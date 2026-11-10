@@ -42,7 +42,7 @@ function skRepoOpen() {
         '<button class="sk-back" data-sk-back title="返回会话">←</button>' +
         '<div class="sk-title"><b>技能仓库</b><span id="skSub">发现 · 安装 · 管理 Claude 技能</span></div>' +
         '<span class="sk-status" id="skStatus"></span>' +
-        '<input class="sk-search" id="skSearch" placeholder="搜索技能（支持中文，自动英译）…">' +
+        '<input autocomplete="off" class="sk-search" id="skSearch" placeholder="搜索技能（支持中文，自动英译）…">' +
         '<button class="sk-btn" data-sk-import title="导入离线包（内网一键安装）"><span style="vertical-align:-2.5px">' + ICO16.package + '</span> 导入离线包</button>' +
         '<input type="file" id="skFile" accept=".zip" style="display:none">' +
       '</div>' +

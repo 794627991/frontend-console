@@ -57,6 +57,22 @@
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       const host = _hgModalHost();
       host.appendChild(ov);
+      // a447（用户实锤截图「重命名会话」也弹黑窗）：浏览器自动填充建议层
+      // 是 Edge 自绘的深色面板，样式完全不受我们控制。弹窗里所有文本类
+      // 输入框统一改 type=search + autocomplete=off 并去掉 name——Chromium
+      // 对「疑似表单字段」会忽略 autocomplete=off，但搜索框不入库。
+      // 视觉差异由 style.css 的 .hg-modal input 规则抹平。
+      try {
+        ov.querySelectorAll('input').forEach((inp) => {
+          const t = (inp.getAttribute('type') || 'text').toLowerCase();
+          if (t === 'checkbox' || t === 'radio' || t === 'file' || t === 'number'
+              || t === 'date' || t === 'time' || t === 'color' || t === 'range') return;
+          inp.setAttribute('type', 'search');
+          inp.setAttribute('autocomplete', 'off');
+          inp.setAttribute('aria-autocomplete', 'none');
+          inp.removeAttribute('name');
+        });
+      } catch (_) {}
       // 挂 body 的弹窗登记到「当前可见宿主」的收口表；宿主被拆（tab 关闭）
       // 时由 teardown 统一关掉——否则弹窗会盖在全窗上，误点主按钮还会对
       // 已销毁的面板发真实写请求（实测 POST /api/vcs/add）
@@ -80,6 +96,6 @@
       [{label: '取消', value: false}, {label: '删除', primary: true, value: true}]);
   }
   function hgPrompt(title, label, val) {
-    return hgModal(title, `<div class="hg-modal-body"><label>${esc(label)}</label><input data-hg-mi value="${esc(val || '')}" name="hg_mi"></div>`,
+    return hgModal(title, `<div class="hg-modal-body"><label>${esc(label)}</label><input autocomplete="off" data-hg-mi value="${esc(val || '')}" name="hg_mi"></div>`,
       [{label: '取消', value: null}, {label: '保存', primary: true, value: (inp) => (inp ? inp.value.trim() : '')}]);
   }

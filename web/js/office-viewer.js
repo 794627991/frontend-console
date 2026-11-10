@@ -183,12 +183,12 @@ function _ovPdfBuildUI(wrap, conn, path, name) {
         <span class="office-title">${esc(name)}</span>
         <span class="ov-pdf-info" data-ov-info>加载中…</span>
         <span style="flex:1"></span>
-        <input type="text" class="ov-pdf-search" data-ov-search placeholder="搜索…（Enter）" spellcheck="false"
+        <input autocomplete="off" type="text" class="ov-pdf-search" data-ov-search placeholder="搜索…（Enter）" spellcheck="false"
           style="width:160px;background:var(--bg-input);border:1px solid var(--border);border-radius:4px;padding:3px 8px;color:var(--fg);font-size:11px;outline:none;">
         <span class="ov-pdf-search-info" data-ov-searchinfo style="font-size:10px;color:var(--muted);min-width:60px;"></span>
         <span style="width:8px"></span>
         <button class="btn ghost lv-btn" data-ov-prev title="上一页">◀</button>
-        <input type="text" data-ov-page style="width:36px;text-align:center;background:var(--bg-input);border:1px solid var(--border);border-radius:3px;color:var(--fg);font-size:11px;font-family:var(--font-mono);outline:none;" value="1">
+        <input autocomplete="off" type="text" data-ov-page style="width:36px;text-align:center;background:var(--bg-input);border:1px solid var(--border);border-radius:3px;color:var(--fg);font-size:11px;font-family:var(--font-mono);outline:none;" value="1">
         <span data-ov-total style="font-size:10px;color:var(--muted);font-family:var(--font-mono);">/?</span>
         <button class="btn ghost lv-btn" data-ov-next title="下一页">▶</button>
         <span style="width:8px"></span>

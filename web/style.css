@@ -3230,7 +3230,12 @@ html {
 .hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7; }
 .hg-modal-body label { display: block; font-size: var(--fs-cap); color: var(--muted); margin-bottom: 5px; }
 .hg-modal-body input { width: 100%; box-sizing: border-box; padding: 6px 9px; font-size: 12.5px;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg);
+  /* a447：modal.js 把文本输入框统一改成 type=search（躲浏览器自动填充黑窗），
+     search 的原生外观/清除按钮要抹平，避免与既有输入框观感不一致 */
+  -webkit-appearance: none; appearance: none; }
+.hg-modal-body input::-webkit-search-cancel-button,
+.hg-modal-body input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
 .hg-modal-body input:focus { outline: none; border-color: var(--accent); }
 .hg-modal-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 /* ---- 自定义提示词（v2.8：左栏底部入口 + 多条目管理界面）---- */

@@ -43,7 +43,7 @@
           <div data-hg-v-probe-out style="font-size:11px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
         </label>
         <label class="hg-vision-prompt-lab">多模态模型名单（逗号分隔，模型下拉的识图标记以此为准；名单外的模型一律走 MCP 识图通道）
-          <input name="hg_v_mm" class="hg-vision-mm" data-hg-v-mm spellcheck="false"
+          <input autocomplete="off" name="hg_v_mm" class="hg-vision-mm" data-hg-v-mm spellcheck="false"
                  value="${esc((cfg.mm_extra || []).join(', '))}"
                  placeholder="如：glm-5.3 flash, Lanz-Medium-V（前缀匹配，填一个即可覆盖其 [1M] 变体）" name="hg_v_mm"></label>
         <label class="hg-vision-prompt-lab">识图提示词（作为识图请求的 system）
@@ -330,12 +330,12 @@
           card.className = 'hg-prompt-item' + (it.enabled ? '' : ' off');
           card.innerHTML =
             `<div class="hg-prompt-item-head">` +
-            `<input class="hg-prompt-note" placeholder="备注（如：中文注释规范）" value="${esc(it.note || '')}" name="hg_prompt_note">` +
+            `<input autocomplete="off" class="hg-prompt-note" placeholder="备注（如：中文注释规范）" value="${esc(it.note || '')}" name="hg_prompt_note">` +
             `<select name="hg_prompt_scope" class="hg-prompt-scope">` +
             `<option value="global"${it.scope !== 'project' ? ' selected' : ''}>全局（所有会话）</option>` +
             `<option value="project"${it.scope === 'project' ? ' selected' : ''}>项目（按目录名匹配）</option>` +
             `</select>` +
-            `<input class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''} name="hg_prompt_proj">` +
+            `<input autocomplete="off" class="hg-prompt-proj" placeholder="目录名" value="${esc(it.project || '')}"${it.scope === 'project' ? '' : ' style="display:none"'}${it.active === false ? ' title="当前项目不匹配（不会注入本会话）"' : ''} name="hg_prompt_proj">` +
             `<button class="hg-prompt-onoff" title="启用/停用">${it.enabled ? '<span style="color:var(--neon-green);display:inline-flex;vertical-align:-2px">' + ICO.dotOn + '</span>' : ICO.dotOff}</button>` +
             `<button class="hg-prompt-del" title="删除">✕</button></div>` +
             `<textarea name="hg_prompt_ta" class="hg-prompt-ta" spellcheck="false" placeholder="提示词正文…"></textarea>`;

@@ -63,12 +63,12 @@ async function buildHexViewerTab(path, name) {
       </div>
       <div class="hx-body">
         <div class="hx-goto-bar" style="display:none">
-          <span>偏移(h):</span><input type="text" data-hx-goto-input name="hx_goto" placeholder="如 0x100 或 256">
+          <span>偏移(h):</span><input autocomplete="off" type="text" data-hx-goto-input name="hx_goto" placeholder="如 0x100 或 256">
           <button class="lv-btn" data-hx-action="gotoOk">跳转</button>
           <button class="lv-btn" data-hx-action="gotoCancel">✕</button>
         </div>
         <div class="hx-find-bar" style="display:none">
-          <span>查找:</span><input type="text" data-hx-find-input name="hx_find" placeholder="hex（如 55 AA）或文本">
+          <span>查找:</span><input autocomplete="off" type="text" data-hx-find-input name="hx_find" placeholder="hex（如 55 AA）或文本">
           <button class="lv-btn" data-hx-action="findNext">下一个</button>
           <button class="lv-btn" data-hx-action="findAll">全部</button>
           <button class="lv-btn" data-hx-action="findCancel">✕</button>

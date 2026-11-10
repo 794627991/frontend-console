@@ -91,9 +91,9 @@ function buildProxyTab() {
         <div class="px-sec">
           <div class="px-sec-title">Lanz 额度</div>
           <div class="px-quota-login" data-px-quota-login>
-            <input name="px_q_user" data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
+            <input autocomplete="off" name="px_q_user" data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
             <span class="px-eye-wrap">
-              <input name="px_q_pwd" data-px-q-pwd type="password" placeholder="密码（存本地 lanz_credentials.json）" spellcheck="false" style="width:220px;">
+              <input autocomplete="off" name="px_q_pwd" data-px-q-pwd type="password" placeholder="密码（存本地 lanz_credentials.json）" spellcheck="false" style="width:220px;">
               <button class="px-eye" data-px-q-eye title="显示/隐藏密码" tabindex="-1" aria-label="显示或隐藏密码">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>

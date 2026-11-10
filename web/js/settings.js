@@ -542,7 +542,7 @@ async function _stRenderTermKeysPane(pane) {
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">截图快捷键（全局）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="snipHk" value="${esc(snipHk)}" spellcheck="false" readonly
+          <input autocomplete="off" type="text" id="snipHk" value="${esc(snipHk)}" spellcheck="false" readonly
                  placeholder="点击录制按键…"
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
           <button class="btn ghost" id="snipHkClear" title="清空=禁用全局快捷键">清除</button>
@@ -554,13 +554,13 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-sub" style="margin-top:4px;">改键立即生效（热更新，无需重启）。文档内搜索=当前日志/编辑器/终端/十六进制查看的查找；全库笔记搜索=跨全部笔记与文本文件检索（Ctrl+点击双链不受影响）。</div>
         <div class="dd-label" style="margin-top:10px;">文档内搜索（${esc(docHk)}）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="docHkInput" value="${esc(docHk)}" spellcheck="false" readonly
+          <input autocomplete="off" type="text" id="docHkInput" value="${esc(docHk)}" spellcheck="false" readonly
                  placeholder="点击录制按键…"
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
         </div>
         <div class="dd-label" style="margin-top:10px;">全库笔记搜索（${esc(notesHk)}）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="notesHkInput" value="${esc(notesHk)}" spellcheck="false" readonly
+          <input autocomplete="off" type="text" id="notesHkInput" value="${esc(notesHk)}" spellcheck="false" readonly
                  placeholder="点击录制按键…"
                  style="flex:1;font-family:var(--font-mono);padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--fg);cursor:pointer;">
         </div>
@@ -767,7 +767,7 @@ async function _stRenderResourcesPane(pane) {
       <div class="dd-cur" style="margin-top:12px;">
         <div class="dd-label">资源包</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
-          <input type="text" id="rsPkgPath" class="dd-input" spellcheck="false"
+          <input autocomplete="off" type="text" id="rsPkgPath" class="dd-input" spellcheck="false"
                  placeholder="选择或粘贴 .fcpk 资源包路径" style="flex:1;">
           <button class="btn ghost" id="rsPkgPick"><span>${ICO16.folderOpen}</span> 选择…</button>
           <button class="btn ghost icon-btn" id="rsRefresh" title="重新检测">⟳</button>
@@ -1198,7 +1198,7 @@ async function _stRenderApiPane(pane) {
         </div>
         <div id="profList" style="margin-top:10px;margin-bottom:4px;display:flex;flex-direction:column;gap:8px;"></div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:14px;">
-          <input type="text" id="profName" class="dd-input" spellcheck="false"
+          <input autocomplete="off" type="text" id="profName" class="dd-input" spellcheck="false"
                  placeholder="${NEW ? '必填——新配置将保存为这个方案名' : '方案名，如：配置1 / 智谱 / 中转站'}" style="flex:1;${NEW ? 'border-color:var(--accent);' : ''}">
           <button class="btn ghost" id="profSaveCur" title="把当前 settings.json 整份（含 Token、网关、模型映射等）存为方案"
                   style="${NEW ? 'display:none;' : ''}"><span>${ICO16.save}</span> 存当前为方案</button>
@@ -1222,7 +1222,7 @@ async function _stRenderApiPane(pane) {
         </div>
         <div class="dd-label" style="margin-top:12px;">BASE_URL（网关地址，随方案切换）</div>
         <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;">
-          <input type="text" id="apiBaseUrl" class="dd-input" spellcheck="false"
+          <input autocomplete="off" type="text" id="apiBaseUrl" class="dd-input" spellcheck="false"
                  placeholder="http://…（留空保持不变）" style="flex:1;">
           <button class="btn ghost" id="apiProbe" title="按上面的 BASE_URL + Token 向网关拉取可用模型列表"
                   style="flex-shrink:0;white-space:nowrap;"><span>${ICO16.search}</span> 获取模型</button>
@@ -1233,14 +1233,14 @@ async function _stRenderApiPane(pane) {
           ${M_SLOTS.map(([k, n, tip]) => `
             <label title="${tip}" style="display:flex;align-items:center;gap:6px;min-width:0;cursor:help;">
               <span style="flex-shrink:0;width:50px;font-size:11px;color:var(--muted);">${n}</span>
-              <input type="text" name="dd_mk_${k}" class="dd-input" data-mk="${k}" spellcheck="false"
+              <input autocomplete="off" type="text" name="dd_mk_${k}" class="dd-input" data-mk="${k}" spellcheck="false"
                      placeholder="不改" style="flex:1;min-width:0;">
               <button type="button" class="btn ghost" data-mk1m="${k}" title="声明支持 1M：给模型名加/去 [1M] 后缀（网关按此后缀提供百万级上下文）"
                       style="flex-shrink:0;padding:2px 7px;font-size:10px;">1M</button>
             </label>`).join('')}
           <label title="默认兜底模型（ANTHROPIC_MODEL）：未明确落到上面 5 个角色档的请求都用它。新开的会话默认用它，也是本工具模型下拉里显示的那一项。" style="display:flex;align-items:center;gap:6px;min-width:0;cursor:help;">
             <span style="flex-shrink:0;width:50px;font-size:11px;color:var(--muted);">兜底</span>
-            <input type="text" name="dd_mk_main" class="dd-input" data-mk="main" spellcheck="false"
+            <input autocomplete="off" type="text" name="dd_mk_main" class="dd-input" data-mk="main" spellcheck="false"
                    placeholder="不改" style="flex:1;min-width:0;">
             <button type="button" class="btn ghost" data-mk1m="main" title="声明支持 1M：给模型名加/去 [1M] 后缀"
                     style="flex-shrink:0;padding:2px 7px;font-size:10px;">1M</button>
@@ -1251,15 +1251,15 @@ async function _stRenderApiPane(pane) {
         <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px;">
           <label style="display:flex;align-items:center;gap:6px;min-width:0;">
             <span style="flex-shrink:0;width:64px;font-size:11px;color:var(--muted);">压缩窗口</span>
-            <input type="text" id="apiCtxWindow" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
+            <input autocomplete="off" type="text" id="apiCtxWindow" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
           </label>
           <label style="display:flex;align-items:center;gap:6px;min-width:0;">
             <span style="flex-shrink:0;width:64px;font-size:11px;color:var(--muted);">最大上下文</span>
-            <input type="text" id="apiMaxCtx" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
+            <input autocomplete="off" type="text" id="apiMaxCtx" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
           </label>
           <label style="display:flex;align-items:center;gap:6px;min-width:0;">
             <span style="flex-shrink:0;width:64px;font-size:11px;color:var(--muted);">压缩阈值%</span>
-            <input type="text" id="apiCompactPct" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
+            <input autocomplete="off" type="text" id="apiCompactPct" class="dd-input" spellcheck="false" placeholder="不改" style="flex:1;min-width:0;">
           </label>
         </div>
         <div class="dd-sub" style="margin-top:6px;">压缩窗口/最大上下文 = tokens（如 200000）；压缩阈值 = 用量百分比（如 85）。这三项决定「用到多少 tokens 才自动压缩」。</div>
@@ -1598,7 +1598,7 @@ async function _stRenderUpdatePane(pane) {
       <div class="dd-form">
         <div class="dd-label">升级服务器地址（发布者提供）</div>
         <div class="dd-row">
-          <input type="text" id="upUrl" class="dd-input" spellcheck="false" placeholder="http://发布者内网IP:8765/">
+          <input autocomplete="off" type="text" id="upUrl" class="dd-input" spellcheck="false" placeholder="http://发布者内网IP:8765/">
           <button class="btn ghost" id="upSaveUrl">保存</button>
           <button class="btn primary" id="upCheck">检查更新</button>
         </div>
@@ -1612,7 +1612,7 @@ async function _stRenderUpdatePane(pane) {
         </div>
         <div class="dd-sub">开启后本机 8765 端口只读分发 dist/releases/ 下的版本包；首次开启 Windows 防火墙弹窗请允许（勾选专用网络）。把「同事升级地址」发给同事填到他们的这个输入框即可。</div>
         <div class="dd-row" style="margin-top:10px;">
-          <input type="text" id="upPwd" class="dd-input" spellcheck="false" placeholder="Web 门户登录密码（空=默认 888888）" style="flex:1;">
+          <input autocomplete="off" type="text" id="upPwd" class="dd-input" spellcheck="false" placeholder="Web 门户登录密码（空=默认 888888）" style="flex:1;">
           <button class="btn ghost" id="upPwdSave">改密码</button>
         </div>
       </div>
@@ -1737,7 +1737,7 @@ function _stRenderDataPane(pane) {
       <div class="dd-form">
         <div class="dd-label">修改到</div>
         <div class="dd-row">
-          <input type="text" id="ddNewPath" class="dd-input" spellcheck="false" placeholder="如 D:\\前端控制台">
+          <input autocomplete="off" type="text" id="ddNewPath" class="dd-input" spellcheck="false" placeholder="如 D:\\前端控制台">
           <button class="btn ghost icon-btn" id="ddPick" title="浏览选择目录">${ICO16.folderOpen}</button>
         </div>
         <div class="dd-sub">默认建议：<span id="ddDefault" style="font-family:var(--font-mono);"></span>（数据跟工具目录走，备份工具目录即备份全部；endpoint/config 留 home）</div>

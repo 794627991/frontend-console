@@ -25,6 +25,17 @@
   ];
 
   function fix(el) {
+    // a447（用户实锤两处截图）：浏览器自动填充建议层（Edge 深色「保存的信息」
+    // 面板）会挂到被它认作表单字段的文本框上。统一加 autocomplete=off；
+    // 弹窗（hgModal）与提问卡另外用 type=search 彻底隔离（那两处样式自持，
+    // 改 type 不影响其它模块）。全局不改 type——会打断 input[type=text]
+    // 选择器与密码显隐的二态判断。
+    if (el.tagName === 'INPUT' && !el.getAttribute('autocomplete')) {
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      if (t === 'text' || t === 'search' || t === 'password' || t === 'email' || t === 'url' || t === 'tel') {
+        el.setAttribute('autocomplete', 'off');
+      }
+    }
     if (el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') ||
         el.getAttribute('title') || el.closest('label') ||
         (el.id && document.querySelector('label[for="' + el.id + '"]'))) {
@@ -42,7 +53,10 @@
       el.setAttribute('aria-label', label);
     }
     // DevTools 另一条：A form field element should have an id or name
-    if (!el.id && !el.getAttribute('name')) {
+    // a447：type=search 的输入框是「为了躲浏览器自动填充黑窗」才改成 search
+    // 的。给它们补回 name 会把字段重新变成浏览器可记忆的表单字段，自动填充
+    // 建议层又冒出来——跳过。
+    if (el.type !== 'search' && !el.id && !el.getAttribute('name')) {
       const base = (el.className || '').split(/\s+/)[0] || 'field';
       el.setAttribute('name', base);
     }

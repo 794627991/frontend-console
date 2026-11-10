@@ -270,9 +270,9 @@ function _vcsHistOpen() {
     `<div class="hg-modal hg-modal-vcslog">` +
       `<div class="hg-modal-title"><span style="vertical-align:-2.5px">${ICO16.log}</span> 提交历史 · ${esc(D.vcs || '')}${D.branch ? ' · ⎇ ' + esc(D.branch) : ''}</div>` +
       `<div class="hg-vcs-htool">` +
-        `<input name="hg_vcs_hsearch" class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '关键字（svn 整串匹配，含作者/日期）' : '关键字（多词 AND，含正文）'}" spellcheck="false">` +
+        `<input autocomplete="off" name="hg_vcs_hsearch" class="hg-vcs-hsearch" data-vcs-hq="text" placeholder="${isSvn ? '关键字（svn 整串匹配，含作者/日期）' : '关键字（多词 AND，含正文）'}" spellcheck="false">` +
         (isSvn ? '' :
-          `<input name="hg_vcs_hauthor" class="hg-vcs-hauthor" data-vcs-hq="author" list="hg-vcs-authors" placeholder="作者" spellcheck="false">` +
+          `<input autocomplete="off" name="hg_vcs_hauthor" class="hg-vcs-hauthor" data-vcs-hq="author" list="hg-vcs-authors" placeholder="作者" spellcheck="false">` +
           `<datalist id="hg-vcs-authors"></datalist>`) +
         `<button class="btn ghost hg-vcs-chip" data-vcs-chip="today">今天</button>` +
         `<button class="btn ghost hg-vcs-chip" data-vcs-chip="7d">近7天</button>` +
@@ -480,7 +480,7 @@ function _vcsHistPager() {
   if (info) {
     // v3.5.148：页码可编辑跳转（Enter/失焦触发 _vcsHistGoto——已载内直跳、
     // 不足自动补拉）；重绘重建 input，值随 H.page
-    info.innerHTML = n ? `第 <input name="hg_vcs_hpgin" class="hg-vcs-hpgin" value="${H.page}" ` +
+    info.innerHTML = n ? `第 <input autocomplete="off" name="hg_vcs_hpgin" class="hg-vcs-hpgin" value="${H.page}" ` +
       `title="输入页码回车跳转（共 ${vpages} 页）"> / ${vpages} 页` : '—';
     const inp = info.querySelector('.hg-vcs-hpgin');
     if (inp) inp.addEventListener('keydown', (e) => {

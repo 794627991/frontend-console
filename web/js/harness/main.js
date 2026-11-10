@@ -22,7 +22,7 @@ function buildClaudeHarnessTab(opts = {}) {
           <button class="hg-new-btn" data-hg-new title="新建会话">✚ 新建会话</button>
           <button class="hg-new-btn hg-recover-btn" data-hg-recover title="扫描磁盘上的会话记录，找回列表里消失的会话（异常丢失/误删都可找回）">⟲ 恢复会话</button>
         </div>
-        <div class="hg-search-wrap"><input class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false" name="hg_search"></div>
+        <div class="hg-search-wrap"><input autocomplete="off" class="hg-search" data-hg-search placeholder="搜索会话" spellcheck="false" name="hg_search"></div>
         <div class="hg-sessions" data-hg-sessions></div>
         <button class="hg-prompt-btn" data-hg-vision title="识图配置（MCP 识图模型/端点映射/提示词）">${ICO16.eye} 识图配置</button>
         <button class="hg-prompt-btn" data-hg-roles-cfg title="三角色配置：开关/三槽模型（主会话/设计/审核）/端点角色映射/审核模式与分级线（保存后下条消息热更生效）。双形态：轻主力=主会话直干所有活+设计+审核两个代理；重主力=直干+审核兜底">${ICO16.users} 三角色</button>

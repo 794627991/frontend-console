@@ -220,7 +220,7 @@
       var row = document.createElement('div');
       row.className = 'res-manual';
       row.style.cssText = 'display:flex;gap:8px;margin:8px 0;';
-      row.innerHTML = '<input data-res-inp placeholder="资源包完整路径（*.fcpk）" ' +
+      row.innerHTML = '<input autocomplete="off" data-res-inp placeholder="资源包完整路径（*.fcpk）" ' +
         'style="flex:1;padding:6px 8px;border:1px solid #ccc;border-radius:4px">' +
         '<button class="btn sm" data-res-ok>安装</button>';
       m.querySelector('[data-res-body]').appendChild(row);
