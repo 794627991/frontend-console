@@ -26,7 +26,11 @@ import src.harness.session as S
 # 隔离：sync_meta 只写内存字典，_meta_load 空操作（会话注册/标题路径不读真实盘）
 S._meta_load = lambda: None
 S._meta_save = lambda: None
-S._meta = {}
+# a460：必须**原地清空**，不能 `S._meta = {}` 重绑定——session._meta 与
+# harness.meta._meta 是同一 dict 的两个别名，重绑定只换 session 侧那一个，
+# 后续测试（test_bg_hold 等）往 meta._meta 写、session.stale_hold_repair
+# 读 session._meta 就永远读空（全量跑必挂、单跑本文件却过=典型别名分裂）。
+S._meta.clear()
 
 from src.harness.session import HarnessSession  # noqa: E402
 

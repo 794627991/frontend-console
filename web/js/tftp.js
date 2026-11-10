@@ -123,11 +123,22 @@ async function refreshTftp() {
   const resizer = $('tftpResizer');
   const pane = $('tftpPane');
   if (!resizer || !pane) return;
-  // 恢复记忆高度（clamp 到合理范围防窗口变小后面板超界）
-  try {
-    const h = parseInt(localStorage.getItem('tftpPaneH') || '', 10);
-    if (h >= 180 && h <= window.innerHeight - 200) pane.style.height = h + 'px';
-  } catch(e) {}
+  // 恢复记忆高度。a461（用户实锤：拖好高度下次启动又回去了）：原实现
+  // `if (h >= 180 && h <= innerHeight - 200)` 越界就**整个丢弃**，回落到
+  // CSS 的 50%——用户在最大化窗口里拖到 900px，下次以小窗口启动就判越界、
+  // 记忆等于没存。改为 clamp 到合法区间：越界说明窗口尺寸变了，不是记忆
+  // 失效；存的值本身保留，窗口再变大仍能恢复原高度。
+  let _savedH = 0;
+  try { _savedH = parseInt(localStorage.getItem('tftpPaneH') || '', 10) || 0; } catch(e) {}
+  function _clampPaneH(h) {
+    const hi = Math.max(180, window.innerHeight - 200);
+    return Math.max(180, Math.min(h, hi));
+  }
+  if (_savedH >= 180) pane.style.height = _clampPaneH(_savedH) + 'px';
+  // 窗口尺寸变化后重新套用（恢复的是上次的意图高度，不是上次的像素）
+  window.addEventListener('resize', () => {
+    if (_savedH >= 180) pane.style.height = _clampPaneH(_savedH) + 'px';
+  });
   let dragging = false, startY = 0, startH = 0;
   resizer.addEventListener('mousedown', e => {
     dragging = true; startY = e.clientY; startH = pane.offsetHeight;
@@ -146,7 +157,10 @@ async function refreshTftp() {
     dragging = false;
     resizer.classList.remove('dragging');
     document.body.style.userSelect = '';
-    try { localStorage.setItem('tftpPaneH', pane.offsetHeight); } catch(e) {}
+    try {
+      localStorage.setItem('tftpPaneH', pane.offsetHeight);
+      _savedH = pane.offsetHeight;   // a461：同步内存值，resize 才有正确意图高度
+    } catch(e) {}
   });
 })();
 

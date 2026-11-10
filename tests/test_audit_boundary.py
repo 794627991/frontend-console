@@ -15,7 +15,8 @@ sys.path.insert(0, ROOT)
 # 会让本套件假失败/假通过
 import src.app_state as _st   # noqa: E402
 _TMP = tempfile.mkdtemp(prefix="audit_boundary_test_")
-_st.CONFIG_FILE = os.path.join(_TMP, "config.json")
+_CFG_PATH = os.path.join(_TMP, "config.json")
+_st.CONFIG_FILE = _CFG_PATH
 os.environ.setdefault("HARNESS_AGENTS_DIR", _TMP)
 # 线值显式钉死（免审100/轻审250/设计150）——R2 后 settle 用单读真实
 # audit_limits/design_limit，桩的 _audit_state limits 已弃用，不钉会漂
@@ -29,7 +30,22 @@ from src.harness.session import HarnessSession   # noqa: E402
 
 
 def _mk_session():
-    """最小桩会话：不真起 CLI 进程，只挂审计状态机要用的属性。"""
+    """最小桩会话：不真起 CLI 进程，只挂审计状态机要用的属性。
+
+    a460：这里必须**每次**把 app_state.CONFIG_FILE 指回本文件的临时配置。
+    _audit_settle 走 roles_cfg() 真读盘，而 CONFIG_FILE 是模块级全局——
+    test_roles_routing 在 import 时会把它改成自己的临时目录且不还原，于是
+    pytest 同进程跑全量时，本文件读到的线值来自别人，4 条用例假失败
+    （单独跑本文件恒通过，正是导入顺序依赖的典型症状）。"""
+    import src.app_state as _st2
+    _st2.CONFIG_FILE = _CFG_PATH
+    try:
+        with open(_CFG_PATH, "w", encoding="utf-8") as _f:
+            _json.dump({"harness_roles": {"design_max_lines": 150,
+                                          "l1_max_lines": 100,
+                                          "l2_max_lines": 250}}, _f)
+    except OSError:
+        pass
     s = HarnessSession.__new__(HarnessSession)
     s.sid = "t"
     s._audit = {"lines": 0, "files": [], "designer": False,
