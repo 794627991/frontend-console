@@ -787,10 +787,15 @@ class LanzQuotaWorker:
         self._stop.set()
         self._wake.set()
 
+    def wake_loads(self):
+        """催 worker 尽快刷一次负载（仍用它的会话，不新建客户端）。"""
+        self._wake.set()
+
     def _run(self):
         client = None
         cur_cred = object()
         cur_epoch = 0
+        fail_n = 0
         while not self._stop.is_set():
             try:
                 with self._lock:
@@ -805,17 +810,86 @@ class LanzQuotaWorker:
                     client = lanz_quota.LanzClient(*cred)
                     cur_cred = cred
                     cur_epoch = epoch
+                    fail_n = 0
                 if not self._ensure_login(client, cred):
-                    self._wake.wait(self.LOGIN_RETRY_WAIT)
+                    self._clear_loads("登录失败，模型负载暂不可用")
+                    # a452：SSO 连续失败会锁号（实测 "Too many attempts"）。
+                    # 固定 60s 重试等于持续敲锁定账号，改指数退避 60→120→
+                    # 300→600s 封顶；成功一次即归零。
+                    fail_n += 1
+                    wait = min(self.LOGIN_RETRY_WAIT * (2 ** min(fail_n - 1, 4)), 600)
+                    self._wake.wait(wait)
                     self._wake.clear()
                     continue
-                self._fetch_all(client, cred)
-                self._wake.clear()
-                if self._stop.is_set():
-                    break
-                self._wake.wait(self.REFRESH_INTERVAL if auto else None)
+                fail_n = 0
+                # a452（严重回归修复）：负载查询必须复用**这一个** client。
+                # 原先 _get_model_loads 自己 new LanzClient 并每 20s 登录一次，
+                # 同一 SSO 账号两个会话互相踢——worker 刚登录就被踢回 SSO
+                # 登录页，表现为「一直登录失败」，还会触发风控锁号。
+                # a452：负载 20s 级变化，额度 600s 级。切三段等待，负载每
+                # LOAD_TTL 走一次 _fetch_loads（同一 client，零新登录）。
+                self._cur_client = client
+                last_full = 0.0
+                while not self._stop.is_set():
+                    now = time.time()
+                    if now - last_full >= (self.REFRESH_INTERVAL if auto else 1e9):
+                        self._fetch_all(client, cred)
+                        last_full = time.time()
+                    if not self._fetch_loads(client):
+                        break            # 会话失效 → 回外层按 60s 退避重登
+                    self._wake.clear()
+                    if self._stop.is_set():
+                        break
+                    # 自动刷新关掉时：只等 wake（手动刷新），负载也不自动拉
+                    self._wake.wait(LOAD_TTL if auto else None)
+                    with self._lock:
+                        cred_now, auto_now = self._cred, self._auto
+                    if cred_now != cred or getattr(self, "_cur_cred_epoch", 0) != cur_epoch:
+                        break            # 凭据/重登变了 → 回外层重建 client
+                    auto = auto_now
             except Exception:
                 log.exception("LanzQuotaWorker _run 循环异常，继续运行")
+
+    def _fetch_loads(self, client):
+        """拉模型负载（a452）：复用 worker 的 client，绝不另建会话。
+
+        返回 True=继续；False=会话失效——**不在负载通道里自己重登**。账号
+        一旦被 SSO 风控锁定，20s 一次的重登会持续加重锁定，交给外层
+        _ensure_login 按 60s 退避重登。
+        """
+        try:
+            loads = client.get_model_loads()
+        except lanz_quota.LanzSessionExpired:
+            self._set_loads_err("会话过期，等待重新登录")
+            return False
+        except lanz_quota.LanzError as e:
+            self._set_loads_err("负载查询失败: %s" % e)
+            return True
+        except Exception as e:
+            log.warning("模型负载查询异常: %s", e)
+            self._set_loads_err("负载查询异常: %s" % e)
+            return True
+        global _quota_loads, _quota_loads_ts, _quota_loads_err, _quota_loads_busy
+        with _quota_loads_lock:
+            _quota_loads = loads
+            _quota_loads_ts = time.time()
+            _quota_loads_err = ""
+            _quota_loads_busy = False
+        return True
+
+    def _set_loads_err(self, msg):
+        global _quota_loads_err, _quota_loads_busy
+        with _quota_loads_lock:
+            _quota_loads_err = msg
+            _quota_loads_busy = False
+
+    def _clear_loads(self, msg):
+        global _quota_loads, _quota_loads_ts, _quota_loads_err, _quota_loads_busy
+        with _quota_loads_lock:
+            _quota_loads = []
+            _quota_loads_ts = 0.0
+            _quota_loads_err = msg
+            _quota_loads_busy = False
 
     def _cred_changed(self, cred):
         with self._lock:
@@ -906,8 +980,6 @@ _quota_loads_ts = 0.0
 _quota_loads_err = ""
 _quota_loads_busy = False
 _quota_loads_lock = threading.Lock()
-_quota_loads_client = None   # a450：常驻客户端（复用 CAS session，免每次重登）
-_quota_loads_cred = None     # 该客户端对应的 (user, pwd)，凭据变了才重建
 _quota_ts = None         # 上次 data 时间戳（前端显示"上次刷新 Ns 前"）
 _quota_lock = threading.Lock()
 _quota = None            # LanzQuotaWorker（HAS_LANZ 且凭据存在时才建）
@@ -1037,13 +1109,10 @@ def _invalidate_cred_cache(cred):
     _cred_cached = True
     # a448：凭据变了，模型负载也失效（换号后负载/权限都不同）
     global _quota_loads, _quota_loads_ts, _quota_loads_err
-    global _quota_loads_client, _quota_loads_cred
     with _quota_loads_lock:
         _quota_loads = []
         _quota_loads_ts = 0.0
         _quota_loads_err = ""
-        _quota_loads_client = None
-        _quota_loads_cred = None
 
 
 LOAD_TTL = 20.0   # 模型负载缓存时长（秒）：status 1s 轮询，20s 内复用
@@ -1069,72 +1138,16 @@ def _is_lanz_api():
 def _get_model_loads(force=False):
     """模型实时负载（a448）。返回 (列表, 错误串)。
 
-    走 LanzClient.get_model_loads（与 API 密钥申请页同源 /v1/openai/models）。
-    有 20s 缓存。**永不阻塞调用方超过一次即时返回**：status 被前端 1s 轮询，
-    登录+请求要 1~2s，同步做会把面板轮询拖垮——这里只读缓存，缓存过期就
-    起后台线程刷新（在途标志防重入），本次先返回旧值。
+    a452（严重回归修复）：**只读缓存，绝不自己登录**。
+    原实现在这里 new LanzClient 并 login()，与 LanzQuotaWorker 的会话同时
+    存在于同一个 SSO 账号下——两个会话互相踢，worker 刚登好就被踢回 SSO
+    登录页（用户实锤「一直登录失败」，还触发风控）。现在负载统一由 worker
+    在它自己的 client 上顺带拉（_fetch_loads），这里只取缓存。
     """
-    global _quota_loads, _quota_loads_busy
-    now = time.time()
+    if force and _quota is not None:
+        _quota.wake_loads()      # 让 worker 尽快刷一次（仍用它的会话）
     with _quota_loads_lock:
-        fresh = _quota_loads and now - _quota_loads_ts < LOAD_TTL
-        busy = _quota_loads_busy
-        snapshot = list(_quota_loads), _quota_loads_err
-        if fresh or busy:
-            return snapshot
-        _quota_loads_busy = True
-    if force:
-        _quota_loads_refresh_now()
-    else:
-        threading.Thread(target=_quota_loads_refresh_now, daemon=True).start()
-    return snapshot
-
-
-def _quota_loads_refresh_now():
-    """在后台线程里真正拉一次负载并落缓存（调用方已在 _quota_loads_busy 置位）。
-
-    a450：复用常驻客户端——原来每次刷新都 new 一个 LanzClient 再走完整 CAS
-    登录（~1.5s），20s 一拉等于常驻重登录。改为记住上次成功的 client +
-    凭据，下次直接复用 session cookie；凭据变了才重建，会话过期自己重登。
-    """
-    global _quota_loads, _quota_loads_ts, _quota_loads_err, _quota_loads_busy
-    global _quota_loads_client, _quota_loads_cred
-    loads, err = [], ""
-    try:
-        cred = _get_credentials()
-        if not HAS_LANZ or not cred:
-            return
-        key = (cred.get("username"), cred.get("password"))
-        c = _quota_loads_client
-        if c is None or _quota_loads_cred != key:
-            c = lanz_quota.LanzClient(cred["username"], cred["password"])
-        try:
-            c.login()                       # 已登录时是空操作（_logged_in 短路）
-            loads = c.get_model_loads()
-        except lanz_quota.LanzSessionExpired:
-            c.login(force=True)
-            loads = c.get_model_loads()
-        _quota_loads_client = c
-        _quota_loads_cred = key
-    except lanz_quota.LanzAuthError as e:
-        _quota_loads_client = None          # 凭据失效：下次重建重试
-        err = "登录失败: %s" % e
-    except lanz_quota.LanzNetworkError as e:
-        err = "网络错误: %s" % e
-    except lanz_quota.LanzError as e:
-        err = "负载查询失败: %s" % e
-    except Exception as e:
-        log.warning("模型负载查询异常: %s", e)
-        err = "负载查询异常: %s" % e
-    finally:
-        with _quota_loads_lock:
-            _quota_loads_busy = False
-            if loads:
-                _quota_loads = loads
-                _quota_loads_ts = time.time()
-                _quota_loads_err = ""
-            else:
-                _quota_loads_err = err
+        return list(_quota_loads), _quota_loads_err
 
 
 def _ensure_quota_worker():
