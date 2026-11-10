@@ -474,9 +474,12 @@ function hgProxyRefreshState() {
       const j = await r.json();
       let txt = '· 未运行', cls = ' off';
       if (j.already_running || j.running) {
-        txt = '· 37349 运行中';
+        // a451（用户实锤「要么运行中要么重试中，不能运行中（重试中）」）：
+        // 重试是「处理中」的独立状态，不与运行中叠加——有在途重试就只显示
+        // 重试中（既省宽度不换行，也让用户一眼判断当前是否被限流重试）。
+        const retrying = !!(j.running && j.snapshot && j.snapshot.in_flight_retries > 0);
+        txt = retrying ? '· 37349 重试中' : '· 37349 运行中';
         cls = ' on';
-        if (j.running && j.snapshot && j.snapshot.in_flight_retries > 0) txt += '（重试中）';
       } else if (j.port_busy) {
         txt = '· 端口被占'; cls = ' err';
       }
