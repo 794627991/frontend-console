@@ -428,17 +428,42 @@ function _hgLoadsPaint(anchor) {
 }
 function _hgLoadsHide() {
   if (_hgLoadsTip) _hgLoadsTip.style.display = 'none';
+  _hgLoadsStopTick();
 }
+// a450（用户实锤「一直悬浮就不更新」）：原来只在 mouseover 拉一次，悬停期间
+// 数值冻住，挪开再回来才变。悬停期间按 20s（后端缓存 TTL）定时重拉，卡片
+// 可见时跟着重绘；鼠标离开即停。
+let _hgLoadsTick = null;
+function _hgLoadsStopTick() {
+  if (_hgLoadsTick) { clearInterval(_hgLoadsTick); _hgLoadsTick = null; }
+}
+function _hgLoadsTickStart(anchor) {
+  _hgLoadsStopTick();
+  _hgLoadsTick = setInterval(() => {
+    if (!_hgLoadsTip || _hgLoadsTip.style.display === 'none') { _hgLoadsStopTick(); return; }
+    _hgProxyHoverAnchor = anchor;
+    hgProxyRefreshState();     // 拉到新数据后由下方 .then 重绘
+  }, 20000);
+}
+let _hgProxyHoverAnchor = null;
 document.addEventListener('mouseover', ev => {
   const btn = ev.target.closest('[data-hg-proxy-btn]');
   if (!btn) return;
-  // a448：悬浮即刷新一次（负载 20s 级变化，SSE 不覆盖；鼠标进入时拉最新）
+  // mouseover 在按钮内子元素间移动会反复触发——只在「进入按钮」这一次
+  // （relatedTarget 不在按钮内）才拉数据 + 重臂定时器，否则悬停时每秒
+  // 好几发请求。
+  if (btn.contains(ev.relatedTarget)) return;
+  _hgProxyHoverAnchor = btn;
   hgProxyRefreshState();
   _hgLoadsPaint(btn);
+  _hgLoadsTickStart(btn);
 });
 document.addEventListener('mouseout', ev => {
   const btn = ev.target.closest('[data-hg-proxy-btn]');
   if (!btn) return;
+  // 同上：移去按钮内部的子元素不算离开
+  if (btn.contains(ev.relatedTarget)) return;
+  _hgProxyHoverAnchor = null;
   _hgLoadsHide();
 });
 
@@ -461,6 +486,11 @@ function hgProxyRefreshState() {
       });
       // a448：悬浮卡的负载数据（无数据时置空，悬浮不出卡）
       _hgProxyLoads = (j.model_loads && j.model_loads.length) ? j.model_loads : null;
+      // a450：卡片在场时跟着刷新（悬停定时器 20s 一拉，数据回来就重绘）
+      if (_hgProxyHoverAnchor && _hgLoadsTip && _hgLoadsTip.style.display !== 'none') {
+        if (_hgProxyLoads) _hgLoadsPaint(_hgProxyHoverAnchor);
+        else _hgLoadsHide();
+      }
     } catch (_) {}
   };
   fetchIt();

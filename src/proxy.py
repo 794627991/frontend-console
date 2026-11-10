@@ -906,6 +906,8 @@ _quota_loads_ts = 0.0
 _quota_loads_err = ""
 _quota_loads_busy = False
 _quota_loads_lock = threading.Lock()
+_quota_loads_client = None   # a450：常驻客户端（复用 CAS session，免每次重登）
+_quota_loads_cred = None     # 该客户端对应的 (user, pwd)，凭据变了才重建
 _quota_ts = None         # 上次 data 时间戳（前端显示"上次刷新 Ns 前"）
 _quota_lock = threading.Lock()
 _quota = None            # LanzQuotaWorker（HAS_LANZ 且凭据存在时才建）
@@ -1035,10 +1037,13 @@ def _invalidate_cred_cache(cred):
     _cred_cached = True
     # a448：凭据变了，模型负载也失效（换号后负载/权限都不同）
     global _quota_loads, _quota_loads_ts, _quota_loads_err
+    global _quota_loads_client, _quota_loads_cred
     with _quota_loads_lock:
         _quota_loads = []
         _quota_loads_ts = 0.0
         _quota_loads_err = ""
+        _quota_loads_client = None
+        _quota_loads_cred = None
 
 
 LOAD_TTL = 20.0   # 模型负载缓存时长（秒）：status 1s 轮询，20s 内复用
@@ -1086,21 +1091,33 @@ def _get_model_loads(force=False):
 
 
 def _quota_loads_refresh_now():
-    """在后台线程里真正拉一次负载并落缓存（调用方已在 _quota_loads_busy 置位）。"""
+    """在后台线程里真正拉一次负载并落缓存（调用方已在 _quota_loads_busy 置位）。
+
+    a450：复用常驻客户端——原来每次刷新都 new 一个 LanzClient 再走完整 CAS
+    登录（~1.5s），20s 一拉等于常驻重登录。改为记住上次成功的 client +
+    凭据，下次直接复用 session cookie；凭据变了才重建，会话过期自己重登。
+    """
     global _quota_loads, _quota_loads_ts, _quota_loads_err, _quota_loads_busy
+    global _quota_loads_client, _quota_loads_cred
     loads, err = [], ""
     try:
         cred = _get_credentials()
         if not HAS_LANZ or not cred:
             return
-        c = lanz_quota.LanzClient(cred["username"], cred["password"])
+        key = (cred.get("username"), cred.get("password"))
+        c = _quota_loads_client
+        if c is None or _quota_loads_cred != key:
+            c = lanz_quota.LanzClient(cred["username"], cred["password"])
         try:
-            c.login()
+            c.login()                       # 已登录时是空操作（_logged_in 短路）
             loads = c.get_model_loads()
         except lanz_quota.LanzSessionExpired:
             c.login(force=True)
             loads = c.get_model_loads()
+        _quota_loads_client = c
+        _quota_loads_cred = key
     except lanz_quota.LanzAuthError as e:
+        _quota_loads_client = None          # 凭据失效：下次重建重试
         err = "登录失败: %s" % e
     except lanz_quota.LanzNetworkError as e:
         err = "网络错误: %s" % e
