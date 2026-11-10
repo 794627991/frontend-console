@@ -402,10 +402,9 @@ function _hgLoadsPaint(anchor) {
   const loads = _hgProxyLoads;
   if (!loads || !loads.length) return;
   const tip = _hgLoadsTipEl();
-  const lvTxt = { jam: '拥挤', busy: '繁忙', normal: '正常', idle: '空闲' };
-  tip.innerHTML = '<div class="hg-loads-h">模型负载' +
-    '<span class="hg-loads-note">' + esc(String(loads.length)) + ' 个模型</span></div>' +
-    loads.map(m => {
+  // a449（用户实锤）：去掉标题行——它在深色背景上是一条突兀的黑条，且
+  // 「6 个模型」这种计数对用户没信息量；卡片直接就是负载列表。
+  tip.innerHTML = loads.map(m => {
       const pct = (m.pct == null) ? null : m.pct;
       const cls = m.level ? ' px-load--' + m.level : '';
       return '<div class="hg-loads-row"><span class="hg-loads-name">' + esc(m.name) + '</span>' +
@@ -414,10 +413,15 @@ function _hgLoadsPaint(anchor) {
     }).join('');
   tip.style.display = 'block';
   const r = anchor.getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  // a449（用户实锤「窗口向下被截断」）：Proxy 按钮贴窗口下沿，向下弹必然
+  // 被裁。优先向上弹（卡片底部对齐按钮顶部上方 6px）；上方也放不下时
+  // 退化为「贴视口顶部、向下弹」。
+  let top = r.top - th - 6;
+  if (top < 8) top = Math.min(r.bottom + 6, Math.max(8, window.innerHeight - th - 8));
+  tip.style.top = Math.round(top) + 'px';
   tip.style.left = Math.round(r.left) + 'px';
-  tip.style.top = Math.round(r.bottom + 6) + 'px';
   // 右缘防溢出
-  const tw = tip.offsetWidth;
   if (r.left + tw > window.innerWidth - 8) {
     tip.style.left = Math.max(8, window.innerWidth - tw - 8) + 'px';
   }

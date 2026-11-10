@@ -2302,9 +2302,6 @@
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 10px 36px rgba(0,0,0,.55); padding: 9px 11px;
   font-family: var(--font-mono); font-size: 11px; pointer-events: none; }
-.hg-loads-h { display: flex; align-items: baseline; justify-content: space-between;
-  font-weight: 600; color: var(--fg-bright); margin-bottom: 6px; font-size: 12px; }
-.hg-loads-note { font-weight: 400; color: var(--muted); font-size: 10px; }
 .hg-loads-row { display: grid; grid-template-columns: 92px 1fr 44px;
   gap: 8px; align-items: center; padding: 3px 0; }
 .hg-loads-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis;
