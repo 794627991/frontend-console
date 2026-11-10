@@ -775,6 +775,7 @@
   }
 
   let _pollTimer = null;
+  let _navClockTimer = null;   // a435：独立计时器
 
   function ui(path) {
     _closePanel();
@@ -798,6 +799,14 @@
 
   function _closePanel() {
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+    if (_navClockTimer) { clearInterval(_navClockTimer); _navClockTimer = null; }
+    const _td = document.getElementById('navTierDialog');
+    if (_td) {
+      // a440：弹窗还在说明建库线程正卡在「等用户选建库方式」。关掉面板后
+      // 用户再没有任何途径作答，后端会白等 10 分钟——关面板即视为放弃建库。
+      _td.remove();
+      fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
+    }
     const el = document.getElementById('navIdxPanel');
     if (el) el.remove();
   }
@@ -955,7 +964,7 @@
     bPick.onclick = () => _scopePick(path, dirs => {
       if (!dirs || !dirs.length) return;
       // a423（内网报告·用户令「只要有白名单一定用白名单」）：手选目录
-      // **不指定档位**（原写死 full=私自全建，H11 实锤 841MB tags）——
+      // **不指定档位**（原写死 full=私自全建，实测 tags 撑到数百 MB）——
       // 后端按收录集有无中间文件判：有→白名单，零→全量（唯一降档）。
       // a415R3 BUG-2：勾「整个目录」根行时 dirs=[''] 映射成 '.'
       card._scopeCfg = { version: 1, name: '手选 ' + dirs.length + ' 目录',
@@ -1377,11 +1386,116 @@
       .catch(e => showBanner('启动失败: ' + e, 4000, true));
   }
 
+  // a438：白名单覆盖率偏低时的建库方式选择弹窗——把实际数据显示给用户，
+  // 由用户决定「只收白名单」还是「全量收源码」，不再由代码写死阈值行为。
+  function _askTierDialog(info, txt) {
+    const ov = document.createElement('div');
+    ov.id = 'navTierDialog';   // a439：可被 _closePanel 统一清理
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);' +
+      'z-index:10050;display:flex;align-items:center;justify-content:center;';
+    const card = document.createElement('div');
+    card.className = 'dd-cur';
+    card.style.cssText = 'width:520px;max-width:92vw;padding:18px 20px;' +
+      'border-radius:12px;background:var(--bg-panel);border:1px solid var(--border);' +
+      'box-shadow:0 12px 40px rgba(0,0,0,.5);';
+    const title = _h('div', '编译白名单可能不完整');
+    title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:10px;';
+    card.appendChild(title);
+    const lines = [
+      ['products', '编译产物', (info.o_count || 0) + ' 个 .o · ' + (info.cmd_files || 0) + ' 个 .cmd'],
+      ['units', '推导出的源码单元', (info.units || 0) + ' 个'],
+      ['all', '收录集内源码文件', (info.all_code || 0) + ' 个'],
+      ['cover', '覆盖率', (info.cover || 0) + '%'],
+    ];
+    lines.forEach(([k, label, val]) => {
+      const row = _h('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;' +
+        'font-size:12px;padding:3px 0;font-family:var(--font-mono);';
+      const a = _h('span', label);
+      a.style.cssText = 'color:var(--muted);';
+      const b = _h('span', val);
+      if (k === 'cover') b.style.cssText = 'color:var(--accent);font-weight:600;';
+      row.appendChild(a); row.appendChild(b);
+      card.appendChild(row);
+    });
+    const hint = _h('div', '该工程可能尚未编译，或产物来自 SDK 预编译/外部构建系统。' +
+      '请选择收录方式：');
+    hint.style.cssText = 'font-size:12px;color:var(--muted);margin:12px 0 0;' +
+      'line-height:1.6;';
+    card.appendChild(hint);
+    const opts = [
+      ['full', '全量收源码（推荐）',
+       '收录范围内所有 C/C++/汇编源码（' + (info.all_code || 0) + ' 个），索引更完整'],
+      ['whitelist', '只收白名单',
+       '仅收录能推出源的 ' + (info.units || 0) + ' 个单元，索引更小更快'],
+    ];
+    const wrap = _h('div');
+    wrap.style.cssText = 'margin-top:12px;display:flex;flex-direction:column;gap:8px;';
+    opts.forEach(([val, label1, desc]) => {
+      const b = _h('button');
+      b.className = 'btn';
+      b.style.cssText = 'text-align:left;padding:10px 12px;line-height:1.5;';
+      const t1 = _h('div', label1);
+      t1.style.cssText = 'font-size:13px;font-weight:600;';
+      const t2 = _h('div', desc);
+      t2.style.cssText = 'font-size:11px;color:var(--muted);margin-top:2px;';
+      b.appendChild(t1); b.appendChild(t2);
+      b.onclick = () => { ov.remove(); _postTier(val); };
+      wrap.appendChild(b);
+    });
+    card.appendChild(wrap);
+    const btns = _h('div');
+    btns.style.cssText = 'margin-top:12px;display:flex;justify-content:flex-end;';
+    const cancel = _h('button', '放弃建库');
+    cancel.className = 'btn ghost';
+    cancel.onclick = () => { ov.remove(); _postTier('cancel'); };
+    btns.appendChild(cancel);
+    card.appendChild(btns);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    if (txt) txt.textContent = '等待选择建库方式…';
+
+    function _postTier(choice) {
+      if (txt) txt.textContent = '已选择：' +
+        ({ full: '全量收源码', whitelist: '只收白名单', cancel: '放弃建库' }[choice] || choice);
+      fetch('/api/nav/tier', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice }),
+      }).catch(() => {});
+    }
+  }
+
   function _renderProgress(card, path) {
     const _ov = document.getElementById('navIdxPanel');
     if (_ov) _ov.dataset.running = '1';   // a409：背景关闭禁令配套标记
     card.innerHTML = '';
-    card.appendChild(_h('div', '正在建立索引'));
+    // a435（需求：独立计时器 hh:mm:ss）：与进度条/阶段文案分离，只此一处报时间；
+    // 其余日志里的「已用 Ns」全部去掉，避免多处读秒互相打架
+    const headRow = _h('div');
+    headRow.style.cssText = 'display:flex;align-items:baseline;gap:10px;';
+    headRow.appendChild(_h('div', '正在建立索引'));
+    const clock = _h('div', '00:00:00');
+    clock.style.cssText = 'margin-left:auto;font-family:var(--font-mono);' +
+      'font-size:15px;font-weight:600;color:var(--accent);letter-spacing:.5px;';
+    headRow.appendChild(clock);
+    card.appendChild(headRow);
+    // a435：基准先用本地时刻，首次 poll 拿到后端 started 后校正
+    // （关面板重开/刷新页面仍显示真实已用时间，不从 0 重数）
+    let _t0 = Date.now();
+    let _synced = false;
+    const _fmt = (ms) => {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+      const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+      const ss = String(s % 60).padStart(2, '0');
+      return hh + ':' + mm + ':' + ss;
+    };
+    clock.textContent = _fmt(0);
+    if (_navClockTimer) clearInterval(_navClockTimer);
+    _navClockTimer = setInterval(() => {
+      clock.textContent = _fmt(Date.now() - _t0);
+    }, 1000);
     card.appendChild(_h('div', path)).style.cssText =
       'font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:4px;word-break:break-all;';
     const barBox = _h('div');
@@ -1400,25 +1514,68 @@
     btns.style.cssText = 'margin-top:12px;display:flex;gap:8px;justify-content:flex-end;';
     const bCancel = _h('button', '取消');
     bCancel.className = 'btn ghost';
-    bCancel.onclick = () => fetch('/api/nav/cancel', { method: 'POST' });
+    bCancel.onclick = () => {
+      // a439：若建库正卡在「等用户选建库方式」，取消要同时把弹窗收掉
+      const _td = document.getElementById('navTierDialog');
+      if (_td) _td.remove();
+      fetch('/api/nav/cancel', { method: 'POST' });
+    };
     btns.appendChild(bCancel);
     card.appendChild(btns);
-    let seen = 0;
+    let _rowByKey = {};   // a433：进度行 key -> DOM 节点（同类日志原地刷新）
+    let _lastSeq = 0;     // a433：按 seq 增量拉取（后端裁剪后下标不再错位）
+    let _tierAsked = false;   // a438：建库方式弹窗只弹一次
     if (_pollTimer) clearInterval(_pollTimer);
     _pollTimer = setInterval(async () => {
       try {
         const r = await fetch('/api/nav/poll');
         const s = await r.json();
+        if (!_synced && s.started) {
+          _t0 = s.started * 1000; _synced = true;
+          clock.textContent = _fmt(Date.now() - _t0);
+        }
         bar.style.width = (s.percent || 0) + '%';
         txt.textContent = (s.phase || '') + ' · ' + (s.percent || 0) + '%' + (s.cancelling ? ' · 正在取消…' : '');
         const lg = s.log || [];
-        for (; seen < lg.length && seen < 200; seen++) {
-          const d = _h('div', lg[seen].msg);
+        // a440：后端日志上限 400 条，轮询间隔内产出过多时中间条目会被裁掉。
+        // 后端上报已被裁掉的最大 seq，前端发现自己的进度落后于它才提示
+        // （进度行原地替换也消耗 seq，不能只看条数或首条 seq）。
+        const _drop = s.log_dropped || 0;
+        if (_drop > _lastSeq) {
+          const d = _h('div', '（' + (_drop - _lastSeq) + ' 条过程日志已省略——建库仍在继续）');
+          d.style.cssText = 'color:var(--muted);opacity:.7;';
           log.appendChild(d);
+          _lastSeq = _drop;
+        }
+        for (const e of lg) {
+          if (!e || e.seq <= _lastSeq) continue;
+          _lastSeq = e.seq;
+          if (e.key && _rowByKey[e.key]) {
+            _rowByKey[e.key].textContent = e.msg;      // 同一行刷新
+            continue;
+          }
+          const d = _h('div', e.msg);
+          log.appendChild(d);
+          if (e.key) _rowByKey[e.key] = d;
         }
         log.scrollTop = log.scrollHeight;
+        // a438：白名单覆盖率偏低——弹窗让用户选建库方式（给实际数据）
+        if (s.ask_tier && !_tierAsked) {
+          _tierAsked = true;
+          _askTierDialog(s.ask_tier, txt);
+        } else if (!s.ask_tier && _tierAsked) {
+          // a440：后端已撤销提问（10 分钟超时按全量继续 / 任务取消），
+          // 弹窗若还开着必须收掉——否则用户点了只会拿到 409
+          const _td3 = document.getElementById('navTierDialog');
+          if (_td3) _td3.remove();
+          _tierAsked = false;
+        }
         if (!s.done) return;
         clearInterval(_pollTimer); _pollTimer = null;
+        if (_navClockTimer) { clearInterval(_navClockTimer); _navClockTimer = null; }
+        // a440：任务已终态，遗留的建库方式弹窗必须收掉（否则挡住结果）
+        const _td2 = document.getElementById('navTierDialog');
+        if (_td2) _td2.remove();
         const _ov2 = document.getElementById('navIdxPanel');
         if (_ov2) delete _ov2.dataset.running;   // a409：任务终态解除背景关闭禁令
         if (s.ok_done) {

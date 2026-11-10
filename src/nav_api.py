@@ -5,6 +5,7 @@
 seq 日志）；查询端点无状态直答。门卫：索引根必须在文件树登记根内
 （_under_roots + _under_roots_real，与 tree 系 API 同源）。"""
 import os
+import re
 import threading
 import time
 
@@ -20,12 +21,66 @@ _state = {"running": False, "phase": "", "log": [], "done": False,
 
 
 def _log(msg):
+    """a433（用户令：同类日志不许刷屏，只占同一行）：按「进度行键」合并。
+
+    进度类消息用 `\\r` 前缀标记为可覆盖行——同键的后续消息**原地替换**
+    最后一条，而不是追加。前端按 seq 变化就地更新那一行。
+    键 = 去掉末尾数字/百分比后的稳定前缀（如「产物源扫描中」「递归 include」）。
+    非进度消息（阶段头、告警、完成）照常追加。"""
+    msg = str(msg)
     with _lock:
         _state["log_seq"] += 1
-        _state["log"].append({"t": time.time(), "msg": str(msg),
-                              "seq": _state["log_seq"]})
-        if len(_state["log"]) > 400:
-            del _state["log"][:-400]
+        _seq = _state["log_seq"]
+        _key = _progress_key(msg)
+        _lg = _state["log"]
+        if _key:
+            _last = _state.get("_prog_row") or {}
+            _idx = _last.get(_key)
+            if _idx is not None and 0 <= _idx < len(_lg) \
+                    and _lg[_idx].get("key") == _key:
+                _lg[_idx] = {"t": time.time(), "msg": msg,
+                             "seq": _seq, "key": _key}
+                # 原地替换 + 后端给旧位置换新 seq，前端写盘时要把它搬到末尾，
+                # 让日志按 seq 递增（与后端数组顺序一致）——否则 poll 响应里
+                # 数组顺序是后端顺序、seq 却乱序，任何「seq > 上次」的增量
+                # 遍历都会跳过该行之后的全部新条目。
+                _row = _lg.pop(_idx)
+                _lg.append(_row)
+                for _k, _i2 in list(_state.get("_prog_row", {}).items()):
+                    if _i2 > _idx:
+                        _state["_prog_row"][_k] = _i2 - 1
+                _state["_prog_row"][_key] = len(_lg) - 1
+                return
+        _lg.append({"t": time.time(), "msg": msg, "seq": _seq, "key": _key})
+        if _key:
+            _state.setdefault("_prog_row", {})[_key] = len(_lg) - 1
+        # 裁剪会移动下标——重置进度行索引（下一次退化为追加，可接受）。
+        # a440：记录被裁掉的最后一条 seq——前端据此判断自己是否漏了日志
+        # （进度行原地替换也会消耗 seq，只比对 log_seq 会把合并误判成丢失）
+        if len(_lg) > 400:
+            _cut = len(_lg) - 400
+            _state["log_dropped"] = _lg[_cut - 1]["seq"]
+            del _lg[:_cut]
+            _state["_prog_row"] = {}
+
+
+# 进度行识别：这些前缀的消息视为「同一行刷新」
+_PROG_PREFIXES = (
+    "产物源扫描中", "扫描中：", "单元推导", "编译参数提取", "递归 include",
+    "同目录头文件补收", "写文件清单", "指纹扫描中", "白名单映射",
+    "读符号表", "sqlite 导入", "扫描等待",
+)
+_PROG_NUM_RE = re.compile(r"\d[\d.,:/%]*")
+
+
+def _progress_key(msg):
+    """进度行键：把数字统一替换成 #，同类进度得到稳定键（原地刷新）。
+    「单元推导 ① … 100/4425」与「单元推导 ① … 200/4425」同键；
+    ①/②/③ 因文案不同而分键。"""
+    s = msg.strip()
+    if not any(s.startswith(p) for p in _PROG_PREFIXES):
+        return ""
+    return _PROG_NUM_RE.sub("#", s)[:48]
 
 
 def _guard(path):
@@ -209,7 +264,7 @@ def nav_build():
                 pass
             if scope is None:
                 return jsonify({"ok": True, "cleared": True})
-        _state.update(running=True, phase="准备", log=[], done=False, ok=False,
+        _state.update(running=True, phase="准备", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       percent=0, cur="", cancelled=False, log_seq=0, root=root)
 
@@ -220,6 +275,30 @@ def nav_build():
         _state.update(percent=int(pct), cur=label or "",
                       phase=str(label or "处理中"))
 
+    def ask_tier(info):
+        """a438：白名单覆盖率偏低时暂停，等用户在弹窗里选建库方式。
+        返回 "full" | "whitelist"；用户取消任务时返回 "cancel"。
+
+        a439：不能用裸 evt.wait()——用户点「取消」或关掉面板时没有任何
+        路径能唤醒它，建库线程会永久挂起（running 状态卡死，下次建库被拒）。
+        改分片轮询：0.2s 一轮，同时检查 should_cancel；超时兜底 10 分钟。"""
+        _ask = {"evt": threading.Event(), "choice": None, "info": info}
+        with _lock:
+            _state["ask_tier"] = _ask
+        _state.update(phase="等待选择建库方式")
+        _t0 = time.time()
+        while not _ask["evt"].wait(0.2):
+            if should_cancel():
+                break
+            if time.time() - _t0 > 600:      # 10 分钟无人应答 → 按全量继续
+                _log("等待建库方式选择超时（10 分钟），按全量收源码继续")
+                break
+        with _lock:
+            _state["ask_tier"] = None
+        if should_cancel():
+            return "cancel"
+        return _ask["choice"] or "full"
+
     def work():
         try:
             nav_index._close_tagdb()   # S37-2（P2）：与 reindex 对齐——查询过的库
@@ -227,7 +306,8 @@ def nav_build():
                                        # WinError 5 → 静默降级 readtags + tmp 残留
             res = nav_index.build(root, log=_log, progress=on_prog,
                                   should_cancel=should_cancel,
-                                  backend=backend, scope=scope)
+                                  backend=backend, scope=scope,
+                                  ask_tier=ask_tier)
             # a415R（审计#13）：建库**成功后**才落盘范围（原先落盘——失败/
             # 取消后范围与索引对不上）；独立存储位（删索引不连带删范围）
             if scope is not None:
@@ -264,7 +344,34 @@ def nav_poll():
                         "percent": _state["percent"], "cur": _state["cur"],
                         "cancelling": _state["cancel"],
                         "cancelled": _state["cancelled"],
-                        "log_seq": _state["log_seq"], "root": _state["root"]})
+                        "log_seq": _state["log_seq"], "root": _state["root"],
+                        # a435：任务启动时刻（前端独立计时器基准——关面板
+                        # 重开后仍能显示真实已用时间，而非从 0 重数）
+                        "started": _state.get("ts") or 0,
+                        # a438：等待用户选择建库方式时的数据（无则 null）
+                        "ask_tier": (_state.get("ask_tier") or {}).get("info"),
+                        # a440：已被裁剪的日志最大 seq——前端据此提示省略
+                        "log_dropped": _state.get("log_dropped") or 0})
+
+
+@nav_bp.route("/api/nav/tier", methods=["POST"])
+def nav_tier():
+    """a438：用户对「白名单覆盖率偏低」弹窗的选择。body {choice}：
+    full=全量收源码 / whitelist=只收白名单 / cancel=放弃建库。"""
+    d = request.get_json(force=True, silent=True) or {}
+    choice = str(d.get("choice") or "").strip().lower()
+    if choice not in ("full", "whitelist", "cancel"):
+        return jsonify({"ok": False, "err": "choice 必须是 "
+                        "full / whitelist / cancel"}), 400
+    with _lock:
+        _ask = _state.get("ask_tier")
+        if not _ask:
+            return jsonify({"ok": False, "err": "当前没有待选择的建库任务"}), 409
+        _ask["choice"] = choice
+        if choice == "cancel":
+            _state["cancel"] = True
+    _ask["evt"].set()
+    return jsonify({"ok": True})
 
 
 @nav_bp.route("/api/nav/cancel", methods=["POST"])
@@ -360,7 +467,7 @@ def nav_reindex():
         if _state["running"]:
             return jsonify({"ok": False,
                             "err": "已有索引任务在运行（%s）" % _state["root"]}), 409
-        _state.update(running=True, phase="切档", log=[], done=False, ok=False,
+        _state.update(running=True, phase="切档", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       percent=0, cur="", cancelled=False, log_seq=0, root=root)
 
@@ -439,7 +546,7 @@ def nav_cg_build():
     with _lock:
         if _state["running"]:
             return jsonify({"ok": False, "err": "索引任务运行中（%s）" % _state["root"]}), 409
-        _state.update(running=True, phase="codegraph", log=[], done=False, ok=False,
+        _state.update(running=True, phase="codegraph", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       percent=0, cur="", cancelled=False, log_seq=0, root=root)
 

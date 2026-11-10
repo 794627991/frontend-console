@@ -106,6 +106,7 @@ function buildProxyTab() {
             <button class="lv-btn" data-px-q-relogin title="登录失效（多天不用后获取不到数据）时的自救：丢弃旧会话强制重新登录。只刷新登录状态，代理链路不受影响">强制重登</button>
             <button class="lv-btn" data-px-q-logout title="删除本地凭据">断开</button>
             <label class="px-q-auto" title="每 10 分钟自动刷新额度"><input type="checkbox" name="px_q_auto" data-px-q-auto checked> 自动刷新(10min)</label>
+            <label class="px-q-auto" title="开启：登录失败时自动重登。关闭：暂停自动重登，等你在登录页手动点「强制重登」（SSO 锁定期间建议关闭，避免每次重试重置锁定计时）"><input type="checkbox" name="px_q_autologin" data-px-q-autologin checked> 自动重登</label>
           </div>
           <div class="px-q-statrow">
             <span data-px-q-status style="font-size:12px;"></span>
@@ -179,6 +180,9 @@ function buildProxyTab() {
   const qReloginBtn = $p('[data-px-q-relogin]');
   const qLogoutBtn = $p('[data-px-q-logout]');
   const qAutoEl = $p('[data-px-q-auto]');
+  // a457：独立的自动重登开关（注意不能与「强制重登」按钮同属性——
+  // 原写成 data-px-q-relogin 会与按钮撞车，querySelector 取到的是按钮）
+  const qAutoLoginEl = $p('[data-px-q-autologin]');
   const hrStatsEl = $p('[data-px-hr-stats]');
   const hrCfgBtn = $p('[data-px-hr-cfg]');
   const retryCfgBtn = $p('[data-px-retry-cfg]');
@@ -286,8 +290,10 @@ function buildProxyTab() {
     // 登录失败/查询失败禁刷新（GUI 同款：对着失败态反复点刷新无意义）。
     const online = state === 'online';
     const busy = state === 'logging';
-    qRefreshBtn.disabled = busy || state === 'error' || state === 'fetch_err';
-    qReloginBtn.disabled = !online && state !== 'error' && state !== 'fetch_err' && state !== 'logging';
+    const locked = state === 'locked';
+    qRefreshBtn.disabled = busy || (!locked && (state === 'error' || state === 'fetch_err'));
+    qReloginBtn.disabled = !online && !locked && state !== 'error'
+      && state !== 'fetch_err' && state !== 'logging';
     qLogoutBtn.disabled = busy;
   }
 
@@ -337,10 +343,16 @@ function buildProxyTab() {
     if (state === 'logging') _setQStatus('● 登录中…', 'px-retry');
     else if (state === 'online') _setQStatus('● 在线 ' + esc(lg.user || ''), 'px-healthy');
     else if (state === 'error') _setQStatus('登录失败', 'px-failed');
+    else if (state === 'locked') _setQStatus('账号锁定 · 已停止自动登录', 'px-failed');
     else if (state === 'fetch_err') _setQStatus('查询失败', 'px-failed');
     else if (!j.has_credentials) _setQStatus('● 未登录', 'px-stopped');
     _setQButtons(state || (j.has_credentials ? '' : undefined));
-    if (state === 'error' || state === 'fetch_err')
+    if (state === 'locked')
+      // a454：锁定后后端已停登，这里必须说清楚「不会再自己试」——
+      // 否则用户会以为还在重试，反复点刷新反而续期锁定。
+      _msg('账号已被 SSO 锁定，已停止自动登录（每次尝试都会重置锁定计时）。'
+           + '请等待 8~30 分钟或联系 itsm@hikvision.com 解锁后再手动刷新。', true);
+    else if (state === 'error' || state === 'fetch_err')
       _msg((state === 'error' ? '登录失败: ' : '查询失败: ') + (lg.msg || ''), true);
     else if (state === 'online' && !msgEl.dataset.keep) _msg('');
 
@@ -349,10 +361,17 @@ function buildProxyTab() {
     qLastEl.textContent = _qLastText();
     // 自动刷新 checkbox 同步（后端是真相源；用户点击瞬间先本地翻转防抖动）
     if (document.activeElement !== qAutoEl) qAutoEl.checked = j.quota_auto !== false;
+    // a457：自动重登开关同步（独立开关，缺省 true）
+    if (qAutoLoginEl && document.activeElement !== qAutoLoginEl)
+      qAutoLoginEl.checked = j.quota_auto_relogin !== false;
 
     const ov = j.quota_overview;
-    // 凭据已存：预填用户名（密码不回传，明文存本地已是既定约定）
+    // 凭据已存：预填用户名与密码（a455 用户实锤：密码框永远只显示占位符，
+    // 已保存的凭据却要每次重打）。仅填空框——用户正在输入/已清空不覆盖；
+    // input 仍是 type=password，点眼睛才显示明文。收起到顶部提前做，
+    // 避免下面 !ov 提前 return 时密码框还是空的。
     if (j.quota_username && !qUserEl.value) qUserEl.value = j.quota_username;
+    if (j.quota_password && !qPwdEl.value) qPwdEl.value = j.quota_password;
     if (!ov) { quotaViewEl.innerHTML = '<div class="px-hint">登录后显示额度（10 分钟自动刷新）</div>'; return; }
     const tile = (u, l) => {
       u = u || 0; l = l || 0;
@@ -795,6 +814,7 @@ function buildProxyTab() {
         body: JSON.stringify({action: 'clear'})});
       conn.quotaTs = 0;
       qPwdEl.value = '';
+      qUserEl.value = '';   // a455：用户名也清——否则下次自动回填残留旧账号
       quotaViewEl.innerHTML = '<div class="px-hint">已断开。登录后显示额度</div>';
       quotaRankEl.innerHTML = '';
       qLastEl.textContent = '上次刷新 -';
@@ -802,6 +822,21 @@ function buildProxyTab() {
       _setQButtons(undefined);
       _msg('已断开登录，本地凭据已删除');
     } catch(e) { _msg('请求失败: ' + e, true); }
+  };
+  if (qAutoLoginEl) qAutoLoginEl.onchange = async (e) => {
+    // a457：自动重登独立开关（用户令：不许复用「自动刷新」那个开关，
+    // 刷新=拉额度，重登=登录失败后要不要自己再登，两件事）
+    try {
+      await fetch('/api/proxy/quota', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({auto_relogin: e.target.checked})});
+      _msg(e.target.checked
+        ? '自动重登已开启（登录失败时按退避自动重试）'
+        : '自动重登已关闭——只在你手动点「刷新」/「强制重登」时登录');
+    } catch(err) {
+      e.target.checked = !e.target.checked;   // 回滚
+      _msg('请求失败: ' + err, true);
+    }
   };
   qAutoEl.onchange = async (e) => {
     // 自动刷新开关（老 GUI checkbox 平移），后端是真相源

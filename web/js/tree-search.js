@@ -14,6 +14,7 @@
   const $s = (sel) => document.querySelector(sel);
   const qEl = document.querySelector('[data-ts-q]');
   const caseEl = document.querySelector('[data-ts-case]');
+  const wordEl = document.querySelector('[data-ts-word]');
   const rexEl = document.querySelector('[data-ts-rex]');
   const fnEl = document.querySelector('[data-ts-fn]');
   const scopeEl = document.querySelector('[data-ts-scope]');
@@ -24,7 +25,7 @@
   let lastTruncated = false;
   const st = {
     scope: '',          // '' = 全部根
-    caseOn: false, regexOn: false, fnOn: false,
+    caseOn: false, wordOn: false, regexOn: false, fnOn: false,
     ctrl: null,         // AbortController
     files: 0, hits: 0, domMatches: 0,
   };
@@ -44,20 +45,46 @@
   function highlight(text, q) {
     // 字面高亮（正则/函数模式退化为不高亮——col 已可跳转）
     if (st.regexOn || st.fnOn || !q) return esc(text);
-    const parts = String(text).split(q);
-    return parts.map((x, i) => i === 0 ? esc(x) : '<mark>' + esc(q) + '</mark>' + esc(x)).join('');
+    // a300 审计：所有匹配都必须在转义后的字符串上做——先 esc 再匹配会让
+    // '<'→'&lt;'/'&'→'&amp;' 等实体与原文错位（非全词分支原先就是这样）。
+    const et = esc(text), eq = esc(q);
+    if (st.wordOn) {
+      // 全词：复刻 rg -w 的 \b 口径。审计 P2：必须用 Unicode 词字符类——
+      // rg(rust regex) 的 \b 默认 Unicode-aware，中文字符算词字符（实测
+      // 「中文ddr_rank」不命中）；用 ASCII 类会让前端高亮与后端结果错位。
+      const re = new RegExp('(^|[^\\p{L}\\p{N}_])(' + eq.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+                            ')(?![\\p{L}\\p{N}_])', 'gu');
+      return et.replace(re, (m, pre, kw) => pre + '<mark>' + kw + '</mark>');
+    }
+    return et.split(eq).join('<mark>' + eq + '</mark>');
   }
 
   // ---- 工具条交互（a221：条件变化立即重搜——VSCode 语义，无需回车确定）----
   function bindToggle(el, key) {
-    el.onclick = () => {
+    if (!el) return;   // a300 审计 F2：旧 index.html（WebView2 持久缓存）无新按钮
+    el.onclick = () => {   // 时不能抛错拖垮整个 IIFE（否则搜索功能全挂）
       st[key] = !st[key]; el.classList.toggle('on', st[key]);
       if (qEl.value.trim()) run();   // 已有关键词：切换即按新模式重搜
     };
   }
   bindToggle(caseEl, 'caseOn');
+  bindToggle(wordEl, 'wordOn');
   bindToggle(rexEl, 'regexOn');
   bindToggle(fnEl, 'fnOn');
+  // a300 审计 P2：fn 与 \b 后端互斥（-w 会让 fn 的正则恒 0 命中）——开了 fn
+  // 就把 \b 视觉置灰，避免用户以为「全词 + 函数」双条件生效。
+  function syncFnWord() {
+    if (!wordEl) return;
+    wordEl.disabled = st.fnOn;
+    wordEl.style.opacity = st.fnOn ? '0.35' : '';
+    wordEl.title = st.fnOn ? '函数模式已自带定义边界，全词匹配此处不生效'
+                           : '全词匹配（同 VSCode \\b：ddr_rank 不匹配 ddr_rank_a）';
+  }
+  if (fnEl) {
+    const _origFnToggle = fnEl.onclick;
+    fnEl.onclick = () => { _origFnToggle(); syncFnWord(); };
+  }
+  syncFnWord();
   // 输入防抖 400ms 自动搜（VSCode 同款即时感；Enter 仍可立即触发、Esc 取消）
   let _deb = 0;
   qEl.addEventListener('input', () => {
@@ -122,7 +149,7 @@
       fetch('/api/tree/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q, scope, case: st.caseOn, regex: st.regexOn, mode: st.fnOn ? 'function' : 'text' }),
+        body: JSON.stringify({ q, scope, case: st.caseOn, regex: st.regexOn, word: st.wordOn, mode: st.fnOn ? 'function' : 'text' }),
         signal: st.ctrl.signal,
       }).then(r => {
         if (!r.ok) {   // a233 P2: 400/5xx 非 SSE 被静默吞

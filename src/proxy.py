@@ -729,6 +729,79 @@ class BiliController:
 
 
 # ---- LanzQuotaWorker（GUI:3371-3544 平移；emit → 直写模块缓存）--------
+_LOCKOUT_KEYS = ("too many attempts", "locked", "error limit")
+
+
+def _is_lockout_msg(msg):
+    """a454/a456：登录失败文案是否是「SSO 账号被锁」而非普通会话失效。
+
+    锁定后每再试一次都会重置 SSO 的锁定计时（用户实锤：1 小时仍未解开，
+    因为 600s 一次的退避重登一直在续期）。所以必须在文案层识别出来，
+    一旦命中就停登，等用户手动触发。
+
+    a456（用户实锤：改了没生效，前端仍显示「会话失效…」而非「账号锁定」）：
+    原实现只认英文关键词，而 _classify_nonjson 在「登录页但无 msg」时走的是
+    **优先级4 的兜底文案**——「会话失效，请求被重定向回 SSO 登录页。可能
+    账号已锁定或凭据失效…」。这段中文里含「锁定」但一个英文关键词都没有，
+    于是永远判不出锁定。中文关键词必须一起认。
+    """
+    m = str(msg or "").lower()
+    if any(k in m for k in _LOCKOUT_KEYS):
+        return True
+    if "too many" in m and "attempt" in m:
+        return True
+    # 中文判据（_classify_nonjson 优先级1/优先级4 的两种文案）
+    for k in ("锁定", "尝试次数超限", "次数超限"):
+        if k in m:
+            return True
+    # 优先级4 兜底文案形如「可能账号已锁定或凭据失效」——它不是确定锁定，
+    # 但输出这条时服务端确实把已登录会话踢回了登录页，重登只会继续撞锁，
+    # 所以同样按锁定停登处理（停比反复敲安全）。
+    return "会话失效" in m and "重定向" in m
+
+
+def _cfg_get_quota_auto():
+    """「自动刷新(10min)」：定时拉额度。config.json 的 proxy_quota_auto，
+    默认 True。注意这里**只管刷新额度**，不管登录失败后要不要重登——
+    自动重登是独立开关 proxy_quota_auto_relogin（a457 用户令：不许混为一谈）。"""
+    try:
+        from src.app_state import cfg_read
+        v = (cfg_read() or {}).get("proxy_quota_auto")
+        return True if v is None else bool(v)
+    except Exception:
+        return True
+
+
+def _cfg_get_auto_relogin():
+    """a457：自动重登独立开关。config.json 的 proxy_quota_auto_relogin，
+    默认 True（用户令：默认开启，可手动关闭）。"""
+    try:
+        from src.app_state import cfg_read
+        v = (cfg_read() or {}).get("proxy_quota_auto_relogin")
+        return True if v is None else bool(v)
+    except Exception:
+        return True
+
+
+def _cfg_set_auto_relogin(on):
+    try:
+        from src.app_state import cfg_commit
+        ok, _err = cfg_commit(
+            lambda d: d.__setitem__("proxy_quota_auto_relogin", bool(on)))
+        return ok
+    except Exception:
+        return False
+
+
+def _cfg_set_quota_auto(on):
+    try:
+        from src.app_state import cfg_commit
+        ok, _err = cfg_commit(lambda d: d.__setitem__("proxy_quota_auto", bool(on)))
+        return ok
+    except Exception:
+        return False
+
+
 class LanzQuotaWorker:
     """额度查询 daemon 线程。emit(kind,payload) 直写模块级缓存
     _quota_state（前端轮询 /api/proxy/status 读走），无 tkinter。"""
@@ -739,8 +812,11 @@ class LanzQuotaWorker:
     def __init__(self, emit):
         self._emit = emit
         self._cred = None
-        self._auto = True
+        self._auto = _cfg_get_quota_auto()   # 自动刷新(10min)：拉额度
+        self._auto_relogin = _cfg_get_auto_relogin()   # a457：自动重登（独立）
         self._login_failed = False
+        self._login_err = ""
+        self._locked = False                 # a454：SSO 锁定 → 停登等手动
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -758,30 +834,50 @@ class LanzQuotaWorker:
         self._wake.set()
 
     def refresh_now(self):
+        """手动刷新。a454：同时解除锁定停登——用户手动点了就是要再试一次，
+        这是解锁后唯一的主动出口（自动重登已被锁定拦住）。"""
         with self._lock:
             if self._cred is None:
                 return False
+            self._locked = False
         self._wake.set()
         return True
 
     def force_relogin(self):
         """强制重登：丢旧 client（连旧 session cookie 一起），下轮循环换新
         client 全新登录。多天不用后 session 过期且 _ensure_login 的单次
-        重试救不回来时用（用户实测场景）。代理链路零触碰——只动额度查询。"""
+        重试救不回来时用（用户实测场景）。代理链路零触碰——只动额度查询。
+        a454：同样解除锁定停登（这是用户说的「我登一次就好了」的出口）。"""
         with self._lock:
             if self._cred is None:
                 return False
             self._login_failed = False
+            self._locked = False
         self._cur_cred_epoch = (getattr(self, "_cur_cred_epoch", 0) + 1)
         self._wake.set()
         return True
 
     def set_auto(self, on):
-        """自动刷新开关（GUI checkbox 同款）。"""
+        """自动刷新开关：只管「每 10 分钟拉额度」。a454 落 config.json，
+        否则控制台一重启就又开回来（用户实锤：关了也没用）。
+        a457：**不再**在这里解除锁定——刷新与重登是两件事，锁定停登只由
+        set_auto_relogin(True)/手动刷新/强制重登解除。"""
         with self._lock:
             self._auto = bool(on)
+        _cfg_set_quota_auto(bool(on))
         if on:
             self._wake.set()   # 开启时唤醒，避免卡在 wait(None)
+
+    def set_auto_relogin(self, on):
+        """a457：自动重登独立开关（用户令：不许复用「自动刷新」开关）。
+        开启＝登录失败时按退避自动重登；关闭＝只等用户手动刷新/强制重登。
+        默认开启（config.json 缺省即 True）。"""
+        with self._lock:
+            self._auto_relogin = bool(on)
+            if on:
+                self._locked = False   # 重新允许自动重登＝解除停登
+        _cfg_set_auto_relogin(bool(on))
+        self._wake.set()
 
     def stop(self):
         self._stop.set()
@@ -800,6 +896,7 @@ class LanzQuotaWorker:
             try:
                 with self._lock:
                     cred, auto = self._cred, self._auto
+                    auto_relogin = self._auto_relogin
                 if cred is None:
                     self._wake.wait(5)
                     self._wake.clear()
@@ -813,12 +910,33 @@ class LanzQuotaWorker:
                     fail_n = 0
                 if not self._ensure_login(client, cred):
                     self._clear_loads("登录失败，模型负载暂不可用")
+                    with self._lock:
+                        locked = self._locked
+                        locked_err = self._login_err
+                    if locked:
+                        # a454（用户实锤：1 小时都没解锁）：锁定期间**不再
+                        # 自动重登**。每次尝试都会重置 SSO 的锁定计时，600s
+                        # 一次的退避重登等于让锁定永久续期。停在这里，只等
+                        # 用户手动刷新/强制重登（它们会清 _locked）或换凭据。
+                        self._emit("login_locked", locked_err)
+                        while not self._stop.is_set():
+                            with self._lock:
+                                if not self._locked or self._cred != cred:
+                                    break
+                            self._wake.wait(5)
+                            self._wake.clear()
+                        continue
                     # a452：SSO 连续失败会锁号（实测 "Too many attempts"）。
                     # 固定 60s 重试等于持续敲锁定账号，改指数退避 60→120→
                     # 300→600s 封顶；成功一次即归零。
                     fail_n += 1
                     wait = min(self.LOGIN_RETRY_WAIT * (2 ** min(fail_n - 1, 4)), 600)
-                    self._wake.wait(wait)
+                    # a457：是否自动重登看**独立开关** _auto_relogin，
+                    # 与「自动刷新(拉额度)」解耦（用户令：不许混为一谈）
+                    if not auto_relogin:
+                        self._wake.wait(None)
+                    else:
+                        self._wake.wait(wait)
                     self._wake.clear()
                     continue
                 fail_n = 0
@@ -905,11 +1023,19 @@ class LanzQuotaWorker:
                 return False
             with self._lock:
                 self._login_failed = False
+                self._login_err = ""
+                self._locked = False      # a454：登录成功即解除锁定停登
             self._emit("login_ok", cred[0])
             return True
         except lanz_quota.LanzAuthError as e:
             with self._lock:
                 self._login_failed = True
+                self._login_err = str(e)
+                # a454（用户实锤：1 小时不解锁——锁定期间每 600s 仍自动登一次，
+                # 每次尝试都把 SSO 锁定计时重置，等于永久续期）。识别到锁定
+                # 文案就**停登**，不再定时重试，等用户手动点刷新/重登。
+                if _is_lockout_msg(str(e)):
+                    self._locked = True
             if not self._cred_changed(cred):
                 self._emit("login_err", str(e))
             return False
@@ -1063,6 +1189,11 @@ def _quota_emit(kind, payload):
         elif kind == "login_err":
             _quota_login = {"state": "error", "user": None,
                             "msg": str(payload or "登录失败")}
+        elif kind == "login_locked":
+            # a454：SSO 锁定 → 已停登（不再自动重试，避免续期锁定）
+            _quota_login = {"state": "locked", "user": None,
+                            "msg": str(payload or "账号已被 SSO 锁定，已停止自动登录"),
+                            "auto_paused": True}
         elif kind == "fetch_err":
             # 查询失败可能意味着会话失效——「在线」是误导（GUI 同款降级）
             _quota_login = {"state": "fetch_err", "user": _quota_login.get("user") if _quota_login else None,
@@ -2150,8 +2281,15 @@ def _status_payload():
         "quota_login": qlogin,
         "quota_user": (qlogin or {}).get("user") if qlogin else None,
         "quota_auto": _quota._auto if _quota is not None else True,
+        # a457：自动重登是独立开关（与「自动刷新」互不替代）
+        "quota_auto_relogin": (_quota._auto_relogin
+                               if _quota is not None else True),
         "has_credentials": cred is not None,
         "quota_username": (cred or {}).get("username"),
+        # a455（用户实锤：密码框永远是占位符，看不到已保存的密码）：
+        # 凭据本来就明文存本地 lanz_credentials.json，界面却没回填——用户
+        # 每次都要重打。只在有凭据时回传，前端仅填空框、保持 type=password。
+        "quota_password": (cred or {}).get("password"),
         "quota_ts": qts,
     }
     if ov:
@@ -2279,9 +2417,17 @@ def _api_quota_refresh():
     j = request.get_json(silent=True) or {}
     if "auto" in j:
         # 自动刷新开关（GUI checkbox 平移）：{auto: bool}
+        # a457：只管「每 10 分钟拉额度」，与自动重登解耦
         _quota.set_auto(bool(j.get("auto")))
         return jsonify({"ok": True, "msg": "自动刷新已开启（10min）" if j.get("auto")
                         else "自动刷新已关闭"})
+    if "auto_relogin" in j:
+        # a457（用户令）：自动重登独立开关，与「自动刷新」互不影响
+        on = bool(j.get("auto_relogin"))
+        _quota.set_auto_relogin(on)
+        return jsonify({"ok": True,
+                        "msg": "自动重登已开启（登录失败时按退避重试）" if on
+                        else "自动重登已关闭（登录失败后等你手动强制重登）"})
     if j.get("force"):
         # 强制重登：丢旧 session 换新 client 全新登录（多天不用后登录失效的自救）。
         # 只动额度查询，重试代理/headroom 链路零触碰。

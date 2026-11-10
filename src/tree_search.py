@@ -58,17 +58,22 @@ def tree_search():
     if not _under_roots_real(scope):   # a234 junction 拒；a242 双侧归一（网络盘）
         return jsonify({"ok": False, "err": "搜索范围包含指向根外的链接"}), 400
     smart_case = not bool(data.get("case"))       # 默认 smart-case（全小写=忽略大小写）
-    use_regex = bool(data.get("regex")) or str(data.get("mode")) == "function"
+    mode = str(data.get("mode") or "text")
+    use_regex = bool(data.get("regex")) or mode == "function"
+    # a300：全词匹配（VSCode \b）。审计 F1：与函数模式互斥——fn 的 pattern 以
+    # ^\s* 开头，套 -w 后要求整段两端都是词边界，实测恒 0 命中（静默空结果）。
+    # 判定必须在此层做：_stream 拿不到 request data。
+    whole_word = bool(data.get("word")) and mode != "function"
     max_hits = min(int(data.get("maxResults") or MAX_HITS), 5000)
 
-    if str(data.get("mode")) == "function":
+    if mode == "function":
         pattern = _func_regex(q)
     else:
         # a213 审计 P1：非正则模式追加 --fixed-strings——原再 re.escape 是
         # 双重转义，'open(file)'/'config.json' 等含元字符查询恒 0 命中
         pattern = q
 
-    return Response(_stream(scope, pattern, use_regex, smart_case, max_hits),
+    return Response(_stream(scope, pattern, use_regex, smart_case, max_hits, whole_word),
                     mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -77,7 +82,7 @@ def _sse(obj):
     return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
 
 
-def _stream(scope, pattern, use_regex, smart_case, max_hits):
+def _stream(scope, pattern, use_regex, smart_case, max_hits, whole_word=False):
     """起 rg 流式读 --json 行 → SSE。生成器被关闭（客户端断开）时 terminate。"""
     if not os.path.isfile(RG_EXE):
         yield _sse({"type": "error", "err": "未找到 vendor/rg.exe（搜索不可用）"})
@@ -88,10 +93,11 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
     # 复审F1：注释吞参事故——--max-filesize 回归（a235 资源边界不能拆）
     cmd = [RG_EXE, "--json", "--no-messages",
            "--max-filesize", FILE_SIZE_CAP,
-           "--max-count", "50",
-           # a218：默认排除依赖/版本库目录（裸目录无 .gitignore 时也排除，
-           # 与 VSCode 搜索默认行为对齐）
-           "-g", "!node_modules", "-g", "!.git", "-g", "!vendor"]
+           "--max-count", "50"]
+    # a300（用户定调）：后端不再做任何路径筛选——原先的 -g !node_modules /
+    # !.git / !vendor 全部删除。-g 裸目录名会匹配任意层级，实证吞掉
+    # uboot/uboot_sdk/board/vendor/hi3519dv500.c 等正常代码。是否排除依赖
+    # 目录交给仓库自身 .gitignore（rg 默认尊重，与 VSCode 一致）。
     if not use_regex:
         cmd.append("--fixed-strings")
         cmd.append("--crlf")
@@ -100,6 +106,10 @@ def _stream(scope, pattern, use_regex, smart_case, max_hits):
         cmd.append("auto")
     if not smart_case:
         cmd.append("--case-sensitive")
+    if whole_word:
+        # a300：rg -w 按 \b 边界（Unicode-aware，下划线属词字符），
+        # ddr_rank 不会命中 ddr_rank_a / asd_ddr_rank。
+        cmd.append("--word-regexp")
     cmd += ["-e", pattern, scope]
     creationflags = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
