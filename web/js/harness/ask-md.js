@@ -64,8 +64,16 @@ function askRender(it) {
       // 留空提交=纯选项；只输入不点选也放行（自由作答）
       const ex = document.createElement('div');
       ex.className = 'h-ask-extra';
-      ex.innerHTML = `<input class="h-ask-x" data-hg-askx="${qi}" spellcheck="false"
-        placeholder="输入你的回答…" title="回车提交" name="hg_askx">`;
+      // a446（用户实锤「黑色弹窗与 UI 风格不符」）：这是 Edge 的自动填充
+      // 建议面板（标题「保存的信息」）——它把本输入框当成可记忆的表单字段，
+      // 弹出浏览器自绘的深色候选层，样式我们完全控制不了。提问作答是临时
+      // 内容，不该进自动填充库。
+      // autocomplete=off 在 Chromium 对「疑似登录/地址」字段会被忽略，所以
+      // 三管齐下：off + type=search（浏览器不把它当表单字段存）+ 不设 name
+      // （无 name 的表单字段不参与自动填充库）。
+      ex.innerHTML = `<input class="h-ask-x" type="search" data-hg-askx="${qi}"
+        spellcheck="false" autocomplete="off" aria-autocomplete="none"
+        placeholder="输入你的回答…" title="回车提交">`;
       box.appendChild(ex);
       card.appendChild(box);
     });
