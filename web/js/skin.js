@@ -129,9 +129,11 @@ function toggleNoGpuMode(on) {
   const el = document.documentElement;
   if (on === undefined) on = !el.hasAttribute('data-nogpu');
   el.toggleAttribute('data-nogpu', on);
+  // 审计 A 轮：fetch 拒绝不走 try/catch（Promise）——补 .catch 防控制台
+  // unhandled rejection；失败不影响本会话（属性已挂，仅不持久化）
   try {
     fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nogpu_mode: on }) });
+      body: JSON.stringify({ nogpu_mode: on }) }).catch(() => {});
   } catch (_) {}
   return on;
 }

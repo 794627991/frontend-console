@@ -318,7 +318,7 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apNoGpuToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 12 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会一次性提示建议开启。外网真机保持关闭即享完整 GPU 效果。</div>
+      <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 12 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会在启动时提示建议开启（每次启动至多一次）。外网真机保持关闭即享完整 GPU 效果。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">性能模式（全禁大锤）</div>
@@ -394,9 +394,14 @@ function _stRenderAppearancePane(pane) {
   if (nogpuBtn && typeof toggleNoGpuMode === 'function') {
     const syncNoGpu = () => {
       const on = document.documentElement.hasAttribute('data-nogpu');
+      // 审计 A 轮文案缺口：两档同开时实际生效的是 perf 全禁（CSS 源序覆盖），
+      // 如实标注，避免「动画降帧中」误导
+      const perfOn = document.documentElement.hasAttribute('data-perf');
       nogpuBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
         + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
-        + '<small style="color:var(--muted);font-weight:400;">　' + (on ? '动画降帧中（补间 100ms · 循环 12 帧/周期 · 无毛玻璃）' : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
+        + '<small style="color:var(--muted);font-weight:400;">　' + (on
+          ? (perfOn ? '已开启（当前性能模式全禁生效中）' : '动画降帧中（补间 100ms · 循环 16 帧/周期 · 无毛玻璃）')
+          : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
     };
     nogpuBtn.onclick = () => { toggleNoGpuMode(); syncNoGpu(); };
     syncNoGpu();
