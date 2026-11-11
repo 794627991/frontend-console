@@ -27,9 +27,12 @@ const _WEB_SLEEP_MIN = 10;                 // a475：切走 N 分钟后休眠（
 // a475 会话恢复：启动时读上次栈（重开网页 tab 无显式 URL 时回到上次页）
 try {
   const _saved = JSON.parse(localStorage.getItem('web-session') || 'null');
-  if (_saved && Array.isArray(_saved.stack) && _saved.stack.length) {
-    _webNav.stack = _saved.stack.slice(0, 50);
-    _webNav.idx = Math.min(Math.max(-1, _saved.idx | 0), _webNav.stack.length - 1);
+  if (_saved && Array.isArray(_saved.stack)) {
+    // 审计修（C.a）：只收字符串元素——本地篡改塞对象会让 frame.src 强转
+    // 失败、导航异常
+    _webNav.stack = _saved.stack.filter(x => typeof x === 'string').slice(0, 50);
+    _webNav.idx = _webNav.stack.length
+      ? Math.min(Math.max(0, _saved.idx | 0), _webNav.stack.length - 1) : -1;
   }
 } catch (_) {}
 function _webSessionSave() {
@@ -40,6 +43,7 @@ function _webSessionSave() {
 // 到时置空 iframe（进程回收由 Chromium 完成）；前台/休眠态即停
 setInterval(() => {
   const c = connections[WEB_PORTID];
+  // reader 态 iframe 已置 about:blank（无燃烧）——无需休眠
   if (!c || _webUi.sleeping || _webUi.reader) return;
   if (c.wrap.style.display === 'none' && document.visibilityState === 'visible') {
     c._hidSec = (c._hidSec || 0) + 60;
@@ -80,7 +84,10 @@ function buildWebPanelTab(url) {
     return connections[pid];
   }
   const portId = WEB_PORTID;
-  _webNav.stack = []; _webNav.idx = -1;   // 新建即清（上次会话的栈不复活）
+  // 审计修（会话恢复死代码）：原「新建即清」无条件清栈——模块加载时恢复的
+  // 上次会话栈被清掉，恢复分支永不可达。改为：显式 URL 才清栈（全新浏览），
+  // 无 URL 首开保留恢复栈（底部 else-if 走恢复导航）
+  if (url) { _webNav.stack = []; _webNav.idx = -1; _webSessionSave(); }
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
@@ -132,8 +139,11 @@ function buildWebPanelTab(url) {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
   });
   wrap.querySelectorAll('[data-web]').forEach(b => b.onclick = () => _webAct(b.dataset.web, wrap));
-  // a475 站点缩放记忆：Ctrl+滚轮缩放（iframe 元素级 zoom，跨域安全模型
-  // 允许——缩的是宿主元素不是内容文档）；按 host 记忆，Ctrl+0 复位
+  // a475 站点缩放记忆（审计修·降级如实）：DOM 事件不冒泡出 iframe——网页
+  // 视图下 iframe 全覆盖容器，此监听只在**阅读态**（reader div 在上层）可达。
+  // 网页视图缩放需 CDP（Emulation.setPageScaleFactor），待 CDP 普开后接入；
+  // iframe 内 Ctrl+滚轮会触发 Chromium 内建整页缩放（缩放整个工具 UI）——
+  // 已知行为，可与阅读缩放并存。按 host 记忆，Ctrl+0 复位
   const body = wrap.querySelector('[data-web-body]');
   body.addEventListener('wheel', (e) => {
     if (!e.ctrlKey) return;
@@ -178,9 +188,10 @@ function _webNavigate(url) {
   if (_webNav.stack.length > 50) _webNav.stack.shift();
   _webNav.idx = _webNav.stack.length - 1;
   _webSessionSave();                       // a475 会话恢复
-  // a475：新导航唤醒休眠态 + 退出阅读态
+  // a475：新导航唤醒休眠态 + 退出阅读态（skipRestore：随后的显式 src 覆盖，
+  // 不做旧 URL 恢复——避免 about:blank→旧URL→新URL 三连导航）
   _webWake(c);
-  if (_webUi.reader) _webReaderToggle(false);
+  if (_webUi.reader) _webReaderToggle(false, true);
   frame.src = url;
   inp.value = url;
   c.tab.querySelector('.label').textContent = _webShortUrl(url).slice(0, 24);
@@ -215,24 +226,31 @@ setInterval(() => {
 }, 1000);
 
 // ---- a475：阅读模式（Reader）----
-function _webReaderToggle(on) {
+function _webReaderToggle(on, skipRestore) {
   const c = _webCur();
   if (!c) return;
   const rd = c.wrap.querySelector('[data-web-reader]');
   const frame = c.wrap.querySelector('[data-web-frame]');
   const btn = c.wrap.querySelector('[data-web="read"]');
   const url = _webNav.stack[_webNav.idx] || '';
+  // 审计修（状态机）：无 URL 时先退出——内部态不翻（原实现先置 reader=true
+  // 再早退，UI 零变化但状态脏）
+  if (on && !url) return;
   _webUi.reader = on;
   if (!on) {
     rd.style.display = 'none';
     frame.style.display = '';
     if (btn) btn.textContent = '☰ 阅读';
+    // 审计修（省内存声明落空）：进阅读时 iframe 已置 about:blank 释放渲染
+    // 进程；切回网页视图必须重载原 URL（与睡眠唤醒同权衡）。skipRestore=
+    // 调用方（_webNavigate）随即将赋新 src，不在此重复导航
+    if (!skipRestore && url) frame.src = url;
     return;
   }
-  if (!url) return;
   rd.innerHTML = '<div class="web-reader-load">正在取正文…</div>';
   rd.style.display = '';
   frame.style.display = 'none';
+  frame.src = 'about:blank';   // 释放页面 JS 与渲染进程（a355 禁节流下必须显式卸载）
   if (btn) btn.textContent = '▦ 网页';
   fetch('/api/web/fetch_text', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }) })
@@ -288,18 +306,25 @@ function _webAct(act, wrap) {
   if (!c) return;
   const frame = c.wrap.querySelector('[data-web-frame]');
   const url = _webNav.stack[_webNav.idx] || '';
+  const _afterMove = () => {
+    // 审计修（E.d）：back/fwd 改 idx 后补会话保存（否则重启恢复到后退前
+    // 的 URL，与「回到上次离开的页面」语义相悖）+ per-host 缩放套用
+    _webSessionSave();
+    _webApplyZoom(_webZoomFor(_webNav.stack[_webNav.idx] || ''),
+                  _webHostOf(_webNav.stack[_webNav.idx] || ''));
+  };
   if (act === 'back' && _webNav.idx > 0) {
     _webNav.idx--;
     frame.src = _webNav.stack[_webNav.idx];
     c.wrap.querySelector('[data-web-input]').value = _webNav.stack[_webNav.idx];
     c.tab.querySelector('.label').textContent = _webShortUrl(_webNav.stack[_webNav.idx]).slice(0, 24);
-    _webSyncUI();
+    _webSyncUI(); _afterMove();
   } else if (act === 'fwd' && _webNav.idx < _webNav.stack.length - 1) {
     _webNav.idx++;
     frame.src = _webNav.stack[_webNav.idx];
     c.wrap.querySelector('[data-web-input]').value = _webNav.stack[_webNav.idx];
     c.tab.querySelector('.label').textContent = _webShortUrl(_webNav.stack[_webNav.idx]).slice(0, 24);
-    _webSyncUI();
+    _webSyncUI(); _afterMove();
   } else if (act === 'reload' && url) {
     frame.src = url;
   } else if (act === 'read') {
@@ -370,7 +395,7 @@ function _webAct(act, wrap) {
     if (e.key !== 'Enter' || e.isComposing) return;
     e.preventDefault();
     const u = _webNormUrl(bar.value);
-    if (!u) return;
+    if (!u) { buildWebPanelTab(); bar.blur(); return; }   // 空=开网页 tab（有会话则恢复）
     buildWebPanelTab(u);
     bar.blur();
   });
@@ -387,6 +412,9 @@ function _webFavMenu(anchor) {
   list.id = 'webFavMenu';
   list.className = 'web-fav-menu';
   let html = '<div class="web-fav-title">收藏夹</div>';
+  if (_webNav.idx >= 0 && _webNav.stack[_webNav.idx]) {
+    html += `<div class="web-fav-cur" data-fav-resume>⟲ 恢复上次网页（${esc(_webShortUrl(_webNav.stack[_webNav.idx]))}）</div>`;
+  }
   if (cur && connections[WEB_PORTID]) {
     const starred = favs.some(f => f.url === cur);
     html += `<div class="web-fav-cur" data-fav-act="${starred ? 'unstar' : 'star'}">`
@@ -422,6 +450,12 @@ function _webFavMenu(anchor) {
       list.remove();
       _webFavMenu(anchor);
       _webSyncUI();
+      return;
+    }
+    if (e.target.closest('[data-fav-resume]')) {
+      e.stopPropagation();
+      buildWebPanelTab();
+      list.remove();
       return;
     }
     const act = e.target.closest('[data-fav-act]');

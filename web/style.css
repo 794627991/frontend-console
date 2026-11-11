@@ -5761,7 +5761,7 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   background: var(--bg-input); border: 1px solid var(--border); border-radius: 14px;
   outline: none; transition: border-color .15s, width .15s; }
 .top-url-bar:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.top-url-bar:focus { border-color: var(--accent); width: 340px; max-width: 40vw; }
+.top-url-bar:focus { border-color: var(--accent); flex-basis: 340px; max-width: 40vw; }
 #tabFavBtn { color: var(--muted); }
 #tabFavBtn:hover { color: var(--accent); }
 .web-pane { flex: 1; min-height: 0; display: flex; flex-direction: column;

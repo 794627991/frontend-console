@@ -785,7 +785,8 @@ function _stCdpCard(pane) {
       + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
       + '<small style="color:var(--muted);font-weight:400;">　' + (on
         ? (live ? 'AI 可用 devtools_* 工具操作浏览器' : '已保存——重启工具后生效')
-        : '点击开启：AI 可操作内嵌浏览器（重启生效）') + '</small>';
+        : (live ? '调试模式已带 CDP（AI 当前可用）——本开关只管正常启动'
+                : '点击开启：AI 可操作内嵌浏览器（重启生效）')) + '</small>';
   };
   fetch('/api/theme').then(r => r.json()).then(j => {
     const on = !!(j && j.web_cdp);

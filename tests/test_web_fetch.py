@@ -47,3 +47,31 @@ def test_html_to_text_basic():
 def test_html_to_text_title_entities_and_len():
     t, _ = S._web_html_to_text("<title>" + "长" * 300 + "</title><body>x</body>")
     assert len(t) == 120   # title 截断 120
+
+
+def test_multi_script_full_strip():
+    """a474 审计 B 轮补钉：re.sub 位置参数 count=2 的回归（第 3 个 script
+    块起曾漏剥）。"""
+    t, b = S._web_html_to_text(
+        "<script>1</script><script>2</script><script>LEAK3</script>"
+        "<style>s3</style><p>ok</p><script>LEAK4</script>")
+    assert "LEAK3" not in b and "LEAK4" not in b and "s3" not in b and "ok" in b
+
+
+def test_bom_stripped():
+    t, b = S._web_html_to_text("<body>\ufeff正文</body>")
+    assert b == "正文"
+
+
+def test_invalid_charset_falls_back():
+    """无效编码名（charset=unicode 老页面）不整页失败——由路由 try 兜，
+    这里钉探测函数的返回形态（名字原样返回，由调用方 try LookupError）。"""
+    raw = b'<meta charset="unicode">x'
+    cs = S._web_detect_charset("", raw)
+    assert isinstance(cs, str) and len(cs) > 0
+    try:
+        raw.decode(cs, "replace")
+        ok = True
+    except LookupError:
+        ok = False
+    assert ok is False   # 确认路由的 try 分支是必要路径

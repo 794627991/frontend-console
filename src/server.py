@@ -1818,6 +1818,8 @@ def _web_html_to_text(html_src):
     body = _re.sub(r"[ \t\r\f\v]+", " ", body)
     body = _re.sub(r"\n\s*\n\s*", "\n", body)
     body = "\n".join(ln.strip() for ln in body.splitlines() if ln.strip())
+    if body.startswith("\ufeff"):
+        body = body[1:]   # 审计观察：utf-8 BOM 残留正文首行
     return title, body
 
 
@@ -1853,8 +1855,13 @@ def api_web_fetch_text():
         ctx.verify_mode = _ssl.CERT_NONE
         with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
             raw = r.read(5 * 1024 * 1024)
-            text = raw.decode(_web_detect_charset(
-                r.headers.get("Content-Type"), raw), "replace")
+            # 审计修：无效编码名（老页面 charset=unicode 之类）decode 抛
+            # LookupError 会整页「取页失败」——回落 utf-8
+            cs = _web_detect_charset(r.headers.get("Content-Type"), raw)
+            try:
+                text = raw.decode(cs, "replace")
+            except LookupError:
+                text = raw.decode("utf-8", "replace")
     except Exception as e:
         return jsonify({"ok": False, "err": "取页失败：%s" % str(e)[:180]})
     title, body = _web_html_to_text(text)
