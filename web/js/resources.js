@@ -44,6 +44,10 @@
     if (!_resState) return [];
     var ignored = _resState.ignored || [];
     return (_resState.items || []).filter(function (it) {
+      // a455（第三轮审计 P2）：unknown=探测没跑出结论（超时/杀毒首扫），
+      // 不是缺失。后端 res_install 已专门为 unknown 写了「不是失败」分支，
+      // 这里若把它算进红条，会把「装了、只是慢」报成「缺少，请重装」。
+      if (it.state === 'unknown') return false;
       return !it.ok && ignored.indexOf(it.kind) < 0;
     });
   }

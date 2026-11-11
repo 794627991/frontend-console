@@ -50,7 +50,13 @@
           <textarea name="hg_v_prompt" class="hg-vision-prompt" data-hg-v-prompt spellcheck="false"></textarea></label>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
-      const close = (v) => { ov.remove(); resolve(v); };
+      // a455（第三轮审计 P2）：必须登记收口表。挂 _hgWrap 的弹窗随 wrap
+      // 移除，但 Promise 永不 resolve——`await hgVisionManager()/hgRolesManager()/
+      // hgPromptManager()` 之后的保存链永久挂起，闭包持整棵 DOM 泄漏。
+      let close = (v) => { ov.remove(); resolve(v); };
+      try {
+        if (typeof hgModalTrack === 'function') close = hgModalTrack(ov, close);
+      } catch (_) {}
       const ta = ov.querySelector('[data-hg-v-prompt]');
       const modelEl = ov.querySelector('[data-hg-v-model]');
       const onEl = ov.querySelector('[data-hg-v-on]');
@@ -268,7 +274,13 @@
         </div>
         <div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
-      const close = (v) => { ov.remove(); resolve(v); };
+      // a455（第三轮审计 P2）：必须登记收口表。挂 _hgWrap 的弹窗随 wrap
+      // 移除，但 Promise 永不 resolve——`await hgVisionManager()/hgRolesManager()/
+      // hgPromptManager()` 之后的保存链永久挂起，闭包持整棵 DOM 泄漏。
+      let close = (v) => { ov.remove(); resolve(v); };
+      try {
+        if (typeof hgModalTrack === 'function') close = hgModalTrack(ov, close);
+      } catch (_) {}
       const mkBtn = (label, primary, fn) => {
         const b = document.createElement('button');
         b.className = 'btn' + (primary ? ' primary' : '');
@@ -321,7 +333,13 @@
         <div class="hg-modal-acts"></div></div>`;
       const _hgListEl = ov.querySelector('.hg-prompt-list');
       const acts = ov.querySelector('.hg-modal-acts');
-      const close = (v) => { ov.remove(); resolve(v); };
+      // a455（第三轮审计 P2）：必须登记收口表。挂 _hgWrap 的弹窗随 wrap
+      // 移除，但 Promise 永不 resolve——`await hgVisionManager()/hgRolesManager()/
+      // hgPromptManager()` 之后的保存链永久挂起，闭包持整棵 DOM 泄漏。
+      let close = (v) => { ov.remove(); resolve(v); };
+      try {
+        if (typeof hgModalTrack === 'function') close = hgModalTrack(ov, close);
+      } catch (_) {}
 
       function render() {
         _hgListEl.innerHTML = '';

@@ -399,7 +399,10 @@ def probe_all(use_cache=True):
         items.append({"kind": k, "name": m["name"], "hard": m["hard"],
                       "ok": ok, "state": st, "ver": ver, "detail": detail,
                       "fix": m["fix"]})
-        if not ok:
+        # a455（第三轮审计 P2）：unknown=探测没跑出结论，不是缺失。原来把它
+        # 也塞进 hard/soft_missing，导致顶层 ok 变 false——慢机上「装了但
+        # --version 超时」会让整包自检报不通过。
+        if not ok and st != "unknown":
             (hard_miss if m["hard"] else soft_miss).append(k)
     if use_cache:
         _write_state({"last_probe": cached})

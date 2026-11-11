@@ -802,7 +802,8 @@ function closeLogViewer(portId) {
   const back = window._hgTabBack;
   window._hgTabBack = null;
   if (remaining.length) {
-    if (activePortId === portId) switchTab(back && connections[back] ? back : remaining[0]);
+    // a455：自动回切不计 MRU（与 harness 关 tab 同约定）
+    if (activePortId === portId) switchTab(back && connections[back] ? back : remaining[0], true);
   }
   else {
     activePortId = null;

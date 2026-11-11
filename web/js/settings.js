@@ -869,12 +869,17 @@ async function _stRenderResourcesPane(pane) {
     el.innerHTML = items.map(function (it) {
       const ok = inPkg(it.kind);
       const chk = _picked.has(it.kind) ? ' checked' : '';
+      // a455（第三轮审计 P2）：unknown=探测没跑出结论，不等于缺失——慢盘/
+      // 杀毒首扫时 --version 会超时。原来一律渲染「✗ 缺失」并引导重装。
+      const unk = !it.ok && it.state === 'unknown';
       const badge = it.ok
         ? '<span style="color:var(--accent)">✓ 已就绪</span>' +
           (it.ver ? ' <span style="color:var(--muted)">' + esc(it.ver) + '</span>' : '')
+        : unk
+        ? '<span style="color:var(--muted)">? 探测超时（已装，稍后复查）</span>'
         : '<span style="color:var(--neon-red)">✗ ' +
           esc(it.state === 'outdated' ? '版本过低' : '缺失') + '</span>';
-      const detail = it.ok ? '' :
+      const detail = (it.ok || unk) ? '' :
         ' <span style="color:var(--muted);font-size:11px;">' + esc(it.detail || it.fix || '') + '</span>';
       const hard = it.hard
         ? ' <span style="font-size:10px;border:1px solid var(--muted);padding:0 3px;' +

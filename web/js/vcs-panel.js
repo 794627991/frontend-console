@@ -1193,7 +1193,14 @@ function _vcsCommitModal() {
     `</div><div class="hg-modal-acts"></div></div>`;
   const acts = ov.querySelector('.hg-modal-acts');
   const ta = ov.querySelector('textarea[name="hg_vcs_msg"]');
-  const close = () => ov.remove();
+  let close = () => ov.remove();
+  // a455（第三轮审计 P1）：这个自建弹窗原来既不登记收口表、也不在 teardown
+  // 里摘除——面板关掉后它还挂在 body 上，用户点「提交」会用 teardown 特意
+  // 保留的 VCS.root 照发真实 /api/vcs/commit。正是 a438-P1 要堵的写请求。
+  // 必须在绑按钮之前替换成 wrapped：按钮闭包拿到的才是带退册的那一版。
+  try {
+    if (typeof hgModalTrack === 'function') close = hgModalTrack(ov, close);
+  } catch (_) {}
   const doCommit = () => {
     const msg = ta.value.trim();
     if (!msg) { showBanner('提交说明必填', 3000, true); ta.focus(); return; }

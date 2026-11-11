@@ -355,6 +355,17 @@ def _npm_install_global(force=False):
         if real and os.path.isdir(real) and _claude_installed(real):
             npm_dir = real
             env["npm_config_prefix"] = real
+    else:
+        # a455（第三轮审计 P2）：force 也要跟随实际 prefix，否则「强制重装」
+        # 会装到 %APPDATA%\npm，而 PATH 里更靠前的 Program Files 旧 shim 仍先
+        # 被 shutil.which 命中——用户看到「重装成功但版本没变」。这里只在
+        # 该位置确实装着老版本时跟随（装机目录可能无写权限，失败会如实报错）。
+        real = _npm_prefix()
+        if real and os.path.isdir(real) and _claude_installed(real):
+            npm_dir = real
+            env["npm_config_prefix"] = real
+            _log("强制重装：沿用现有安装位置 %s（避免 PATH 上旧版本抢先命中）"
+                 % real)
     if not force and _claude_installed(npm_dir):
         _log("已安装 claude-code，改为 npm update -g（只拉版本差异）…")
         r = subprocess.run(["cmd", "/c", npm, "update", "-g", pkg],
@@ -365,7 +376,7 @@ def _npm_install_global(force=False):
             # 更新失败不动现有安装：能用比新更重要
             _log("npm update 失败（退出码 %d）——保留现有安装，可改用"
                  "「强制重装」" % r.returncode)
-        _ensure_npm_path()
+        _ensure_npm_path(npm_dir)
         return
     _log("npm install -g %s（prefix → 用户目录，免提权）…" % pkg)
     r = subprocess.run(["cmd", "/c", npm, "install", "-g", pkg],
@@ -374,7 +385,7 @@ def _npm_install_global(force=False):
         _log(line)
     if r.returncode != 0:
         raise RuntimeError(f"npm 退出码 {r.returncode}")
-    _ensure_npm_path()
+    _ensure_npm_path(npm_dir)
 
 
 def _npm_prefix():
@@ -463,14 +474,20 @@ def _broadcast_path_change():
         pass
 
 
-def _ensure_npm_path():
-    """把 %APPDATA%\\npm 写进 HKCU PATH（不存在才写；存在不动——守则4）。"""
+def _ensure_npm_path(npm_dir=None):
+    """把 npm 全局目录写进 HKCU PATH（不存在才写；存在不动——守则4）。
+
+    a455（第三轮审计 P2）：目录改为可传入。原来恒写 %APPDATA%\\npm，而
+    `_npm_install_global` 跟随实际 prefix 后可能装到别处——装了却不在 PATH 上，
+    `shutil.which('claude')` 找不到，表现为「装完仍不可用」。
+    """
     try:
         import winreg
         appdata = os.environ.get("APPDATA", "")
-        if not appdata:
-            return
-        npm_dir = os.path.join(appdata, "npm")
+        if npm_dir is None:
+            if not appdata:
+                return
+            npm_dir = os.path.join(appdata, "npm")
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment",
                              0, winreg.KEY_READ | winreg.KEY_WRITE)
         try:
