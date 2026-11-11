@@ -195,11 +195,11 @@ function _ovPdfBuildUI(wrap, conn, path, name) {
         <button class="btn ghost lv-btn" data-ov-zoomout title="缩小">－</button>
         <span data-ov-zoom style="font-size:10px;color:var(--muted);min-width:36px;text-align:center;font-family:var(--font-monospace;">100%</span>
         <button class="btn ghost lv-btn" data-ov-zoomin title="放大">＋</button>
-        <button class="btn ghost lv-btn" data-ov-outline title="目录/书签">☰</button>
+        <button class="btn ghost lv-btn" data-ov-outline-btn title="目录/书签">☰</button>
         ${conn.officeKind === 'ppt' ? '<button class="btn ghost lv-btn" data-ov-dsedit title="OnlyOffice 全功能编辑（需本机安装）">✎ 编辑</button>' : ''}
       </div>
       <div class="ov-pdf-main">
-        <div class="ov-pdf-outline" data-ov-outline style="display:none;">
+        <div class="ov-pdf-outline" style="display:none;">
           <div class="ov-pdf-outline-head">目录</div>
           <div class="ov-pdf-outline-list" data-ov-outlinelist></div>
         </div>
@@ -400,10 +400,12 @@ function _ovPdfBindControls(conn, wrap) {
   wrap.querySelector('[data-ov-zoomin]').onclick = () => setZoom(conn._pdfZoom + 0.25);
   wrap.querySelector('[data-ov-zoomout]').onclick = () => setZoom(conn._pdfZoom - 0.25);
 
-  // 目录
-  wrap.querySelector('[data-ov-outline]').onclick = () => {
-    const outline = wrap.querySelector('[data-ov-outline]');
-    outline.style.display = outline.style.display === 'none' ? '' : 'none';
+  // 目录（a461 修复：按钮与面板原本共用 data-ov-outline——querySelector 恒
+  // 命中按钮本身，点「☰」变成把按钮藏掉、面板从未打开（a283 起即坏）。
+  // 按钮改用与 docx 侧一致的 data-ov-outline-btn，面板按类名切换）
+  wrap.querySelector('[data-ov-outline-btn]').onclick = () => {
+    const panel = wrap.querySelector('.ov-pdf-outline');
+    panel.style.display = panel.style.display === 'none' ? '' : 'none';
   };
 
   // 键盘
@@ -487,10 +489,16 @@ function _ovPdfOutlineRender(conn, wrap, items, depth) {
         try {
           let dest = it.dest;
           if (typeof dest === 'string') dest = await conn._pdfDoc.getDestination(dest);
-          if (Array.isArray(dest) && dest[0] && typeof dest[0] === 'object') {
-            const pg = await conn._pdfDoc.getPageIndex(dest[0]) + 1;
-            const el = conn._pdfPageEls[pg - 1];
-            if (el) { el.scrollIntoView({ block: 'start' }); conn._pdfCurrent = pg; wrap.querySelector('[data-ov-page]').value = pg; }
+          if (Array.isArray(dest) && dest[0] != null) {
+            // a461：dest[0] 两种形态都接——引用对象（标准）走 getPageIndex，
+            // 直接给页码数字（部分生成器的写法）就地 +1。原先数字形态静默不跳
+            let pg;
+            if (typeof dest[0] === 'object') pg = await conn._pdfDoc.getPageIndex(dest[0]) + 1;
+            else if (typeof dest[0] === 'number') pg = dest[0] + 1;
+            if (pg >= 1 && pg <= conn._pdfDoc.numPages) {
+              const el = conn._pdfPageEls[pg - 1];
+              if (el) { el.scrollIntoView({ block: 'start' }); conn._pdfCurrent = pg; wrap.querySelector('[data-ov-page]').value = pg; }
+            }
           }
         } catch (_) {}
       };
