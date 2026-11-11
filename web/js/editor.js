@@ -1496,6 +1496,9 @@ function _edCloseNow(conn) {
   if (conn._pdfTask) { try { conn._pdfTask.destroy(); } catch(e){} conn._pdfTask = null; conn._pdfDoc = null; }
   if (conn._pdfIO) { try { conn._pdfIO.disconnect(); } catch(e){} conn._pdfIO = null; }
   if (conn._outlineRO) { try { conn._outlineRO.disconnect(); } catch(e){} conn._outlineRO = null; }
+  // a449（内网包）：docx blob URL 回收——useBase64URL:false 后图片挂 blob
+  // 引用，不随 DOM 移除自动释放；不收则反复开关大图文档累积泄漏
+  try { if (typeof _ovRevokeBlobs === 'function') _ovRevokeBlobs(conn.wrap); } catch(e){}
   if (conn.wrap) {
     conn.wrap.querySelectorAll('[data-ov-body], [data-ov-pages]').forEach(h => {
       if (h._ovSbV) { clearTimeout(h._ovSbV.hideT); h._ovSbV = null; }

@@ -404,8 +404,11 @@ def _rewind_write(p, lines, keep, brief):
 
 _RESCUE_META_TYPES = {"api-request", "api-request-blob", "api-request-shape",
                       "queue-operation", "last-prompt", "atis-latch",
-                      "mode", "tools-used"}
-_RESCUE_DEFAULT_RATIO = 1.0 / 3.0   # 字符→token 兜底换算（中英混排经验值）
+                      "mode", "tools-used", "cost-state", "system"}
+# 复审 a463：兜底比率原 1/3 按英文 4 字符/token 估，中文为主时实际约
+# 1 token ≈ 1.5~2 字符——低估近半 → 欠裁 → 救完仍 400。救援宁可多裁：
+# 兜底按 1 字符 = 0.5 token（有真实用量时会按 used 重新标定覆盖它）
+_RESCUE_DEFAULT_RATIO = 0.5
 
 
 def _rescue_plan(lines, used, window, target_ratio=0.62):
@@ -413,16 +416,32 @@ def _rescue_plan(lines, used, window, target_ratio=0.62):
 
     plan = {"drop": [回合下标…], "sizes": [...], "total_chars": n,
             "est_before": t, "est_after": t, "target": t, "ratio": r}
-    回合 0（任务定义）永不丢；候选按「体量降序、同体量旧者先」丢弃直到
-    估算 ≤ window*target_ratio。used>0 时用真实用量标定字符→token 比率。"""
+    回合 0（任务基线）永不丢；候选按「体量降序、同体量旧者先」丢弃直到
+    估算 ≤ window*target_ratio。used>0 时用真实用量标定字符→token 比率。
+
+    复审 a463：/compact 后旧行不再被 resume 重放（isCompactSummary 边界），
+    只有边界之后的行占用上下文——估算从最后一个压缩边界起算，否则
+    全文件字符稀释比率 → 欠裁。压缩边界之前的回合成本≈0，保留不参与估算。"""
     if not lines:
         return None, "会话转写为空"
     if not window:
         return None, "拿不到模型上下文窗口（先发一条消息或 /status）"
+    # 最后一个压缩边界（与 _session_ctx_used 同标记）
+    base = 0
+    for i, L in enumerate(lines):
+        if '"isCompactSummary":true' in L:
+            base = i + 1
     starts = [i for i, L in enumerate(lines) if _is_turn_start(L)]
     if len(starts) < 2:
         return None, "会话不足两个完整回合，救援没有裁剪空间（请回滚到锚点或新建会话）"
-    bounds = list(zip(starts, starts[1:] + [len(lines)]))
+    # 边界之前的回合整段保留（成本 0，不进估算）；回合 0 改指边界之后的
+    # 首个回合（它是压缩后的任务基线）
+    live = [k for k, st in enumerate(starts) if st >= base]
+    if not live:
+        return None, "压缩边界后没有完整回合，无需救援（上下文已归零）"
+    first_live = live[0]
+    bounds = [(st, (starts[k + 1] if k + 1 < len(starts) else len(lines)))
+              for k, st in enumerate(starts)]
 
     def _seg_bytes(a, b):
         n = 0
@@ -437,8 +456,10 @@ def _rescue_plan(lines, used, window, target_ratio=0.62):
         return n
 
     sizes = [_seg_bytes(a, b) for a, b in bounds]
-    head = _seg_bytes(0, starts[0])
-    total = sum(sizes) + head
+    # 压缩边界之前的回合/文件头：保留但成本记 0（resume 不重放）
+    live_sizes = [sizes[k] if k >= first_live else 0 for k in range(len(bounds))]
+    live_head = _seg_bytes(base, starts[first_live]) if starts[first_live] > base else 0
+    total = sum(live_sizes) + live_head
     ratio = (float(used) / total) if (used and total > 0) else _RESCUE_DEFAULT_RATIO
     target = int(window * target_ratio)
 
@@ -450,22 +471,21 @@ def _rescue_plan(lines, used, window, target_ratio=0.62):
                       % (_est(total) // 1024, target // 1024))
     kept = total
     drop = []
-    for i in sorted(range(1, len(bounds)), key=lambda i: (-sizes[i], i)):
+    # 候选 = 压缩边界之后、除任务基线外的回合（边界前回合成本 0，丢了也
+    # 不减估算、白损历史——不参与）
+    cand = [k for k in range(first_live + 1, len(bounds)) if live_sizes[k] > 0]
+    for k in sorted(cand, key=lambda k: (-live_sizes[k], k)):
         if _est(kept) <= target:
             break
-        kept -= sizes[i]
-        drop.append(i)
+        kept -= live_sizes[k]
+        drop.append(k)
     if _est(kept) > target:
-        return None, ("只剩首回合仍超限（约 %dK > %dK）——首回合自身过大，"
+        return None, ("压缩后上下文仍超限（约 %dK > %dK）——任务基线自身过大，"
                       "请拆小任务后新建会话" % (_est(kept) // 1024, target // 1024))
-    return {"drop": sorted(drop), "sizes": sizes, "total_chars": total,
+    return {"drop": sorted(drop), "sizes": live_sizes, "total_chars": total,
             "est_before": _est(total), "est_after": _est(kept),
-            "target": target, "ratio": ratio}, None
-
-
-def _rescue_last_user_text(lines, starts, bounds, kept_last_turn):
-    """（保留占位避免误用）已并入路由内联实现。"""
-    return None  # noqa: 并入下方路由
+            "target": target, "ratio": ratio,
+            "first_live": first_live}, None
 
 
 def _turn_user_text(line):
@@ -540,11 +560,16 @@ def harness_rescue():
     if not ok:
         return jsonify({"ok": False, "err": msg}), 500
     # 自动续跑：末回合被丢（爆炸点就在其中）→ 重发该回合的人类指令；
-    # 末回合保留（爆点在中部）→ 已有结论，不重复消耗，提示继续即可
+    # 末回合保留（爆点在中部）→ 已有结论，不重复消耗，提示继续即可。
+    # 复审 a463：指令本体 >20K 字符不自动重发——巨指令本身可能就是爆点，
+    # 原样重发＝再爆一次；提示用户精简后手动发
+    _TOO_BIG_RESEND = 20000
     tail_dropped = (len(bounds) - 1) in dropset
+    resend_skipped_big = tail_dropped and len(last_turn_text) > _TOO_BIG_RESEND
     resent = False
     err2 = None
-    if tail_dropped and str(data.get("resend", "auto")) != "off" and last_turn_text:
+    if (tail_dropped and not resend_skipped_big
+            and str(data.get("resend", "auto")) != "off" and last_turn_text):
         # send_message 不自带复活（复活在 send 路由）——先 --resume 拉起
         if not s.alive and not s.revive_if_dead():
             err2 = "进程复活失败"
@@ -556,6 +581,9 @@ def harness_rescue():
                   plan["est_after"] // 1024, plan["target"] // 1024))
     if resent:
         summary += "；已自动重发最后指令续跑"
+    elif resend_skipped_big:
+        summary += ("；末回合指令过大（%d 字符）未自动重发——精简后手动发送"
+                    % len(last_turn_text))
     elif tail_dropped and last_turn_text:
         summary += "；自动续发失败（%s），请手动重发" % (err2 or "未知")
     else:

@@ -519,22 +519,44 @@ async function _ovRenderSimple(kind, buf, body, wrap, conn) {
   body.innerHTML = '<div class="office-err">不支持的文件类型</div>';
 }
 
+// a449（内网包）：blob URL 回收——useBase64URL:false 后 docx-preview 以
+// URL.createObjectURL 挂图，不自动 revoke；tab 关闭与同 tab 重渲染前调用，
+// 否则反复开关大图文档会累积泄漏整批 blob
+function _ovRevokeBlobs(scope) {
+  (scope || document).querySelectorAll('img[src^="blob:"]').forEach(img => {
+    try { URL.revokeObjectURL(img.src); } catch (_) {}
+    img.removeAttribute('src');
+  });
+}
+
 async function _ovRenderDocx(buf, body, wrap, conn) {
   if (typeof docx === 'undefined') { body.innerHTML = '<div class="office-err">docx-preview 库未加载</div>'; return; }
-  body.innerHTML = '<div class="docx-container"></div>';
+  // a449（内网包）：同一 tab 重渲染前回收上一轮 blob URL（docx-preview 不
+  // 自动 revoke，重开/重渲同文档会累积泄漏）；渲染期显示体量进度（原为空白，
+  // 用户无法区分「在跑」和「卡死」）
+  try { _ovRevokeBlobs(body); } catch (_) {}
+  const _mb = buf && buf.byteLength ? buf.byteLength / 1048576 : 0;
+  body.innerHTML = '<div class="docx-container"><div class="office-loading">'
+    + '正在渲染' + (_mb > 1 ? '（' + _mb.toFixed(1) + ' MB）' : '') + '…</div></div>';
   const container = body.firstChild;
   let _timeout = null;
   try {
+    // a449：超时 10s→60s。renderAsync 是异步的（内部 await Promise.allSettled
+    // 等全部图片），定时器可正常触发；3MB/52 图的大文档渲染远超 10s——
+    // 原超时会在渲染中途撕掉容器（注释曾误写「渲染是同步的」）
     _timeout = setTimeout(() => {
       if (container._rendering) {
         container._rendering = false;
-        body.innerHTML = '<div class="office-err">Word 渲染超时</div>';
+        body.innerHTML = '<div class="office-err">Word 渲染超时（60s）——文档过大或图片过多，可改用 OnlyOffice 全功能编辑</div>';
       }
-    }, 10000);
+    }, 60000);
     container._rendering = true;
     await docx.renderAsync(buf, container, null, {
       inWrapper: true, breakPages: true, renderHeaders: true, renderFooters: true,
-      useBase64URL: true, ignoreLastRenderedPageBreak: false,
+      // a449：关 base64 内联。52 图 2.91MB→base64 3.89MB（+33%）且解码是
+      // 主线程同步计算；blob URL（createObjectURL）O(1) 挂载。代价是不自
+      // 动回收——_ovRevokeBlobs 在渲染前与 tab 关闭两路回收
+      useBase64URL: false, ignoreLastRenderedPageBreak: false,
     });
     container._rendering = false;
     clearTimeout(_timeout);
@@ -542,6 +564,10 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
     // a290 全功能：docx 目录索引侧栏——从渲染 DOM 提取 h1-h6（docx-preview 按
     // Word 标题样式映射 heading），点击跳转 + 滚动高亮当前节
     _ovDocxOutline(body, container, conn);
+    // a449 复审：进度提示按「renderAsync 会替换容器内容」假设置入容器内，
+    // 但该假设未在真浏览器验证过——若库是追加式写入，提示会残留在文档
+    // 顶部。渲染完成后防御性摘除（替换式则此处无节点，空操作）
+    container.querySelectorAll('.office-loading').forEach(n => n.remove());
   } catch (e) {
     container._rendering = false;
     if (_timeout) clearTimeout(_timeout);

@@ -97,7 +97,7 @@ def test_rescue_needs_two_turns():
 
 
 def test_rescue_first_turn_too_big():
-    """首回合独大：丢光中部仍超限 → 如实报错（不产生半吊子计划）。"""
+    """任务基线独大：丢光中部仍超限 → 如实报错（不产生半吊子计划）。"""
     L = _lines([
         ("human", "任务定义" * 300, 1200),
         ("asst", "ok", 10),
@@ -107,7 +107,31 @@ def test_rescue_first_turn_too_big():
         ("asst", "答3", 10),
     ])
     plan, err = R._rescue_plan(L, used=3000, window=1000)
-    assert plan is None and "首回合" in err
+    assert plan is None and "任务基线" in err
+
+
+def test_rescue_compact_boundary_calibration():
+    """复审 a463：/compact 后旧行不占上下文——估算只从压缩边界起算。
+
+    构造：压缩边界前有巨大回合（老历史），边界后正文很小但真实用量大。
+    若旧行混算：total 虚高稀释比率 → 误判「无需救援」或欠裁。"""
+    summary = json.dumps({"type": "user", "isCompactSummary": True,
+                          "timestamp": "t", "message": {"content": "摘要"}},
+                         ensure_ascii=False, separators=(",", ":"))
+    L = _lines([("human", "老任务", 20), ("asst", "巨量老历史" * 200, 1400)]) + \
+        [summary] + \
+        _lines([("human", "新任务", 20), ("asst", "答1" * 30, 60),
+                ("human", "q2", 20), ("asst", "答2" * 30, 60)])
+    # 边界后正文 ~160 字符、真实用量 900 tokens（比率≈5.6）、窗口 1000
+    # （target 620）→ 必须裁掉一个边界后回合才回线；边界前的巨量老历史
+    # 不参与估算（参与则 total≈1560、比率≈0.58、est(total)=900 同值但
+    # est_after 减不动 → 误报「任务基线过大」）
+    plan, err = R._rescue_plan(L, used=900, window=1000)
+    assert plan, err
+    assert plan["drop"], "欠裁：压缩边界标定失效"
+    assert plan["est_after"] <= plan["target"]
+    # 边界前的回合（0 基 0）永不进 drop
+    assert 0 not in plan["drop"]
 
 
 def test_rescue_meta_lines_not_double_counted():
