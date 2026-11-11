@@ -557,14 +557,20 @@ function buildProxyTab() {
       _setHrUI(j);
       _setRetryUI(j);
       _renderBiliInstall(j);
+      // a456（第三轮审计 P2）：locked 优先级最高，不能被压缩引擎提示覆盖。
+      // 原来 bili 分支无条件 _msg——账号锁定 + 压缩引擎未装时，用户每 3s
+      // 只看得到压缩提示，看不到「别再点刷新、每次尝试都会续期锁定」。
+      // 操作反馈保鲜期同理（bili 是常驻状态，不该抢用户刚点按钮的结果）。
+      const _biliHold = ((j.quota_login || {}).state === 'locked') || _msgHeld();
       if (!j.bili_ready && j.bili_mode === 'on') {
         msgEl.dataset.biliKeep = '1';
-        _msg('压缩引擎未安装——下方「联网下载安装」一键装（需 Node ≥22 + 网络）；重试代理不受影响', true);
+        if (!_biliHold)
+          _msg('压缩引擎未安装——下方「联网下载安装」一键装（需 Node ≥22 + 网络）；重试代理不受影响', true);
       } else if (j.bili_last_err) {
         // a203：后端切换失败会静默回退 off，原样只留一行 log——用户只看到
         // 「点了没反应」。把原因顶到面板上（切成功后后端清空该字段）。
         msgEl.dataset.biliKeep = '1';
-        _msg(j.bili_last_err, true);
+        if (!_biliHold) _msg(j.bili_last_err, true);
       } else if (msgEl.dataset.biliKeep === '1' && !_msgHeld()) {
         // a452（审计）：原来这里删的是**共用的** dataset.keep，把操作反馈
         // 的 6s 保鲜期一并摧毁（实际只剩不到 3s）。bili 用自己的标志。

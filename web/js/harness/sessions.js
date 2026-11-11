@@ -27,6 +27,10 @@
     // 「本会话累计」也还是别人的数。只在收到 tps patch 时才整体替换是不够的
     // （新会话首帧之前有一段空窗）。
     _HG.tps = null;
+    // a456（第三轮审计 P2）：上下文圆环同属「本会话」口径，必须一起清。
+    // 只清 tps 会让圆环/胶囊继续显示上一会话的占用，直到下一帧 /ctx 返回
+    // （5s）——原来两者都旧（同屏一致），现在一新一旧反而是明显的矛盾。
+    _HG.ctxRing = null;
     _HG.subTail = {};   // v2.46：tail 轮询 offset 随会话切换重置（防串会话读错文件位；批4：subRows/subBlk/subTailSeg 随段退役删）
     _HG.fetchedBusy = null;   // C组T5：随切会话清（防陈旧值误用）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）

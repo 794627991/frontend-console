@@ -84,6 +84,7 @@ function _harnessClose(portId) {
   try { _hgLoadsStopTick(); } catch(_) {}
   try { if (_hgLoadsTip) _hgLoadsTip.style.display = 'none'; } catch(_) {}
   _HG.tps = null;
+  _HG.ctxRing = null;   // a456：上下文圆环同属会话口径，随 tab 一起清
   _HG.rowById = {}; _HG.run = null;   // 批4：subRows/subBlk 段档随段退役删除
   // v2.15：补齐残留态复位。旧实现只清了上面这几个，重开 tab 后 dirty/busy/
   // activity 等沿用上一轮的值——dirty 漏复位会与「点 chip 删会话」叠加，

@@ -67,13 +67,22 @@
       // 统一 close()：摘 DOM + 登记处退册 + resolve(null)（幂等）。
       let done = false;
       let reg = null;
+      // a456（第三轮审计 P2）：Esc 必须绑 document。原来（a453）只绑 ov，
+      // 但 ov 加了 tabindex 却没人 focus——hgConfirm 这类**无输入框**的弹窗
+      // 焦点仍在触发按钮上（非 ov 后代），keydown 到不了 ov，按 Esc 没反应。
+      // 绑 document 并在每次关闭时摘除（与 _uiConfirm 同款）。
+      const _onEsc = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); close(null); }
+      };
       const close = (v) => {
         if (done) return;
         done = true;
+        try { document.removeEventListener('keydown', _onEsc); } catch (_) {}
         try { ov.remove(); } catch (_) {}
         if (reg) { try { reg.del(ov); } catch (_) {} }
         resolve(v);
       };
+      document.addEventListener('keydown', _onEsc);
       buttons.forEach((b) => {
         const btn = document.createElement('button');
         btn.className = 'btn' + (b.primary ? ' primary' : '');
@@ -119,13 +128,6 @@
         }
       } catch (_) {}
       const inp = inp0;
-      // a453（第二轮审计 P2）：Esc 原来只绑在 inp 上——hgConfirm（删除会话/
-      // 纳入版本控制/Pull/卸载技能）这类无输入框的弹窗整段监听不注册，
-      // 按 Esc 毫无反应。改为同时绑 ov（tabindex 让它能收键盘事件）。
-      ov.setAttribute('tabindex', '-1');
-      ov.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { e.stopPropagation(); close(null); }
-      });
       if (inp) { inp.focus(); inp.select();
         inp.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') { const b = buttons[buttons.length - 1]; const v = typeof b.value === 'function' ? b.value(inp) : b.value; close(v); }

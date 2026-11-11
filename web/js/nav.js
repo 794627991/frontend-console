@@ -807,12 +807,16 @@
     if (_navClockTimer) { clearInterval(_navClockTimer); _navClockTimer = null; }
     const _td = document.getElementById('navTierDialog');
     if (_td) {
-      _td.remove();
-      // 弹窗还在说明建库线程正卡在「等用户选建库方式」。真正的关闭动作下
-      // 用户再没有任何途径作答，后端会白等 10 分钟——视为放弃建库。
-      // a452：只是切换到另一个目录查看时不取消（那不是放弃）。
-      if (cancelIfAsking !== false)
+      // a456（第三轮审计 P2）：删弹窗也要受 cancelIfAsking 约束。原来
+      // `_td.remove()` 无条件执行、只把 POST /cancel 挡在外面——切换目录
+      // 时弹窗被摘掉、任务却还在后端等作答，用户再无任何作答入口，10 分钟
+      // 后按 full 继续，收录方式选择静默丢失。切换目录时把弹窗留着。
+      if (cancelIfAsking !== false) {
+        _td.remove();
+        // 弹窗还在说明建库线程正卡在「等用户选建库方式」。真正的关闭动作下
+        // 用户再没有任何途径作答，后端会白等 10 分钟——视为放弃建库。
         fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
+      }
     }
     const el = document.getElementById('navIdxPanel');
     if (el) el.remove();
@@ -1613,18 +1617,21 @@
           _tierAsked = false;
         }
         if (!s.done) return;
-        // a453（第二轮审计 P2）：DONE 分支必须校验「本轮是否仍是当前轮」。
-        // 任务 A 结束瞬间其 poll 请求在途（慢盘 >1.6s），用户已在另一目录
-        // 起任务 B 并弹出建库方式弹窗——A 的回调会把 B 的弹窗删掉、解除
-        // B 面板的 dataset.running（B 的后端白等 10 分钟后按 full 继续，
-        // 用户的选择丢失）。不是当前轮就直接返回，什么都不清。
-        if (_pollTimer !== _myPoll) return;
-        // a452：只清本轮自己的定时器；模块级引用若已指向别的任务则不碰
+        // a456（第三轮审计 P2：上一版的 early return 跳过了自己的清理）：
+        // 必须先无条件停掉**本轮自己的**定时器，再对模块级引用加门。
+        // 原来 `if (_pollTimer !== _myPoll) return;` 直接 return——任务 A 的
+        // 最后一次 poll 在途时用户换目录起任务 B，A 的 interval 永不被
+        // clear，此后每 800ms 仍打 /api/nav/poll 把 B 的日志往 A 已脱离
+        // DOM 的容器里追加，直到刷新页面。
         clearInterval(_myPoll);
         if (_myClock) clearInterval(_myClock);
-        if (_pollTimer === _myPoll) _pollTimer = null;
+        const _mine = (_pollTimer === _myPoll);
+        if (_mine) _pollTimer = null;
         if (_navClockTimer === _myClock) _navClockTimer = null;
         _myPoll = _myClock = null;
+        // 全局 DOM（弹窗 / running 标志）属于**当前轮**，不是本轮就不碰——
+        // 否则 A 的终态回调会删掉 B 正在等作答的弹窗、解除 B 的面板禁令。
+        if (!_mine) return;
         // a434：任务已终态，遗留的建库方式弹窗必须收掉（否则挡住结果）
         const _td2 = document.getElementById('navTierDialog');
         if (_td2) _td2.remove();

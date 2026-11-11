@@ -179,6 +179,21 @@ def _dec(b):
     return b.decode("utf-8", "replace")
 
 
+def _remote_used_now(cwd):
+    """本次调用**实际**是否走了 SSH 远端（threading.local 单次标记）。
+
+    a456（第三轮审计 P2）：原来 _svn_changes 用 `_remote_ctx(...) and not
+    _remote_hint(...)` 推「这次走了远端」——但 hint 只在失败时写、成功从不清
+    (TTL 300s)。网络盘工程某次远端抖动后 5 分钟内 SSH 已恢复、`_run` 明明
+    走的是远端，判据仍说「本地」，于是对**远端结果**套用 SMB 符号链接误报
+    过滤，把真实的链改动当误报隐藏。现在由 _run 自己记真实路径。
+    """
+    try:
+        return bool(getattr(_REMOTE_CUR, "used", False))
+    except Exception:
+        return False
+
+
 def _run(argv, cwd, timeout):
     """subprocess 统一入口：list argv / bytes 输出 / 隐藏窗口 / 超时保护。
     返回 (rc, out_str, err_str)——超时转 rc=-1 + err 文案。
@@ -186,12 +201,20 @@ def _run(argv, cwd, timeout):
     a455：网络盘工程若配了 SSH 远端，改为在构建机上执行（SMB 上每次 stat
     都是网络往返，全树 status 实测 47.9s vs 远端 1.1s）。远端不可达/未配置
     → 静默回退本地，版本面板绝不因远端故障不可用。"""
+    try:
+        _REMOTE_CUR.used = False      # a456：每次调用重置，由本函数如实置位
+    except Exception:
+        pass
     r = _remote_ctx(cwd)
     if r is not None:
         try:
             from src import vcs_remote
             entry = r
             rc, raw, e = vcs_remote.run(entry, argv, cwd, timeout)
+            try:
+                _REMOTE_CUR.used = True
+            except Exception:
+                pass
             return rc, _dec(raw), e
         except Exception as _e:
             # 回退本地：把原因记进 _LAST_REMOTE_ERR，status 端点透给 UI 提示
@@ -546,10 +569,11 @@ def _svn_changes(wc, depth=None):
     # 目标内容）；~/! 是类型变更/目标不可达。网络盘上按 wc.db 的 svn:special
     # 清单过滤（绝不静默：symlink_hidden 透出，前端提示）
     sym_hidden = 0
-    # a455：走 SSH 远端时结果来自 Linux 侧——那里的符号链接是真实的，
+    # a456：走 SSH 远端时结果来自 Linux 侧——那里的符号链接是真实的，
     # 不该按 SMB 展开误报去过滤（否则会误删真实改动条目）。
-    # 只有「网络盘 + 未启用远端」才需要这套补偿。
-    _use_remote = _remote_ctx(wc) is not None and not _remote_hint(wc)
+    # 判据用**本次调用真实路径**（_run 置的线程局部标记），不用 hint——
+    # hint 只在失败时写、成功不清，远端恢复后 5 分钟内仍会误判成「本地」。
+    _use_remote = _remote_used_now(wc)
     if files and not _use_remote and _is_network_drive(wc):
         sym = _svn_symlink_paths(wc)
         sym_low = {x.lower() for x in sym}

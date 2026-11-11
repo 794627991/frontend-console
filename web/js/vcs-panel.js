@@ -50,7 +50,7 @@ function vcsPanelTeardown() {
   // root 保留：下次打开还是同一个工程
   VCS.data = null; VCS.log = null; VCS.out = ''; VCS.busy = false;
   VCS.sel = new Set();
-  VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set(); VCS.cfGen = (VCS.cfGen || 0) + 1;   // a438：展开态与清单缓存随面板关闭清；a452 代际+1 作废在途
+  VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set();   // a438：展开态与清单缓存随面板关闭清（换新 Map 即作废在途结果）
 }
 function buildVcsPanelTab() {
   for (const pid in connections) {
@@ -1035,10 +1035,11 @@ function _vcsLoadCommitFiles(rev, box) {
   if (!VCS.cfPending) VCS.cfPending = new Set();
   if (VCS.cfPending.has(rev)) { box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>'; return; }
   VCS.cfPending.add(rev);
-  // a452（第二轮审计 P2）：记代际号。teardown / 换工程会把 cfCache 换成新
-  // Map，旧工程的在途结果若照写，会污染「本该已清空」的新 Map（换工程后
-  // rev 恰好相同就渲染出错误的文件清单）。回调首行校验代际。
-  const cfGen = VCS.cfGen = (VCS.cfGen || 0) + 1;
+  // a456（第三轮审计 P1：上一版按请求递增代际，把并发请求互相作废）：
+  // 判据改为**快照 cfCache 引用**。teardown / 换工程会把 cfCache 换成新 Map，
+  // 引用不等即说明「面板已关/已换工程」，语义正好；同时并发展开多个提交时
+  // 它们共享同一个 Map，互不干扰。
+  const myCache = VCS.cfCache;
   box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>';
   fetch('/api/vcs/commit_files', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1046,7 +1047,7 @@ function _vcsLoadCommitFiles(rev, box) {
     .then(r => r.json())
     .then(j => {
       VCS.cfPending.delete(rev);
-      if (cfGen !== VCS.cfGen) return;   // 面板已关/已换工程，结果作废
+      if (myCache !== VCS.cfCache) return;   // 面板已关/已换工程，结果作废
       // a452（审计 P2）：缓存先写，再做存活检查。原来存活检查在 set 之前，
       // 请求途中 _vcsPaint 重绘（30s 轮询）会让旧 box 失效 → 直接 return，
       // 结果永不进缓存，新 box 一直停在「加载中…」，要再触发一次重绘才恢复。
@@ -1058,7 +1059,7 @@ function _vcsLoadCommitFiles(rev, box) {
     })
     .catch(e => {
       VCS.cfPending.delete(rev);
-      if (cfGen !== VCS.cfGen) return;
+      if (myCache !== VCS.cfCache) return;
       if (!_vpEl || !document.contains(box)) return;
       box.innerHTML = '<div class="hg-vcs-empty">获取失败：' + esc(String(e)) + '</div>';
     });
@@ -1086,7 +1087,7 @@ function _vcsBind(paintRoots) {
         VCS.chgGen = (VCS.chgGen || 0) + 1;   // v3.5.275 F3-A：作废在途扫描链
         VCS.root = sel.value; localStorage.setItem('hg-vcs-root', sel.value);
         VCS.data = null; VCS.log = null; VCS.sel = new Set();
-        VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set(); VCS.cfGen = (VCS.cfGen || 0) + 1;   // a438：换工程，展开态/缓存在途都属于旧工程；a452 代际+1 作废在途
+        VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set();   // a438：换工程，展开态/缓存在途都属于旧工程（换新 Map 即作废）
         _vcsReload(); _vcsReloadLog();
       };
     }
