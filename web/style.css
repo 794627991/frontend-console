@@ -4925,24 +4925,58 @@ html {
 /* ============================================================
    v3.5.117 「版本」页签（git/svn，24-vcs.js）——右栏窗格第三伪 tab
    ============================================================ */
-.hg-vcs-pane { overflow-y: auto; padding: 10px 12px; font-size: 12px; }
+.hg-vcs-pane { overflow-y: auto; padding: 16px 40px 24px; font-size: 12px; }
+/* 窄窗口下别把内容挤没——留白随宽度自适应 */
+@media (max-width: 1100px) { .hg-vcs-pane { padding-left: 20px; padding-right: 20px; } }
 .hg-vcs-rootrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .hg-vcs-roott { flex-shrink: 0; color: var(--muted); font-size: 11px; }
 .hg-vcs-root { flex: 1; min-width: 0; background: var(--bg-input); color: var(--fg);
   border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
 .hg-vcs-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
 .hg-vcs-badge { flex-shrink: 0; padding: 2px 8px; border-radius: 10px; font-size: 11px;
   font-weight: 600; background: rgba(80,200,120,.15); color: #4caf7d; }
 .hg-vcs-badge.svn { background: rgba(80,140,220,.15); color: #6a9fe0; }
 .hg-vcs-badge.none { background: rgba(150,150,150,.15); color: var(--muted); }
 .hg-vcs-branch { font-weight: 600; }
 .hg-vcs-count { margin-left: auto; color: var(--muted); font-size: 11px; flex-shrink: 0; }
+/* a455：执行方式芯片（版本头右侧，点击开 SSH 配置） */
+.hg-vcs-rmchip { flex-shrink: 0; margin-left: 8px; padding: 2px 9px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid transparent;
+  background: rgba(150,150,150,.15); color: var(--muted); }
+.hg-vcs-rmchip.on { background: rgba(80,200,120,.15); color: #4caf7d;
+  border-color: rgba(80,200,120,.35); }
+.hg-vcs-rmchip.warn { background: rgba(230,160,60,.15); color: #d99a3a;
+  border-color: rgba(230,160,60,.35); }
+.hg-vcs-rmchip:hover { filter: brightness(1.15); }
+/* a455：SSH 配置浮层 */
+.hg-vcs-rdlg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 10060;
+  display: flex; align-items: center; justify-content: center; }
+.hg-vcs-rdlg-card { width: 560px; max-width: 94vw; max-height: 88vh; overflow: auto;
+  padding: 18px 20px; border-radius: 12px; background: var(--bg-panel);
+  border: 1px solid var(--border); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.hg-vcs-rdlg-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.hg-vcs-rdlg-sub { font-size: 12px; color: var(--muted); line-height: 1.65;
+  margin-bottom: 12px; }
+.hg-vcs-rdlg-row { display: flex; gap: 8px; align-items: center; margin: 7px 0;
+  font-size: 12px; }
+.hg-vcs-rdlg-row > label { width: 92px; flex-shrink: 0; color: var(--muted); }
+.hg-vcs-rdlg-row > input, .hg-vcs-rdlg-row > select { flex: 1; min-width: 0;
+  background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px;
+  font-family: var(--font-mono); }
+.hg-vcs-rdlg-acts { display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 14px; flex-wrap: wrap; }
+.hg-vcs-rdlg-msg { font-size: 12px; line-height: 1.6; margin-top: 10px;
+  padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
+.hg-vcs-rdlg-msg.ok { background: rgba(80,200,120,.12); color: #4caf7d; }
+.hg-vcs-rdlg-msg.err { background: rgba(230,90,90,.12); color: #d96a6a; }
+.hg-vcs-rdlg-msg.info { background: rgba(120,120,120,.12); color: var(--muted); }
 .hg-vcs-warn { color: var(--muted); font-size: 11px; }
 .hg-vcs-acts { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
 .hg-vcs-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
 .hg-vcs-files { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.hg-vcs-frow { display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+.hg-vcs-frow { display: flex; gap: 8px; align-items: center; padding: 7px 14px;
   border-bottom: 1px solid var(--border); cursor: pointer; }
 .hg-vcs-frow:last-child { border-bottom: none; }
 .hg-vcs-frow:hover { background: rgba(128,128,128,.08); }
@@ -4963,7 +4997,7 @@ html {
 .hg-vcs-out pre { margin: 0; white-space: pre-wrap; word-break: break-all;
   font-family: var(--font-mono); font-size: 11px; max-height: 180px; overflow-y: auto; }
 .hg-vcs-sec { margin: 12px 0 6px; font-weight: 600; }
-.hg-vcs-logrow { display: flex; gap: 8px; align-items: baseline; padding: 5px 4px;
+.hg-vcs-logrow { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px;
   border-bottom: 1px solid var(--border); }
 .hg-vcs-logrev { flex-shrink: 0; font-family: var(--font-mono); color: var(--accent); font-size: 11px; }
 .hg-vcs-logmsg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -106,6 +106,24 @@ function _vcsActivate(force) {
   if (!VCS.busy) _vcsReload();
   else _vcsPaint();
 }
+// a455：网络盘首次进入自动弹一次 SSH 引导（每个工程只弹一次，本地记忆）。
+// 纯本地盘不会弹——_vcsRemoteAutoAsk 只在 remote_used==='smb' 且未配置时生效。
+function _vcsRemoteAutoAsk() {
+  if (!VCS.root) return;
+  const D = VCS.data || {};
+  if (D.remote_used !== 'smb') return;
+  const key = 'hg-vcs-ssh-asked:' + VCS.root;
+  try { if (localStorage.getItem(key)) return; } catch (_) { return; }
+  fetch('/api/vcs/remote/probe', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root: VCS.root }) })
+    .then(r => r.json()).then(j => {
+      // 已配置过（或非网络盘）就不再打扰
+      if (!j || !j.ok || j.configured || !j.is_network) return;
+      try { localStorage.setItem(key, '1'); } catch (_) {}
+      if (!document.getElementById('hgVcsRemoteDlg')) _vcsRemoteDialog();
+    }).catch(() => {});
+}
 // 弹窗宿主：面板可能在任何 tab 之上打开，统一挂 body 层（不受 tab 显隐影响）
 function _vpModalHost() { return document.body; }
 
@@ -640,6 +658,7 @@ function _vcsReload(lite) {
       _vcsPaint();
       // v3.5.264（Q1）：svn status 已轻量化（只有 info）——改动列表由
       // changes 端点惰性补拉（独立 chgBusy，不置灰 logbtn）
+      if (js.ok && !lite) setTimeout(_vcsRemoteAutoAsk, 600);
       if (js.ok && js.changes_pending && !VCS.chgBusy && !lite) _vcsReloadChanges();
       // v3.5.266（用户需求「点到版本，最近提交就后台刷出来，不等点提交
       // 历史」）：激活即后台补拉最近提交（_vcsLogBusy 防连点；lite tick
@@ -689,15 +708,25 @@ function _vcsReloadChanges() {
       _j1ok = true;
       VCS.data.files = j1.files || [];
       VCS.data.truncated = j1.truncated || 0;
+      VCS.data.truncated_unv = j1.truncated_unv || 0;   // a455：被截断的未版本控制数
       VCS.data.symlink_hidden = j1.symlink_hidden || 0;   // vcs-report：网络盘符号链接误报过滤计数
       VCS.data.changes_timeout = false;
-      VCS.data.changes_shallow = true;   // 头部保持「全树扫描中」
+      VCS.data.changes_shallow = !j1.shallow_skipped;   // a455：远端已给全量
       _vcsPaint();
+      // a455：远端模式下第一段就是全量，跳过第二段（省一次往返）
+      if (j1.shallow_skipped) {
+        VCS.data.changes_pending = false;
+        VCS.chgRetry = 0;
+        return null;
+      }
     }
     return _chg(false);   // 二段：全树补扫
   }).then(j2 => {
     VCS.chgBusy = false;
     if (_stale()) { _vcsPaint(); _rearm(); return; }   // 已作废：结果弃+重臂
+    // a455：一段已含全量（远端模式）时不去请求二段，j2 为 null——
+    // 这不是失败，保持一段结果即可，绝不能落到下面的「二段失败」叙事。
+    if (j2 === null && _j1ok) return;
     if (VCS.data && !VCS.data.err) {
       if (j2 && j2.ok) {
         if (j2.changes_timeout) {
@@ -707,6 +736,7 @@ function _vcsReloadChanges() {
         } else {
           VCS.data.files = j2.files || [];
           VCS.data.truncated = j2.truncated || 0;
+          VCS.data.truncated_unv = j2.truncated_unv || 0;   // a455：被截断的未版本控制数
           VCS.data.symlink_hidden = j2.symlink_hidden || 0;   // vcs-report：网络盘符号链接误报过滤计数
           VCS.data.changes_timeout = false;
           VCS.data.changes_shallow = false;
@@ -845,7 +875,7 @@ function _vcsPaint() {
       ? `<div class="hg-vcs-files">` + (_svn
           ? _core.map(([f, i]) => _vcsFileHtml(f, i)).join('')
           : files.map((f, i) => _vcsFileHtml(f, i)).join('')) + `</div>`
-        + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个文件未显示（用命令行查看）</div>` : '')
+        + (D.truncated ? `<div class="hg-vcs-more">还有 ${D.truncated} 个实质改动未显示（用命令行查看）</div>` : '')
         // v3.5.276（R5）：超时但列表在场=顶层结果，明示口径消解头部「未获取」张力
         + (D.changes_timeout && D.changes_shallow ? `<div class="hg-vcs-more">以上为顶层扫描结果（全树扫描未完成，完整改动请用命令行 svn status 查看或点 ⟳ 重试）</div>` : '')
       : D.changes_timeout
@@ -858,8 +888,8 @@ function _vcsPaint() {
     (_svn && _unv.length
       ? `<div class="hg-vcs-unv" data-vcs-unv="1">` +
         (_showUnv
-          ? `<div class="hg-vcs-unv-t">▾ 未版本控制 ${_unv.length} 个（点收起）——勾选后提交时先 svn add 再提交</div><div class="hg-vcs-files">` + _unv.map(([f, i]) => _vcsFileHtml(f, i)).join('') + `</div>`
-          : `<div class="hg-vcs-unv-t">▸ 未版本控制 ${_unv.length} 个（编译产物/临时文件为主——点展开）</div>`) + `</div>`
+          ? `<div class="hg-vcs-unv-t">▾ 未版本控制 ${_unv.length}${D.truncated_unv ? '+' : ''} 个（点收起）——勾选后提交时先 svn add 再提交${D.truncated_unv ? '；另有 ' + D.truncated_unv + ' 个未列出' : ''}</div><div class="hg-vcs-files">` + _unv.map(([f, i]) => _vcsFileHtml(f, i)).join('') + `</div>`
+          : `<div class="hg-vcs-unv-t">▸ 未版本控制 ${_unv.length}${D.truncated_unv ? '+' : ''} 个（编译产物/临时文件为主——点展开${D.truncated_unv ? '，仅列出前 ' + _unv.length + ' 个' : ''}）</div>`) + `</div>`
       : '') +
     (VCS.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(VCS.out.slice(0, 4000))}</pre></div>` : '') +
     // v3.5.265（Q3 首选嫌疑缓解）：busy 期置灰同时给明确提示（旧=静默灰
@@ -923,11 +953,36 @@ function _vcsHeadHtml(D) {
   const _chgTxt = (D.changes_pending && (VCS.chgBusy || D.changes_shallow)) ? '全树扫描中…'
     : D.changes_timeout ? '改动数未获取（扫描超时）'
     : `${(D.files || []).length - _svnU.length} 个改动` +
-      (_svnU.length ? `（另有 ${_svnU.length} 个未版本控制）` : '') +
+      (_svnU.length ? `（另有 ${_svnU.length}${D.truncated_unv ? '+' : ''} 个未版本控制）` : '') +
       (D.symlink_hidden ? `（已隐藏 ${D.symlink_hidden} 项网络盘符号链接误报）` : '');
   return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
     `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
-    `<span class="hg-vcs-count">${_chgTxt}</span></div>`;
+    `<span class="hg-vcs-count">${_chgTxt}</span>` +
+    _vcsRemoteChip(D) + `</div>`;
+}
+
+// a455：头部右侧的「执行方式」芯片。三种态：
+//   ssh   —— 已配置且正在用远端（绿点）
+//   smb   —— 网络盘但没配 / 刚回退（橙点，可点开引导）
+//   local —— 纯本地盘（灰点，不打扰；纯 Windows 环境就停在这）
+function _vcsRemoteChip(D) {
+  const mode = (D && D.remote_used) || '';
+  const hint = (D && D.remote_hint) || '';
+  if (mode === 'ssh') {
+    return `<button class="hg-vcs-rmchip on" name="hg_vcs_remote" title="正在用构建机执行版本命令（SSH 加速）">` +
+      `SSH 加速</button>`;
+  }
+  if (mode === 'smb') {
+    // a455：区分「根本没配」和「配了但这次失败了」——后者不能再说「建议启用」，
+    // 用户会以为自己没配过，反复重填。
+    if (hint) {
+      return `<button class="hg-vcs-rmchip warn" name="hg_vcs_remote" ` +
+        `title="SSH 已配置但本次回退到本地：${esc(hint)}">已配置·已回退</button>`;
+    }
+    return `<button class="hg-vcs-rmchip warn" name="hg_vcs_remote" ` +
+      `title="当前走网络盘本地 svn，扫描很慢——建议启用 SSH 加速">本地·建议 SSH</button>`;
+  }
+  return '';
 }
 function _vcsFileHtml(f, i) {
   const cls = _VCS_ST_CLS[f.st] || 'm';
@@ -1027,6 +1082,9 @@ function _vcsBind(paintRoots) {
   // 提交历史弹窗（打开时后台补刷新——v3.5.127「无条件重拉」语义由弹窗
   // 承接：无缓存即拉，有缓存先显后刷）
   if (lb) lb.onclick = () => _vcsHistOpen();
+  // a455：执行方式芯片 → SSH 配置弹窗
+  const _rmc = _vpEl.querySelector('[name="hg_vcs_remote"]');
+  if (_rmc) _rmc.onclick = (e) => { e.stopPropagation(); _vcsRemoteDialog(); };
   _vpEl.querySelectorAll('.hg-vcs-ck').forEach(ck => ck.onchange = () => {
     if (ck.checked) VCS.sel.add(ck.dataset.rel); else VCS.sel.delete(ck.dataset.rel);
     const cb = _vpEl.querySelector('[name="hg_vcs_commit"]');
@@ -1144,4 +1202,228 @@ function _vcsCommitModal() {
   });
   _vpModalHost().appendChild(ov);
   ta.focus();
+}
+
+
+// ==================== a455/a455：SSH 远端加速（版本面板内，不进设置页）====================
+// 两层模型（用户实锤：换个 svn 就要重填密码，太怪）：
+//   连接档案（主机/账号/口令/密钥）—— 全局共用一份，配一次到处复用
+//   工程映射（本地目录 → 远端目录）—— 每个工程一条，通常自动推导
+// UI：
+//   · 网络盘工程 → 头部橙色芯片；纯本地盘 → 不显示芯片、不打扰
+//   · 弹窗顶部「连接」下拉：已有档案直接选，新工程只需确认远端路径
+//   · 无任何档案时显示完整表单；有档案时可「新建连接」「管理连接」
+function _vcsRemoteDialog() {
+  const old = document.getElementById('hgVcsRemoteDlg');
+  if (old) old.remove();
+  const root = VCS.root || '';
+  const ov = document.createElement('div');
+  ov.id = 'hgVcsRemoteDlg';
+  ov.className = 'hg-vcs-rdlg';
+  ov.innerHTML = '<div class="hg-vcs-rdlg-card"><div class="hg-vcs-rdlg-sub">读取配置…</div></div>';
+  document.body.appendChild(ov);
+  ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+
+  fetch('/api/vcs/remote/probe', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root }) })
+    .then(r => r.json())
+    .then(j => _vcsRemoteRender(ov, root, j || {}))
+    .catch(e => {
+      const c = ov.querySelector('.hg-vcs-rdlg-card');
+      if (c) c.innerHTML = '<div class="hg-vcs-rdlg-msg err">配置读取失败：'
+        + esc(String(e)) + '</div>';
+    });
+}
+
+function _vcsRemoteRender(ov, root, p) {
+  const entry = p.entry || {};
+  const isNet = !!p.is_network;
+  const profiles = p.profiles || [];
+  const hasProf = profiles.length > 0;
+  const card = ov.querySelector('.hg-vcs-rdlg-card');
+  const sub = isNet
+    ? (p.configured
+        ? '当前工程在<b>网络盘 ' + esc(p.drive || '') + '</b> 上，已接入 SSH 加速——'
+          + '版本命令在构建机上执行，全树扫描从数十秒降到 2 秒级。'
+        : '检测到工程位于<b>网络盘 ' + esc(p.drive || '') + '</b>——本地 svn 需逐个文件走网络，'
+          + '全树扫描通常要数十秒。<br>接入构建机后改为远端执行，一次扫描约 2 秒。')
+    : ('当前工程在<b>本地盘 ' + esc(p.drive || '') + '</b> 上，本地 svn 已是毫秒级，'
+       + '无需 SSH 加速。<br>若该目录其实是映射盘但没被识别出来，可在此手动配置。');
+
+  // 选中哪个档案：当前工程已配 → 用它；否则用第一个（复用现有连接）
+  const selPid = entry.profile_id || (hasProf ? profiles[0].id : '');
+  const curProf = profiles.find(x => x.id === selPid) || {};
+  const auth = curProf.auth || 'password';
+
+  let html =
+    '<div class="hg-vcs-rdlg-title">' + (p.configured ? 'SSH 加速（已配置）' : '启用 SSH 加速') + '</div>' +
+    '<div class="hg-vcs-rdlg-sub">' + sub + '</div>' +
+    '<div class="hg-vcs-rdlg-row"><label>工程（本地）</label>' +
+      '<input data-rm-f="local_root" value="' + esc(root) + '" readonly></div>';
+
+  // ── 连接选择（有档案时）──
+  if (hasProf) {
+    html += '<div class="hg-vcs-rdlg-row"><label>连接</label>' +
+      '<select data-rm-f="profile_id">' +
+      profiles.map(x => `<option value="${x.id}"${x.id === selPid ? ' selected' : ''}>`
+        + esc((x.name || x.host) + '  ·  ' + x.user + '@' + x.host + ':' + x.port)
+        + '</option>').join('') +
+      '<option value="__new">＋ 新建连接…</option>' +
+      '</select></div>';
+  }
+
+  // a455：远端路径不再让用户填——保存时后端自己到构建机上找这个工程。
+  // 已定位到的只读展示出来，纯粹是让用户知道「它找到了哪儿」。
+  html +=
+    '<div class="hg-vcs-rdlg-row"><label>远端位置</label>' +
+      '<input data-rm-f="remote_root_readonly" readonly value="' +
+      esc(entry.remote_root || '') + '" placeholder="保存时自动定位（无需填写）"></div>';
+
+  // ── 新连接表单（无档案 / 选了「新建连接」时显示）──
+  const showNew = !hasProf;
+  html += '<div data-rm-newconn style="' + (showNew ? '' : 'display:none;') + '">' +
+    '<div class="hg-vcs-rdlg-row"><label>名称</label>' +
+      '<input data-rm-f="name" placeholder="构建机（可留空）" value=""></div>' +
+    '<div class="hg-vcs-rdlg-row"><label>主机</label>' +
+      '<input data-rm-f="host" placeholder="10.1.74.239" value="' + esc(curProf.host || '') + '"></div>' +
+    '<div class="hg-vcs-rdlg-row"><label>端口</label>' +
+      '<input data-rm-f="port" value="' + esc(String(curProf.port || 22)) + '"></div>' +
+    '<div class="hg-vcs-rdlg-row"><label>用户名</label>' +
+      '<input data-rm-f="user" placeholder="gaoyi13" value="' + esc(curProf.user || '') + '"></div>' +
+    '<div class="hg-vcs-rdlg-row"><label>认证方式</label>' +
+      '<select data-rm-f="auth">' +
+        '<option value="password"' + (auth === 'password' ? ' selected' : '') + '>密码登录</option>' +
+        '<option value="key"' + (auth === 'key' ? ' selected' : '') + '>私钥文件</option>' +
+        '<option value="agent"' + (auth === 'agent' ? ' selected' : '') + '>SSH Agent</option>' +
+      '</select></div>' +
+    '<div class="hg-vcs-rdlg-row" data-rm-pwd style="' + (auth === 'password' ? '' : 'display:none;') + '">' +
+      '<label>密码</label><input type="password" data-rm-f="password" placeholder="填写登录密码"></div>' +
+    '<div class="hg-vcs-rdlg-row" data-rm-key style="' + (auth === 'key' ? '' : 'display:none;') + '">' +
+      '<label>私钥文件</label><input data-rm-f="key_path" placeholder="留空 = 自动生成 ~/.ssh/id_ed25519" value="' +
+      esc(curProf.key_path || '') + '"></div>' +
+    '</div>';
+
+  html +=
+    '<div class="hg-vcs-rdlg-msg info" data-rmr-msg style="display:none;"></div>' +
+    '<div class="hg-vcs-rdlg-acts">' +
+      (p.configured ? '<button class="btn ghost" data-rm="del">断开此工程</button>' : '') +
+      (hasProf && p.configured ? '<button class="btn ghost" data-rm="deploy">一键部署公钥（免密）</button>' : '') +
+      '<button class="btn ghost" data-rm="test">测试连接</button>' +
+      '<button class="btn ghost" data-rm="cancel">取消</button>' +
+      '<button class="btn primary" data-rm="save">保存</button>' +
+    '</div>';
+
+  card.innerHTML = html;
+
+  const q = (s) => card.querySelector(s);
+  const val = (f) => {
+    const el = q('[data-rm-f="' + f + '"]');
+    return el ? String(el.value || '').trim() : '';
+  };
+  const msgEl = q('[data-rmr-msg]');
+  const msg = (txt, kind) => {
+    if (!msgEl) return;
+    msgEl.style.display = txt ? '' : 'none';
+    msgEl.className = 'hg-vcs-rdlg-msg ' + (kind || 'info');
+    msgEl.textContent = txt || '';
+  };
+  if (p.hint) msg('回退原因：' + p.hint, 'err');
+
+  const body = () => {
+    const pid = val('profile_id');
+    const isNew = !pid || pid === '__new';
+    // a455：不传 remote_root——后端会自己到构建机上定位这个工程
+    const b = { root: root, enabled: true };
+    if (isNew) {
+      Object.assign(b, {
+        host: val('host'), user: val('user'), port: val('port') || 22,
+        auth: val('auth') || 'password',
+        password: val('password') || undefined,
+        key_path: val('key_path'),
+        name: val('name'),
+      });
+    } else {
+      b.profile_id = parseInt(pid, 10);
+    }
+    return b;
+  };
+
+  // 切换连接档案 → 显示/隐藏新连接表单（路径由后端探测，无前端联动）
+  const psel = q('[data-rm-f="profile_id"]');
+  if (psel) psel.onchange = () => {
+    const isNew = psel.value === '__new';
+    const nc = q('[data-rm-newconn]');
+    if (nc) nc.style.display = isNew ? '' : 'none';
+    const rr = q('[data-rm-f="remote_root_readonly"]');
+    if (rr && !isNew) rr.value = '';   // 换连接后旧路径不再适用，保存时重新探测
+  };
+
+  const asel = q('[data-rm-f="auth"]');
+  if (asel) asel.onchange = () => {
+    const a = asel.value;
+    q('[data-rm-pwd]').style.display = (a === 'password') ? '' : 'none';
+    q('[data-rm-key]').style.display = (a === 'key') ? '' : 'none';
+  };
+
+  card.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
+    const act = b.dataset.rm;
+    if (act === 'cancel') { ov.remove(); return; }
+    if (act === 'del') {
+      fetch('/api/vcs/remote/delete', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: root }) })
+        .then(r => r.json()).then(() => { ov.remove(); _vcsReload(); })
+        .catch(() => msg('断开失败', 'err'));
+      return;
+    }
+    b.disabled = true;
+    const re = () => { b.disabled = false; };
+    if (act === 'save' || act === 'test') {
+      fetch('/api/vcs/remote/save', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body()) })
+        .then(r => r.json()).then(s => {
+          if (!s.ok) { re(); msg('保存失败：' + (s.err || ''), 'err'); return null; }
+          if (act === 'save') {
+            re(); ov.remove(); _vcsReload();
+            showBanner('已接入 SSH 加速', 2500);
+            return null;
+          }
+          msg('正在测试连接…', 'info');
+          return fetch('/api/vcs/remote/test', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ root: root }) }).then(r => r.json()).then(t => {
+            re();
+            if (t.ok) {
+              msg('连接成功（' + (t.latency_ms || 0) + ' ms）'
+                  + (t.svn_version ? '\n远端 svn ' + t.svn_version : '')
+                  + (t.git_version ? '\n远端 ' + t.git_version : ''), 'ok');
+            } else {
+              msg('连接失败：' + (t.err || '未知原因')
+                  + '\n可改用「一键部署公钥」走免密登录，或核对主机/端口/用户名/密码。', 'err');
+            }
+          });
+        })
+        .catch(e => { re(); msg('请求失败：' + String(e), 'err'); });
+      return;
+    }
+    if (act === 'deploy') {
+      msg('正在用已保存的密码登录并部署公钥…', 'info');
+      fetch('/api/vcs/remote/deploy_key', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: root }) })
+        .then(r => r.json()).then(d => {
+          re();
+          if (d.ok) {
+            msg('公钥已部署，已切换为免密登录。\n公钥：' + (d.pub || ''), 'ok');
+            setTimeout(() => { ov.remove(); _vcsReload(); }, 1200);
+          } else {
+            msg((d.err || '部署失败')
+                + (d.pub ? '\n可手动追加到远端 ~/.ssh/authorized_keys：\n' + d.pub : ''), 'err');
+          }
+        })
+        .catch(e => { re(); msg('部署失败：' + String(e), 'err'); });
+    }
+  });
 }

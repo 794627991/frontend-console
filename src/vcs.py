@@ -55,6 +55,102 @@ def _root_lock(wc_dir):
         return _ROOT_LOCKS.setdefault(os.path.normcase(wc_dir), threading.Lock())
 
 
+_LAST_REMOTE_ERR = {}        # root(normcase) -> (ts, msg)；status 端点透给 UI
+_REMOTE_ERR_TTL = 300        # 5 分钟内的回退原因保持可见，之后自动消失
+_REMOTE_CUR = threading.local()   # 每请求线程正在处理的工程根（防并发串扰）
+
+
+def _set_remote_err(e):
+    """记录一次远端回退原因，供 status/changes 端点透给 UI。"""
+    try:
+        r = getattr(_REMOTE_CUR, "root", None)
+        if r:
+            _LAST_REMOTE_ERR[os.path.normcase(r)] = (time.time(), str(e)[:200])
+    except Exception:
+        pass
+
+
+def _remote_ctx(cwd):
+    """判断 cwd 是否该走 SSH 远端。
+
+    只为**网络盘上的工程根**启用（纯 Windows 本地盘一次 stat 是微秒级，
+    走 SSH 反而多一跳网络）。返回 entry 或 None。
+
+    a455：优先用 _guard 记下的请求根；但该值是线程局部，Flask 的工作线程
+    会被复用——上一次请求的 root 会残留到下一次。所以只有「cwd 确实落在
+    那个 root 下」时才采信，否则以 cwd 自己为准（就地判断网络盘）。"""
+    try:
+        from src import vcs_remote
+    except Exception:
+        return None
+    root = getattr(_REMOTE_CUR, "root", None) or ""
+    if root:
+        nr = os.path.normcase(os.path.normpath(str(root)))
+        nc = os.path.normcase(os.path.normpath(str(cwd)))
+        if not (nc == nr or nc.startswith(nr + os.sep)):
+            root = ""          # 残留的旧 root，与本次 cwd 无关——丢弃
+    if not root:
+        root = cwd
+    try:
+        entry = vcs_remote.get_for_root(root)
+        if not entry and root != cwd:
+            entry = vcs_remote.get_for_root(cwd)
+            if entry:
+                root = cwd
+    except Exception:
+        return None
+    if not entry:
+        return None
+    try:
+        if not _is_network_drive(root):
+            return None
+    except Exception:
+        return None
+    _REMOTE_CUR.root = root
+    return entry
+
+
+def _remote_hint(root):
+    """给 UI 的回退提示（有则返回 (msg, ts)，否则 None）。"""
+    v = _LAST_REMOTE_ERR.get(os.path.normcase(str(root or "")))
+    if not v:
+        return None
+    if time.time() - v[0] > _REMOTE_ERR_TTL:
+        _LAST_REMOTE_ERR.pop(os.path.normcase(str(root or "")), None)
+        return None
+    return v[1]
+
+
+def _clear_remote_err(root):
+    _LAST_REMOTE_ERR.pop(os.path.normcase(str(root or "")), None)
+
+
+def _mirror_effective(root):
+    """该工程当前**实际**走的执行模式：'ssh' | 'smb' | 'local'。
+
+    注意与「配置了」不同——配置了但连接失败会回退本地，此处如实反映回退后
+    的真实状态，前端顶部据此显示「SSH 加速」还是「本地（已回退）」。"""
+    try:
+        from src import vcs_remote
+    except Exception:
+        return "local"
+    try:
+        entry = vcs_remote.get_for_root(root)
+    except Exception:
+        entry = None
+    if not entry:
+        try:
+            return "smb" if _is_network_drive(root) else "local"
+        except Exception:
+            return "local"
+    if _remote_hint(root):
+        return "smb"          # 配了但刚回退过
+    try:
+        return "ssh" if _is_network_drive(root) else "local"
+    except Exception:
+        return "local"
+
+
 def _data_dir():
     """运行时取 app_state.DATA_DIR（v3.5.118，轻审 P4：from-import 是值
     拷贝，数据目录迁移端点回写 _st.DATA_DIR 后这里仍指旧目录——vcs_tmp
@@ -76,7 +172,26 @@ def _dec(b):
 
 def _run(argv, cwd, timeout):
     """subprocess 统一入口：list argv / bytes 输出 / 隐藏窗口 / 超时保护。
-    返回 (rc, out_str, err_str)——超时转 rc=-1 + err 文案。"""
+    返回 (rc, out_str, err_str)——超时转 rc=-1 + err 文案。
+
+    a455：网络盘工程若配了 SSH 远端，改为在构建机上执行（SMB 上每次 stat
+    都是网络往返，全树 status 实测 47.9s vs 远端 1.1s）。远端不可达/未配置
+    → 静默回退本地，版本面板绝不因远端故障不可用。"""
+    r = _remote_ctx(cwd)
+    if r is not None:
+        try:
+            from src import vcs_remote
+            entry = r
+            rc, raw, e = vcs_remote.run(entry, argv, cwd, timeout)
+            return rc, _dec(raw), e
+        except Exception as _e:
+            # 回退本地：把原因记进 _LAST_REMOTE_ERR，status 端点透给 UI 提示
+            _set_remote_err(_e)
+    return _run_local(argv, cwd, timeout)
+
+
+def _run_local(argv, cwd, timeout):
+    """本地 subprocess 执行（原 _run 实现，逐字保留）。"""
     try:
         # B组P7：git/svn 子进程强制 C locale——shortstat 解析按英文
         # 「N insertions/deletions」配对，zh_CN gettext 下徽章会整体消失
@@ -239,7 +354,11 @@ def _wc_root(path):
 
 def _guard(root, need_tool=None):
     """公共前置：解析工作副本 + 工具探测。返回 (vcs, wc, err_resp, tool)。
-    err_resp 非 None 时调用方直接返回它。"""
+    err_resp 非 None 时调用方直接返回它。
+
+    a455：顺带把本次请求的工程根写进线程局部，供 _run 判定走不走 SSH 远端。
+    未配置/非网络盘时这里什么也不做，行为与改动前完全一致。"""
+    _REMOTE_CUR.root = str(root or "")
     vcs, wc, err = _wc_root(root)
     if err:
         return None, None, (jsonify({"ok": False, "err": err}), 400), None
@@ -324,10 +443,19 @@ def _git_status_run(wc):
         else:
             files.append({"rel": rel.replace("\\", "/"), "path": rel, "st": st})
     rc, rev, _e = _run(["git", "rev-parse", "--short", "HEAD"], wc, 10)
-    truncated = max(0, len(files) - FILES_CAP)
+    # a455：与 svn 同因——git status 也按路径字典序，未纳入版本控制的文件
+    # （构建产物等）可能吃掉全部额度，把真实改动挤出列表。实质改动优先。
+    _core = [f for f in files if f["st"] != "?"]
+    _unv = [f for f in files if f["st"] == "?"]
+    _core_kept = _core[:FILES_CAP]
+    _room = FILES_CAP - len(_core_kept)
+    _unv_kept = _unv[:_room] if _room > 0 else []
+    _trunc_unv = max(0, len(_unv) - len(_unv_kept))
     return {"vcs": "git", "tool": True, "branch": branch, "rev": rev.strip(),
             "ahead": ahead, "behind": behind,
-            "files": files[:FILES_CAP], "truncated": truncated}, None
+            "files": _core_kept + _unv_kept,
+            "truncated": max(0, len(_core) - len(_core_kept)),
+            **({"truncated_unv": _trunc_unv} if _trunc_unv else {})}, None
 
 
 def _svn_info(wc):
@@ -356,9 +484,14 @@ def _svn_changes(wc, depth=None):
     实测 0.45s vs 全树 39~54s）——首屏秒出顶层改动，全树由前端二段补扫
     覆盖；超时 30s 对秒级余量充足。"""
     argv = ["svn", "status", "--xml"]
-    if depth:
+    # a455：走 SSH 远端时取消分层加载——分层是为绕开 SMB 全树 40~50s 的
+    # 痛点，而远端全量只要 1~2s；照旧发 --depth empty 反而在 Linux 侧要全表
+    # 扫 wc.db（实测 37s 且顶层恒空），比全量还慢。
+    if depth and _remote_ctx(wc) is None:
         argv += ["--depth", depth]
-    rc, out, err = _run(argv, wc, 30 if depth == "empty" else VCS_TIMEOUT_CHG)
+    # a455：远端全量 1~2s，无需为分层单独缩短超时
+    _to = 30 if (depth == "empty" and _remote_ctx(wc) is None) else VCS_TIMEOUT_CHG
+    rc, out, err = _run(argv, wc, _to)
     if rc != 0:
         if "超时" in (err or ""):
             return {"files": [], "truncated": 0,
@@ -391,7 +524,11 @@ def _svn_changes(wc, depth=None):
     # 目标内容）；~/! 是类型变更/目标不可达。网络盘上按 wc.db 的 svn:special
     # 清单过滤（绝不静默：symlink_hidden 透出，前端提示）
     sym_hidden = 0
-    if files and _is_network_drive(wc):
+    # a455：走 SSH 远端时结果来自 Linux 侧——那里的符号链接是真实的，
+    # 不该按 SMB 展开误报去过滤（否则会误删真实改动条目）。
+    # 只有「网络盘 + 未启用远端」才需要这套补偿。
+    _use_remote = _remote_ctx(wc) is not None and not _remote_hint(wc)
+    if files and not _use_remote and _is_network_drive(wc):
         sym = _svn_symlink_paths(wc)
         sym_low = {x.lower() for x in sym}
         kept = []
@@ -407,9 +544,28 @@ def _svn_changes(wc, depth=None):
                 continue
             kept.append(f)
         files = kept
-    truncated = max(0, len(files) - FILES_CAP)
+    truncated_unv = 0
+    if files:
+        # a455（实锤：G10 有 5 个真实 M 却显示「没有实质改动」）：svn status
+        # 按路径字典序输出，未版本控制文件（编译产物）动辄数万个，把 500 条
+        # 额度全吃掉——实质改动落在第几千位以后被截断，前端折叠 ? 后就只剩
+        # 空白。截断前**分区**：实质改动优先，? 用剩余额度补。
+        _core = [f for f in files if f["st"] != "?"]
+        _unv = [f for f in files if f["st"] == "?"]
+        _core_kept = _core[:FILES_CAP]
+        _room = FILES_CAP - len(_core_kept)
+        _unv_kept = _unv[:_room] if _room > 0 else []
+        files = _core_kept + _unv_kept
+        truncated = max(0, len(_core) - len(_core_kept))
+        truncated_unv = max(0, len(_unv) - len(_unv_kept))
+    else:
+        truncated = 0
     return {"files": files[:FILES_CAP], "truncated": truncated,
+            **({"truncated_unv": truncated_unv} if truncated_unv else {}),
             "shallow": bool(depth),
+            # a455：远端模式下请求虽标了 shallow，实际做的是全量——前端据此
+            # 跳过第二段补扫（否则同一份全量结果白拉两遍）
+            **({"shallow_skipped": True} if (depth and _use_remote) else {}),
             **({"symlink_hidden": sym_hidden} if sym_hidden else {})}, None
 
 
@@ -444,13 +600,19 @@ def vcs_status():
     # 记，前端显示「改动扫描中」占位。git 的 status 本身亚秒级，维持原样
     if vcs == "svn":
         rev, branch = _svn_info(wc)
+        give_miss = _remote_hint(data.get("root"))
         return jsonify({"ok": True, "vcs": "svn", "tool": True,
                         "branch": branch, "rev": rev, "ahead": 0, "behind": 0,
-                        "files": [], "truncated": 0, "changes_pending": True})
+                        "files": [], "truncated": 0, "changes_pending": True,
+                        "remote_used": _mirror_effective(data.get("root")),
+                        **({"remote_hint": give_miss} if give_miss else {})})
     res, e = _git_status(wc)
     if e:
         return jsonify({"ok": False, "err": e}), 500
-    return jsonify({"ok": True, **res})
+    _h = _remote_hint(data.get("root"))
+    return jsonify({"ok": True, **res,
+                    "remote_used": _mirror_effective(data.get("root")),
+                    **({"remote_hint": _h} if _h else {})})
 
 
 @vcs_bp.route("/api/vcs/changes", methods=["POST"])
@@ -472,13 +634,20 @@ def vcs_changes():
         res, e = _svn_changes(wc, depth="empty" if data.get("shallow") else None)
         if e:
             return jsonify({"ok": False, "err": e}), 500
-        return jsonify({"ok": True, "vcs": "svn", **res})
+        _h = _remote_hint(data.get("root"))
+        return jsonify({"ok": True, "vcs": "svn", **res,
+                        "remote_used": _mirror_effective(data.get("root")),
+                        **({"remote_hint": _h} if _h else {})})
     res, e = _git_status(wc)
     if e:
         return jsonify({"ok": False, "err": e}), 500
+    _h = _remote_hint(data.get("root"))
     return jsonify({"ok": True, "vcs": "git",
                     "files": res.get("files", []),
-                    "truncated": res.get("truncated", 0)})
+                    "truncated": res.get("truncated", 0),
+                    "truncated_unv": res.get("truncated_unv", 0),
+                    "remote_used": _mirror_effective(data.get("root")),
+                    **({"remote_hint": _h} if _h else {})})
 
 
 # ---------------------------------------------------------------------------
@@ -647,28 +816,38 @@ def vcs_log():
 # diff（旧版本物化成临时文件，前端 buildDiffViewerTab 走真实路径）
 # ---------------------------------------------------------------------------
 
-def _git_old_bytes(wc, rel, st):
-    if st == "A":                           # 新增文件：旧版为空
-        return b""
-    try:                                    # 轻审 P6：超时/异常降级空旧版
-        p = subprocess.run(["git", "show", "HEAD:%s" % rel], cwd=wc,
-                           capture_output=True, timeout=VCS_TIMEOUT_RO,
+def _run_bytes(argv, cwd, timeout=None):
+    """取原始字节（diff 用）。a455：与 _run 同样优先走 SSH 远端——
+    否则 diff 在网盘上仍要 47s 级。失败返回 b''（原有降级语义不变）。"""
+    to = timeout or VCS_TIMEOUT_RO
+    entry = _remote_ctx(cwd)
+    if entry is not None:
+        try:
+            from src import vcs_remote
+            rc, raw, _e = vcs_remote.run(entry, argv, cwd, to)
+            return raw if rc == 0 else b""
+        except Exception as _e:
+            _set_remote_err(_e)
+    try:
+        p = subprocess.run([str(a) for a in argv], cwd=cwd,
+                           capture_output=True, timeout=to,
                            creationflags=CREATE_NO_WINDOW)
         return p.stdout if p.returncode == 0 else b""
     except Exception:
         return b""
+
+
+def _git_old_bytes(wc, rel, st):
+    if st == "A":                           # 新增文件：旧版为空
+        return b""
+    # 轻审 P6：超时/异常降级空旧版
+    return _run_bytes(["git", "show", "HEAD:%s" % rel], wc)
 
 
 def _svn_old_bytes(wc, rel, st):
     if st == "A":
         return b""
-    try:
-        p = subprocess.run(["svn", "cat", "-r", "BASE", os.path.join(wc, rel)],
-                           cwd=wc, capture_output=True, timeout=VCS_TIMEOUT_RO,
-                           creationflags=CREATE_NO_WINDOW)
-        return p.stdout if p.returncode == 0 else b""
-    except Exception:
-        return b""
+    return _run_bytes(["svn", "cat", "-r", "BASE", os.path.join(wc, rel)], wc)
 
 
 @vcs_bp.route("/api/vcs/commit_files", methods=["POST"])
@@ -738,16 +917,10 @@ def vcs_commit_diff():
     st = str(data.get("st") or "M")
 
     def _git_rev_bytes(spec):
-        try:
-            # v3.5.132（轻审严重2）：quotepath 同步——rel 含非 ASCII 时 rev:rel
-            # 必须按原字节名寻址
-            p = subprocess.run(["git", "-c", "core.quotepath=false", "show",
-                                "%s:%s" % (spec, rel)], cwd=wc,
-                               capture_output=True, timeout=VCS_TIMEOUT_RO,
-                               creationflags=CREATE_NO_WINDOW)
-            return p.stdout if p.returncode == 0 else b""
-        except Exception:
-            return b""
+        # v3.5.132（轻审严重2）：quotepath 同步——rel 含非 ASCII 时 rev:rel
+        # 必须按原字节名寻址。a455：统一走 _run_bytes（自动优先 SSH 远端）。
+        return _run_bytes(["git", "-c", "core.quotepath=false", "show",
+                           "%s:%s" % (spec, rel)], wc)
 
     base = os.path.basename(rel)
     if vcs == "git":
@@ -756,13 +929,8 @@ def vcs_commit_diff():
         a_hint, b_hint = "%s@%s~1" % (base, rev[:8]), "%s@%s" % (base, rev[:8])
     else:
         def _svn_rev_bytes(r):
-            try:
-                p = subprocess.run(["svn", "cat", "-r", r, os.path.join(wc, rel)],
-                                   cwd=wc, capture_output=True, timeout=VCS_TIMEOUT_RO,
-                                   creationflags=CREATE_NO_WINDOW)
-                return p.stdout if p.returncode == 0 else b""
-            except Exception:
-                return b""
+            return _run_bytes(["svn", "cat", "-r", r,
+                               os.path.join(wc, rel)], wc)
         a_bytes = b"" if st == "A" else _svn_rev_bytes(str(int(rev) - 1))
         b_bytes = b"" if st == "D" else _svn_rev_bytes(rev)
         a_hint, b_hint = "%s@r%s-1" % (base, rev), "%s@r%s" % (base, rev)
@@ -925,3 +1093,192 @@ def vcs_update():
         _st_memo_inval(wc)   # 写后失效 status memo（性能批）
         return jsonify({"ok": True, "out": text[:4000],
                         "conflicts": conflicts})
+
+
+# ---------------------------------------------------------------------------
+# 远端加速（a455）：版本面板内的 SSH 配置 / 探测 / 一键部署公钥
+# ---------------------------------------------------------------------------
+
+@vcs_bp.route("/api/vcs/remote/probe", methods=["POST"])
+def vcs_remote_probe():
+    """当前工程该不该、能不能走 SSH 远端。前端据此决定显示哪种引导。
+
+    返回 {ok, vcs, is_network, drive, configured, enabled, remote_ok, reason,
+          entry(脱敏), hint(上次回退原因)}
+    纯本地盘：is_network=False，前端什么都不显示（不打扰）。
+    网络盘未配置：reason='unconfigured'，前端出「建议启用 SSH 加速」卡片。"""
+    from src import vcs_remote
+    data = request.get_json(force=True, silent=True) or {}
+    root = str(data.get("root") or "").strip()
+    vcs, wc, err, _tool_ok = _guard(root)
+    if err:
+        return err
+    probe = vcs_remote.probe_scope(root)
+    entry = vcs_remote.get_for_root(root)
+    profiles = vcs_remote.list_profiles()
+    # a455：连接档案全局复用——换工程时不用重填主机/口令；这里顺带给出
+    # 按共享根推导出的远端路径，用户确认一下就能保存。
+    _basis = entry or (profiles[0] if profiles else {})
+    # a455：档案没设共享根时，连上去自动探测一次（结果只用于本次提示）
+    _share = (_basis or {}).get("share_root") or ""
+    if _basis and not _share:
+        _prof = vcs_remote.get_profile(_basis.get("profile_id")
+                                       or _basis.get("id"))
+        if _prof:
+            _share = vcs_remote.detect_share_root(_prof, root)
+            if _share:
+                _basis = dict(_basis, share_root=_share)
+    resp = {"ok": True, "vcs": vcs, "wc": wc, **probe,
+            "entry": vcs_remote.public_view(entry),
+            "profiles": profiles,
+            "mappings": vcs_remote.list_mappings(),
+            "detected_share_root": _share,
+            "suggest_remote_root": vcs_remote.guess_remote_root(root, _basis)
+            if _basis else "",
+            "hint": _remote_hint(root) or ""}
+    # 已配置但从未测通时，顺带做一次轻探测（12s 上限，失败也返回 200）
+    if entry and probe.get("reason") == "configured" and data.get("check"):
+        t = vcs_remote.test(entry)
+        resp["test"] = t
+        resp["remote_ok"] = bool(t.get("ok"))
+        if not t.get("ok"):
+            resp["hint"] = t.get("err") or ""
+    return jsonify(resp)
+
+
+@vcs_bp.route("/api/vcs/remote/save", methods=["POST"])
+def vcs_remote_save():
+    """保存工程映射；若同时给了主机信息则一并维护连接档案。body:
+    {root, profile_id?, host?, user?, remote_root?, auth?, password?,
+     key_path?, port?, share_root?, name?, enabled?}
+
+    典型两种调用：
+      换工程复用已有档案 → {root, profile_id: 1, remote_root: "/data1/..."}
+      首次配置          → {root, host, user, password, share_root}
+    password 省略/空 = 保留已存口令（改主机名不丢密码）。"""
+    from src import vcs_remote
+    data = request.get_json(force=True, silent=True) or {}
+    root = str(data.get("root") or "").strip()
+    _vcs, _wc, err, _t = _guard(root)
+    if err:
+        return err
+    auth = str(data.get("auth") or "").strip().lower()
+    if auth and auth not in ("password", "key", "agent"):
+        return jsonify({"ok": False, "err": "auth 必须是 password/key/agent"}), 400
+    pwd = data.get("password")
+    pid = data.get("profile_id")
+    try:
+        pid = int(pid) if pid not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "err": "profile_id 必须是数字"}), 400
+    try:
+        entry = vcs_remote.upsert(
+            local_root=root,
+            host=data.get("host") or None,
+            user=data.get("user") or None,
+            remote_root=data.get("remote_root") or None,
+            auth=auth or "password",
+            password=(str(pwd) if pwd else None),
+            key_path=data.get("key_path") or "",
+            port=data.get("port") or 22,
+            enabled=data.get("enabled", True),
+            profile_id=pid,
+            share_root=data.get("share_root") or "",
+            name=data.get("name") or "")
+    except ValueError as e:
+        return jsonify({"ok": False, "err": str(e)}), 400
+    _clear_remote_err(root)      # 配置变更后清掉旧的回退提示
+    return jsonify({"ok": True, "entry": vcs_remote.public_view(
+        vcs_remote.get_for_root(root)),
+        "profiles": vcs_remote.list_profiles()})
+
+
+@vcs_bp.route("/api/vcs/remote/profiles", methods=["POST"])
+def vcs_remote_profiles():
+    """连接档案的独立管理（新增/修改/删除），与工程无关。
+
+    body {action: "save"|"delete", id?, name?, host?, user?, auth?,
+          password?, key_path?, port?, share_root?}"""
+    from src import vcs_remote
+    data = request.get_json(force=True, silent=True) or {}
+    act = str(data.get("action") or "").strip().lower()
+    if act == "delete":
+        try:
+            pid = int(data.get("id"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "err": "id 必须是数字"}), 400
+        r = vcs_remote.remove_profile(pid)
+        return jsonify({"ok": True, **r,
+                        "profiles": vcs_remote.list_profiles()})
+    if act != "save":
+        return jsonify({"ok": False, "err": "action 必须是 save/delete"}), 400
+    auth = str(data.get("auth") or "password").strip().lower()
+    if auth not in ("password", "key", "agent"):
+        return jsonify({"ok": False, "err": "auth 必须是 password/key/agent"}), 400
+    pwd = data.get("password")
+    pid = data.get("id")
+    try:
+        pid = int(pid) if pid not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "err": "id 必须是数字"}), 400
+    try:
+        prof = vcs_remote.upsert_profile(
+            profile_id=pid, name=data.get("name") or "",
+            host=data.get("host"), user=data.get("user"), auth=auth,
+            password=(str(pwd) if pwd else None),
+            key_path=data.get("key_path") or "",
+            port=data.get("port") or 22,
+            share_root=data.get("share_root") or "")
+    except ValueError as e:
+        return jsonify({"ok": False, "err": str(e)}), 400
+    return jsonify({"ok": True, "profile": vcs_remote.public_profile(prof),
+                    "profiles": vcs_remote.list_profiles()})
+
+
+@vcs_bp.route("/api/vcs/remote/test", methods=["POST"])
+def vcs_remote_test():
+    """用已存配置测连通性（不传 body 也能测：默认用 root 对应那条）。"""
+    from src import vcs_remote
+    data = request.get_json(force=True, silent=True) or {}
+    root = str(data.get("root") or "").strip()
+    entry = vcs_remote.get_for_root(root)
+    if not entry:
+        return jsonify({"ok": False, "err": "该工程还没有保存 SSH 配置"}), 400
+    t = vcs_remote.test(entry)
+    if t.get("ok"):
+        _clear_remote_err(root)
+    else:
+        _LAST_REMOTE_ERR[os.path.normcase(root)] = (time.time(),
+                                                    t.get("err") or "连接失败")
+    return jsonify({"ok": bool(t.get("ok")), **t})
+
+
+@vcs_bp.route("/api/vcs/remote/deploy_key", methods=["POST"])
+def vcs_remote_deploy_key():
+    """一键部署公钥：用已存口令登录一次，把公钥追加到远端 authorized_keys，
+    成功后把配置切到免密登录。返回公钥内容供用户手工兜底。"""
+    from src import vcs_remote
+    data = request.get_json(force=True, silent=True) or {}
+    root = str(data.get("root") or "").strip()
+    _vcs, _wc, err, _t = _guard(root)
+    if err:
+        return err
+    entry = vcs_remote.get_for_root(root)
+    if not entry:
+        return jsonify({"ok": False, "err": "请先保存 SSH 配置"}), 400
+    res = vcs_remote.deploy_key(entry, data.get("key_path") or "")
+    if not res.get("ok"):
+        return jsonify({"ok": False, **res}), 400
+    vcs_remote.drop_pool()
+    return jsonify({"ok": True, **res})
+
+
+@vcs_bp.route("/api/vcs/remote/delete", methods=["POST"])
+def vcs_remote_delete():
+    """删除该工程的 SSH 配置（回到本地 svn 模式）。"""
+    from src import vcs_remote
+    data = request.get_json(force=True, silent=True) or {}
+    root = str(data.get("root") or "").strip()
+    vcs_remote.remove(root)
+    _clear_remote_err(root)
+    return jsonify({"ok": True})
