@@ -739,25 +739,35 @@ def _is_lockout_msg(msg):
     因为 600s 一次的退避重登一直在续期）。所以必须在文案层识别出来，
     一旦命中就停登，等用户手动触发。
 
-    a456（用户实锤：改了没生效，前端仍显示「会话失效…」而非「账号锁定」）：
-    原实现只认英文关键词，而 _classify_nonjson 在「登录页但无 msg」时走的是
-    **优先级4 的兜底文案**——「会话失效，请求被重定向回 SSO 登录页。可能
-    账号已锁定或凭据失效…」。这段中文里含「锁定」但一个英文关键词都没有，
-    于是永远判不出锁定。中文关键词必须一起认。
+    a461（审计 P0：判据闭合成环）：原实现里的「锁定」二字是子串匹配，而
+    `lanz_quota._classify_nonjson` 的**密码错误**文案自带警示语「注意：
+    连续错误会锁定 SSO 账号」——警示语被当成锁定事实，用户密码输错一次
+    就永久停登，改对密码也不自愈。所以不能匹配裸「锁定」，必须匹配
+    _classify_nonjson **优先级1 那条确定结论**的特征词。
+
+    同理「会话失效 + 重定向」（优先级4）本身是「可能锁定也可能凭据失效」
+    的不确定结论，不该当确定锁定处理：它只作为**一次性的**停登理由（避免
+    反复撞锁），且 refresh_now / force_relogin / 换凭据都能立刻解除。
     """
     m = str(msg or "").lower()
+    # 英文：锁定页/接口返回的原始错误（lanz_quota 会拼进各异常文案）
     if any(k in m for k in _LOCKOUT_KEYS):
         return True
     if "too many" in m and "attempt" in m:
         return True
-    # 中文判据（_classify_nonjson 优先级1/优先级4 的两种文案）
-    for k in ("锁定", "尝试次数超限", "次数超限"):
-        if k in m:
-            return True
-    # 优先级4 兜底文案形如「可能账号已锁定或凭据失效」——它不是确定锁定，
-    # 但输出这条时服务端确实把已登录会话踢回了登录页，重登只会继续撞锁，
-    # 所以同样按锁定停登处理（停比反复敲安全）。
-    return "会话失效" in m and "重定向" in m
+    # 中文：只认 _classify_nonjson 优先级1 的确定结论。不要匹配裸「锁定」——
+    # 密码错误文案里的「会锁定 SSO 账号」是警示语，不是事实。
+    if "已被 sso 锁定" in m:
+        return True
+    # a462（审计）：优先级3 —— 服务端登录页 `<div id="msg">` 若给出中文提示
+    # （如「您的账号已被锁定」），_classify_nonjson 不命中英文关键词就落到
+    # 「登录失败…服务端提示: …」。必须认带「已」的确定措辞，仍不得恢复裸
+    # 「锁定」。注意不能匹配「账号已锁定」——优先级4 兜底文案「可能账号
+    # 已锁定或凭据失效」含该子串，那是**不确定**结论，误判成确定锁定就是
+    # 上一轮刚修掉的 P0（假锁定卡死一整夜）。
+    if "已被锁定" in m:
+        return True
+    return "尝试次数超限" in m or "次数超限" in m
 
 
 def _cfg_get_quota_auto():
@@ -770,6 +780,19 @@ def _cfg_get_quota_auto():
         return True if v is None else bool(v)
     except Exception:
         return True
+
+
+def _epoch_changed(w, cred, cred_now, cur_epoch):
+    """内层负载循环的「换代」判据：凭据变了、或两个 epoch 计数任一变了。
+
+    a462（审计）：`cur_epoch` 是 `(cur_cred_epoch, cred_epoch)` **二元组**，
+    原来这里写成 `getattr(self, "_cur_cred_epoch", 0) != cur_epoch`——int 与
+    tuple 恒不等 → 内层每轮必 break，600s 的全量刷新被退化成 20s 一次。
+    抽成独立函数是为了让测试**直接调真实判据**，而不是在测试里复刻表达式。
+    """
+    return (cred_now != cred
+            or cur_epoch[0] != getattr(w, "_cur_cred_epoch", 0)
+            or cur_epoch[1] != w._cred_epoch)
 
 
 def _cfg_get_auto_relogin():
@@ -817,6 +840,8 @@ class LanzQuotaWorker:
         self._login_failed = False
         self._login_err = ""
         self._locked = False                 # a454：SSO 锁定 → 停登等手动
+        self._cred_epoch = 0                 # a461：凭据提交计数（同值重提也能唤醒）
+        self._refresh_req = False            # a461：手动刷新请求（唤醒后必须拉一次全量）
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -825,21 +850,36 @@ class LanzQuotaWorker:
     def submit_credentials(self, user, pwd):
         with self._lock:
             self._cred = (user, pwd)
+            # a461（审计 P2）：只比较凭据值时，用户把**同一组**账号密码再提交
+            # 一次无法跳出锁定停登循环（元组相等），界面一直停在锁定态。用
+            # epoch 给「提交动作」本身发信号。
+            self._cred_epoch += 1
+            # a461（审计 P1）：换账号/改密码要清掉上一个账号的锁定态，
+            # 否则账号 A 被锁的 _locked/_login_err 会传给账号 B。
+            self._locked = False
+            self._login_err = ""
         self._wake.set()
 
     def clear_credentials(self):
         with self._lock:
             self._cred = None
             self._login_failed = False
+            self._locked = False      # a461：登出必须清锁定态
+            self._login_err = ""
+            self._cred_epoch += 1
         self._wake.set()
 
     def refresh_now(self):
         """手动刷新。a454：同时解除锁定停登——用户手动点了就是要再试一次，
-        这是解锁后唯一的主动出口（自动重登已被锁定拦住）。"""
+        这是解锁后唯一的主动出口（自动重登已被锁定拦住）。
+        a461（审计 P1：点刷新对额度无效）：原实现只 _wake.set()，而内层循环
+        醒来先判 `now - last_full >= 600` 未到期就跳过，手动刷新等于没刷。
+        加一次性标志，内层消费后必拉一次全量。"""
         with self._lock:
             if self._cred is None:
                 return False
             self._locked = False
+            self._refresh_req = True
         self._wake.set()
         return True
 
@@ -891,6 +931,7 @@ class LanzQuotaWorker:
         client = None
         cur_cred = object()
         cur_epoch = 0
+        epoch_of_cred = 0
         fail_n = 0
         while not self._stop.is_set():
             try:
@@ -901,12 +942,21 @@ class LanzQuotaWorker:
                     self._wake.wait(5)
                     self._wake.clear()
                     continue
-                epoch = getattr(self, "_cur_cred_epoch", 0)
+                # a461：凭据「提交动作」也算换代信号——用户把同一组账号密码
+                # 再提交一次时 cred 元组相等，只比值得不到任何变化，会卡在
+                # 锁定停登循环里出不来。把 _cred_epoch 并入 epoch。
+                with self._lock:
+                    epoch = (getattr(self, "_cur_cred_epoch", 0),
+                             self._cred_epoch)
                 if cred != cur_cred or epoch != cur_epoch:
                     # 换凭据或 force_relogin（epoch++）：换新 client 丢旧 session
                     client = lanz_quota.LanzClient(*cred)
                     cur_cred = cred
                     cur_epoch = epoch
+                    # a462（审计实锤：cur_epoch 是元组，下面却拿 int 比，
+                    # 恒不等 → 内层每轮必 break，600s 全量刷新退化成 20s）。
+                    # 复用同一份快照，不要二次读共享字段。
+                    epoch_of_cred = epoch[1]
                     fail_n = 0
                 if not self._ensure_login(client, cred):
                     self._clear_loads("登录失败，模型负载暂不可用")
@@ -923,6 +973,8 @@ class LanzQuotaWorker:
                             with self._lock:
                                 if not self._locked or self._cred != cred:
                                     break
+                                if self._cred_epoch != epoch_of_cred:
+                                    break   # a461：同一凭据重提也要能跳出
                             self._wake.wait(5)
                             self._wake.clear()
                         continue
@@ -950,9 +1002,15 @@ class LanzQuotaWorker:
                 last_full = 0.0
                 while not self._stop.is_set():
                     now = time.time()
-                    if now - last_full >= (self.REFRESH_INTERVAL if auto else 1e9):
-                        self._fetch_all(client, cred)
+                    # a461（审计 P1：点刷新对额度无效）：手动刷新请求必须
+                    # 立即拉一次全量，不能被下面 600s 的到期判定吃掉。
+                    with self._lock:
+                        force_full = self._refresh_req
+                        self._refresh_req = False
+                    if force_full or now - last_full >= (self.REFRESH_INTERVAL if auto else 1e9):
                         last_full = time.time()
+                        if not self._fetch_all(client, cred):
+                            break        # a462：会话过期 → 回外层走 _ensure_login
                     if not self._fetch_loads(client):
                         break            # 会话失效 → 回外层按 60s 退避重登
                     self._wake.clear()
@@ -962,7 +1020,9 @@ class LanzQuotaWorker:
                     self._wake.wait(LOAD_TTL if auto else None)
                     with self._lock:
                         cred_now, auto_now = self._cred, self._auto
-                    if cred_now != cred or getattr(self, "_cur_cred_epoch", 0) != cur_epoch:
+                    # a462：cur_epoch 是 (cur_cred_epoch, cred_epoch) 二元组，
+                    # 必须逐项比。原来 `int != tuple` 恒真，内层每轮都 break。
+                    if _epoch_changed(self, cred, cred_now, cur_epoch):
                         break            # 凭据/重登变了 → 回外层重建 client
                     auto = auto_now
             except Exception:
@@ -1028,64 +1088,93 @@ class LanzQuotaWorker:
             self._emit("login_ok", cred[0])
             return True
         except lanz_quota.LanzAuthError as e:
+            msg = str(e)
             with self._lock:
-                self._login_failed = True
-                self._login_err = str(e)
-                # a454（用户实锤：1 小时不解锁——锁定期间每 600s 仍自动登一次，
-                # 每次尝试都把 SSO 锁定计时重置，等于永久续期）。识别到锁定
-                # 文案就**停登**，不再定时重试，等用户手动点刷新/重登。
-                if _is_lockout_msg(str(e)):
-                    self._locked = True
+                # a462（审计）：旧账号的 login() 在途时用户提交了新账号，
+                # 这里若照写 _locked/_login_err，会把旧账号的锁定态喂给新
+                # 账号（界面闪一次误导性的「账号已被 SSO 锁定」）。持锁区
+                # 内只能直接比字段——_cred_changed 会重新 acquire 死锁。
+                if self._cred == cred:
+                    self._login_failed = True
+                    self._login_err = msg
+                    # a454（用户实锤：1 小时不解锁——锁定期间每 600s 仍自动
+                    # 登一次，每次尝试都把 SSO 锁定计时重置，等于永久续期）。
+                    # 识别到锁定文案就**停登**，不再定时重试，等用户手动点
+                    # 刷新/重登。
+                    if _is_lockout_msg(msg):
+                        self._locked = True
             if not self._cred_changed(cred):
-                self._emit("login_err", str(e))
+                self._emit("login_err", msg)
             return False
         except lanz_quota.LanzNetworkError as e:
+            # a461（审计 P1）：锁定文案不只从 LanzAuthError 出来——_fetch_text
+            # 在 HTTP 401/403/500 时把响应体拼进 LanzNetworkError，锁定页的
+            # "Too many attempts" 会走这条。只认 LanzAuthError 就漏判，外层
+            # 按 60→600s 退避持续重登，把 SSO 锁定反复续期。
+            msg = "网络错误（需内网/VPN）: %s" % e
             with self._lock:
                 self._login_failed = True
+                if _is_lockout_msg(msg):
+                    self._locked = True
+                    self._login_err = msg
             if not self._cred_changed(cred):
-                self._emit("login_err", "网络错误（需内网/VPN）: %s" % e)
+                self._emit("login_err", msg)
             return False
         except lanz_quota.LanzError as e:
+            # a461：同理，_request 在 code!=2001/3001 时抛的通用 LanzError
+            # 也可能带锁定文案（"API 返回错误 code=… msg=Too many attempts"）。
+            msg = "登录失败: %s" % e
             with self._lock:
                 self._login_failed = True
+                if _is_lockout_msg(msg):
+                    self._locked = True
+                    self._login_err = msg
             if not self._cred_changed(cred):
-                self._emit("login_err", "登录失败: %s" % e)
+                self._emit("login_err", msg)
             return False
 
     def _fetch_all(self, client, cred=None):
-        for attempt in (1, 2):
+        """拉额度全量。返回 True=继续，False=会话已过期，调用方须回外层重登。
+
+        a461：原 `for attempt in (1, 2)` 的重试只服务于「会话过期 → force
+        重登 → 再取一次」这一条（唯一 continue 的路径，已删）。现在会话
+        过期直接返回 False，循环只跑一轮。
+
+        a462（审计）：原来这里只 emit 不返回状态，内层靠紧随的
+        _fetch_loads 也报 3001 才 break。若 dashboard 走 /v1/ai-resource 已
+        过期、而 models 走 /v1/openai/models 仍 2001（两条网关路径），内层
+        永不回外层 → 额度面板永久「会话过期，等待重新登录」直到手动重登。
+        会话过期必须以返回值显式传递。
+        """
+        try:
+            dash = client.get_dashboard()
+            budget = None
             try:
-                dash = client.get_dashboard()
-                budget = None
-                try:
-                    budget = client.get_budget_overview()
-                except lanz_quota.LanzError:
-                    pass
-                if cred is not None and self._cred_changed(cred):
-                    return
-                self._emit("data", {"dashboard": dash, "budget": budget,
-                                    "ts": time.time()})
-                return
-            except lanz_quota.LanzSessionExpired:
-                if attempt == 1:
-                    try:
-                        client.login(force=True)
-                        continue
-                    except lanz_quota.LanzError as e:
-                        if cred is None or not self._cred_changed(cred):
-                            self._emit("fetch_err", "会话过期且重新登录失败: %s" % e)
-                        return
-                if cred is None or not self._cred_changed(cred):
-                    self._emit("fetch_err", "会话过期")
-                return
-            except lanz_quota.LanzNetworkError as e:
-                if cred is None or not self._cred_changed(cred):
-                    self._emit("fetch_err", "网络错误: %s" % e)
-                return
-            except lanz_quota.LanzError as e:
-                if cred is None or not self._cred_changed(cred):
-                    self._emit("fetch_err", "查询失败: %s" % e)
-                return
+                budget = client.get_budget_overview()
+            except lanz_quota.LanzError:
+                pass
+            if cred is not None and self._cred_changed(cred):
+                return True
+            self._emit("data", {"dashboard": dash, "budget": budget,
+                                "ts": time.time()})
+            return True
+        except lanz_quota.LanzSessionExpired:
+            # a461（审计 P1）：这里原有 `client.login(force=True)` 私有重登，
+            # 绕过了 _ensure_login 的锁定识别、_auto_relogin 开关和锁定停登
+            # ——自动重登关着照样重登、账号已锁照样再敲一次把锁定计时续期。
+            # 刷新路径不允许自带重登：如实报会话过期，交给外层 _run 统一
+            # 走 _ensure_login（那里才认锁定与开关）。
+            if cred is None or not self._cred_changed(cred):
+                self._emit("fetch_err", "会话过期，等待重新登录")
+            return False
+        except lanz_quota.LanzNetworkError as e:
+            if cred is None or not self._cred_changed(cred):
+                self._emit("fetch_err", "网络错误: %s" % e)
+            return True
+        except lanz_quota.LanzError as e:
+            if cred is None or not self._cred_changed(cred):
+                self._emit("fetch_err", "查询失败: %s" % e)
+            return True
 
 
 # ==== 模块级单例与状态（仿 tftp.py `_tftp` 模式）========================

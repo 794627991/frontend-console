@@ -440,11 +440,23 @@ class LanzClient:
         for m in (d.get("data") or []):
             if not isinstance(m, dict):
                 continue
-            rs = m.get("routeStatus") or {}
+            # a462（审计）：`or {}` 只兜 None/空值，上游把 routeStatus 漂移成
+            # list/str 时 rs.get 直接 AttributeError，整批负载被丢且每 20s
+            # 报一次（a461 给 modelTags 修的就是同一类，这里漏了）。
+            rs = m.get("routeStatus")
+            if not isinstance(rs, dict):
+                rs = {}
             active = rs.get("total_active")
             mx = rs.get("effective_max_concurrent")
+            # a461（审计 P2）：原判据 isinstance(..., int) 放行 bool（True 被
+            # 当成 1），且未校验 active >= 0——上游口径漂移返回 -1 时算出负
+            # pct，前端 width:-N% 与「--」判定全部失配。用 type() is int 精确
+            # 排除 bool，并要求非负。
+            def _cnt(v):
+                return v if type(v) is int and v >= 0 else None
+            active, mx = _cnt(active), _cnt(mx)
             pct = None
-            if isinstance(active, int) and isinstance(mx, int) and mx > 0:
+            if active is not None and mx:
                 pct = min(100, int(active * 100 // mx))
             if pct is None:
                 level = None
@@ -456,14 +468,24 @@ class LanzClient:
                 level = "normal"
             else:
                 level = "idle"
+            # a461（审计 P2）：modelTags 原假定是 str，服务端返回 list/数字时
+            # `.split` 抛 AttributeError，被上层当「负载查询异常」整批丢弃并
+            # 每 20s 报一次。容忍 str（分号分隔）/list/tuple/None。
+            _tags = m.get("modelTags")
+            if isinstance(_tags, str):
+                _tags = [t for t in _tags.split(";") if t]
+            elif isinstance(_tags, (list, tuple)):
+                _tags = [str(t) for t in _tags if t]
+            else:
+                _tags = []
             out.append({
                 "name": m.get("modelName") or "",
                 "type": m.get("type") or "",
                 "ctx": m.get("contextSize") or "",
-                "tags": [t for t in (m.get("modelTags") or "").split(";") if t],
+                "tags": _tags,
                 "available": rs.get("available"),
-                "active": active if isinstance(active, int) else None,
-                "max": mx if isinstance(mx, int) else None,
+                "active": active,
+                "max": mx,
                 "pct": pct,
                 "level": level,
             })

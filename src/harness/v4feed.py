@@ -138,6 +138,36 @@ def _in_obj(inp, cap=4000):
     return out
 
 
+def _settle_result_usage(red, data, ms):
+    """result 帧的账务结算（a463 抽出）：TPS 累计、上下文真值落地、估值清零。
+
+    抽出来是为了让两个入口共用：正常收口路径，以及 hold 期早退路径
+    （主链回合已结束但后台子代理还在飞时 _reduce_cli 跳过组头收口，
+    早退不能连账务一起跳过——否则估值永远挂在那里，字符继续累加）。
+    """
+    u = data.get("usage") or {}
+    ot = int(u.get("output_tokens") or 0)
+    if ot > 0:
+        red._tps["toks"] = ot
+        red._tps["all"] += ot
+        if ms:
+            red._tps["last"] = round(ot * 1000.0 / ms, 1)
+    # a153：result 的 usage 输入侧=回合后真实上下文（即时刷新，不等 5s 轮询）
+    fin = ((u.get("input_tokens") or 0)
+           + (u.get("cache_read_input_tokens") or 0)
+           + (u.get("cache_creation_input_tokens") or 0))
+    if isinstance(fin, int) and fin > 0:
+        red._tps["ctxLive"] = fin
+        # a154：缓存命中率累计（只在 result 帧记——assistant 中间帧的
+        # usage 是过程值，重复入账会虚高）
+        red._cache_r += (u.get("cache_read_input_tokens") or 0)
+        red._cache_n += fin
+        red._tps["hit"] = round(red._cache_r * 100.0 / red._cache_n, 1)
+    # 估值清零（a463：hold 早退路径同样要清）
+    red._live_chars = 0
+    red._tps["liveToks"] = 0
+
+
 class V4Feed(object):
     """单会话投影 feed（主会话与子代理共用）。线程安全：ingest 与取帧
     并发（ingest 来自 session 线程，取帧来自 SSE 生成器），锁内推进。"""
@@ -556,7 +586,14 @@ class V4Feed(object):
                         self._last_turn_rid = rid
                     self._merge_turn = False
                 self._live_chars = 0       # a153：新回合肥字账归零
-                ds.append(P.d_state({"busy": True, "curTurn": turn}))
+                # a463（审计 P1）：只清字符账不清估值——上回合被中断/报错
+                # （没有 result 帧）时 liveToks 留着旧值，新回合若输出不足
+                # 32 档不刷新，整回合旁注都显示上回合的「生成中 +X」。
+                self._tps["liveToks"] = 0
+                # a469（第二轮审计 P1）：只改内存不发 state 帧，前端与快照都
+                # 拿不到清零——a463 的修复实际未生效。四个清零点都要发帧。
+                ds.append(P.d_state({"busy": True, "curTurn": turn,
+                                     "tps": dict(self._tps)}))
             elif t == "turn_complete":
                 rid = self._turn_rows.get(turn)
                 if rid is None and turn:
@@ -580,13 +617,18 @@ class V4Feed(object):
                 # turn_complete）——标记后 _reduce_cli 的 result 兜底不收口
                 self._held = True
             elif t == "turn_error":
+                # a463（审计 P1）：报错的回合没有 result 帧，估值账必须在这里清，
+                # 否则下一回合旁注串上一回合的「生成中 +X」。
+                self._live_chars = 0
+                self._tps["liveToks"] = 0
                 rid = self._turn_rows.get(turn)
                 if rid:
                     d, _ = self._upsert(rid, state="error", endedAt=ts,
                                         err=data.get("brief") or "")
                     if d:
                         ds.append(d)
-                ds.append(P.d_state({"busy": False}))
+                # a469：清零必须随 state 帧下发（见 turn_started 同条注释）
+                ds.append(P.d_state({"busy": False, "tps": dict(self._tps)}))
                 self._held = False    # 与 turn_complete 对称：hold 不跨回合残留
             # S3 修复（a116）：原首个 `elif t == "interrupted"` 已删除——
             # 它无条件新建 marker 行并把组头翻 cancelled，使下面 :327 的
@@ -782,6 +824,12 @@ class V4Feed(object):
                         if d2:
                             ds.append(d2)
                 ds.append(P.d_state({"busy": False}))
+                # a463（审计 P1）：中断的回合没有 result 帧，估值账在这里清，
+                # 否则下一回合旁注显示上一回合的「生成中 +X」。
+                self._live_chars = 0
+                self._tps["liveToks"] = 0
+                # a469：清零必须随 state 帧下发（见 turn_started 同条注释）
+                ds.append(P.d_state({"tps": dict(self._tps)}))
             elif t == "sysnote":
                 # 系统提示不占位（用户拍板 a39：「系统提示 · 已注入…」气泡
                 # 当时只是没改）——skind 标记 task-notification（后台代理完成
@@ -1084,40 +1132,30 @@ class V4Feed(object):
             # （后台子代理在飞）session 不发 turn_complete，结果帧照常到达，
             # 此时**不**收口（避免组头提前 success 而 busy 仍 True）。
             if getattr(self, "_held", False):
+                # a463（审计 P1）：早退只该跳过「组头收口」，账务必须照做——
+                # 原实现在这里直接 return，跳过了下方 ctxLive=_fin 与
+                # liveToks/_live_chars 归零。后果：主链回合已结束，容量卡
+                # 下方仍挂「生成中 +X（估值）」，且字符继续累加到旧账。
+                _settle_result_usage(self, data, data.get("duration_ms"))
+                # a469（第二轮审计 P1）：清零只改内存时前端收不到——hold 期间
+                # 容量卡一直挂着上一回合的「生成中 +X（估值）」直到下次 assistant
+                # 块攒够 32 token 才发新帧。这里补一帧。
+                ds.append(P.d_state({"tps": dict(self._tps)}))
                 return ds
+            # a463：_ms 必须在 if rid 之外取——原只在 rid 分支内赋值，下面
+            # 结算路径在 rid 为假时引用它会 UnboundLocalError。
+            _ms = data.get("duration_ms")
             rid = self._turn_rows.get(turn) if turn else None
             if rid:
                 _flds = {"state": "error" if data.get("is_error") else "success",
                          "endedAt": ts}
-                _ms = data.get("duration_ms")
                 if _ms is not None:   # 不带时长则保真（CLI result 兜底刚写的值）
                     _flds["activeMs"] = (self._merge_base_ms.get(rid, 0) + _ms
                                          if rid in self._merge_base_ms else _ms)
                 d, _ = self._upsert(rid, **_flds)
                 if d:
                     ds.append(d)
-            # a152：TPS——result 帧 usage.output_tokens / duration_ms（两值
-            # 都是 CLI 权威源；合并续接回合天然按段增量对齐）
-            _u = data.get("usage") or {}
-            _ot = int(_u.get("output_tokens") or 0)
-            if _ot > 0:
-                self._tps["toks"] = _ot
-                self._tps["all"] += _ot
-                if _ms:
-                    self._tps["last"] = round(_ot * 1000.0 / _ms, 1)
-            # a153：result 的 usage 输入侧=回合后真实上下文（即时刷新，
-            # 不等 5s 轮询）；估値清零
-            _fin = (_u.get("input_tokens") or 0)                 + (_u.get("cache_read_input_tokens") or 0)                 + (_u.get("cache_creation_input_tokens") or 0)
-            if isinstance(_fin, int) and _fin > 0:
-                self._tps["ctxLive"] = _fin
-            # a154：缓存命中率累计（只在 result 帧记——assistant 中间帧的
-            # usage 是过程值，重复入账会虚高）
-            if isinstance(_fin, int) and _fin > 0:
-                self._cache_r += (_u.get("cache_read_input_tokens") or 0)
-                self._cache_n += _fin
-                self._tps["hit"] = round(self._cache_r * 100.0 / self._cache_n, 1)
-            self._live_chars = 0
-            self._tps["liveToks"] = 0
+            _settle_result_usage(self, data, _ms)
             ds.append(P.d_state({"tps": dict(self._tps)}))
         return ds
 

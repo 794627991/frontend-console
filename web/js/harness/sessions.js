@@ -22,6 +22,11 @@
     _turnHeadStop();   // v3.2：回合秒表随切会话全收
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
+    // a463（审计 P2）：tps 里的 liveToks/toks/all/last/hit 都是**本会话**口径，
+    // 切换必须清——否则新会话忙碌期旁注取到上一会话的「生成中 +X」，卡内
+    // 「本会话累计」也还是别人的数。只在收到 tps patch 时才整体替换是不够的
+    // （新会话首帧之前有一段空窗）。
+    _HG.tps = null;
     _HG.subTail = {};   // v2.46：tail 轮询 offset 随会话切换重置（防串会话读错文件位；批4：subRows/subBlk/subTailSeg 随段退役删）
     _HG.fetchedBusy = null;   // C组T5：随切会话清（防陈旧值误用）
     _HG.histAll = null; _HG.histStart = 0; _HG.histLive = false;   // v2.24：多段历史渲染源不复用（防串会话）；v2.35.2：histLive 随切重置（快照恢复态不进滚动扩收）

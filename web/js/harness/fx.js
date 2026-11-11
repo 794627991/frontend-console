@@ -198,6 +198,12 @@
       return;
     }
     const pct = Math.min(100, used / ctxMax * 100);
+    // a463（审计 P2）：显示取整不能让 99.5% 看起来像 100%——那正是用户
+    // 投诉的「界面满格但 CLI 没压缩」。展示值用 floor，且真满格时才写 100。
+    const pctTxt = Math.floor(pct);
+    // 判色用**同一个**取整值，与胶囊（panel.js 先 round 再比）保持同一档，
+    // 否则 79.6% 会出现「胶囊橙 80%、圆环蓝 80%」的同屏矛盾。
+    const pctBand = Math.round(pct);
     // v2.6：viewBox 与 CSS 显示尺寸一致（24），r=10 + stroke 3 → 直径 23 < 24 不裁边；
     // 此前 r=9 贴 viewBox 边缘，缩放裁切导致"圆环爆掉"
     const VB = 24, R = 10, C = 2 * Math.PI * R;
@@ -205,8 +211,8 @@
     // 百分比文本——「0%」会被读成「上下文被清空」，而真实语义是「还没统计」
     const noUsed = !(used > 0);
     const col = noUsed ? 'var(--accent)'
-              : pct >= 95 ? 'var(--neon-red, #e06c75)'
-              : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
+              : pctBand >= 95 ? 'var(--neon-red, #e06c75)'
+              : pctBand >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
     _hgCostEl.innerHTML =
       `<svg class="hg-ctx-ring" viewBox="0 0 ${VB} ${VB}">` +
       `<circle cx="${VB / 2}" cy="${VB / 2}" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>` +
@@ -215,11 +221,11 @@
         ` stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - pct / 100)}"` +
         ` stroke-linecap="round" transform="rotate(-90 ${VB / 2} ${VB / 2})"/>`) +
       `</svg>` +
-      (noUsed ? '' : `<span class="hg-ctx-pct">${Math.round(pct)}%</span>`);
+      (noUsed ? '' : `<span class="hg-ctx-pct">${pctTxt}%</span>`);
     // a1375（用户拍板）：纯文本 title 废止——悬浮直接弹容量卡（下方 hover
     // 绑定），卡片内容是 title 的超集（TPS/子代理/估值明细都在卡内）；
     // 「已压缩待首轮」类状态由卡片头部「首轮回复后统计」分支承担
-    _hgCostEl.classList.toggle('warn', !noUsed && pct >= 80);
+    _hgCostEl.classList.toggle('warn', !noUsed && pctBand >= 80);
     _HG.ctxRing = { used: used, max: ctxMax };
     _hgDynDirty();   // v2.32 面板：上下文行跟随（localStorage 即数据总线，零新轮询）
     _hgCtxCardBind();
@@ -385,6 +391,11 @@
           }
           _hgCtxSave(sid, _HG.ctxRing.used, win || _HG.ctxRing.max,
                      j.badMax > 0 ? j.badMax : 0, j.model || '');
+          // a463（审计 P1）：busy 期也要把圆环重画到新真值上。原来这里只改
+          // _HG.ctxRing 就 return，DOM 要等下一拍 v4bridge 的 tps 帧才更新
+          // ——容量卡/胶囊每拍读内存值已是新数，圆环还停在旧值，同屏矛盾。
+          // 注意：估值（liveToks）不参与，圆环口径与卡/胶囊一致。
+          _hgDrawCtxRing(_HG.ctxRing.used, _HG.ctxRing.max);
           return;
         }
         renderCtxRing({ usage: { input_tokens: j.used },
@@ -420,10 +431,17 @@
     // 正是圆环/胶囊已经修掉的那种误导，卡片必须同口径
     const max = (r.max > 0) ? r.max : 0;
     const pct = max > 0 ? Math.min(100, used / max * 100) : 0;
-    const barCol = pct >= 95 ? 'var(--neon-red, #e06c75)'
-                 : pct >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
+    // a463：判色与圆环统一用 round 档；显示用 floor 防 99.5% 变 100%
+    const pctBand = Math.round(pct);
+    const barCol = pctBand >= 95 ? 'var(--neon-red, #e06c75)'
+                 : pctBand >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
     const parts = _HG.ctxParts || { sys: 0, mcp: 0 };
     const msg = Math.max(0, used - parts.sys - parts.mcp);
+    // a463（审计 P2）：分母是 used，而 sys/mcp 是进程内固定估值，两者之和
+    // 可能超过 used——原来只对 msg 单项 clamp，三行占比合计会到 116%。
+    // 归一化：估算部分超过 used 时按比例压缩，保证三行合计 ≈100%。
+    const _est = Math.max(0, (parts.sys || 0)) + Math.max(0, (parts.mcp || 0));
+    const _estScale = (_est > used && _est > 0) ? used / _est : 1;
     const row = (name, tok, est_) => {
       const p = used > 0 ? (tok / used * 100).toFixed(1) : '0.0';
       return `<div class="hg-ctx-row"><i class="hg-ctx-dot${est_ ? ' est' : ''}"></i>` +
@@ -436,14 +454,18 @@
     if (t.sub) tpsBits.push(`子代理 ${_hgCtxCardFmt(t.sub)}`);
     // a264（用户定调）：窗口选择器移除——窗口只走自动链（网关实报→
     // settings.json→[1M]→兜底），不提供用户选项
-    return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(max > 0 && (used > 0 || est > 0)) ?
-        `${_hgCtxCardFmt(used)}/${_hgCtxCardFmt(max)}（${Math.round(pct)}%）` :
+    // a463（审计 P2）：显示条件不能含 est——used=0 而 est>0 时会渲染
+    // 「0.0K/max（0%）」，而圆环此刻按 noUsed 什么百分比都不显示，两处相反。
+    // 分母在、真值还没到时统一说「首轮回复后统计」。
+    return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(max > 0 && used > 0) ?
+        `${_hgCtxCardFmt(used)}/${_hgCtxCardFmt(max)}（${Math.floor(pct)}%）` :
         (max > 0 ? '首轮回复后统计' : '等待窗口 · 分母将由后端补')}</span></div>` +
       `<div class="hg-ctx-bar"><i style="width:${pct}%;background:${barCol}"></i></div>` +
       `<div class="hg-ctx-rows">` +
         row('消息', msg, false) +
-        row('系统提示词', parts.sys, true) +
-        row('MCP 工具', parts.mcp, true) +
+        // a463：估算项按 _estScale 缩放后再显示，保证三行合计 ≈100%
+        row('系统提示词', parts.sys * _estScale, true) +
+        row('MCP 工具', parts.mcp * _estScale, true) +
       `</div>` +
       `<div class="hg-ctx-line">缓存命中率 ${t.hit > 0 ? t.hit + '%' : '—'}` +
         `<span class="hg-ctx-dim">（本会话累计）</span></div>` +

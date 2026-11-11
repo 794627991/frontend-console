@@ -56,7 +56,15 @@
     // a447：type=search 的输入框是「为了躲浏览器自动填充黑窗」才改成 search
     // 的。给它们补回 name 会把字段重新变成浏览器可记忆的表单字段，自动填充
     // 建议层又冒出来——跳过。
-    if (el.type !== 'search' && !el.id && !el.getAttribute('name')) {
+    // a466（审计 P0：主因没除）：只豁免 search 不够——设置页/连接弹窗/识图/
+    // 提示词等大量文本框只是加了 autocomplete="off"、仍是 type=text，observer
+    // 照样补回 name（而且是从 className 派生的重复名 dd-input/field），
+    // Edge 一旦判成用户名/地址启发式就直接忽略 off、黑窗照弹。凡是**显式
+    // 声明了 autocomplete="off" 的控件**都不补 name：那是「我不参与表单
+    // 记忆」的明确意图，补名等于把它打回可记忆字段。
+    const _ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (el.type !== 'search' && _ac !== 'off'
+        && !el.id && !el.getAttribute('name')) {
       const base = (el.className || '').split(/\s+/)[0] || 'field';
       el.setAttribute('name', base);
     }

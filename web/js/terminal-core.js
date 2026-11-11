@@ -497,7 +497,7 @@ function buildTerminal(portId, meta) {
   return conn;
 }
 
-function switchTab(portId) {
+function switchTab(portId, auto) {
   // 来路记录（v4.1：关闭当前 tab 应回「来时的 tab」而非排序首位——claude
   // 会话 + 已开文件的组合下，关 diff 后回排序首位会顶到文件 tab，用户实锤
   // 回不到 claude 界面）。只在真实切换且旧 tab 仍存活时记录（关 tab 回切时
@@ -507,8 +507,10 @@ function switchTab(portId) {
     window._hgTabBack = activePortId;
   }
   activePortId = portId;
-  // 抽屉/⋮ 列表按最近访问排序：每次切到该 tab 就刷新时间戳（MRU）
-  if (window._tabTouch) window._tabTouch(portId);
+  // 抽屉/⋮ 列表按最近访问排序：用户切到该 tab 就刷新时间戳（MRU）。
+  // a467（审计 P2）：自动回切（如关后台 tab 后切到 remaining[0]）不算
+  // 「用户访问过」——否则关一个后台 tab 会把无关的编辑器 tab 顶到最前。
+  if (!auto && window._tabTouch) window._tabTouch(portId);
   // 标签
   tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.portId === portId));
   // 终端区

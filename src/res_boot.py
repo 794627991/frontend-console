@@ -244,7 +244,19 @@ def probe_claude():
     try:
         from .claude_conn import _resolve_claude_exe, ClaudeNotFoundError
         exe, _shim = _resolve_claude_exe()
-        return "ok", _run_ver([exe, "--version"]), ""
+        # a464（审计 P1）：能解析到路径 ≠ 能跑。npm update 中途失败会把包写成
+        # 半成品（入口被删/替换中），此时 _resolve 仍能命中缓存里的旧路径，
+        # 装完照报成功、CLI 实际不可用。要求 --version 真有输出才算 ok。
+        # a469（第二轮审计 P2）：超时/起不来 ≠ 缺安装。杀毒首扫新 exe、慢盘
+        # 上 --version 常超 8s，原来一律判 missing，刚装好的 CLI 被报安装
+        # 失败（install 侧据此抛 InstallError）。超时给 30s 并判 unknown。
+        try:
+            ver = _run_ver([exe, "--version"], timeout=30, strict=True)
+        except _VerUnknown as e:
+            return "unknown", "", "claude 存在但 --version 探测超时/起不来: %s" % e
+        if not (ver or "").strip():
+            return "missing", "", "claude 可执行文件存在但无法运行（可能安装不完整）"
+        return "ok", ver, ""
     except Exception:
         return "missing", "", ""
 
@@ -328,8 +340,13 @@ def _probe_codegraph():
 _PROBES["codegraph"] = _probe_codegraph   # S37-6：三元组 (state, fix, detail)
 
 
-def _run_ver(argv, timeout=8):
-    """跑一次 --version 取版本串。超时/失败返回空（探测失败≠缺失）。"""
+def _run_ver(argv, timeout=8, strict=False):
+    """跑一次 --version 取版本串。超时/失败返回空（探测失败≠缺失）。
+
+    strict=True 时，超时/进程起不来抛 _VerUnknown（「没跑出结论」），
+    而「跑通了但没输出」仍返回 ""（那是确定异常）。install 侧靠这个区分
+    避免把慢机上的好安装误报成失败。
+    """
     try:
         r = subprocess.run(argv, capture_output=True, text=True,
                            timeout=timeout, encoding="utf-8", errors="replace",
@@ -341,8 +358,20 @@ def _run_ver(argv, timeout=8):
         import re
         m = re.search(r"\d+\.\d+(?:\.\d+)?", out[0])
         return m.group(0) if m else out[0][:40]
-    except Exception:
+    except Exception as e:
+        if strict:
+            raise _VerUnknown("%s: %s" % (type(e).__name__, e))
         return ""
+
+
+class _VerUnknown(Exception):
+    """--version 探测**没跑出结论**（超时/进程起不来），区别于「跑通了但没输出」。
+
+    a469（第二轮审计 P2）：_run_ver 的 docstring 写明「超时/失败返回空
+    （探测失败≠缺失）」，但 install 侧把空一律当 missing——企业杀毒首扫新
+    解压的 claude.exe、慢盘上 --version 超过 8s 时，刚装好的 CLI 会被报
+    「npm 装完但 claude 不可用」。三态区分由此补上。
+    """
 
 
 def probe_all(use_cache=True):

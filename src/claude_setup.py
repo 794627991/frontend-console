@@ -344,6 +344,17 @@ def _npm_install_global(force=False):
     env["npm_config_prefix"] = npm_dir
     env["npm_config_cache"] = os.path.join(appdata, "npm-cache")
     pkg = "@anthropic-ai/claude-code"
+    # a469（第二轮审计 P2）：判据用**实际** prefix，不再是 env 里那个待写入的
+    # 位置。原来硬传 npm_dir（%APPDATA%\npm），_claude_installed 的默认分支
+    # 永不执行——用户 CLI 装在 Program Files 或自定 prefix 时一律判未装，每次
+    # 全量 install -g，a459 想省的下载一分没省（_npm_prefix 成了死代码）。
+    # 只在「实际 prefix 里确实装着」时才跟随它，否则仍装到用户目录：
+    # Program Files 的 update 要提权（UAC），免提权是本函数的既定设计。
+    if not force:
+        real = _npm_prefix()
+        if real and os.path.isdir(real) and _claude_installed(real):
+            npm_dir = real
+            env["npm_config_prefix"] = real
     if not force and _claude_installed(npm_dir):
         _log("已安装 claude-code，改为 npm update -g（只拉版本差异）…")
         r = subprocess.run(["cmd", "/c", npm, "update", "-g", pkg],
@@ -366,16 +377,75 @@ def _npm_install_global(force=False):
     _ensure_npm_path()
 
 
-def _claude_installed(npm_dir):
-    """是否已装 claude-code：看 npm 标准位有没有官方 bin 入口。
-    用 package.json 判（不是只看目录存在）——半装/空壳目录不算已装。"""
-    for p in (os.path.join(npm_dir, "node_modules", "@anthropic-ai",
-                           "claude-code", "package.json"),
-              os.path.join(npm_dir, "node_modules", "@anthropic-ai",
-                           "claude-code", "cli.js")):
-        if os.path.isfile(p):
-            return True
-    return False
+def _npm_prefix():
+    """npm 实际全局 prefix（`npm prefix -g`），拿不到就退回 %APPDATA%\\npm。
+
+    a464（审计 P2）：原实现把「已装」判据硬编码到 %APPDATA%\\npm——用户 CLI
+    装在 nodejs MSI 默认的 Program Files、或改过 prefix 时，此目录下没有包，
+    于是一律判未装、又走全量 install，本次改动想省的下载对这类机器无效。
+    """
+    _, npm = _node_ok()
+    if npm:
+        try:
+            # a469（第二轮审计 P2）：node 走管道输出 UTF-8，而 text=True 用
+            # locale(cp936) 解码——用户名含中文或 .npmrc 自定 prefix 含中文时
+            # 必然乱码，isdir 恒 False 静默降级回 APPDATA（这次改动的目的之一
+            # 就是别钉死 APPDATA）。另补 CREATE_NO_WINDOW：pythonw 无控制台
+            # 时这个 cmd 会闪窗。超时抬到 60s（冷启动/杀毒扫描首跑）。
+            kw = {}
+            _cnw = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if _cnw:
+                kw["creationflags"] = _cnw
+            r = subprocess.run(["cmd", "/c", npm, "prefix", "-g"],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace",
+                               timeout=60, **kw)
+            p = (r.stdout or "").strip().splitlines()
+            if r.returncode == 0 and p and os.path.isdir(p[-1].strip()):
+                return p[-1].strip()
+            _log("npm prefix -g 未拿到有效目录（rc=%s out=%r）"
+                 % (r.returncode, (r.stdout or "")[:200]))
+        except Exception as e:
+            _log("npm prefix -g 探测失败: %s" % e)
+    return os.path.join(os.environ.get("APPDATA", ""), "npm")
+
+
+def _claude_installed(npm_dir=None):
+    """是否已装**可用**的 claude-code：package.json 与它的 bin 入口都在。
+
+    a464（审计 P2）三处修正：
+    - 原判据「两文件任一存在」，install 中断留下 package.json 而入口缺失时
+      也判已装（docstring 说用 package.json 精确判，实现与说法相反）。
+    - 目录来源改为 npm 实际 prefix（见 _npm_prefix），不再钉死 APPDATA。
+    - 入口**从 package.json 的 bin 读**，不要写死 cli.js——实包是
+      `{"bin": {"claude": "bin/claude.exe"}}`（带 native exe 的发行形态），
+      写死 cli.js 会让所有机器都判成未装、又走全量下载。
+    """
+    base = os.path.join(npm_dir or _npm_prefix(), "node_modules",
+                        "@anthropic-ai", "claude-code")
+    pj = os.path.join(base, "package.json")
+    if not os.path.isfile(pj):
+        return False
+    try:
+        with open(pj, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return False
+    # a469（第二轮审计 P2）：json.load 对 []、""、数字都成功，随后 d.get 抛
+    # AttributeError 且不在上面的 except 覆盖范围内——install 中断把
+    # package.json 写成非对象时，走不到 npm install -g 的覆盖修复路径。
+    if not isinstance(d, dict):
+        return False
+    b = d.get("bin")
+    if isinstance(b, str):
+        rel = b
+    elif isinstance(b, dict):
+        rel = b.get("claude") or (next(iter(b.values())) if b else "")
+    else:
+        rel = ""
+    if not rel:
+        return False
+    return os.path.isfile(os.path.join(base, rel.replace("/", os.sep)))
 
 
 def _broadcast_path_change():

@@ -778,7 +778,8 @@
   let _navClockTimer = null;   // a435：独立计时器
 
   function ui(path) {
-    _closePanel();
+    // a462：切换目录查看 ≠ 放弃正在等选择的任务，只收面板不取消建库
+    _closePanel(false);
     const ov = document.createElement('div');
     ov.id = 'navIdxPanel';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:9999;display:flex;align-items:center;justify-content:center;';
@@ -797,15 +798,21 @@
     _renderProbe(card, path);
   }
 
-  function _closePanel() {
+  // a462（审计 P2）：_closePanel 的「弹窗还在 ⇒ 关面板即放弃建库」语义只
+  // 适用于**用户真的关闭**。ui()（右键另一个目录）也走 _closePanel，会把
+  // 正在等用户选建库方式的任务静默取消——用户只觉得换了个目录，任务没了。
+  // 加 cancelIfAsking 参数：切面板传 false，只收弹窗不动任务。
+  function _closePanel(cancelIfAsking) {
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
     if (_navClockTimer) { clearInterval(_navClockTimer); _navClockTimer = null; }
     const _td = document.getElementById('navTierDialog');
     if (_td) {
-      // a440：弹窗还在说明建库线程正卡在「等用户选建库方式」。关掉面板后
-      // 用户再没有任何途径作答，后端会白等 10 分钟——关面板即视为放弃建库。
       _td.remove();
-      fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
+      // 弹窗还在说明建库线程正卡在「等用户选建库方式」。真正的关闭动作下
+      // 用户再没有任何途径作答，后端会白等 10 分钟——视为放弃建库。
+      // a462：只是切换到另一个目录查看时不取消（那不是放弃）。
+      if (cancelIfAsking !== false)
+        fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
     }
     const el = document.getElementById('navIdxPanel');
     if (el) el.remove();
@@ -1381,6 +1388,11 @@
       .then(r => r.json())
       .then(j => {
         if (!j.ok) { showBanner('启动失败：' + (j.err || ''), 4000, true); return; }
+        // a462（审计 P1）：面板可能在 fetch 在途时已被关闭（慢盘上点完立刻
+        // 点背景，此时 dataset.running 还没置位，遮罩仍可关）。原实现照样
+        // _renderProgress，在已脱离 DOM 的 card 上重建轮询与计时器，之后
+        // 无人清理（_closePanel 早跑过了），后台每 800ms 空转到任务结束。
+        if (!document.getElementById('navIdxPanel')) return;
         _renderProgress(card, path);
       })
       .catch(e => showBanner('启动失败: ' + e, 4000, true));
@@ -1456,13 +1468,24 @@
     if (txt) txt.textContent = '等待选择建库方式…';
 
     function _postTier(choice) {
-      if (txt) txt.textContent = '已选择：' +
-        ({ full: '全量收源码', whitelist: '只收白名单', cancel: '放弃建库' }[choice] || choice);
+      // a462（审计 P2）：后端 10 分钟超时撤销提问后，前端还没轮询到，
+      // 此时点选项拿到 409。原来无条件写「已选择：…」，用户以为选项生效，
+      // 实际已按超时默认（全量）继续。先如实显示「提交中」，按结果再定。
+      if (txt) txt.textContent = '提交选择…';
       fetch('/api/nav/tier', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ choice }),
-      }).catch(() => {});
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (ok && j && j.ok) {
+            if (txt) txt.textContent = '已选择：' +
+              ({ full: '全量收源码', whitelist: '只收白名单', cancel: '放弃建库' }[choice] || choice);
+          } else if (txt) {
+            txt.textContent = '选择未生效（' + ((j && (j.err || j.msg)) || '任务已结束') + '）';
+          }
+        })
+        .catch(() => { if (txt) txt.textContent = '提交失败（网络异常）'; });
     }
   }
 
@@ -1470,6 +1493,8 @@
     const _ov = document.getElementById('navIdxPanel');
     if (_ov) _ov.dataset.running = '1';   // a409：背景关闭禁令配套标记
     card.innerHTML = '';
+    // a462：本轮的定时器句柄（闭包私有），清理只动自己
+    let _myPoll = null, _myClock = null;
     // a435（需求：独立计时器 hh:mm:ss）：与进度条/阶段文案分离，只此一处报时间；
     // 其余日志里的「已用 Ns」全部去掉，避免多处读秒互相打架
     const headRow = _h('div');
@@ -1493,7 +1518,7 @@
     };
     clock.textContent = _fmt(0);
     if (_navClockTimer) clearInterval(_navClockTimer);
-    _navClockTimer = setInterval(() => {
+    _navClockTimer = _myClock = setInterval(() => {
       clock.textContent = _fmt(Date.now() - _t0);
     }, 1000);
     card.appendChild(_h('div', path)).style.cssText =
@@ -1526,7 +1551,11 @@
     let _lastSeq = 0;     // a433：按 seq 增量拉取（后端裁剪后下标不再错位）
     let _tierAsked = false;   // a438：建库方式弹窗只弹一次
     if (_pollTimer) clearInterval(_pollTimer);
-    _pollTimer = setInterval(async () => {
+    // a462（审计 P1：误清后来任务的定时器）：句柄已在本函数顶部声明为
+    // _myPoll/_myClock，回调结束时只清自己的。原来清的是模块级当前值——
+    // 任务 A 的末次 poll 在途中，用户重开面板起了任务 B，A 的回调返回
+    // done 时清掉的是 B 的 interval，B 的进度与日志永久停在初值。
+    _pollTimer = _myPoll = setInterval(async () => {
       try {
         const r = await fetch('/api/nav/poll');
         const s = await r.json();
@@ -1542,7 +1571,12 @@
         // （进度行原地替换也消耗 seq，不能只看条数或首条 seq）。
         const _drop = s.log_dropped || 0;
         if (_drop > _lastSeq) {
-          const d = _h('div', '（' + (_drop - _lastSeq) + ' 条过程日志已省略——建库仍在继续）');
+          // a462（审计 P2）：log_dropped 是**被裁掉的最后一条的 seq**，不是
+          // 条目数。进度行原地替换同样消耗 seq，直接相减会把「合并」算成
+          // 「丢失」（实际裁掉 100 条却提示省略 320 条）。改用对数估算：
+          // 两者之比只有量级意义，措辞也据此降级为「约」。
+          const _miss = _drop - _lastSeq;
+          const d = _h('div', '（已省略约 ' + _miss + ' 条过程日志——建库仍在继续）');
           d.style.cssText = 'color:var(--muted);opacity:.7;';
           log.appendChild(d);
           _lastSeq = _drop;
@@ -1571,8 +1605,12 @@
           _tierAsked = false;
         }
         if (!s.done) return;
-        clearInterval(_pollTimer); _pollTimer = null;
-        if (_navClockTimer) { clearInterval(_navClockTimer); _navClockTimer = null; }
+        // a462：只清本轮自己的定时器；模块级引用若已指向别的任务则不碰
+        clearInterval(_myPoll);
+        if (_myClock) clearInterval(_myClock);
+        if (_pollTimer === _myPoll) _pollTimer = null;
+        if (_navClockTimer === _myClock) _navClockTimer = null;
+        _myPoll = _myClock = null;
         // a440：任务已终态，遗留的建库方式弹窗必须收掉（否则挡住结果）
         const _td2 = document.getElementById('navTierDialog');
         if (_td2) _td2.remove();

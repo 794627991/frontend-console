@@ -136,10 +136,12 @@
           if (base > 0 && mx > 0) {
             // v4.1（用户定调）：胶囊只按真值 base 算，不叠生成中估值——
             // 口径与圆环/容量卡统一（估值要下一轮才成为 input）
-            const pct = Math.min(100,
-              Math.round(base / mx * 100));
-            ctxTxt = pct + '%';
-            ctxWarn = pct >= 80;
+            // a463（审计 P1）：显示用 floor、判色用 round，与 fx.js 圆环
+            // 完全同档。原来先 round 再拿它判色，79.6% 会出现「胶囊橙 80%、
+            // 圆环蓝 80%」同屏矛盾；display floor 也避免 99.5% 看起来满格。
+            const _p = Math.min(100, base / mx * 100);
+            ctxTxt = Math.floor(_p) + '%';
+            ctxWarn = Math.round(_p) >= 80;
           }
         } catch(_) {}
       }

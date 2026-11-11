@@ -63,6 +63,18 @@ function _harnessClose(portId) {
     try { V4Main.close(); } catch(_) {}
   }
   _HG.conn = null; _HG.sid = null; _HG.cache = {};
+  // a466（审计 P1）：关 tab 必须关掉本 tab 的弹窗。恢复会话/技能仓库/三角色
+  // 等弹窗是自建 hg-modal-ov、挂 body 的，不随 wrap 移除——会盖在全窗上，
+  // 误点「恢复」还会对已销毁面板发真实写请求。收口表统一 closeAll。
+  try { if (window._hgModalReg) window._hgModalReg.closeAll(); } catch (_) {}
+  // a464（审计 P2）：悬浮负载卡是模块级状态，必须随 tab 一起收——否则鼠标
+  // 正停在 Proxy 按钮上时关 tab，按钮随 wrap.remove() 消失且不再派生
+  // mouseout，tip 保持 block，20s tick 继续用 detached anchor（rect 全 0）
+  // 把卡片重绘到左上角，永久僵尸。_HG.tps 同理（见 sessions.js 的切换清理）。
+  _hgProxyHoverAnchor = null;
+  try { _hgLoadsStopTick(); } catch(_) {}
+  try { if (_hgLoadsTip) _hgLoadsTip.style.display = 'none'; } catch(_) {}
+  _HG.tps = null;
   _HG.rowById = {}; _HG.run = null;   // 批4：subRows/subBlk 段档随段退役删除
   // v2.15：补齐残留态复位。旧实现只清了上面这几个，重开 tab 后 dirty/busy/
   // activity 等沿用上一轮的值——dirty 漏复位会与「点 chip 删会话」叠加，
@@ -99,7 +111,7 @@ function _harnessClose(portId) {
     const ka = sortKeyFn(a), kb = sortKeyFn(b);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
-  if (remaining.length) switchTab(remaining[0]);
+  if (remaining.length) switchTab(remaining[0], true);   // a467：自动回切不计 MRU
   else {
     activePortId = null;
     termArea.innerHTML = '<div class="empty-state"><div class="big-icon"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12.2" r="1.1"/><path d="M5 9.2a4.2 4.2 0 0 1 6 0"/><path d="M2.7 6.9a7.5 7.5 0 0 1 10.6 0"/></svg></div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';   // a261：信号 path 同库 signal 字形（30px 空态大图标）
@@ -387,6 +399,7 @@ hgLoginRefresh();
 // a448（用户需求）：悬浮显示模型负载。后端 status 只在「上游是 lanz」且已登录
 // 时下发 model_loads；有数据才出悬浮卡，不是 lanz 网关时保持原样。
 let _hgProxyLoads = null;     // 最近一次 status 的 model_loads（悬浮时直接用）
+let _hgProxyLoadsErr = '';    // a464：后端下发的 model_loads_err（无数据时给用户原因）
 let _hgLoadsTip = null;
 
 function _hgLoadsTipEl() {
@@ -400,17 +413,25 @@ function _hgLoadsTipEl() {
 }
 function _hgLoadsPaint(anchor) {
   const loads = _hgProxyLoads;
-  if (!loads || !loads.length) return;
+  // a464（审计 P2）：数据未到时也要建 tip 并显示「加载中」——原来直接
+  // return 不建元素，而 hgProxyRefreshState 的回调与 20s tick 都以
+  // 「_hgLoadsTip 非空」为前提，形成永久不自愈的闭环：冷启动首次悬停
+  // 什么都看不到，必须移开再悬停。现在先占位，数据到了原地重绘。
   const tip = _hgLoadsTipEl();
-  // a449（用户实锤）：去掉标题行——它在深色背景上是一条突兀的黑条，且
-  // 「6 个模型」这种计数对用户没信息量；卡片直接就是负载列表。
-  tip.innerHTML = loads.map(m => {
+  if (!loads || !loads.length) {
+    tip.innerHTML = '<div class="hg-loads-row"><span class="hg-loads-name" ' +
+      'style="color:var(--muted)">' +
+      (_hgProxyLoadsErr ? esc(_hgProxyLoadsErr) : '负载加载中…') + '</span></div>';
+  } else {
+    // a449（用户实锤）：去掉标题行——它在深色背景上是一条突兀的黑条。
+    tip.innerHTML = loads.map(m => {
       const pct = (m.pct == null) ? null : m.pct;
       const cls = m.level ? ' px-load--' + m.level : '';
       return '<div class="hg-loads-row"><span class="hg-loads-name">' + esc(m.name) + '</span>' +
         '<span class="hg-loads-bar' + cls + '"><i style="width:' + (pct == null ? 0 : pct) + '%"></i></span>' +
         '<span class="hg-loads-pct' + cls + '">' + (pct == null ? '--' : pct + '%') + '</span></div>';
     }).join('');
+  }
   tip.style.display = 'block';
   const r = anchor.getBoundingClientRect();
   const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -419,6 +440,18 @@ function _hgLoadsPaint(anchor) {
   // 退化为「贴视口顶部、向下弹」。
   let top = r.top - th - 6;
   if (top < 8) top = Math.min(r.bottom + 6, Math.max(8, window.innerHeight - th - 8));
+  // a464（审计 P2）：上界兜底——窗口比卡片还矮时上面两条都放不下，
+  // 必须钳到 0（并让卡片自身可滚动），否则底部仍被裁掉。
+  const _avail = window.innerHeight - 16;
+  if (th > _avail) {
+    tip.style.maxHeight = _avail + 'px';
+    tip.style.overflowY = 'auto';
+    top = 8;
+  } else {
+    tip.style.maxHeight = '';
+    tip.style.overflowY = '';
+    top = Math.max(8, Math.min(top, window.innerHeight - th - 8));
+  }
   tip.style.top = Math.round(top) + 'px';
   tip.style.left = Math.round(r.left) + 'px';
   // 右缘防溢出
@@ -464,20 +497,30 @@ document.addEventListener('mouseout', ev => {
   // 同上：移去按钮内部的子元素不算离开
   if (btn.contains(ev.relatedTarget)) return;
   _hgProxyHoverAnchor = null;
+  _hgProxyLoadsErr = '';   // a464：离开即清，下次悬停重新取
   _hgLoadsHide();
 });
 
 function hgProxyRefreshState() {
   const fetchIt = async () => {
     try {
-      const r = await fetch('/api/proxy/status');
-      const j = await r.json();
+      // a464（审计 P2）：后端卡住时 fetch 永不 settle，20s 一次的定时重拉会
+      // 累积 pending 请求占满同域连接池（本文件 289 行已为同类问题加过超时）。
+      const _ac = new AbortController();
+      const _to = setTimeout(() => { try { _ac.abort(); } catch(_) {} }, 8000);
+      let r, j;
+      try {
+        r = await fetch('/api/proxy/status', { signal: _ac.signal });
+        j = await r.json();
+      } finally { clearTimeout(_to); }
       let txt = '· 未运行', cls = ' off';
       if (j.already_running || j.running) {
         // a451（用户实锤「要么运行中要么重试中，不能运行中（重试中）」）：
-        // 重试是「处理中」的独立状态，不与运行中叠加——有在途重试就只显示
-        // 重试中（既省宽度不换行，也让用户一眼判断当前是否被限流重试）。
-        const retrying = !!(j.running && j.snapshot && j.snapshot.in_flight_retries > 0);
+        // 重试是「处理中」的独立状态，不与运行中叠加。
+        // a464（审计 P2）：判据改吃后端算好的 status——后端在 in_flight_retries
+        // 之外还有 recent_overload（2s）/recent_fail（5s）也置 RETRY，前端
+        // 只重算第一个会让用户把「退避重试窗口」看成「运行中」。
+        const retrying = (j.status === 'RETRY');
         txt = retrying ? '· 37349 重试中' : '· 37349 运行中';
         cls = ' on';
       } else if (j.port_busy) {
@@ -489,10 +532,12 @@ function hgProxyRefreshState() {
       });
       // a448：悬浮卡的负载数据（无数据时置空，悬浮不出卡）
       _hgProxyLoads = (j.model_loads && j.model_loads.length) ? j.model_loads : null;
+      _hgProxyLoadsErr = j.model_loads_err || '';
       // a450：卡片在场时跟着刷新（悬停定时器 20s 一拉，数据回来就重绘）
+      // a464：数据未到时也要重绘（显示原因/加载中），不能直接 Hide——
+      // 原来空数据走 _hgLoadsHide 会把卡片收掉，用户看着像卡没弹出来。
       if (_hgProxyHoverAnchor && _hgLoadsTip && _hgLoadsTip.style.display !== 'none') {
-        if (_hgProxyLoads) _hgLoadsPaint(_hgProxyHoverAnchor);
-        else _hgLoadsHide();
+        _hgLoadsPaint(_hgProxyHoverAnchor);
       }
     } catch (_) {}
   };

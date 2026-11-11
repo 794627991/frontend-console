@@ -911,11 +911,28 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                         say("在线安装/更新 Claude CLI：确保 Node → npm update -g …")
                     cs._install_node_if_missing(dl_dir)
                     cs._npm_install_global(force=force)
+                    # a469（第二轮审计 P2）：清缓存必须放在 install **之后**。
+                    # 原来清在 install 之前（分钟级），安装期间任何线程
+                    # （server 状态接口、前端打开 Claude 会话）解析一次就把
+                    # 旧路径重新填回缓存，装后 probe 复用的还是它。
+                    try:
+                        import src.claude_conn as _cc
+                        _cc._exe_cache = None
+                    except Exception:
+                        pass
                     from src.res_boot import probe_claude
                     st, v, _m = probe_claude()
-                    if st != "ok":
-                        raise InstallError("npm 装完但 claude 不可用（%s）" % v)
-                    ok = True
+                    # a469：unknown=探测没跑出结论（超时/杀毒首扫），不是失败。
+                    # 把慢机上的好安装报成 InstallError 会让用户白白重装。
+                    if st == "unknown":
+                        say("Claude CLI 已装，--version 探测超时（%s）——"
+                            "首次运行/杀毒扫描常见，稍后可在资源状态里复查" % _m)
+                        ok = True
+                    elif st != "ok":
+                        raise InstallError("npm 装完但 claude 不可用（%s）"
+                                           % (_m or v or "未知原因"))
+                    else:
+                        ok = True
                 elif k == "dotnet":
                     say("下载 .NET 4.8.1 安装器（约 74MB，内网代理可能拦微软 CDN）…")
                     exe = os.path.join(dl_dir, "ndp481-online.exe")

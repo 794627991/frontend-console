@@ -33,13 +33,16 @@ let activePortId = null;
   let _pinned = new Set();         // 固定的 portId
   const _GROUP_LABEL = {
     serial: '串口', ssh: 'SSH', telnet: 'Telnet',
-    claude: 'Claude', harness: 'Claude',
+    // a468（第二轮审计）：claude 与 harness 原来都叫「Claude」，抽屉里同时
+    // 出现两个同名同图标的胶囊，✕ 确认文案也一模一样，用户分不清关的是
+    // 会话组还是对话面板组。harness 按它自己的 tab 标签「Claude 对话」命名。
+    claude: 'Claude', harness: 'Claude 对话',
     editor: '编辑器', hex: 'Hex', diff: '对比', bindiff: 'Bin对比',
     log: '日志', office: '文件', proxy: '代理', bitcalc: '计算器', vcs: '版本',
   };
   const _GROUP_ICON = {
     serial: ICO16.plug, ssh: ICO16.terminal, telnet: ICO16.terminal,
-    claude: ICO16.zap, harness: ICO16.zap,
+    claude: ICO16.zap, harness: ICO16.robot,
     editor: ICO16.file, hex: ICO16.hex, diff: ICO16.compare, bindiff: ICO16.compare,
     log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear, bitcalc: ICO16.calc,
     vcs: ICO16.branch,
@@ -51,13 +54,19 @@ let activePortId = null;
     hex: 3, bindiff: 3, office: 3, bitcalc: 3, vcs: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
   // 用户需求：同类只开一个时不收进抽屉（平铺直达，一点即达），开第二个才收。
   // _SINGLE_KINDS = 设计上不会多开的类型（兜底：即便数量判定放宽也不收）
-  const _SINGLE_KINDS = new Set(['claude', 'harness', 'bitcalc', 'proxy', 'vcs']);
+  // a467（审计 P1）：claude **不在**此列——后端 server.py 允许 `claude:{n}`
+  // 自增多开（连开多个会话是常态）。把它当单例兜底会让 _isFlat 短路，
+  // 多个 claude tab 永不进抽屉，tab 栏被平铺占满压成图标态。
+  const _SINGLE_KINDS = new Set(['harness', 'bitcalc', 'proxy', 'vcs']);
   // 按当前打开的 tab 统计各 kind 数量（判定「是否独苗」）
   function _kindCount() {
     const cnt = {};
     for (const pid in connections) {
       const c = connections[pid];
       if (!c || !c.tab) continue;
+      // a467（审计 P2）：pin 住的 tab 不进抽屉（建组/显隐循环都排除 pinned），
+      // 计数口径必须同源——否则 pin 一个编辑器后再开第二个就直接进抽屉了。
+      if (_pinned.has(pid)) continue;
       const g = _groupOf(c);
       cnt[g] = (cnt[g] || 0) + 1;
     }
@@ -94,7 +103,10 @@ let activePortId = null;
   // 清理已关 pid + 补未被 touch 过的 tab（逐个插队首 → 打开序倒序）
   function _mruSync() {
     for (let i = _mruList.length - 1; i >= 0; i--) {
-      if (!connections[_mruList[i]]) _mruList.splice(i, 1);
+      // a467（审计 [存疑]）：判据与 _kindCount/建组统一用 c.tab——某模块
+      // 「先摘 tab、后删 connections」的两步窗口里，只判 connections 会让
+      // 该 pid 继续占用排名下标。
+      { const _c = connections[_mruList[i]]; if (!_c || !_c.tab) _mruList.splice(i, 1); }
     }
     for (const p in connections) {
       const c = connections[p];
@@ -104,8 +116,20 @@ let activePortId = null;
   // 通用应用风格确认弹窗（Promise<boolean>）——供「抽屉分组全关」使用；
   // 全站多个模块各有同款实现，但 util.js 是最早加载的脚本，不能反向依赖。
   // 画风与 _edConfirm / _hxConfirm 完全一致（modal + box + head + 取消/确定）
+  let _uiConfirmPending = null;   // {resolve, cleanup}：当前挂起的一轮（覆盖前先结算）
   function _uiConfirm(title, msg, okLabel, danger) {
   return new Promise(resolve => {
+    // a467（审计 P2）：单例 DOM 复用时旧 Promise 会永远挂着（yes.onclick 被
+    // 覆盖）。这里先以「取消」结算上一个，再接管新内容。
+    // a468（第二轮审计）：不能只 resolve——上一轮的 finish 因
+    // `_uiConfirmPending !== resolve` 直接 return，document keydown 监听
+    // 永远不会被 remove（双击胶囊 ✕ 每次泄漏一个常驻监听）。改为调它自己
+    // 的 cleanup。
+    if (_uiConfirmPending) {
+      try { _uiConfirmPending.cleanup(); } catch (_) {}
+      try { _uiConfirmPending.resolve(false); } catch (_) {}
+      _uiConfirmPending = null;
+    }
     let m = document.getElementById('uiConfirmModal');
     if (!m) {
       m = document.createElement('div');
@@ -132,11 +156,22 @@ let activePortId = null;
     yes.textContent = okLabel || '确定';
     yes.className = 'btn' + (danger ? ' danger' : ' primary');
     const finish = v => {
+      // a467：只结算自己这一轮——单例 DOM 被下一次调用接管后，旧按钮的
+      // 残留 handler 不能再 resolve 新 Promise（否则新弹窗被误判为取消）。
+      if (!_uiConfirmPending || _uiConfirmPending.resolve !== resolve) return;
+      _uiConfirmPending = null;
       m.classList.remove('show');
       document.removeEventListener('keydown', onKey);
       resolve(v);
     };
     const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); finish(false); } };
+    _uiConfirmPending = {
+      resolve,
+      cleanup: () => {
+        m.classList.remove('show');
+        document.removeEventListener('keydown', onKey);
+      },
+    };
     yes.onclick = () => finish(true);
     m.querySelector('#uiConfirmNo').onclick = () => finish(false);
     m.querySelector('#uiConfirmX').onclick = () => finish(false);
@@ -158,20 +193,38 @@ let activePortId = null;
       return c && c.tab && !_pinned.has(p) && _groupOf(c) === group;
     });
     if (!pids.length) return;
-    const dirtyN = pids.filter(p => connections[p].dirty).length;
-    const label = _groupLabel(group);
-    const ok = await _uiConfirm('关闭全部' + label + '标签页',
-      '将关闭全部已打开的 ' + pids.length + ' 个' + label + '标签页' +
-      (dirtyN ? '，其中 ' + dirtyN + ' 个有未保存修改——未保存的内容不会保存，关闭即丢失' :
-        '；未保存的内容不会保存') +
-      '。确定关闭？',
-      '全部关闭', true);
-    if (!ok) return;
+    // a468（第二轮审计）：busy 必须覆盖**整个**确认过程。原来在 await 之后
+    // 才置位，双击胶囊 ✕ 两次都能通过守卫，第二次的 _uiConfirm 会覆盖掉
+    // 第一次的弹窗（用户只看到一份，但两个 Promise 链在跑）。
     _closeAllBusy = true;
+    let toClose = [];
+    // a468（第二轮审计）：确认框 .modal 是 z-index:100，而 ⋮/分组下拉是
+    // z-index:9999——列表压在遮罩之上，点「全部关闭」按钮时若列表恰好盖住
+    // 按钮区域，会先命中列表项（切 tab / 关单个 tab）。弹确认前先收列表。
+    _groupCloseList();
+    close();
     try {
+      const dirtyN = pids.filter(p => connections[p].dirty).length;
+      const label = _groupLabel(group);
+      const ok = await _uiConfirm('关闭全部' + label + '标签页',
+        '将关闭全部已打开的 ' + pids.length + ' 个' + label + '标签页' +
+        (dirtyN ? '，其中 ' + dirtyN + ' 个有未保存修改——未保存的内容不会保存，关闭即丢失' :
+          '；未保存的内容不会保存') +
+        '。确定关闭？',
+        '全部关闭', true);
+      if (!ok) return;
+      // a467（审计 P2）：确认框挂着时可能又开了同类 tab——确认后重算，
+      // 否则「已关闭 N 个」按旧快照报数且新 tab 留在原地。
+      // a468（第二轮审计）：重算为空时**不再回退** pids——那会去关一个已经
+      // 不存在的 tab，且横幅报的是实际没关的数量。空就按 0 报。
+      toClose = Object.keys(connections).filter(p => {
+        const c = connections[p];
+        return c && c.tab && !_pinned.has(p) && _groupOf(c) === group;
+      });
+      if (!toClose.length) return;
       // 逐个关：分派到各模块清理链；编辑器族直达 _edCloseNow（跳过 per-tab
       // 脏确认——总确认已给过，不能串出 N 个弹窗）
-      pids.forEach(pid => {
+      toClose.forEach(pid => {
         const conn = connections[pid];
         if (!conn) return;
         const kind = conn.meta && conn.meta.kind;
@@ -189,11 +242,15 @@ let activePortId = null;
         if (isEd && typeof _edCloseNow === 'function') { _edCloseNow(conn); return; }
         if (typeof closeConnection === 'function') closeConnection(pid);
       });
-    } finally { _closeAllBusy = false; }
-    _groupCloseList();
-    close();
-    rebuild(true);
-    showBanner('已关闭 ' + pids.length + ' 个' + label + '标签页', 1800);
+    } finally {
+      _closeAllBusy = false;
+      _groupCloseList();
+      close();
+      rebuild(true);
+    }
+    if (toClose.length) {
+      showBanner('已关闭 ' + toClose.length + ' 个' + _groupLabel(group) + '标签页', 1800);
+    }
   }
 
   // 统一关闭：直接点 tab 自己的 ✕——各模块（terminal=后端断连/editor=脏确认/
@@ -432,6 +489,14 @@ let activePortId = null;
   document.addEventListener('click', e => {
     if (!e.isTrusted) return;
     if (!list || list.contains(e.target) || e.target === btn) return;
+    // a467（审计 P1）：胶囊 ✕ 在列表外，但它属于「关闭整组」这个危险动作的
+    // 确认入口——被这里 close+stop 拦掉后要再点第二次才生效（第一次只收
+    // 列表）。✕ 的事件交给它自己的 onclick 处理。
+    if (e.target.closest && e.target.closest('.tab-drawer-x')) return;
+    // a468（第二轮审计 P1）：同理放行**整个胶囊**。列表开着时点另一个胶囊，
+    // 原来 close+stop 在捕获阶段吃掉事件，胶囊的 onclick 收不到 → 第一次
+    // 点击只收起列表、不切 tab。这里只收列表，不 stopPropagation。
+    if (e.target.closest && e.target.closest('.tab-drawer')) { close(); return; }
     close();
     const m = document.getElementById('ctxMenu');
     if (m && m.style.display === 'block' && m.contains(e.target)) return;
@@ -685,6 +750,11 @@ let activePortId = null;
     _groupDocClose = e => {
       if (!e.isTrusted) return;
       if (!groupList || groupList.contains(e.target)) return;
+      // a467（审计 P1）：点同一胶囊的 ✕ 时别先收下拉再吃掉事件
+      if (e.target.closest && e.target.closest('.tab-drawer-x')) return;
+      // a468（第二轮审计 P1）：同 ⋮ 列表——胶囊本体点击必须放行，否则分组
+      // 下拉开着时第一次点别的胶囊只收起下拉、不切 tab。
+      if (e.target.closest && e.target.closest('.tab-drawer')) { _groupCloseList(); return; }
       _groupCloseList();
       const m = document.getElementById('ctxMenu');
       if (m && m.style.display === 'block' && m.contains(e.target)) return;

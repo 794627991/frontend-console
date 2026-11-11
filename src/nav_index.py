@@ -492,13 +492,18 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                         _arts_hit = sum(1 for d in ds
                                         if d.lower() in _ARTIFACT_DIRS)
                         if _arts_hit:
-                            stats["artifact_dirs"] = \
-                                stats.get("artifact_dirs", 0) + _arts_hit
+                            # a465（审计 P2）：stats 跨 8 个 worker 共享，裸
+                            # 读-改-写会丢更新（artifact_dirs 还参与
+                            # _has_artifact 判档）。与 _active 同用 _alock。
+                            with _alock:
+                                stats["artifact_dirs"] = \
+                                    stats.get("artifact_dirs", 0) + _arts_hit
                         ds[:] = [d for d in ds if _keep_dir(d)]
                         # P0-1 环防护（SMB 自链，报告 §2.1）
                         if _loop_prune(r, sub):
                             ds[:] = []
-                            stats["pruned"] += 1
+                            with _alock:
+                                stats["pruned"] += 1
                             continue
                         if _excluded(os.path.relpath(
                                 r, root).replace(os.sep, "/").lower()):
@@ -519,6 +524,13 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 except Exception as e:   # SMB 断连等：记录，其余子树继续
                     _err[0] = e
         finally:
+            # a465（审计 P2）：worker 退出必须从 _cur_d 摘掉自己——原来只递减
+            # _active，停了告警仍会打印已结束 worker 的最后目录，并把「在跑
+            # worker 数」算多（用户看到的进度信息是错的）。
+            try:
+                _cur_d.pop(_th.current_thread().name, None)
+            except Exception:
+                pass
             with _alock:
                 _active[0] -= 1
                 _last = _active[0] == 0
@@ -600,10 +612,14 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                         _workers = [v for v in list(_cur_d.values()) if v]
                     except RuntimeError:
                         _workers = []
+                    # a462（审计 P2）：原实现逐个 worker 报当前目录，每次停滞
+                    # 最多刷 9 行；那些目录名对用户没有价值（他只需要知道
+                    # 「卡住了、还在跑」），却会把 400 条日志上限冲刷掉，让
+                    # 阶段结论（递归 include 截断告警、收录方式选择等）被裁没。
+                    # 改为单行汇总，不报具体路径（路径每次不同→进度键分裂→刷屏）。
                     say("  扫描等待中 · 已产出 %d 文件 · %d 个 worker 在跑"
+                        "（若长时间不变，多为网盘大目录穿越或连接停滞）"
                         % (_n_out[0], len(_workers)))
-                    for _w in _workers[:8]:
-                        say("    ├ %s" % _w)
                 continue
             r, fs = item
             _last_t = time.time()   # 拿到新目录=有进展
@@ -636,7 +652,12 @@ class _Beat(object):
         self._t = time.time()
         self._n = 0
 
-    def tick(self, done=None, total=None, label=None):
+    def tick(self, done=None, total=None, label=None, *largs):
+        """a465（审计 P2）：节流必须在**取参之前**生效。原来 label 是已格式化
+        好的字符串，调用点每项都构造一次（20 万个 .o 就是 20 万次无用
+        %/len），节流形同虚设。现在支持传模板 + 参数：只有真正要报时才
+        格式化。用法：`b.tick(i, n, "  白名单映射 %d/%d", i, n)`。
+        """
         self._n += 1
         now = time.time()
         if now - self._t < self._iv:
@@ -645,7 +666,7 @@ class _Beat(object):
         if not self._say:
             return
         if label is not None:
-            self._say(label)
+            self._say(label % largs if largs else label)
         elif total:
             self._say("  进行中：%d/%d（%.0f%%）" % (done, total,
                                                  100.0 * done / total))
@@ -850,6 +871,14 @@ def _elf_defined_syms(data, max_syms=400000):
                 st_name, st_info, st_shndx = v[0], v[1], v[3]
             t = st_info & 0xF
             if t not in _ELF_WANT_TYPE:      # FUNC / OBJECT / NOTYPE / IFUNC
+                continue
+            # a465（审计 P2）：NOTYPE 里还有 STB_LOCAL(binding=0) 的汇编局部
+            # 标号（entry_foo / bss_start 之类，不以 $/./.L 开头，名字过滤
+            # 兜不住）。它们不是可跳转的全局定义，收进 symbols 会把错误文件
+            # 拉进同名符号候选、打乱消歧排序。只对 NOTYPE 用 binding 收紧
+            # （FUNC/OBJECT 的 LOCAL 是 static 函数/变量，是合法跳转目标，
+            # 必须保留）。
+            if t == 0 and (st_info >> 4) == 0:
                 continue
             if st_shndx == 0:                # SHN_UNDEF：引用不是定义
                 continue
@@ -1074,12 +1103,29 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
     （quiet_rounds=None 关闭早停）。保留参数仅为兼容旧的调用方。
 
     base_dirs：.cmd 里 -I 为相对路径时的解析基准（产物根/源码根）。"""
-    dirs = set()
+    # a465：用有序去重列表保存 -I——gcc 语义是「按 -I 出现顺序取第一个」，
+    # set 会丢掉这个顺序，而字典序不是 -I 顺序。_dir_seen 负责去重。
+    dirs = []
+    _dir_seen = set()
+    def _add_dir(p):
+        if p not in _dir_seen:
+            _dir_seen.add(p)
+            dirs.append(p)
     n = 0          # 已打开的 .cmd 数（含解析失败——空洞不能白吃收敛额度）
     _parsed = 0    # 真正解析出命令行的 .cmd 数
     _quiet = 0     # a435：按**解析成功的 .cmd** 计无新增，不按打开数
     _bases = [os.path.normpath(b) for b in base_dirs if os.path.isdir(b)]
     _probe = 0
+    # a465（审计 P2）：-I 解析结果缓存。1 万个 .cmd × 平均 30 个相对 -I ×
+    # 最多 5 个 base 逐个 isdir，SMB 上每次都是一次 RTT（分钟级纯等待）；
+    # 而 .cmd 里反复出现的是同一批 include 目录，缓存命中率极高。
+    _isdir_c = {}
+    def _isdir(p):
+        v = _isdir_c.get(p)
+        if v is None:
+            v = os.path.isdir(p)
+            _isdir_c[p] = v
+        return v
     # a440：cmd_abs_list 来自并发目录扫描（顺序不稳定），而下面有收敛早停
     # ——顺序不同会在不同的 .cmd 处收敛，提到不同的 -I 集，导致同一工程
     # 两次建库的收录清单漂移。排序使收敛点与结果都确定可复现。
@@ -1101,6 +1147,10 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
                     % (n, len(_cmd_seq), _parsed, len(dirs)))
         _before = len(dirs)
         _got = False
+        # a465（审计 P2）：日志口径按注释兑现——n 是「已打开数（含解析失败）」，
+        # 原来 n+=1 写在识别到 cmd_ 行之后，空/异常 .cmd 根本走不到，n 恒等于
+        # _parsed，日志「已扫 7000/10000（可解析 7000）」掩盖了 3000 个失败。
+        n += 1
         try:
             with open(ap, encoding="utf-8", errors="replace") as fh:
                 for line in fh:
@@ -1118,15 +1168,17 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
                             continue
                         d2 = d2.strip("'\"")
                         if os.path.isabs(d2):
-                            if os.path.isdir(d2):
-                                dirs.add(os.path.normpath(d2))
+                            # a465：绝对 -I 也走缓存（交叉工具链目录被上万个
+                            # .cmd 重复引用，SMB 上每次 isdir 都是一次往返）
+                            _hit = _isdir(d2)
+                            if _hit:
+                                _add_dir(os.path.normpath(d2))
                             continue
                         for bd in _bases:
                             norm = os.path.normpath(os.path.join(bd, d2))
-                            if os.path.isdir(norm):
-                                dirs.add(norm)
+                            if _isdir(norm):
+                                _add_dir(norm)
                                 break
-                    n += 1
                     break
         except OSError:
             pass
@@ -1152,7 +1204,15 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
       ① _ls(inc_dir) 只列一次目录项（懒加载、按需、带取消）
       ② 同名头文件在多个 -I 目录时按 -I 顺序取第一个（gcc 语义）
       ③ 当前目录相对 include 仍走 _isfile（通常紧邻，量小）"""
-    _inc_list = sorted(inc_dirs)
+    # a465（审计 P2）：注释写「按 -I 顺序取第一个（gcc 语义）」，实现却是
+    # sorted(字典序)——两者在 `-Iarch/arm/include` 与 `-Iinclude` 都有
+    # `asm/foo.h` 时给出相反结果。gcc 的 -I 顺序才是语义正源：让调用方把
+    # 有序序列传进来（_extract_inc_dirs 已按 .cmd 顺序累积），这里只做
+    # 「保序去重」——顺序要确定，但不能用字典序冒充 -I 顺序。
+    try:
+        _inc_list = list(dict.fromkeys(inc_dirs))
+    except Exception:
+        _inc_list = sorted(inc_dirs)
     _ls_cache = {}      # inc_dir -> {小写文件名: 真实文件名}；None=列不动
     _exists = {}
     _probe = 0
@@ -1165,7 +1225,11 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
             if should_cancel and should_cancel():
                 raise Cancelled()
 
+    # a465（审计 P2）：_isfile 是热点路径——子路径 include 每个都按 -I 顺序
+    # 逐个 stat，SMB 上每次都是往返；单个文件 300 个 include × 50 个目录 =
+    # 15000 次，而唯一的取消检查在外层「每 500 个文件」。这里也接检查点。
     def _isfile(p):
+        _check_cancel()
         v = _exists.get(p)
         if v is None:
             try:
@@ -1225,6 +1289,11 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
     # 只截断真正超深的引用，不会因为先走了深分支而把浅层文件饿死。
     queue = [(p, 0) for p in sorted(units_abs)]
     scanned = set()
+    # a465（审计 P2）：入队去重。原来只在出队时看 scanned，同一份头文件被
+    # N 个父文件 include 就会入队 N 次——kernel 形态（1 万 .c / 5 万头文件 /
+    # 平均出度 50）queue 峰值可达数十万到百万条元组（数百 MB），且深度截断
+    # 计数对同一超深文件重复累加。_queued 与 scanned 同源口径（小写路径）。
+    _queued = {p.lower() for p, _d in queue}
     _cut_depth = 0          # a440：因深度上限被丢弃的节点数（必须上报）
     _n = 0
     _head = 0               # BFS 游标（比 popleft 省 list 搬移）
@@ -1260,11 +1329,17 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
             nm = m.group(1)
             cand = os.path.normpath(os.path.join(curdir, nm))
             if _isfile(cand):
-                queue.append((cand, depth + 1))
+                _cl = cand.lower()
+                if _cl not in _queued and _cl not in scanned:
+                    _queued.add(_cl)
+                    queue.append((cand, depth + 1))
                 continue
             hit = _lookup(nm)
             if hit:
-                queue.append((hit, depth + 1))
+                _hl = hit.lower()
+                if _hl not in _queued and _hl not in scanned:
+                    _queued.add(_hl)
+                    queue.append((hit, depth + 1))
     if _cut_depth and say:
         # a440：深度截断是索引覆盖的隐含损失，必须让用户看见（不许静默）
         say("  ⚠ 递归 include 深度超过 %d 层：%d 处引用被截断"
@@ -1681,8 +1756,8 @@ def build(root, log=None, progress=None, should_cancel=None,
     for orel in o_files:
         _i_o += 1
         _bt.tick(_i_o, len(o_files),
-                 "  单元推导 ① 同目录同名 %d/%d（命中 %d）"
-                 % (_i_o, len(o_files), len(compiled)))
+                 "  单元推导 ① 同目录同名 %d/%d（命中 %d）",
+                 _i_o, len(o_files), len(compiled))
         stem = orel[:-2]
         for ext in (".c", ".cpp", ".cc", ".cxx", ".S", ".s"):
             hit = _rel_by_l.get((stem + ext).lower())
@@ -1736,8 +1811,8 @@ def build(root, log=None, progress=None, should_cancel=None,
     for orel in list(pending_o):
         _i_o += 1
         _bt.tick(_i_o, len(pending_o),
-                 "  单元推导 ② .o 上溯 %d/%d（命中 %d）"
-                 % (_i_o, len(pending_o), len(compiled)))
+                 "  单元推导 ② .o 上溯 %d/%d（命中 %d）",
+                 _i_o, len(pending_o), len(compiled))
         stem = os.path.splitext(orel)[0]
         bname = os.path.basename(stem)
         _names = _name_variants(bname)
@@ -1808,7 +1883,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     for orel in pending_o:
         _i_o += 1
         _bt.tick(_i_o, len(pending_o),
-                 "  单元推导 ③ basename 兜底 %d/%d" % (_i_o, len(pending_o)))
+                 "  单元推导 ③ basename 兜底 %d/%d", _i_o, len(pending_o))
         b = os.path.splitext(os.path.basename(orel))[0].lower()
         hits = unit_by_base.get(b)
         if hits and len(hits) == 1:
@@ -1955,6 +2030,9 @@ def build(root, log=None, progress=None, should_cancel=None,
         say("  编译参数：从 %d 个 .cmd 提取 %d 个 -I 目录"
             % (_n_cmd, len(_inc_dirs)))
         if not _inc_dirs:
+            # a465：_extract_inc_dirs 现返回有序列表（保 -I 语义），兜底同样
+            # 用列表按「标准顺序」追加，不能 .add
+            _inc_dirs = []
             for _a in ("arm", "arm64"):
                 for _sub in ("include", "arch/%s/include" % _a,
                              "include/uapi", "arch/%s/include/uapi" % _a):
@@ -1963,17 +2041,23 @@ def build(root, log=None, progress=None, should_cancel=None,
                             continue
                         _p = os.path.join(root, _kr.replace("/", os.sep),
                                           *_sub.split("/"))
-                        if os.path.isdir(_p):
-                            _inc_dirs.add(_p)
+                        if os.path.isdir(_p) and _p not in _inc_dirs:
+                            _inc_dirs.append(_p)
             say("  ⚠ -I 提取为空，退回标准 include 路径 %d 个" % len(_inc_dirs))
         _units_abs = [os.path.join(root, u.replace("/", os.sep))
                       for u in _units]
         _t0 = time.time()
         _reached = _resolve_includes(_units_abs, _inc_dirs,
                                      should_cancel=should_cancel, say=say)
-        _reached_rel = {_rel_by_l.get(os.path.relpath(p, root)
-                                      .replace(os.sep, "/").lower(), "")
-                        for p in _reached}
+        # a465（审计 P1）：裸 relpath 在跨盘时抛 ValueError——绝对 -I 指向
+        # 别的盘（C: 的工具链头）时整个建库中断。跨盘/异常一律丢弃（这些头
+        # 本就在收录集外，进不了索引）。
+        def _rel_of(p):
+            try:
+                return os.path.relpath(p, root).replace(os.sep, "/").lower()
+            except ValueError:
+                return ""
+        _reached_rel = {_rel_by_l.get(_rel_of(p), "") for p in _reached}
         _reached_rel.discard("")
         say("  递归 include：%d 个单元触达 %d 个头文件（%.1fs）"
             % (len(_units), len(_reached_rel), time.time() - _t0))
@@ -1983,7 +2067,7 @@ def build(root, log=None, progress=None, should_cancel=None,
         for u in _units:
             _i_u += 1
             _bt.tick(_i_u, len(_units),
-                     "  同目录头文件补收 %d/%d" % (_i_u, len(_units)))
+                     "  同目录头文件补收 %d/%d", _i_u, len(_units))
             ud = u.rpartition("/")[0]
             for fn2 in dirs_files.get(ud, ()):
                 if fn2.lower().endswith((".h", ".hpp", ".hh")):
@@ -2070,7 +2154,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     with open(listfile, "w", encoding="utf-8") as _lf:
         for _ri, _rl in enumerate(_list_pool):
             _bt.tick(_ri + 1, len(_list_pool),
-                     "  写文件清单 %d/%d" % (_ri + 1, len(_list_pool)))
+                     "  写文件清单 %d/%d", _ri + 1, len(_list_pool))
             try:
                 _lf.write(os.path.join(root, _rl.replace("/", os.sep)) + "\n")
             except UnicodeEncodeError:
@@ -2131,11 +2215,24 @@ def build(root, log=None, progress=None, should_cancel=None,
                 _stall = 0
     _hb = _th.Thread(target=_heartbeat, daemon=True)
     _hb.start()
-    # a440：去掉 ctags 的 60 分钟硬上限（与指纹扫描同一决策：纯本地/网盘
-    # 遍历耗时多久都可接受，超时反而丢掉整份索引）。取消由上面的心跳线程
-    # kill 进程 → communicate 立即返回，不存在永久挂起。
+    # a440：去掉 ctags 的 60 分钟硬上限（纯本地/网盘遍历耗时多久都可接受，
+    # 超时反而丢掉整份索引）。取消由上面的心跳线程 kill 进程 → communicate
+    # 立即返回。
+    # a465（审计 P2）：「取消由心跳 kill」只在该函数传了 should_cancel 时成立
+    # ——build() 是公共函数，脚本/测试直接调用时不传，心跳里的取消判断恒假，
+    # communicate() 就再也无法被唤醒。这种调用形态下保留一个兜底超时。
     try:
-        out_b, _ = proc.communicate()
+        if should_cancel:
+            out_b, _ = proc.communicate()
+        else:
+            out_b, _ = proc.communicate(timeout=7200)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+            proc.communicate()
+        except Exception:
+            pass
+        raise RuntimeError("ctags 超时（2 小时，且调用方未提供取消能力）——目录过大？")
     finally:
         _hb_stop.set()
     # R15-3（实锤：取消被吞）：已取消则不落盘 tags/不写 meta（半成品库会被
@@ -2245,6 +2342,12 @@ def build(root, log=None, progress=None, should_cancel=None,
                 if not os.path.isabs(_gp):
                     _gp = os.path.join(root, _gp)
                 _gen.add(os.path.normcase(os.path.normpath(_gp)))
+    except Cancelled:
+        # a465（审计 P1）：取消必须穿透——原先 Cancelled 继承 Exception，被下面
+        # 的兜底 `except Exception` 当成「rg 失败」吞掉，流程继续往下；工程没有
+        # .o 时（阶段 3 唯一的取消点整段跳过）最终还会写 meta 报「✓ 索引完成」，
+        # 用户点了取消却拿到一份成功索引。
+        raise
     except Exception:
         _gen = set()
     _write_json(os.path.join(ld, "gen_files.json"),
@@ -2271,7 +2374,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     for srel, info in sorted(compiled.items()):
         o_rel_to_src[info["o"]] = srel
         _mi += 1
-        _bt.tick(_mi, _mt, "  白名单映射 %d/%d" % (_mi, _mt))
+        _bt.tick(_mi, _mt, "  白名单映射 %d/%d", _mi, _mt)
         if _mt and _mi % 500 == 0:
             prog(78 + 2 * _mi / max(1, _mt), "白名单映射 %d/%d" % (_mi, _mt))
     if not o_files:
@@ -2290,8 +2393,8 @@ def build(root, log=None, progress=None, should_cancel=None,
                 raise Cancelled()
             done += 1
             _bt.tick(done, len(o_files),
-                     "  读符号表 %d/%d（符号 %d）" % (done, len(o_files),
-                                                    len(symbols)))
+                     "  读符号表 %d/%d（符号 %d）", done, len(o_files),
+                     len(symbols))
             if done % 100 == 0:
                 prog(78 + 20 * done / max(1, len(o_files)), "符号表 %d/%d" % (done, len(o_files)))
             o_abs = os.path.join(root, orel.replace("/", os.sep))

@@ -287,14 +287,19 @@ def nav_build():
             _state["ask_tier"] = _ask
         _state.update(phase="等待选择建库方式")
         _t0 = time.time()
-        while not _ask["evt"].wait(0.2):
-            if should_cancel():
-                break
-            if time.time() - _t0 > 600:      # 10 分钟无人应答 → 按全量继续
-                _log("等待建库方式选择超时（10 分钟），按全量收源码继续")
-                break
-        with _lock:
-            _state["ask_tier"] = None
+        try:
+            while not _ask["evt"].wait(0.2):
+                if should_cancel():
+                    break
+                if time.time() - _t0 > 600:      # 10 分钟无人应答 → 按全量继续
+                    _log("等待建库方式选择超时（10 分钟），按全量收源码继续")
+                    break
+        finally:
+            # a462（审计 P2）：清空必须走 finally——等待期间线程被异常打断
+            # 时若不执行，ask_tier 会残留非空，poll 持续下发数据、/api/nav/tier
+            # 持续返回 200，前端弹窗反复出现，直到下一次建库才被 reset。
+            with _lock:
+                _state["ask_tier"] = None
         if should_cancel():
             return "cancel"
         return _ask["choice"] or "full"

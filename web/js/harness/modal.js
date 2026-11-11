@@ -25,7 +25,14 @@
   function _hgModalHost() {
     try {
       const w = (typeof _hgWrap !== 'undefined') ? _hgWrap : null;
-      if (w && document.contains(w) && w.offsetParent !== null) return w;
+      if (!w || !document.contains(w)) return document.body;
+      // a466（审计 P2）：不能只用 offsetParent !== null 判「可见」——
+      // position:fixed 元素的 offsetParent 恒为 null，宿主一旦改成 fixed
+      // 悬浮形态，harness 内弹窗就会永远退回 body、遮罩盖全窗。
+      // 显式放行 fixed/sticky，其余仍用 offsetParent 判隐藏祖先。
+      let pos = '';
+      try { pos = (getComputedStyle(w).position || ''); } catch (_) {}
+      if (pos === 'fixed' || pos === 'sticky' || w.offsetParent !== null) return w;
     } catch (_) {}
     return document.body;
   }
@@ -66,18 +73,26 @@
         ov.querySelectorAll('input').forEach((inp) => {
           const t = (inp.getAttribute('type') || 'text').toLowerCase();
           if (t === 'checkbox' || t === 'radio' || t === 'file' || t === 'number'
-              || t === 'date' || t === 'time' || t === 'color' || t === 'range') return;
+              || t === 'date' || t === 'time' || t === 'color' || t === 'range'
+              // a466（审计 P2）：password 必须排除——改成 search 会明文显示
+              // （代理凭据/Token 输入一旦走 hgModal 就泄露）。hidden 同理
+              // （改成 search 会变成可见搜索框）。
+              || t === 'password' || t === 'hidden') return;
           inp.setAttribute('type', 'search');
           inp.setAttribute('autocomplete', 'off');
           inp.setAttribute('aria-autocomplete', 'none');
           inp.removeAttribute('name');
         });
       } catch (_) {}
-      // 挂 body 的弹窗登记到「当前可见宿主」的收口表；宿主被拆（tab 关闭）
-      // 时由 teardown 统一关掉——否则弹窗会盖在全窗上，误点主按钮还会对
-      // 已销毁的面板发真实写请求（实测 POST /api/vcs/add）
+      // 弹窗登记到收口表；宿主被拆（tab 关闭）时统一 close——否则弹窗会
+      // 盖在全窗上，误点主按钮还会对已销毁的面板发真实写请求（实测
+      // POST /api/vcs/add）。
+      // a466（审计 P2）：宿主是 _hgWrap 时也要登记。原来只登记 body 的，
+      // 挂 wrap 的弹窗 DOM 会随 wrap 移除，但 Promise 永不 resolve——
+      // `await hgModal(...)` 的调用链（如技能卸载确认）永久挂起，闭包与
+      // 调用方状态都不释放。
       try {
-        if (host === document.body && window._hgModalReg
+        if (window._hgModalReg
             && typeof window._hgModalReg.add === 'function') {
           reg = window._hgModalReg;
           reg.add(ov, close);
@@ -90,6 +105,14 @@
           if (e.key === 'Escape') close(null);
         }); }
     });
+  }
+  // 自建弹窗（不走 hgModal）的收口入口：ov 为遮罩节点，closeFn 负责摘 DOM
+  // 与必需的 resolve。调用方在 appendChild 之后调一次即可。
+  function hgModalTrack(ov, closeFn) {
+    try {
+      if (window._hgModalReg && typeof window._hgModalReg.add === 'function')
+        window._hgModalReg.add(ov, closeFn);
+    } catch (_) {}
   }
   function hgConfirm(title, msg) {
     return hgModal(title, `<div class="hg-modal-body">${esc(msg)}</div>`,

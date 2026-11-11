@@ -42,21 +42,72 @@
     }
     return np;
   }
+  // a462（审计 P1）：高亮必须在**原文**上定位、再对每一段单独转义。
+  // 之前的「先 esc 再匹配」是错的：esc 后 `&`→`&amp;`、`<`→`&lt;`，
+  // 字符坐标与原文不同构，匹配点会落进实体内部——查 `a` 时 `&amp;` 里的
+  // `a` 也被标成 <mark>，实体被劈开，浏览器把 `&` 渲染成裸 `&` 再补字面
+  // `mp;`，整行显示错乱。C 代码里 `&`、`&&`、`<`、`>`、字符串高频，命中面大。
+  // 做法：先按原文求出所有命中区间 → 逐段 esc 后拼起来，标记插在区间两侧。
+  function _escChunks(text, spans) {
+    let out = '', at = 0;
+    for (const [s, e] of spans) {
+      out += esc(text.slice(at, s)) + '<mark>' + esc(text.slice(s, e)) + '</mark>';
+      at = e;
+    }
+    return out + esc(text.slice(at));
+  }
+
+  // 前端必须与后端 smart-case 同口径：后端 `smart_case = not case`，
+  // 即未勾 Aa 时忽略大小写（rg 默认 smart-case）。否则查 `foo` 时
+  // 「Foo bar」后端命中、前端却不标。
+  const _ci = () => !st.caseOn;
+
+  function _findSpans(text, q) {
+    const spans = [];
+    if (!q) return spans;
+    if (st.wordOn) {
+      // 全词：复刻 rg -w 的边界。用 Unicode 词类近似（\p{L}\p{N}_）——
+      // 与 rg 的 Alphabetic+Mark+Decimal_Number+Connector 仍有细微差异
+      // （组合符/½/Ⅳ 等），但那属于极端字符；宁可少标也不要错位。
+      const re = new RegExp('(^|[^\\p{L}\\p{N}_])(' +
+        q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+        ')(?![\\p{L}\\p{N}_])', 'gu' + (_ci() ? 'i' : ''));
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        const start = m.index + m[1].length;
+        spans.push([start, start + m[2].length]);
+        // 零宽保证不会死循环：m[2] 至少一个字符；但仍显式防呆
+        if (re.lastIndex <= m.index) re.lastIndex = m.index + 1;
+      }
+      return spans;
+    }
+    // 字面：直接在原文上扫，忽略大小写时用 lower 同长偏移（ASCII 安全）
+    if (_ci()) {
+      const lt = text.toLowerCase(), lq = q.toLowerCase();
+      let i = 0;
+      while ((i = lt.indexOf(lq, i)) >= 0) {
+        spans.push([i, i + q.length]);
+        i += Math.max(1, q.length);
+      }
+    } else {
+      let i = 0;
+      while ((i = text.indexOf(q, i)) >= 0) {
+        spans.push([i, i + q.length]);
+        i += Math.max(1, q.length);
+      }
+    }
+    return spans;
+  }
+
   function highlight(text, q) {
     // 字面高亮（正则/函数模式退化为不高亮——col 已可跳转）
     if (st.regexOn || st.fnOn || !q) return esc(text);
-    // a300 审计：所有匹配都必须在转义后的字符串上做——先 esc 再匹配会让
-    // '<'→'&lt;'/'&'→'&amp;' 等实体与原文错位（非全词分支原先就是这样）。
-    const et = esc(text), eq = esc(q);
-    if (st.wordOn) {
-      // 全词：复刻 rg -w 的 \b 口径。审计 P2：必须用 Unicode 词字符类——
-      // rg(rust regex) 的 \b 默认 Unicode-aware，中文字符算词字符（实测
-      // 「中文ddr_rank」不命中）；用 ASCII 类会让前端高亮与后端结果错位。
-      const re = new RegExp('(^|[^\\p{L}\\p{N}_])(' + eq.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-                            ')(?![\\p{L}\\p{N}_])', 'gu');
-      return et.replace(re, (m, pre, kw) => pre + '<mark>' + kw + '</mark>');
+    try {
+      return _escChunks(String(text), _findSpans(String(text), q));
+    } catch (_) {
+      // a462：正则构造失败（含孤立代理对等）不能让整行消失——退回纯转义
+      return esc(text);
     }
-    return et.split(eq).join('<mark>' + eq + '</mark>');
   }
 
   // ---- 工具条交互（a221：条件变化立即重搜——VSCode 语义，无需回车确定）----
@@ -75,14 +126,26 @@
   // 就把 \b 视觉置灰，避免用户以为「全词 + 函数」双条件生效。
   function syncFnWord() {
     if (!wordEl) return;
-    wordEl.disabled = st.fnOn;
-    wordEl.style.opacity = st.fnOn ? '0.35' : '';
-    wordEl.title = st.fnOn ? '函数模式已自带定义边界，全词匹配此处不生效'
-                           : '全词匹配（同 VSCode \\b：ddr_rank 不匹配 ddr_rank_a）';
+    // a462（审计 P2）：正则模式下 `-w` 仍然生效（后端只与 fn 互斥），
+    // 但前端在 regexOn 时不做高亮，用户看不到任何标记、也不知道 -w 把
+    // 边界语义改掉了（如查 `foo)` 时 -w 会额外检查尾部字符，结果与直觉
+    // 相反）。这里同样置灰 + 明确提示，让用户知道该组合不按预期工作。
+    const off = st.fnOn || st.regexOn;
+    wordEl.disabled = off;
+    wordEl.style.opacity = off ? '0.35' : '';
+    wordEl.title = st.fnOn
+      ? '函数模式已自带定义边界，全词匹配此处不生效'
+      : st.regexOn
+        ? '正则模式下全词匹配不参与高亮，且 -w 会改变边界语义——建议只用其一'
+        : '全词匹配（同 VSCode \\b：ddr_rank 不匹配 ddr_rank_a）';
   }
   if (fnEl) {
     const _origFnToggle = fnEl.onclick;
     fnEl.onclick = () => { _origFnToggle(); syncFnWord(); };
+  }
+  if (rexEl) {
+    const _origRexToggle = rexEl.onclick;
+    rexEl.onclick = () => { _origRexToggle(); syncFnWord(); };
   }
   syncFnWord();
   // 输入防抖 400ms 自动搜（VSCode 同款即时感；Enter 仍可立即触发、Esc 取消）
