@@ -87,7 +87,7 @@ function buildWebPanelTab(url) {
   const frame = $w('[data-web-frame]');
   const urlInput = $w('[data-web-input]');
   urlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
   });
   wrap.querySelectorAll('[data-web]').forEach(b => b.onclick = () => _webAct(b.dataset.web, wrap));
 
@@ -155,14 +155,20 @@ function _webAct(act, wrap) {
       _webFavsSave(favs);
       showBanner('已取消收藏', 1600);
     } else {
-      // 标题拿不到（跨域）——先取页接口回传 title，失败用 URL 短化
+      // 标题拿不到（跨域）——先取页接口回传 title，失败用 URL 短化。
+      // 审计修：取页最长 15s，窗口期连点会重复收藏——按钮禁用 + 写入按
+      // url 去重 upsert 双保险
+      const starBtn = c.wrap.querySelector('[data-web="star"]');
+      starBtn.disabled = true;
       let title = _webShortUrl(url);
       fetch('/api/web/fetch_text', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }) })
         .then(r => r.json()).then(j => { if (j && j.ok && j.title) title = j.title; })
         .catch(() => {})
         .finally(() => {
-          _webFavsSave([{ url, title, ts: Date.now() }, ..._webFavs()]);
+          const favs = _webFavs().filter(f => f.url !== url);   // 去重 upsert
+          _webFavsSave([{ url, title, ts: Date.now() }, ...favs]);
+          starBtn.disabled = false;
           showBanner('已收藏：' + title, 2000);
           _webSyncUI();
         });
@@ -202,7 +208,7 @@ function _webAct(act, wrap) {
 (function () {
   const bar = document.getElementById('topUrlBar');
   if (bar) bar.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
+    if (e.key !== 'Enter' || e.isComposing) return;
     e.preventDefault();
     const u = _webNormUrl(bar.value);
     if (!u) return;
@@ -236,7 +242,10 @@ function _webFavMenu(anchor) {
   document.body.appendChild(list);
   const r = anchor.getBoundingClientRect();
   list.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
-  list.style.top = (r.top - list.offsetHeight - 6) + 'px';
+  // 审计修：上方放不下（菜单高于锚点上沿距离）时改锚点下方开，且钳到视口
+  const topUp = r.top - list.offsetHeight - 6;
+  list.style.top = (topUp >= 8 ? topUp : Math.min(r.bottom + 6,
+    Math.max(8, window.innerHeight - list.offsetHeight - 8))) + 'px';
   const close = (ev) => {
     if (!list.contains(ev.target) && ev.target !== anchor) {
       list.remove();

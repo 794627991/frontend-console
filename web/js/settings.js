@@ -789,7 +789,9 @@ function _stCdpCard(pane) {
   };
   fetch('/api/theme').then(r => r.json()).then(j => {
     const on = !!(j && j.web_cdp);
-    const live = on && !!(window._HG_VER);   // 端口在不在只有重启后可知——保守显示已保存态
+    // 审计修：活态由服务端 web_cdp_live 探活下发（前端直 fetch 9222 被
+    // CORS 拒——/json/version 无 ACAO 头，跨源必败）
+    const live = !!(j && j.web_cdp_live);
     btn.onclick = () => {
       const now = !document.documentElement.hasAttribute('data-cdp-cfg');
       fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -800,11 +802,7 @@ function _stCdpCard(pane) {
         }).catch(() => showBanner('保存失败', 2500, true));
     };
     document.documentElement.toggleAttribute('data-cdp-cfg', on);
-    // 已开启且本次进程确实带着 CDP（探测一次 /json/version）→ 显示 live 态
-    if (on) {
-      fetch('http://127.0.0.1:9222/json/version').then(r => r.ok).then(ok => sync(on, ok))
-        .catch(() => sync(on, false));
-    } else sync(false, false);
+    sync(on, live);
   }).catch(() => { sync(false, false); });
 }
 

@@ -1478,15 +1478,19 @@ def main():
     # a473（用户令：L3 网页操作必须有）：CDP 端口解除 debug 限定——配置键
     # web_cdp 开启时正常启动也带 --remote-debugging-port（AI 经 devtools_*
     # MCP 工具操作浏览器：内网换组件/报错分析）。端口只绑 127.0.0.1（CDP
-    # 固有行为），本机单用户工具可接受；默认关，开启需重启生效
+    # 固有行为），本机单用户工具可接受；默认关，开启需重启生效。
+    # 审计修：**端口与 debug 两布尔分离**——webview.start(debug=) 只认
+    # _dbg_web（v3.4.99 用户终裁「正常启动无 F12/右键/F5」，pywebview 的
+    # debug=True 会整体打开 DevTools 与右键菜单，不能被 web_cdp 波及）
+    _web_cdp_cfg = False
     if not _wv_debug:
         try:
             import json as _json
             from src.app_state import CONFIG_FILE
             with open(CONFIG_FILE, encoding="utf-8") as _f:
-                _wv_debug = bool((_json.load(_f) or {}).get("web_cdp"))
+                _web_cdp_cfg = bool((_json.load(_f) or {}).get("web_cdp"))
         except Exception:
-            _wv_debug = False
+            _web_cdp_cfg = False
     # 滚动条系列终局复盘：启动参数禁 overlay 特性（f3adc75 超集）已退役——
     # 与 CSS scrollbar-color（踢掉 Fluent 绘制的正解）叠加会把滚动条打成
     # 1~2px 畸形（两机制打架，用户实锤）；单独用它也没能稳定送达命令行
@@ -1501,7 +1505,7 @@ def main():
                 "--disable-renderer-backgrounding",
                 "--disable-background-timer-throttling",
                 "--disable-features=CalculateNativeWinOcclusion"]
-    if _wv_debug:
+    if _wv_debug or _web_cdp_cfg:
         _wv_args.append("--remote-debugging-port=9222")
     _prev = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
     # R24-3（实锤：同名值型开关被覆盖）：整串子串判断会追加出两个

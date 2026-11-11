@@ -11,7 +11,9 @@ DevTools CDP 基础设施（v3.5.187）——WebView2 调试协议直连客户�
   模式）——已随 exe 打包（前端控制台.spec hiddenimports），源码模式
   hiklink 生产在用；不用 devtools 工具就零导入开销。
 - CDP 端口仅在调试模式开启（run_debug.bat / HARNESS_DEBUG_WEB=1，固定
-  9222；main.py:1043）——用户拍板 P0b 维持调试专用，正式版报明确指引。
+  9222；main.py）——a473 起双路开启：run_debug.bat（调试模式）或配置键
+  web_cdp（设置→终端设置→「AI 网页操作」，正常启动也带端口，仅 debug 模式
+  才带 DevTools/右键菜单——两布尔分离）。
 """
 import json
 import os

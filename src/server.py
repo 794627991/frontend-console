@@ -1342,6 +1342,16 @@ def _calc_hist_clean(items):
     return out
 
 
+def _cdp_alive():
+    """a473/审计修：本进程 CDP 端口是否在听（设置卡活态显示用，0.5s 探活）。"""
+    try:
+        import urllib.request as _u
+        with _u.urlopen("http://127.0.0.1:9222/json/version", timeout=0.5) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def _is_remote_session():
     """a468：当前是否跑在远程桌面会话里（RDP/ICA/Citrix）。
 
@@ -1402,8 +1412,12 @@ def api_theme():
                         # a468：远程会话检测（RDP/ICA）——前端据此一次性建议开启
                         "remote_session": _is_remote_session(),
                         # a473：L3 网页操作——CDP 端口常开（AI 经 devtools_* MCP
-                        # 操作浏览器）；重启生效（WebView2 启动参数期决定）
+                        # 操作浏览器）；重启生效（WebView2 启动参数期决定）。
+                        # web_cdp_live 由服务端探活（审计修：前端 fetch
+                        # 127.0.0.1:9222 被 CORS 拒——/json/version 无 ACAO
+                        # 头，跨源必败，live 态成了死码）
                         "web_cdp": bool(cfg.get("web_cdp", False)),
+                        "web_cdp_live": _cdp_alive(),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
                         # a336：加 back/fwd（导航历史后退/前进）
@@ -1765,6 +1779,48 @@ def api_open_url():
         return jsonify({"ok": False, "err": str(e)}), 400
 
 
+def _web_detect_charset(headers_ct, raw):
+    """a473/审计修：charset 三跳探测（纯函数，tests 直测）。
+
+    ① Content-Type 的 charset=（RFC 9110 允许带引号 charset="GBK"——
+    审计实证带引号形态原正则失配回落 utf-8 全页乱码）
+    ② body 前 2KB 的 <meta charset=…>（老内网页只写 meta 不写 header）
+    ③ 兜底 utf-8"""
+    import re as _re
+    m = _re.search(r'charset=["\']?([\w-]+)', (headers_ct or "").lower())
+    if m:
+        return m.group(1)
+    head = raw[:2048].decode("ascii", "replace").lower()
+    m = _re.search(r'<meta[^>]+charset=["\']?([\w-]+)', head)
+    if m:
+        return m.group(1)
+    return "utf-8"
+
+
+def _web_html_to_text(html_src):
+    """a473/审计修：HTML→纯文本（纯函数）。返回 (title, body)。"""
+    import html as _html
+    import re as _re
+    title = ""
+    m = _re.search(r"<title[^>]*>([\s\S]*?)</title>", html_src, _re.I)
+    if m:
+        title = _html.unescape(_re.sub(r"\s+", " ", m.group(1))).strip()[:120]
+    # 审计修（隐藏级）：re.sub 第 4 个位置参数是 count 不是 flags——
+    # (…, body, _re.I) 等于 count=2，每种替换最多做 2 次（长页面第 3 个
+    # script 起全部漏剥）。flags 一律关键字传参
+    body = _re.sub(r"<(script|style|noscript|title)[^>]*>[\s\S]*?</\1>", " ",
+                   html_src, flags=_re.I)
+    body = _re.sub(r"<!--[\s\S]*?-->", " ", body)
+    body = _re.sub(r"<br\s*/?>|</p>|</div>|</tr>|</li>|</h[1-6]>", "\n",
+                   body, flags=_re.I)
+    body = _re.sub(r"<[^>]+>", " ", body)
+    body = _html.unescape(body)
+    body = _re.sub(r"[ \t\r\f\v]+", " ", body)
+    body = _re.sub(r"\n\s*\n\s*", "\n", body)
+    body = "\n".join(ln.strip() for ln in body.splitlines() if ln.strip())
+    return title, body
+
+
 @app.route("/api/web/fetch_text", methods=["POST"])
 def api_web_fetch_text():
     """a473：网页 tab「发给 Claude」——服务端取页转纯文本。
@@ -1776,9 +1832,10 @@ def api_web_fetch_text():
     浏览器进程内，带全 cookie）。
 
     轻量 HTML→文本：去 script/style/注释/标签 + 实体解码，不引依赖。
-    上限：响应体 5MB、正文 40K 字符（Claude 上下文友好）。"""
-    import html as _html
-    import re as _re
+    上限：响应体 5MB、正文 40K 字符（Claude 上下文友好）。
+    审计修：内网 https 常自签——不校验证书（本地单用户工具语境，与
+    浏览器「继续访问」同权）。"""
+    import ssl as _ssl
     import urllib.request
     data = request.get_json(force=True, silent=True) or {}
     url = str(data.get("url") or "").strip()
@@ -1791,28 +1848,16 @@ def api_web_fetch_text():
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     })
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
             raw = r.read(5 * 1024 * 1024)
-            charset = "utf-8"
-            ct = (r.headers.get("Content-Type") or "").lower()
-            m = _re.search(r"charset=([\w-]+)", ct)
-            if m:
-                charset = m.group(1)
-            text = raw.decode(charset, "replace")
+            text = raw.decode(_web_detect_charset(
+                r.headers.get("Content-Type"), raw), "replace")
     except Exception as e:
         return jsonify({"ok": False, "err": "取页失败：%s" % str(e)[:180]})
-    title = ""
-    m = _re.search(r"<title[^>]*>([\s\S]*?)</title>", text, _re.I)
-    if m:
-        title = _html.unescape(_re.sub(r"\s+", " ", m.group(1))).strip()[:120]
-    body = _re.sub(r"<(script|style|noscript)[^>]*>[\s\S]*?</\1>", " ", text, _re.I)
-    body = _re.sub(r"<!--[\s\S]*?-->", " ", body)
-    body = _re.sub(r"<br\s*/?>|</p>|</div>|</tr>|</li>|</h[1-6]>", "\n", body, _re.I)
-    body = _re.sub(r"<[^>]+>", " ", body)
-    body = _html.unescape(body)
-    body = _re.sub(r"[ \t\r\f\v]+", " ", body)
-    body = _re.sub(r"\n\s*\n\s*", "\n", body)
-    body = "\n".join(ln.strip() for ln in body.splitlines() if ln.strip())
+    title, body = _web_html_to_text(text)
     capped = len(body) > 40000
     return jsonify({"ok": True, "url": url, "title": title,
                     "text": body[:40000], "truncated": capped})
