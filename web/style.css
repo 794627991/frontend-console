@@ -5792,3 +5792,19 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .web-fav-x { color: var(--muted); padding: 0 4px; border-radius: 4px; flex-shrink: 0; }
 .web-fav-x:hover { color: var(--neon-red, #e5484d); }
 .web-fav-empty { font-size: 12px; color: var(--muted); padding: 10px 12px; }
+
+/* a475：阅读模式 / 休眠层（Edge sleeping tabs + Reader 等价物） */
+.web-reader { position: absolute; inset: 0; overflow-y: auto; padding: 18px 24px;
+  background: var(--bg); color: var(--fg); font-size: 13px; line-height: 1.8; }
+.web-reader-head { font-size: 14px; font-weight: 600; color: var(--fg-bright, var(--fg));
+  margin-bottom: 4px; }
+.web-reader-url { display: block; font-size: 11px; font-weight: 400;
+  font-family: var(--font-mono); color: var(--muted); margin-bottom: 12px; }
+.web-reader-trunc { font-size: 11px; color: var(--muted); font-weight: 400; }
+.web-reader-body { max-width: 860px; word-break: break-word; white-space: normal; }
+.web-reader-load, .web-reader-err { color: var(--muted); padding: 12px 0; }
+.web-reader-err { color: var(--neon-red, #e5484d); }
+.web-sleep { position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; background: var(--bg); z-index: 2;
+  font-size: 13px; color: var(--muted); text-align: center; line-height: 2; }
+.web-sleep-sub { font-size: 11px; color: var(--muted); }
