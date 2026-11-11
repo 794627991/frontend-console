@@ -1153,8 +1153,13 @@ def vcs_remote_probe():
     vcs, wc, err, _tool_ok = _guard(root)
     if err:
         return err
-    probe = vcs_remote.probe_scope(root)
-    entry = vcs_remote.get_for_root(root)
+    # a460（复审 a455）：配置/提示统一按 **wc（仓库根）** 归键。执行侧
+    # _run 的 cwd 恒为 wc、_remote_ctx 落点也是 wc——面板以子目录打开时
+    # （root≠wc）按 root 存的配置永远匹配不上：SSH 静默失效、芯片谎报
+    # 「建议启用」、_set_remote_err 落 root 键而 status/changes 按 wc 查
+    # （B-F07），回退提示也丢——B-F02 的回退窗口对子目录入口重新漏风。
+    probe = vcs_remote.probe_scope(wc)
+    entry = vcs_remote.get_for_root(wc)
     profiles = vcs_remote.list_profiles()
     # a455：连接档案全局复用——换工程时不用重填主机/口令；这里顺带给出
     # 按共享根推导出的远端路径，用户确认一下就能保存。
@@ -1165,7 +1170,7 @@ def vcs_remote_probe():
         _prof = vcs_remote.get_profile(_basis.get("profile_id")
                                        or _basis.get("id"))
         if _prof:
-            _share = vcs_remote.detect_share_root(_prof, root)
+            _share = vcs_remote.detect_share_root(_prof, wc)
             if _share:
                 _basis = dict(_basis, share_root=_share)
     resp = {"ok": True, "vcs": vcs, "wc": wc, **probe,
@@ -1173,9 +1178,9 @@ def vcs_remote_probe():
             "profiles": profiles,
             "mappings": vcs_remote.list_mappings(),
             "detected_share_root": _share,
-            "suggest_remote_root": vcs_remote.guess_remote_root(root, _basis)
+            "suggest_remote_root": vcs_remote.guess_remote_root(wc, _basis)
             if _basis else "",
-            "hint": _remote_hint(root) or ""}
+            "hint": _remote_hint(wc) or ""}
     # 已配置但从未测通时，顺带做一次轻探测（12s 上限，失败也返回 200）
     if entry and probe.get("reason") == "configured" and data.get("check"):
         t = vcs_remote.test(entry)
@@ -1217,8 +1222,10 @@ def vcs_remote_save():
     if isinstance(_en, str):
         _en = _en.strip().lower() not in ("false", "0", "off", "no", "")
     try:
+        # a460：按 wc（仓库根）归键（见 probe 端点同款注释）——执行侧匹配
+        # 的是 wc，按请求 root 存在子目录场景下永不命中
         entry = vcs_remote.upsert(
-            local_root=root,
+            local_root=_wc,
             host=data.get("host") or None,
             user=data.get("user") or None,
             remote_root=data.get("remote_root") or None,
@@ -1232,9 +1239,15 @@ def vcs_remote_save():
             name=data.get("name") or "")
     except ValueError as e:
         return jsonify({"ok": False, "err": str(e)}), 400
-    _clear_remote_err(root)      # 配置变更后清掉旧的回退提示
+    # 旧版本可能按「请求根」存过（子目录场景下是死配置）——顺手清掉，
+    # 避免 mappings 列表里出现两条指向同一仓库的影子条目
+    if root and os.path.normcase(os.path.normpath(root)) \
+            != os.path.normcase(os.path.normpath(_wc)):
+        vcs_remote.remove(root)
+    _clear_remote_err(_wc)
+    _clear_remote_err(root)
     return jsonify({"ok": True, "entry": vcs_remote.public_view(
-        vcs_remote.get_for_root(root)),
+        vcs_remote.get_for_root(_wc)),
         "profiles": vcs_remote.list_profiles()})
 
 
@@ -1286,15 +1299,21 @@ def vcs_remote_test():
     from src import vcs_remote
     data = request.get_json(force=True, silent=True) or {}
     root = str(data.get("root") or "").strip()
-    entry = vcs_remote.get_for_root(root)
+    _vcs, wc, err, _t = _guard(root)
+    if err:
+        return err
+    # a460：按 wc 归键（probe 端点同款注释）——root 为子目录时按 root 查
+    # 永远「没有保存配置」，且失败 hint 落错键、status 按 wc 查不到
+    entry = vcs_remote.get_for_root(wc) or vcs_remote.get_for_root(root)
     if not entry:
         return jsonify({"ok": False, "err": "该工程还没有保存 SSH 配置"}), 400
     t = vcs_remote.test(entry)
     if t.get("ok"):
+        _clear_remote_err(wc)
         _clear_remote_err(root)
     else:
-        _LAST_REMOTE_ERR[os.path.normcase(root)] = (time.time(),
-                                                    t.get("err") or "连接失败")
+        _LAST_REMOTE_ERR[os.path.normcase(wc)] = (time.time(),
+                                                  t.get("err") or "连接失败")
     return jsonify({"ok": bool(t.get("ok")), **t})
 
 
@@ -1308,7 +1327,8 @@ def vcs_remote_deploy_key():
     _vcs, _wc, err, _t = _guard(root)
     if err:
         return err
-    entry = vcs_remote.get_for_root(root)
+    # a460：按 wc 归键（probe 端点同款注释）
+    entry = vcs_remote.get_for_root(_wc) or vcs_remote.get_for_root(root)
     if not entry:
         return jsonify({"ok": False, "err": "请先保存 SSH 配置"}), 400
     res = vcs_remote.deploy_key(entry, data.get("key_path") or "")
@@ -1324,6 +1344,15 @@ def vcs_remote_delete():
     from src import vcs_remote
     data = request.get_json(force=True, silent=True) or {}
     root = str(data.get("root") or "").strip()
-    vcs_remote.remove(root)
+    # a460：按 wc 归键（probe 端点同款注释）；root 一并删，清掉旧版本
+    # 按请求根存的影子条目
+    _vcs, _wc, err, _t = _guard(root)
+    if err:
+        return err
+    vcs_remote.remove(_wc)
+    if root and os.path.normcase(os.path.normpath(root)) \
+            != os.path.normcase(os.path.normpath(_wc)):
+        vcs_remote.remove(root)
+    _clear_remote_err(_wc)
     _clear_remote_err(root)
     return jsonify({"ok": True})
