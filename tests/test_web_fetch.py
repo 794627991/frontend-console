@@ -75,3 +75,11 @@ def test_invalid_charset_falls_back():
     except LookupError:
         ok = False
     assert ok is False   # 确认路由的 try 分支是必要路径
+
+
+def test_bom_stripped_with_leading_space():
+    """a477 lstrip 形态钉住（审计 O2）：BOM 后跟标签占位空格的正文首行。"""
+    t, b = S._web_html_to_text("<body>\ufeff <p>正文</p></body>")
+    assert b == "正文", repr(b)
+    t2, b2 = S._web_html_to_text("<body>\ufeff\n<p>换行形态</p></body>")
+    assert b2 == "换行形态", repr(b2)

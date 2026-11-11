@@ -252,10 +252,13 @@ function _webReaderToggle(on, skipRestore) {
   frame.style.display = 'none';
   frame.src = 'about:blank';   // 释放页面 JS 与渲染进程（a355 禁节流下必须显式卸载）
   if (btn) btn.textContent = '▦ 网页';
+  // 审计 O1：阅读态连点 back/fwd 会并发多笔取页，旧响应晚归覆盖新正文
+  // （地址栏/栈已是新 URL，阅读区却显示旧页）。序号守卫：只收最新一笔
+  const mySeq = (_webUi.rseq = (_webUi.rseq || 0) + 1);
   fetch('/api/web/fetch_text', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }) })
     .then(r => r.json()).then(j => {
-      if (!_webUi.reader) return;          // 用户已切回网页视图——丢弃
+      if (!_webUi.reader || mySeq !== _webUi.rseq) return;   // 已切回/已有更新一笔——丢弃
       if (!j || !j.ok) {
         rd.innerHTML = '<div class="web-reader-err">取正文失败：'
           + esc(((j && j.err) || '未知')) + '——用 ↗ 浏览器打开</div>';
@@ -266,7 +269,7 @@ function _webReaderToggle(on, skipRestore) {
         + '<span class="web-reader-url">' + esc(url) + '</span></div>'
         + '<div class="web-reader-body">' + esc(j.text).replace(/\n/g, '<br>') + '</div>';
     }).catch(e => {
-      if (_webUi.reader)
+      if (_webUi.reader && mySeq === _webUi.rseq)
         rd.innerHTML = '<div class="web-reader-err">取正文失败：' + esc(String(e)) + '</div>';
     });
 }
