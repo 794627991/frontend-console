@@ -39,6 +39,11 @@ function vcsPanelTeardown() {
   // a455（第二轮审计 P2）：必须限定 owner。收口表改成按 owner 归组后，
   // 无参调用会关掉**所有**弹窗（含 Claude 面板的），别人的确认框被无辜收掉。
   try { if (window._hgModalReg) window._hgModalReg.closeAll('vcs:panel'); } catch (_) {}
+  // 三路审计 C-F2：SSH 配置弹窗自管宿主（挂 body、不进 _hgModalReg 收口
+  // 表）——teardown 必须显式收掉，否则面板销毁后弹窗仍悬浮，保存/测试/
+  // 断开继续对真实后端配置生效（a438-P1 同型缺陷）。
+  const _rdlg = document.getElementById('hgVcsRemoteDlg');
+  if (_rdlg) _rdlg.remove();
   _vpAlive = false;
   _vpEl = null;
   if (_vcsTick) { clearInterval(_vcsTick); _vcsTick = null; }
@@ -114,13 +119,17 @@ function _vcsRemoteAutoAsk() {
   if (!VCS.root) return;
   const D = VCS.data || {};
   if (D.remote_used !== 'smb') return;
-  const key = 'hg-vcs-ssh-asked:' + VCS.root;
+  const root0 = VCS.root;               // 三路审计 C-F4：回调复检基准
+  const key = 'hg-vcs-ssh-asked:' + root0;
   try { if (localStorage.getItem(key)) return; } catch (_) { return; }
   fetch('/api/vcs/remote/probe', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ root: VCS.root }) })
+    body: JSON.stringify({ root: root0 }) })
     .then(r => r.json()).then(j => {
-      // 已配置过（或非网络盘）就不再打扰
+      // 已配置过（或非网络盘）就不再打扰。
+      // 三路审计 C-F4：600ms 窗口里面板可能已关/工程已切——不复检会出现
+      // 「依据 A 工程的探测结论给 B 工程弹引导」或面板销毁后弹窗照弹。
+      if (!_vpAlive || VCS.root !== root0) return;
       if (!j || !j.ok || j.configured || !j.is_network) return;
       try { localStorage.setItem(key, '1'); } catch (_) {}
       if (!document.getElementById('hgVcsRemoteDlg')) _vcsRemoteDialog();
@@ -728,7 +737,10 @@ function _vcsReloadChanges() {
     if (_stale()) { _vcsPaint(); _rearm(); return; }   // 已作废：结果弃+重臂
     // a455：一段已含全量（远端模式）时不去请求二段，j2 为 null——
     // 这不是失败，保持一段结果即可，绝不能落到下面的「二段失败」叙事。
-    if (j2 === null && _j1ok) return;
+    // 三路审计 C-F1：717 行那次 paint 时 chgBusy/pending 还是旧值（渲染
+    // 「全树扫描中…」），随后早退跳过了终态 paint——干净远程仓库会整屏
+    // 卡在扫描态最长 60s。此处补终态重绘。
+    if (j2 === null && _j1ok) { _vcsPaint(); return; }
     if (VCS.data && !VCS.data.err) {
       if (j2 && j2.ok) {
         if (j2.changes_timeout) {
@@ -884,14 +896,16 @@ function _vcsPaint() {
         ? `<div class="hg-vcs-empty">全树改动扫描超时（网络盘大仓库）——版本信息已就绪；改动列表请用命令行 svn status 查看。</div>`
         : (D.changes_pending && (VCS.chgBusy || D.changes_shallow))
           ? `<div class="hg-vcs-empty">改动列表扫描中…（网络盘大仓库可能需要数十秒）</div>`
-          : (_svn && _unv.length)
-            ? `<div class="hg-vcs-empty">没有实质改动（另有 ${_unv.length} 个未版本控制文件已折叠，点下方展开可 svn add）。</div>`
+          : (_svn && (_unv.length || D.truncated_unv))
+            ? `<div class="hg-vcs-empty">没有实质改动（${_unv.length ? '另有 ' + _unv.length + ' 个未版本控制文件已折叠，点下方展开可 svn add' : D.truncated_unv + ' 个未版本控制文件因 500 条额度截断未显示'}）。</div>`
             : `<div class="hg-vcs-empty">工作区干净，没有未提交的改动。</div>`) +
-    (_svn && _unv.length
+    // 三路审计 C-F6：core≥500 时未版本控条目为 0 但 truncated_unv 可能上万
+    // ——原条件 _unv.length 非零才渲染折叠区，截断信息两处消费点全不可达。
+    (_svn && (_unv.length || D.truncated_unv)
       ? `<div class="hg-vcs-unv" data-vcs-unv="1">` +
         (_showUnv
           ? `<div class="hg-vcs-unv-t">▾ 未版本控制 ${_unv.length}${D.truncated_unv ? '+' : ''} 个（点收起）——勾选后提交时先 svn add 再提交${D.truncated_unv ? '；另有 ' + D.truncated_unv + ' 个未列出' : ''}</div><div class="hg-vcs-files">` + _unv.map(([f, i]) => _vcsFileHtml(f, i)).join('') + `</div>`
-          : `<div class="hg-vcs-unv-t">▸ 未版本控制 ${_unv.length}${D.truncated_unv ? '+' : ''} 个（编译产物/临时文件为主——点展开${D.truncated_unv ? '，仅列出前 ' + _unv.length + ' 个' : ''}）</div>`) + `</div>`
+          : `<div class="hg-vcs-unv-t">▸ 未版本控制 ${_unv.length || D.truncated_unv}${D.truncated_unv && _unv.length ? '+' : ''} 个（${_unv.length ? '编译产物/临时文件为主——点展开' + (D.truncated_unv ? '，仅列出前 ' + _unv.length + ' 个' : '') : '全部因 500 条额度截断未列出——实质改动占满了额度'}）</div>`) + `</div>`
       : '') +
     (VCS.out ? `<div class="hg-vcs-out"><div class="hg-vcs-out-t">上次命令输出</div><pre>${esc(VCS.out.slice(0, 4000))}</pre></div>` : '') +
     // v3.5.265（Q3 首选嫌疑缓解）：busy 期置灰同时给明确提示（旧=静默灰
@@ -955,7 +969,7 @@ function _vcsHeadHtml(D) {
   const _chgTxt = (D.changes_pending && (VCS.chgBusy || D.changes_shallow)) ? '全树扫描中…'
     : D.changes_timeout ? '改动数未获取（扫描超时）'
     : `${(D.files || []).length - _svnU.length} 个改动` +
-      (_svnU.length ? `（另有 ${_svnU.length}${D.truncated_unv ? '+' : ''} 个未版本控制）` : '') +
+      (_svnU.length || D.truncated_unv ? `（另有 ${_svnU.length}${D.truncated_unv && _svnU.length ? '+' : ''} 个未版本控制）` : '') +
       (D.symlink_hidden ? `（已隐藏 ${D.symlink_hidden} 项网络盘符号链接误报）` : '');
   return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
     `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
@@ -1268,7 +1282,7 @@ function _vcsRemoteRender(ov, root, p) {
   if (hasProf) {
     html += '<div class="hg-vcs-rdlg-row"><label>连接</label>' +
       '<select data-rm-f="profile_id">' +
-      profiles.map(x => `<option value="${x.id}"${x.id === selPid ? ' selected' : ''}>`
+      profiles.map(x => `<option value="${esc(x.id)}"${x.id === selPid ? ' selected' : ''}>`
         + esc((x.name || x.host) + '  ·  ' + x.user + '@' + x.host + ':' + x.port)
         + '</option>').join('') +
       '<option value="__new">＋ 新建连接…</option>' +
@@ -1375,7 +1389,13 @@ function _vcsRemoteRender(ov, root, p) {
       fetch('/api/vcs/remote/delete', { method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ root: root }) })
-        .then(r => r.json()).then(() => { ov.remove(); _vcsReload(); })
+        .then(r => r.json()).then(() => {
+          ov.remove();
+          // 三路审计 C-F3：断开是明确的「不要」——落 asked 键。否则 600ms
+          // 后 auto-ask 以引导形态把刚关掉的弹窗原地复活（键未落过的工程）。
+          try { localStorage.setItem('hg-vcs-ssh-asked:' + root, '1'); } catch (_) {}
+          _vcsReload();
+        })
         .catch(() => msg('断开失败', 'err'));
       return;
     }

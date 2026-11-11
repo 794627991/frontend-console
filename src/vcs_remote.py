@@ -32,6 +32,7 @@ import time
 STORE_NAME = "vcs_remote.json"
 _CFG_CACHE = {"path": None, "mtime": None, "data": None}
 _CFG_LOCK = threading.Lock()
+_TXN_LOCK = threading.Lock()   # 合入审计 G8：落盘写事务锁（防并发交错损坏）
 
 # 连接池：host:port:user -> SSHClient（复用 TCP + 认证，省 300~500ms/次）
 _POOL = {}
@@ -39,15 +40,21 @@ _POOL_LOCK = threading.Lock()
 _POOL_IDLE = 900          # 15 分钟不用即关闭（摆渡机上不常驻）
 
 # 允许经 SSH 执行的子命令（前缀精确匹配，防配置被篡改后任意执行）
+# 三路审计 B-F11：删掉 ("svn","revert")——vcs.py docstring 声明能力边界
+# 「不含还原/丢弃改动」，全库亦无调用方；留在表里等于给被篡改配置多开
+# 一扇破坏远端工作副本的门。
 _ALLOW = (
     ("svn", "status"), ("svn", "info"), ("svn", "log"), ("svn", "cat"),
     ("svn", "diff"), ("svn", "add"), ("svn", "commit"), ("svn", "update"),
-    ("svn", "revert"), ("svn", "list"),
+    ("svn", "list"),
     ("git", "status"), ("git", "log"), ("git", "show"), ("git", "diff"),
     ("git", "add"), ("git", "commit"), ("git", "pull"), ("git", "rev-parse"),
     # 合入审计 F5：原表里的 ("git","-c","core.quotepath=false") 三元前缀会把
     # 后续**任意**子命令一并放行（push/…），白名单形同虚设——删掉，由
     # _allowed 的跳 -c 逻辑对真实子命令校验
+    # 合入审计 G2：vcs.py _log_plan 首页必发 git rev-list --count（总数查询），
+    # 漏登白名单 → SSH 模式 log 一开就 RemoteError 回退 + 芯片误报「已回退」
+    ("git", "rev-list"),
 )
 
 
@@ -97,10 +104,12 @@ def _xor(a, b):
 def _enc(plain):
     """加密单个字段（空值原样返回空串）。
 
-    为什么不用 AES：打包版把 cryptography 与 pycryptodome 的 Python 层都
-    剥掉了（只剩 pyd 骨架），import 必失败。这里用纯标准库构造——
-    SHA-256 CTR 密钥流异或 + HMAC-SHA256 加密后认证。密码本身只需要
-    「配置文件里看不见」，不是抗离线爆破的机密材料（同目录本就有源码）。"""
+    为什么不用 AES：内网早期打包形态曾把 cryptography 的 Python 层剥掉
+    （import 必失败，包内 report 自述）；现 spec 虽已把 cryptography 列入
+    hiddenimports，但纯标准库构造在明文调试包/正式包/裸源码三种形态下
+    行为恒定，不赌打包形态。SHA-256 CTR 密钥流异或 + HMAC-SHA256 加密后
+    认证。密码本身只需要「配置文件里看不见」，不是抗离线爆破的机密材料
+    （同目录本就有源码）。"""
     if not plain:
         return ""
     key = _secret_key()                       # 32B
@@ -208,9 +217,14 @@ def _new_profile_id(d):
 
 def _match_or_add_profile(d, prof):
     """按 主机+端口+用户+认证 找同档案；没有就新建（迁移用，免重复）。"""
+    def _port22(v):
+        try:
+            return int(v or 22)
+        except (TypeError, ValueError):
+            return 22        # 合入审计 L2：旧格式 port 非数字不再炸穿 load()
     for p in d.get("profiles") or []:
         if (str(p.get("host")) == str(prof.get("host"))
-                and int(p.get("port") or 22) == int(prof.get("port") or 22)
+                and _port22(p.get("port")) == _port22(prof.get("port"))
                 and str(p.get("user")) == str(prof.get("user"))
                 and (p.get("auth") or "password") == (prof.get("auth") or "password")):
             return p
@@ -225,10 +239,15 @@ def _save(d):
     from src import app_state as _st
     p = _store_path()
     os.makedirs(_st.DATA_DIR, exist_ok=True)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, p)
+    # 合入审计 G8：固定 .tmp 名在并发保存下两把 fd 交错写同一文件，
+    # os.replace 转正后 JSON 损坏 → load() 按未配置处理整体清空。写事务
+    # 加锁 + 线程 id 后缀双保险（读-改-写竞态残余仅限单字段丢失，UI 单
+    # 用户场景可接受，损坏性风险归零）。
+    tmp = "%s.tmp.%d" % (p, threading.get_ident())
+    with _TXN_LOCK:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, p)
     with _CFG_LOCK:
         _CFG_CACHE.update(path=None, mtime=None, data=None)
 
@@ -291,10 +310,14 @@ def detect_share_root(prof, local_root=""):
         cli = _get_client(prof)
         user = str(prof.get("user") or "")
         # 优先按 samba 配置里 valid users 含该用户的段取 path
-        cmd = ("awk '/^\\[/{sec=$0} /^path *=/{p=$0} "
-               "/^valid users/{if (index($0, \\\"%s\\\")>0) print p}' "
-               "/etc/samba/smb.conf 2>/dev/null | head -5" % user)
-        _in, o, _e = cli.exec_command(cmd, timeout=12)
+        # 合入审计 S1：user 原样插进 awk 单引号程序——含 ' 即闭壳，shell
+        # 注入（probe 端点自动触发本探测，用户名被篡改/含撇号都打得到）。
+        # 改走环境变量：shell 侧 _quote 单参、awk 侧 ENVIRON 读取，user
+        # 内容不再被任何一层解析。
+        cmd = ("u=%s awk '/^\\[/{sec=$0} /^path *=/{p=$0} "
+               "/^valid users/{if (index($0, ENVIRON[\"u\"])>0) print p}' "
+               "/etc/samba/smb.conf 2>/dev/null | head -5" % _quote(str(user)))
+        _in, o, _e = _sh_exec(cli, cmd, 12)
         txt = _decode(o.read())
         cands = []
         for ln in txt.splitlines():
@@ -370,7 +393,7 @@ def detect_project_path(prof, local_root, timeout=25):
     roots = [r for r in roots if not (r in seen or seen.add(r))]
 
     def _sh(cmd, to=timeout):
-        _in, o, _e = cli.exec_command(cmd, timeout=to)
+        _in, o, _e = _sh_exec(cli, cmd, to)
         out = _decode(o.read())
         rc = o.channel.recv_exit_status()
         return rc, out
@@ -575,26 +598,43 @@ def to_remote(entry, local_path):
     s = str(local_path)
     if not lr:
         return s
-    a = os.path.normcase(os.path.normpath(s))
-    b = os.path.normcase(os.path.normpath(lr))
+    # 合入审计 G1：匹配用归一化形态（normcase 容忍大小写/尾分隔差异，这正
+    # 是 get_for_root 能找到 entry 的原因），切片却按存储原串 lr 的长度切
+    # s——两者错位（保存时 local_root 带尾反斜杠、或大小写漂移）时 tail 从
+    # 名字中间截断，svn cat 打到错误远端路径。改为 normpath（保大小写、剥
+    # 尾分隔）做长度基准，前缀命中即长度对齐。
+    lr_n = os.path.normpath(lr)
+    s_n = os.path.normpath(s)
+    a = os.path.normcase(s_n)
+    b = os.path.normcase(lr_n)
     if a == b:
         return rr
     if a.startswith(b + os.sep):
-        tail = s[len(lr):].lstrip("\\/").replace("\\", "/")
+        tail = s_n[len(lr_n):].lstrip("\\/").replace("\\", "/")
         return rr + "/" + tail
     # 也可能是「相对 wc 的路径」（-- 之后的参数）——原样给远端即可
     return s.replace("\\", "/")
 
 
 def _map_argv(entry, argv, cwd):
-    """把 argv 里的本地绝对路径翻译成远端路径。相对路径保持原样。"""
+    """把 argv 里**确实落在工程根下**的绝对路径翻译成远端路径。
+
+    合入审计 G4：原实现「isabs 即翻译」——git commit -m 的说明是用户自由
+    文本，写成 W:\\... 形态会被当路径改写后**永久写进版本库**；--grep 搜索
+    词同理。只翻工程根下的绝对路径（vcs.py 实际构造的绝对参数全部是
+    os.path.join(wc, rel) 形态），其余元素（相对 rel 已是 / 分隔、自由
+    文本）一律原样。"""
+    lr = str(entry.get("local_root") or "")
+    b = os.path.normcase(os.path.normpath(lr)) if lr else None
     out = []
     for a in argv:
         s = str(a)
-        if os.path.isabs(s):
-            out.append(to_remote(entry, s))
-        else:
-            out.append(s)
+        if b and os.path.isabs(s):
+            n = os.path.normcase(os.path.normpath(s))
+            if n == b or n.startswith(b + os.sep):
+                out.append(to_remote(entry, s))
+                continue
+        out.append(s)
     return out
 
 
@@ -673,7 +713,20 @@ def _get_client(entry):
         except Exception:
             pass
         raise RemoteError("SSH 连接失败（%s）：%s" % (host, _tidy(e)))
+    # 合入审计 G9：connect 在锁外，两线程同时未命中会双连——后写者覆盖池，
+    # 输家的 Transport 线程被强引用**永不释放**（sshd 也不主动踢）。回锁后
+    # 复查：池里已有别人的活连接就关掉自己的、复用赢家的。
     with _POOL_LOCK:
+        old = _POOL.get(key)
+        if (old is not None and old.get("cli") is not cli
+                and old["cli"].get_transport()
+                and old["cli"].get_transport().is_active()):
+            try:
+                cli.close()
+            except Exception:
+                pass
+            old["ts"] = time.time()
+            return old["cli"]
         _POOL[key] = {"cli": cli, "ts": time.time()}
     return cli
 
@@ -712,6 +765,14 @@ def _quote(a):
     return "'" + s.replace("'", "'\\''") + "'"
 
 
+def _sh_exec(cli, cmd, timeout):
+    """exec_command 统一包 sh -c。合入审计 G6：登录 shell 可能是 csh/tcsh
+    （老构建机常见），POSIX 语法（$( )、if/fi、2>/dev/null）在其下整条语法
+    崩。全部远端命令经 sh -c 单参转义后语义恒定——登录 shell 只负责启动
+    sh 这一个动作，不解析命令体。"""
+    return cli.exec_command("sh -c " + _quote(cmd), timeout=timeout)
+
+
 def run(entry, argv, cwd, timeout=60, gzip_above=256 * 1024):
     """远端执行，返回 (rc, stdout_bytes, stderr_str)。
 
@@ -734,27 +795,34 @@ def run(entry, argv, cwd, timeout=60, gzip_above=256 * 1024):
     rcwd = to_remote(entry, cwd)
     inner = "cd %s && %s" % (
         _quote(rcwd), " ".join(_quote(a) for a in _map_argv(entry, argv, cwd)))
+    # 合入审计 G3：rcf 用 mktemp 不可预测名——固定 .$$ 名可被同机恶意用户
+    # 预建符号链接定向截断（echo > 跟随链接 O_TRUNC 后 rm 销痕）；mktemp
+    # 缺席的极老系统才落回 $$。
     cmd = (
         "if command -v gzip >/dev/null 2>&1; then "
-        "rcf=/tmp/.vcs_rc.$$; "
+        "rcf=$(mktemp /tmp/.vcs_rc.XXXXXX 2>/dev/null) || rcf=/tmp/.vcs_rc.$$; "
         "( %s; echo $? >\"$rcf\" ) | gzip -c 2>/dev/null; "
         "rc=$(cat \"$rcf\" 2>/dev/null || echo 127); rm -f \"$rcf\"; exit \"$rc\"; "
         "else %s; fi" % (inner, inner))
     try:
-        _in, out, err = cli.exec_command(cmd, timeout=timeout)
+        _in, out, err = _sh_exec(cli, cmd, timeout)
         data = out.read()
         ebytes = err.read()
         rc = out.channel.recv_exit_status()
     except Exception as e:
         drop_pool(entry)
         raise RemoteError("远端命令执行失败：%s" % _tidy(e))
-    # gzip 魔数 1f 8b → 解压；无 gzip 的明文分支原样输出
+    # gzip 魔数 1f 8b → 解压；无 gzip 的明文分支原样输出。
+    # 三路审计 B-F08：解压失败（传输截断/损坏）绝不能静默吞掉——压缩字节
+    # 当正文返回 rc=0，git 侧解析出乱码条目、svn 侧 XML 解析失败 500。抛
+    # RemoteError 走统一回退链路。
     if data[:2] == b"\x1f\x8b":
         try:
             import gzip
             data = gzip.decompress(data)
-        except Exception:
-            pass
+        except Exception as _ge:
+            drop_pool(entry)
+            raise RemoteError("远端输出解压失败：%s" % _tidy(_ge))
     return rc, data, _decode(ebytes)
 
 
@@ -780,7 +848,7 @@ def test(entry, timeout=15):
         cmd = ("cd %s 2>/dev/null || { echo __MISS__; exit 3; }; "
                "svn --version --quiet 2>/dev/null; git --version 2>/dev/null"
                % _quote(rr))
-        _in, o, e = cli.exec_command(cmd, timeout=timeout)
+        _in, o, e = _sh_exec(cli, cmd, timeout)
         data = _decode(o.read())
         rc = o.channel.recv_exit_status()
         out["latency_ms"] = int((time.time() - t0) * 1000)
@@ -890,12 +958,24 @@ def upsert(local_root, host=None, user=None, remote_root=None, auth="password",
     rr = _norm_remote(remote_root)
     if not rr.startswith("/"):
         raise ValueError("远端工程路径必须是 Linux 绝对路径（以 / 开头）")
-    # 兜底：路径若明显是父目录（没有工程名这一级），自动探测纠正
+    # 兜底：路径若明显是父目录（没有工程名这一级），自动探测纠正。
+    # 合入审计 G5：末级名不一致 ≠ 填错——本地 trunk ↔ 远端 g10_trunk 是
+    # 合法异名映射，原逻辑探测命中即静默覆盖用户显式输入（可能指向另一
+    # 个同内容检出=另一条分支）。只有该路径在远端**不存在**（疑似父目录/
+    # 打错）才纠正；存在的显式填写一律尊重。
     base_name = os.path.basename(str(local_root).rstrip("\\/"))
     if base_name and rr.rstrip("/").split("/")[-1] != base_name:
-        det = detect_project_path(prof, local_root)
-        if det.get("path"):
-            rr = det["path"]
+        _rr_exists = True
+        try:
+            _cli = _get_client(prof)
+            _in, _o, _e = _sh_exec(_cli, "test -d %s && echo Y" % _quote(rr), 8)
+            _rr_exists = _decode(_o.read()).strip() == "Y"
+        except Exception:
+            _rr_exists = True      # 探测不了就不动用户的显式输入
+        if not _rr_exists:
+            det = detect_project_path(prof, local_root)
+            if det.get("path"):
+                rr = det["path"]
     remotes = d.setdefault("remotes", [])
     lr = _norm(local_root)
     entry = None
@@ -1056,17 +1136,20 @@ def deploy_key(entry, key_path=""):
                     username=user, password=pwd, timeout=12,
                     banner_timeout=12, auth_timeout=15,
                     allow_agent=False, look_for_keys=False)
-        cmd = ("umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
-               "grep -qxF %s ~/.ssh/authorized_keys || echo %s >> ~/.ssh/authorized_keys; "
-               "echo __DONE__" % (_sq(pub), _sq(pub)))
-        _in, o, _e = cli.exec_command(cmd, timeout=20)
-        # 合入审计 F8：__DONE__ 是远端唯一的成功回执——原来 o.read() 读了
-        # 丢弃，追加失败（磁盘满/权限）也报「部署成功」，切 key 后下次连接
-        # 才暴露。必须见到回执才算成。
+        # 合入审计 S2（二审推翻 F8 修法）：原回执 `echo __DONE__` 用 ; 连接，
+        # 前面成败与否都回显——回执与写入成败无因果。改 if/then/else：写入
+        # 链成立才回 __DONE__，否则回 __FAIL__ 并带出 stderr 供定位。
+        cmd = ("umask 077; if mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
+               "{ grep -qxF %s ~/.ssh/authorized_keys || "
+               "echo %s >> ~/.ssh/authorized_keys; }; then echo __DONE__; "
+               "else echo __FAIL__; fi" % (_sq(pub), _sq(pub)))
+        _in, o, e = _sh_exec(cli, cmd, 20)
         done = _decode(o.read())
+        eerr = _decode(e.read()).strip()
         cli.close()
-        if "__DONE__" not in done:
-            res["err"] = "远端未确认写入（authorized_keys 追加失败）"
+        if "__DONE__" not in done or "__FAIL__" in done:
+            res["err"] = ("authorized_keys 写入失败%s"
+                          % ((": " + eerr[:160]) if eerr else "（远端未见成功回执）"))
             return res
         # 切档案到 key 认证（档案是全局的，换工程同样免密）
         pid = entry.get("profile_id")
@@ -1105,6 +1188,22 @@ def _ensure_keypair(path):
     if os.path.isfile(path) and os.path.isfile(path + ".pub"):
         with open(path + ".pub", encoding="utf-8") as f:
             return path, f.read().strip()
+    # 合入审计 G10：私钥在而 .pub 缺失——绝不能按「无密钥」走生成分支把
+    # 用户现有私钥静默覆盖（其它依赖该私钥的 SSH 场景会断）。用 paramiko
+    # 从私钥导出公钥行补齐 .pub；导不出就明确报错让用户换路径。
+    if os.path.isfile(path) and not os.path.isfile(path + ".pub"):
+        try:
+            import paramiko
+            k = paramiko.Ed25519Key.from_private_key_file(path)
+            pub = "%s %s vcs-remote" % (k.get_name(), k.get_base64())
+            with open(path + ".pub", "w", encoding="utf-8") as f:
+                f.write(pub + "\n")
+            return path, pub
+        except Exception as ex:
+            raise RemoteError(
+                "私钥存在但 .pub 缺失，且无法从私钥导出公钥（%s）。"
+                "请手动补 %s.pub，或在配置里换一个私钥路径"
+                % (_tidy(ex), path))
     d = os.path.dirname(path)
     os.makedirs(d, exist_ok=True)
     import paramiko

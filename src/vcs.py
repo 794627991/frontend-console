@@ -101,6 +101,15 @@ def _remote_ctx(cwd):
         return None
     if not entry:
         return None
+    # 三路审计 B-F02/C-F7：回退窗口期（hint TTL 5 分钟内）直接按本地处理。
+    # 原判定不查 hint——配置在而远端失联时，_run 每条命令都先吃一次 SSH
+    # 连接超时再回退，且 depth/超时/符号链接过滤按「远端」口径选择，shallow
+    # 一段退化成本地全树扫、前端还要二段再扫一遍（实测 2×47s）。在单点
+    # 对齐后，_svn_changes 的三处判定与 _run/_run_bytes 的分流自动回本地
+    # 语义（分层加载、SMB 符号链接补偿全部照旧生效）。恢复路径：hint 到期
+    # 或「测试连接」成功清除。
+    if _remote_hint(root):
+        return None
     try:
         if not _is_network_drive(root):
             return None
@@ -333,7 +342,10 @@ def _wc_root(path):
     for vcs, argv in (("git", ["git", "rev-parse", "--show-toplevel"]),
                       ("svn", ["svn", "info", "--xml", p])):
         if _tool(vcs):
-            rc, out, _e = _run(argv, p, VCS_TIMEOUT_RO)
+            # 三路审计 B-F06：仓库根探测问的是**本地路径**的归属，必须本地
+            # 执行——走 _run 会被 SSH 分流，远端回传 /data1/... 被 abspath
+            # 当成本地盘根路径，_under_roots_or_projects 不认 → 400 假「越界」。
+            rc, out, _e = _run_local(argv, p, VCS_TIMEOUT_RO)
             if rc == 0:
                 if vcs == "git":
                     cand = out.strip().splitlines()[0].strip() if out.strip() else None
@@ -364,10 +376,20 @@ def _guard(root, need_tool=None):
         return None, None, (jsonify({"ok": False, "err": err}), 400), None
     tool = bool(_tool(vcs))
     if need_tool and not tool:
-        return (None, None,
-                (jsonify({"ok": False,
-                          "err": "%s 客户端未安装——安装 %s 命令行并重启后可用"
-                                 % (vcs, vcs)}), 400), False)
+        # 三路审计 B-F03：SSH 生效时命令在构建机执行，不依赖本地 svn/git
+        # 二进制——否则「log 无门卫能刷历史、commit/update 被 400 拒」行为
+        # 割裂。回退窗口期 _remote_ctx 为 None，此时仍要求本地 CLI（自洽）。
+        try:
+            if _remote_ctx(wc) is None:
+                return (None, None,
+                        (jsonify({"ok": False,
+                                  "err": "%s 客户端未安装——安装 %s 命令行"
+                                         "并重启后可用" % (vcs, vcs)}), 400), False)
+        except Exception:
+            return (None, None,
+                    (jsonify({"ok": False,
+                              "err": "%s 客户端未安装——安装 %s 命令行"
+                                     "并重启后可用" % (vcs, vcs)}), 400), False)
     return vcs, wc, None, tool
 
 
@@ -590,28 +612,33 @@ def vcs_status():
     if err:
         return err
     # v3.5.118（轻审 P3）：「未安装 = tool:False 占位」设计内首态——status 是
-    # 只读探测，未装 CLI 时返回 200 + 空 files，前端渲染占位而非报错
-    if not _tool(vcs):
+    # 只读探测，未装 CLI 时返回 200 + 空 files，前端渲染占位而非报错。
+    # 三路审计 B-F03：SSH 生效时执行在构建机、不依赖本地二进制——占位分支
+    # 让路（否则「历史能刷、状态显示未安装」割裂；回退窗口期 _remote_ctx
+    # 为 None，此时仍走占位，判定自洽）。
+    if not _tool(vcs) and _remote_ctx(wc) is None:
         return jsonify({"ok": True, "vcs": vcs, "tool": False, "branch": "",
                         "rev": "", "ahead": 0, "behind": 0,
                         "files": [], "truncated": 0})
     # v3.5.264（Q1）：svn 走轻路径——只 svn info（0.3s 级），全树 status 移
     # 出关键路径（/api/vcs/changes 惰性加载）；files 空表+changes_pending 标
-    # 记，前端显示「改动扫描中」占位。git 的 status 本身亚秒级，维持原样
+  # 记，前端显示「改动扫描中」占位。git 的 status 本身亚秒级，维持原样。
+    # 三路审计 B-F07：hint/芯片按**实际工作根 wc** 取数——工程开在子目录时
+    # 请求根 ≠ wc，按请求根查询会谎报 ssh/丢回退提示。
     if vcs == "svn":
         rev, branch = _svn_info(wc)
-        give_miss = _remote_hint(data.get("root"))
+        give_miss = _remote_hint(wc)
         return jsonify({"ok": True, "vcs": "svn", "tool": True,
                         "branch": branch, "rev": rev, "ahead": 0, "behind": 0,
                         "files": [], "truncated": 0, "changes_pending": True,
-                        "remote_used": _mirror_effective(data.get("root")),
+                        "remote_used": _mirror_effective(wc),
                         **({"remote_hint": give_miss} if give_miss else {})})
     res, e = _git_status(wc)
     if e:
         return jsonify({"ok": False, "err": e}), 500
-    _h = _remote_hint(data.get("root"))
+    _h = _remote_hint(wc)
     return jsonify({"ok": True, **res,
-                    "remote_used": _mirror_effective(data.get("root")),
+                    "remote_used": _mirror_effective(wc),
                     **({"remote_hint": _h} if _h else {})})
 
 
@@ -624,7 +651,7 @@ def vcs_changes():
     vcs, wc, err, _tool_ok = _guard(data.get("root"))
     if err:
         return err
-    if not _tool(vcs):
+    if not _tool(vcs) and _remote_ctx(wc) is None:   # B-F03：SSH 生效让路（同 status）
         return jsonify({"ok": True, "vcs": vcs, "tool": False,
                         "files": [], "truncated": 0})
     if vcs == "svn":
@@ -634,19 +661,19 @@ def vcs_changes():
         res, e = _svn_changes(wc, depth="empty" if data.get("shallow") else None)
         if e:
             return jsonify({"ok": False, "err": e}), 500
-        _h = _remote_hint(data.get("root"))
+        _h = _remote_hint(wc)               # B-F07：按实际工作根取数
         return jsonify({"ok": True, "vcs": "svn", **res,
-                        "remote_used": _mirror_effective(data.get("root")),
+                        "remote_used": _mirror_effective(wc),
                         **({"remote_hint": _h} if _h else {})})
     res, e = _git_status(wc)
     if e:
         return jsonify({"ok": False, "err": e}), 500
-    _h = _remote_hint(data.get("root"))
+    _h = _remote_hint(wc)
     return jsonify({"ok": True, "vcs": "git",
                     "files": res.get("files", []),
                     "truncated": res.get("truncated", 0),
                     "truncated_unv": res.get("truncated_unv", 0),
-                    "remote_used": _mirror_effective(data.get("root")),
+                    "remote_used": _mirror_effective(wc),
                     **({"remote_hint": _h} if _h else {})})
 
 
@@ -883,12 +910,25 @@ def vcs_commit_files():
         if rc != 0:
             return jsonify({"ok": False, "err": e or "svn diff 失败"}), 500
         wcp = wc.replace("/", os.sep).rstrip(os.sep) + os.sep
+        # 三路审计 B-F01：SSH 生效时 summarize 以**远端绝对路径**回传
+        # （_map_argv 把 wc 译成了 remote_root）——只剥本地前缀会把
+        # /data1/... 原样透传，前端点开 diff 必 400「非法文件路径」。
+        # 先剥远端前缀再走本地前缀逻辑，两条路径都归一到 rel。
+        _rr = ""
+        try:
+            _re = _remote_ctx(wc)
+            if _re:
+                _rr = str(_re.get("remote_root") or "").replace("\\", "/").rstrip("/")
+        except Exception:
+            _rr = ""
         for line in out.splitlines():
             # v3.5.132（轻审严重1）：双捕获组——旧单组取路径首字符当状态字母
             m = re.match(r"^([AMD])\s+(.+)$", line.strip())
             if not m:
                 continue
             path = m.group(2).replace("\\", "/")
+            if _rr and (path == _rr or path.startswith(_rr + "/")):
+                path = path[len(_rr):].lstrip("/")
             apath = path.replace("/", os.sep)
             if apath.startswith(wcp):   # svn summarize 可能输出绝对路径——剥工作副本前缀转 rel
                 path = apath[len(wcp):].replace(os.sep, "/")
@@ -1171,6 +1211,11 @@ def vcs_remote_save():
         pid = int(pid) if pid not in (None, "") else None
     except (TypeError, ValueError):
         return jsonify({"ok": False, "err": "profile_id 必须是数字"}), 400
+    # 三路审计 B-F18：enabled 字符串形态严格布尔化——"false" 经 bool() 是
+    # True，API 直调会造出「名义启用实为关」的映射。
+    _en = data.get("enabled", True)
+    if isinstance(_en, str):
+        _en = _en.strip().lower() not in ("false", "0", "off", "no", "")
     try:
         entry = vcs_remote.upsert(
             local_root=root,
@@ -1181,7 +1226,7 @@ def vcs_remote_save():
             password=(str(pwd) if pwd else None),
             key_path=data.get("key_path") or "",
             port=data.get("port") or 22,
-            enabled=data.get("enabled", True),
+            enabled=bool(_en),
             profile_id=pid,
             share_root=data.get("share_root") or "",
             name=data.get("name") or "")
