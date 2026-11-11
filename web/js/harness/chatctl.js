@@ -187,6 +187,7 @@
     ['/model', '打开模型菜单；/model 名 直接切换（模糊匹配）'],
     ['/status', '会话状态与上下文用量'],
     ['/compact', '手动压缩上下文（可附保留要点：/compact 保留串口配置等）'],
+    ['/rescue', '超窗救援：保留首回合任务定义与最近内容，裁中部最大回合回安全余量，末回合被裁时自动重发指令续跑（API 400 爆窗、/compact 压不动的爆死态专用）'],
     ['/rewind', '回退最近 N 个完整回合，默认 1（爆窗/坏回合逃生门；历史自动备份）'],
     ['/roles', '角色设计说明（双形态主会话直干/设计+审核代理与当前配置）'],
     ['/mcp', 'MCP 服务器列表与连接状态（代跑 claude mcp list）'],
@@ -359,6 +360,18 @@
       // 压缩过程与耗时照常显示；arg 作为保留要点附给 CLI。
       // v2.28.10：后端超窗守卫已放行 /compact（拒发锁死出口的实锤修复）。
       await dispatch('/compact' + (arg ? ' ' + arg : ''), null, null, false);
+    } else if (cmd === 'rescue') {
+      // a463：超窗救援——API 400 爆窗（/compact 压不动的爆死态）时丢中部
+      // 最大回合回安全余量：首回合任务定义与最近内容保留，末回合被裁时
+      // 后端自动重发该回合指令续跑。历史全量备份。
+      if (!_HG.sid) { showBanner('当前没有活动会话', 2200); return true; }
+      try {
+        const r = await fetch('/api/harness/rescue', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({sid: _HG.sid})});
+        const j = await r.json();
+        showBanner(j.ok ? j.msg : ('救援失败：' + (j.err || '未知')), 5200, !j.ok);
+      } catch(e) { showBanner('救援失败：' + e, 3000, true); }
     } else if (cmd === 'rewind') {
       // v2.28.11：会话回退——截断转写到最后第 N 个完整回合（备份保全量），
       // 杀进程，下次发消息 --resume 续上回退后的上下文。爆死态（/compact

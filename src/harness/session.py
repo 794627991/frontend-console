@@ -833,9 +833,14 @@ class HarnessSession:
                     # v2.28.11：爆死态（单轮巨量注入，如 Read 大图）连 /compact
                     # 都压不动（压缩请求自身超窗）——/rewind 回退是终极逃生门。
                     if not (text or "").lstrip().startswith("/compact"):
+                        # a463：/rescue 首推——超窗救援丢中部最大回合（首回合
+                        # 任务定义与最近内容保留），末回合被丢时自动重发指令
+                        # 续跑；/rewind 整回合回退与 /compact（爆死态可能压
+                        # 不动）作为备选
                         return False, ("当前上下文已约 %dK tokens，超过模型「%s」"
-                                       "的 %dK 窗口——可 /rewind 回退上一回合"
-                                       "（强烈推荐，立即恢复），或 /compact 压缩"
+                                       "的 %dK 窗口——可 /rescue 智能救援"
+                                       "（强烈推荐：裁中部大回合并自动续跑），"
+                                       "或 /rewind 回退上一回合，或 /compact 压缩"
                                        "（爆死态可能压不动），或新建会话"
                                        % (round(used / 1024),
                                           eff_model,

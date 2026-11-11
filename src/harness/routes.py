@@ -394,6 +394,179 @@ def _rewind_write(p, lines, keep, brief):
     return True, ("%s（丢弃 %d 行；全量备份 %s）"
                   % (brief, len(lines) - len(keep), os.path.basename(bak)))
 
+# ---- a463：超窗救援（/rescue）--------------------------------------------
+# 场景（用户定调）：极少数时候上下文爆到 API 400——/compact 的压缩请求
+# 自身就超窗（爆死态），/rewind 整回合回退丢的恰是最近的活。救援策略：
+# 保留首回合（任务定义）+ 最近回合（手头的活），丢弃**中部最大的回合**
+# （通常是早期的大体积工具输出）直到回到安全余量——最小语义损失。
+# 回合边界与 _rewind_* 同判据（_is_turn_start），整段丢弃不破坏回合内的
+# tool_use/tool_result 配对。
+
+_RESCUE_META_TYPES = {"api-request", "api-request-blob", "api-request-shape",
+                      "queue-operation", "last-prompt", "atis-latch",
+                      "mode", "tools-used"}
+_RESCUE_DEFAULT_RATIO = 1.0 / 3.0   # 字符→token 兜底换算（中英混排经验值）
+
+
+def _rescue_plan(lines, used, window, target_ratio=0.62):
+    """纯计算：从转写行规划「丢哪些回合」。返回 (plan, err)。
+
+    plan = {"drop": [回合下标…], "sizes": [...], "total_chars": n,
+            "est_before": t, "est_after": t, "target": t, "ratio": r}
+    回合 0（任务定义）永不丢；候选按「体量降序、同体量旧者先」丢弃直到
+    估算 ≤ window*target_ratio。used>0 时用真实用量标定字符→token 比率。"""
+    if not lines:
+        return None, "会话转写为空"
+    if not window:
+        return None, "拿不到模型上下文窗口（先发一条消息或 /status）"
+    starts = [i for i, L in enumerate(lines) if _is_turn_start(L)]
+    if len(starts) < 2:
+        return None, "会话不足两个完整回合，救援没有裁剪空间（请回滚到锚点或新建会话）"
+    bounds = list(zip(starts, starts[1:] + [len(lines)]))
+
+    def _seg_bytes(a, b):
+        n = 0
+        for L in lines[a:b]:
+            try:
+                t = json.loads(L).get("type")
+            except Exception:
+                t = None
+            if t in _RESCUE_META_TYPES:
+                continue       # 请求快照/元数据行是正文副本，双计会失真
+            n += len(L)
+        return n
+
+    sizes = [_seg_bytes(a, b) for a, b in bounds]
+    head = _seg_bytes(0, starts[0])
+    total = sum(sizes) + head
+    ratio = (float(used) / total) if (used and total > 0) else _RESCUE_DEFAULT_RATIO
+    target = int(window * target_ratio)
+
+    def _est(chars):
+        return int(chars * ratio)
+
+    if _est(total) <= target:
+        return None, ("当前估算约 %dK tokens，未超 %dK 的安全线，无需救援"
+                      % (_est(total) // 1024, target // 1024))
+    kept = total
+    drop = []
+    for i in sorted(range(1, len(bounds)), key=lambda i: (-sizes[i], i)):
+        if _est(kept) <= target:
+            break
+        kept -= sizes[i]
+        drop.append(i)
+    if _est(kept) > target:
+        return None, ("只剩首回合仍超限（约 %dK > %dK）——首回合自身过大，"
+                      "请拆小任务后新建会话" % (_est(kept) // 1024, target // 1024))
+    return {"drop": sorted(drop), "sizes": sizes, "total_chars": total,
+            "est_before": _est(total), "est_after": _est(kept),
+            "target": target, "ratio": ratio}, None
+
+
+def _rescue_last_user_text(lines, starts, bounds, kept_last_turn):
+    """（保留占位避免误用）已并入路由内联实现。"""
+    return None  # noqa: 并入下方路由
+
+
+def _turn_user_text(line):
+    """回合起始行的人类指令文本（rescue 续跑用）。"""
+    try:
+        o = json.loads(line)
+    except Exception:
+        return ""
+    c = (o.get("message") or {}).get("content")
+    if isinstance(c, str):
+        return c.strip()
+    if isinstance(c, list):
+        return "".join(x.get("text", "") for x in c
+                       if isinstance(x, dict) and x.get("type") == "text").strip()
+    return ""
+
+
+@harness_bp.route("/rescue", methods=["POST"])
+def harness_rescue():
+    """/rescue：超窗救援。丢中部最大回合回安全余量（首回合/最近内容尽量
+    保留），杀进程后若末回合被丢则自动重发其指令续跑任务。全量备份。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = _get_or_create((data.get("sid") or "").strip())
+    if not s:
+        return jsonify({"ok": False, "err": "会话不存在"}), 404
+    if not s.session_id:
+        return jsonify({"ok": False, "err": "会话还没有内容可救援"}), 400
+    from .session import _session_ctx_used, _session_ctx_window
+    try:
+        used, _w, _c = _session_ctx_used(s)
+    except Exception:
+        used = 0
+    try:
+        window = _session_ctx_window(s) or _w
+    except Exception:
+        window = _w or 0
+    p = _jsonl_path_for(s.session_id)
+    if not p:
+        return jsonify({"ok": False, "err": "找不到会话转写文件"}), 400
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    plan, err = _rescue_plan(lines, used, window)
+    if not plan:
+        return jsonify({"ok": False, "err": err}), 400
+    starts = [i for i, L in enumerate(lines) if _is_turn_start(L)]
+    bounds = list(zip(starts, starts[1:] + [len(lines)]))
+    dropset = set(plan["drop"])
+    # 组装保留行 + 记每个回合的人类指令（末回合被丢时用它自动续跑）
+    keep = []
+    if starts[0] > 0:
+        keep.extend(lines[:starts[0]])
+    last_turn_text = ""
+    for k, (a, b) in enumerate(bounds):
+        txt = _turn_user_text(lines[a])
+        if txt:
+            if k == len(bounds) - 1:
+                last_turn_text = txt          # 末回合指令（无论去留都记下）
+        if k in dropset:
+            continue
+        keep.extend(lines[a:b])
+    if len(keep) == len(lines):
+        return jsonify({"ok": False, "err": "救援计划为空（没有可裁剪的回合）"}), 400
+    # 进程必须先杀（与 /rewind 同因）：CLI 在写同一 jsonl 时截断会丢快照后
+    # 的新行，Windows 下恰持句柄时 os.replace 抛 PermissionError
+    s.kill_proc(quiet=True)
+    s.last_result = None
+    try:
+        s._turn_id = ""
+    except Exception:
+        pass
+    ok, msg = _rewind_write(p, lines, keep, "超窗救援")
+    if not ok:
+        return jsonify({"ok": False, "err": msg}), 500
+    # 自动续跑：末回合被丢（爆炸点就在其中）→ 重发该回合的人类指令；
+    # 末回合保留（爆点在中部）→ 已有结论，不重复消耗，提示继续即可
+    tail_dropped = (len(bounds) - 1) in dropset
+    resent = False
+    err2 = None
+    if tail_dropped and str(data.get("resend", "auto")) != "off" and last_turn_text:
+        # send_message 不自带复活（复活在 send 路由）——先 --resume 拉起
+        if not s.alive and not s.revive_if_dead():
+            err2 = "进程复活失败"
+        else:
+            ok2, err2 = s.send_message(last_turn_text)
+            resent = bool(ok2)
+    summary = ("已丢 %d 个中部回合（估算 %dK→%dK，安全线 %dK）"
+               % (len(dropset), plan["est_before"] // 1024,
+                  plan["est_after"] // 1024, plan["target"] // 1024))
+    if resent:
+        summary += "；已自动重发最后指令续跑"
+    elif tail_dropped and last_turn_text:
+        summary += "；自动续发失败（%s），请手动重发" % (err2 or "未知")
+    else:
+        summary += "；末回合已保留，继续发消息即可"
+    return jsonify({"ok": True, "msg": summary + "；" + msg.split("；", 1)[-1],
+                    "dropped": len(dropset),
+                    "est_before": plan["est_before"],
+                    "est_after": plan["est_after"],
+                    "resent": resent})
+
+
 # ---- from claude_harness.py:2808 (harness_rewind) ----
 
 
