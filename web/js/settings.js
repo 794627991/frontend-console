@@ -314,18 +314,11 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-sub">整个界面等比缩放（80%–130%）。也可用 Ctrl+= / Ctrl+- 调终端字号，Ctrl+0 全部恢复默认。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
-      <div class="dd-label">无GPU加速（虚拟机/远程桌面）</div>
-      <div class="dd-row" style="margin-top:6px;">
-        <button class="btn ghost" id="apNoGpuToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
-      </div>
-      <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 16 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会在启动时提示建议开启（每次启动至多一次）。外网真机保持关闭即享完整 GPU 效果。</div>
-    </div>
-    <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">性能模式（全禁大锤）</div>
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">全局禁用过渡/循环动画与毛玻璃——比无GPU加速更激进，极端卡顿时用；两档同开时本档优先。</div>
+      <div class="dd-sub">全局禁用过渡/循环动画与毛玻璃——比终端设置里的「无GPU加速」更激进，极端卡顿时用；两档同开时本档优先。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">Tab 模式</div>
@@ -387,35 +380,16 @@ function _stRenderAppearancePane(pane) {
   }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
   // a346：代码跳转快捷键已移到「终端设置」（a335：与其它快捷键配置放一起）
+  // a472：无GPU加速开关随用户令移入「终端设置」（性能类归堆，a378 CPU 优先
+  // 同款先例）；外观页只留毛玻璃特效向的性能模式
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
-  // a468：无GPU加速（动画降帧档）——两档独立开关。syncNoGpu 声明在 perf 块
-  // 之前并暴露给两个 onclick（审计 B 轮：perf 开/关的瞬间必须联动刷新
-  // nogpu 按钮的「性能模式生效中」标注，否则滞留误导文案）
-  let syncNoGpu = null;
-  const nogpuBtn = pane.querySelector('#apNoGpuToggle');
-  if (nogpuBtn && typeof toggleNoGpuMode === 'function') {
-    syncNoGpu = () => {
-      const on = document.documentElement.hasAttribute('data-nogpu');
-      // 审计 A 轮文案缺口：两档同开时实际生效的是 perf 全禁（CSS 源序覆盖），
-      // 如实标注，避免「动画降帧中」误导
-      const perfOn = document.documentElement.hasAttribute('data-perf');
-      nogpuBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
-        + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
-        + '<small style="color:var(--muted);font-weight:400;">　' + (on
-          ? (perfOn ? '当前性能模式全禁生效中' : '动画降帧中（补间 100ms · 循环 16 帧/周期 · 无毛玻璃）')
-          : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
-    };
-    nogpuBtn.onclick = () => { toggleNoGpuMode(); syncNoGpu(); };
-    syncNoGpu();
-  }
   if (perfBtn && typeof togglePerfMode === 'function') {
     const syncPerf = () => {
       const on = document.documentElement.hasAttribute('data-perf');
       perfBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.eyeOff) + ' ' : '')
         + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
         + '<small style="color:var(--muted);font-weight:400;">　' + (on ? '过渡/循环动画与毛玻璃已全局关闭' : '点击全局禁用动画与毛玻璃') + '</small>';
-      if (syncNoGpu) syncNoGpu();   // 审计 B 轮：联动刷新 nogpu 的同开标注
     };
     perfBtn.onclick = () => { togglePerfMode(); syncPerf(); };
     syncPerf();
@@ -608,6 +582,13 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-sub">工具进程 + 全部 WebView2 渲染进程提优先级——CPU 满载争抢时（并行编译/虚拟机等）界面不被挤压。标准档日常无感无风险；高档激进争抢；关闭还原 Normal。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">无GPU加速（虚拟机/远程桌面）</div>
+        <div class="dd-row" style="margin-top:6px;">
+          <button class="btn ghost" id="tkNoGpuToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
+        </div>
+        <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 16 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会在启动时提示建议开启（每次启动至多一次）。外网真机保持关闭即享完整 GPU 效果。外观页的「性能模式」是更激进的全禁档，两档同开时全禁优先。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
         <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:flex-start;" id="stNavKeysRow"></div>
         <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
@@ -783,6 +764,27 @@ async function _stRenderTermKeysPane(pane) {
   // 放在同一页（原来挂在外观 pane，位置不对）。渲染时机与其他快捷键一致。
   _stNavKeysCard(pane);
   _stBoostCard(pane);   // a378：CPU 优先随用户令移入终端设置
+  _stNoGpuCard(pane);   // a472：无GPU加速随用户令移入终端设置（性能类归堆）
+}
+
+// a472：无GPU加速开关卡（虚机/远程桌面的动画降帧档）——随用户令从外观页
+// 迁入（性能设置归堆，CPU 优先同款先例）。跨页不再需要按钮互刷：两个开关
+// 分居终端/外观两页，每次进页都整页重渲染、状态实时读取
+function _stNoGpuCard(pane) {
+  const btn = pane.querySelector('#tkNoGpuToggle');
+  if (!btn || typeof toggleNoGpuMode !== 'function') return;
+  const sync = () => {
+    const on = document.documentElement.hasAttribute('data-nogpu');
+    // 两档同开时实际生效的是外观页性能模式的全禁（CSS 源序覆盖）——如实标注
+    const perfOn = document.documentElement.hasAttribute('data-perf');
+    btn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
+      + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
+      + '<small style="color:var(--muted);font-weight:400;">　' + (on
+        ? (perfOn ? '当前外观页性能模式全禁生效中' : '动画降帧中（补间 100ms · 循环 16 帧/周期 · 无毛玻璃）')
+        : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
+  };
+  btn.onclick = () => { toggleNoGpuMode(); sync(); };
+  sync();
 }
 
 // ---- 外部依赖安装（v4.1）：运行时依赖检测 + 离线资源包一键装 ----
