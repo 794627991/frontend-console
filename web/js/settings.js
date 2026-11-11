@@ -127,7 +127,7 @@ function _stBoostCard(pane) {
         const r = await fetch('/api/theme', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ boost: { level: cur, power_plan: chk.checked } }) });
-        // a408（内网实锤：应用失败 SyntaxError '<!doctype'）：响应不是 JSON
+        // a391（内网实锤：应用失败 SyntaxError '<!doctype'）：响应不是 JSON
         // 时先报 HTTP 状态——旧版 exe 接口缺失（404/405）或内网安全软件/
         // 代理拦截（200+HTML），天书 SyntaxError 换成可定位的提示
         const ct = (r.headers.get('content-type') || '');
@@ -202,7 +202,7 @@ function _stNavKeysCard(pane) {
         const main = (e.key || '').toLowerCase();
         // R21-3（实锤：白名单过宽）：旧正则只锚首字符——enter/tab 等被录成
         // 主键导致改键后无法输入。完整匹配：单字母/数字 或 f1-f12。
-        // a360R：导航历史的两项默认是方向键（VSCode 同款 Alt+←/→），
+        // a336：导航历史的两项默认是方向键（VSCode 同款 Alt+←/→），
         // 白名单补 arrowleft/arrowright 四个方向键——但方向键**必须带修饰**
         // （裸方向键是编辑器/终端的基础操作，录成热键会全面瘫痪）。
         const _ARROW = /^arrow(left|right|up|down)$/.test(main);
@@ -375,7 +375,7 @@ function _stRenderAppearancePane(pane) {
     });
   }
   const cur = document.documentElement.getAttribute('data-theme') || 'deepblue';
-  // a346：代码跳转快捷键已移到「终端设置」（a359R：与其它快捷键配置放一起）
+  // a346：代码跳转快捷键已移到「终端设置」（a335：与其它快捷键配置放一起）
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
   if (perfBtn && typeof togglePerfMode === 'function') {
@@ -747,7 +747,7 @@ async function _stRenderTermKeysPane(pane) {
   const _notesRef = { get: () => notesHk, set: v => { notesHk = v; } };
   _bindSearchHk('docHkInput', _docRef, 'doc_search_hotkey');
   _bindSearchHk('notesHkInput', _notesRef, 'notes_search_hotkey');
-  // a359R（用户定调）：代码跳转快捷键属于「快捷键配置」，与截图/搜索快捷键
+  // a335（用户定调）：代码跳转快捷键属于「快捷键配置」，与截图/搜索快捷键
   // 放在同一页（原来挂在外观 pane，位置不对）。渲染时机与其他快捷键一致。
   _stNavKeysCard(pane);
   _stBoostCard(pane);   // a378：CPU 优先随用户令移入终端设置
@@ -936,7 +936,7 @@ async function _stRenderResourcesPane(pane) {
     }
   }
 
-  // ---- 在线可用性（a326 批2：net_check 禁用态）----
+  // ---- 在线可用性（a322 批2：net_check 禁用态）----
   let _net = null;   // {kind: {ok, code, err}}
   async function loadNet() {
     try {
@@ -1002,7 +1002,7 @@ async function _stRenderResourcesPane(pane) {
     $q('#rsCancel').style.display = '';
     if (typeof window.ResPanel === 'undefined' || !window.ResPanel.install) {
       errEl.style.display = ''; errEl.textContent = '前端未加载 resources.js';
-      // a334R（第5轮 P3-2）：这条路径不走 onDone，busy 必须在这里清——
+      // a328（第5轮 P3-2）：这条路径不走 onDone，busy 必须在这里清——
       // 否则 #rsGo/#rsOnlineGo 永久灰，用户只能刷新整页。
       $q('#rsGo').dataset.busy = ''; syncGo();
       $q('#rsCancel').style.display = 'none';
@@ -1129,7 +1129,7 @@ async function _stRenderResourcesPane(pane) {
   loadNet();
   loadClaudeLatest();
 
-  // ---- claude 在线升级（a326 批3）：已装 vs npm registry 最新 ----
+  // ---- claude 在线升级（a322 批3）：已装 vs npm registry 最新 ----
   async function loadClaudeLatest() {
     try {
       const r = await fetch('/api/resources/latest?kind=claude');

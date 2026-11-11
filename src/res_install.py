@@ -32,7 +32,7 @@ from src import fcpk
 # dotnet/node/git→install/、claude→claude-code/、pydeps→pydeps/
 
 # 安装顺序：先决条件在前
-# a421（用户令）：billion-context 移出安装库——内网装不上是常态，
+# a407（用户令）：billion-context 移出安装库——内网装不上是常态，
 # 唯一入口=代理面板联网下载（proxy.py /api/proxy/bili_install）。旧资源包
 # 里的 bili/ 段随 ORDER 摘除而自然跳过（不解包不报错）
 ORDER = ["dotnet", "webview2", "node", "git", "claude",
@@ -168,7 +168,7 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
         # D/E 盘——整目录 os.replace 跨卷必炸（WinError 17 实测）。bili 改
         # webview2 同款：直接解到 runtime_root()（arc 前缀 bili/ 天然落
         # offline_runtime/bili/），不经 staging 不 move
-        # a421：bili 解包分支移除（移出安装库）
+        # a407：bili 解包分支移除（移出安装库）
         if "webview2" in plan:
             # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它
             # 的体量从分母里扣掉，否则单装 webview2 时进度条只能到 ~0%
@@ -421,7 +421,7 @@ def _install_git(staging, say, force=False):
 
 
 def _install_codegraph(staging, say, force=False, prog=None):
-    """a386（用户令工具内置）：codegraph 平台 bundle 铺到 %APPDATA%\\npm\\
+    """a360（用户令工具内置）：codegraph 平台 bundle 铺到 %APPDATA%\\npm\\
     node_modules\\@colbymchenry\\codegraph-win32-x64（npm 标准位——用户日后
     npm install -g 可无缝覆盖升级；bundle 自带 node.exe，零 npm 依赖运行）。
     幂等：版本相同跳过；旧版本先备份成功后删（claude 同款 B4 教训）。"""
@@ -748,7 +748,7 @@ class _Heartbeat:
 
 
 # ------------------------------------------------------------------ 在线安装
-# a326 批2（用户需求：有网时工具内直接装，不强制离线包）。URL 与
+# a322 批2（用户需求：有网时工具内直接装，不强制离线包）。URL 与
 # offline_assets/MANIFEST.json 同源；离线包通道不受任何影响。
 
 ONLINE_URLS = {
@@ -903,7 +903,7 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                     else:
                         ok = bool(cs._install_git_if_missing(dl_dir))
                 elif k == "claude":
-                    # a459：已装则走 npm update（只拉版本差异），不再每次全量
+                    # a450：已装则走 npm update（只拉版本差异），不再每次全量
                     # install -g；强制重装才走 install。
                     if force:
                         say("强制重装 Claude CLI：确保 Node → npm install -g …")
@@ -911,7 +911,7 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                         say("在线安装/更新 Claude CLI：确保 Node → npm update -g …")
                     cs._install_node_if_missing(dl_dir)
                     cs._npm_install_global(force=force)
-                    # a469（第二轮审计 P2）：清缓存必须放在 install **之后**。
+                    # a452（第二轮审计 P2）：清缓存必须放在 install **之后**。
                     # 原来清在 install 之前（分钟级），安装期间任何线程
                     # （server 状态接口、前端打开 Claude 会话）解析一次就把
                     # 旧路径重新填回缓存，装后 probe 复用的还是它。
@@ -922,7 +922,7 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                         pass
                     from src.res_boot import probe_claude
                     st, v, _m = probe_claude()
-                    # a469：unknown=探测没跑出结论（超时/杀毒首扫），不是失败。
+                    # a452：unknown=探测没跑出结论（超时/杀毒首扫），不是失败。
                     # 把慢机上的好安装报成 InstallError 会让用户白白重装。
                     if st == "unknown":
                         say("Claude CLI 已装，--version 探测超时（%s）——"

@@ -508,7 +508,7 @@ function switchTab(portId, auto) {
   }
   activePortId = portId;
   // 抽屉/⋮ 列表按最近访问排序：用户切到该 tab 就刷新时间戳（MRU）。
-  // a467（审计 P2）：自动回切（如关后台 tab 后切到 remaining[0]）不算
+  // a452（审计 P2）：自动回切（如关后台 tab 后切到 remaining[0]）不算
   // 「用户访问过」——否则关一个后台 tab 会把无关的编辑器 tab 顶到最前。
   if (!auto && window._tabTouch) window._tabTouch(portId);
   // 标签
@@ -555,7 +555,7 @@ function switchTab(portId, auto) {
     // 编辑器 tab：启动磁盘改动检测（5s 轮询 mtime；切走时定时器自惰——不可见跳过）
     if (conn.meta.kind === 'editor' && typeof _edOnSwitchEditor === 'function')
       _edOnSwitchEditor(conn);
-    // a443：版本面板切回时按需刷新（30s 缓存），与旧 harness 伪 tab 的
+    // a437：版本面板切回时按需刷新（30s 缓存），与旧 harness 伪 tab 的
     // _subActivate → _vcsActivate 钩子同语义；缺了它切回只看得到开 tab 时的首扫
     if (conn.meta.kind === 'vcs' && typeof _vcsActivate === 'function')
       _vcsActivate();

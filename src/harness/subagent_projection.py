@@ -371,7 +371,7 @@ def project(facts, child_states=None, liveness=None, external_links=None,
     external_ids = external_ids or {}
     proc_alive = bool(liveness.get("proc_alive"))
     busy = bool(liveness.get("busy"))
-    # a414：当前 CLI 进程代锚点——判「本代派发」用（旧会话/旧链路无值=0，
+    # a397：当前 CLI 进程代锚点——判「本代派发」用（旧会话/旧链路无值=0，
     # 判 False，行为与历史版本一致）
     proc_start = int(liveness.get("proc_started_ms") or 0)
     now_ms = int(liveness.get("now_ms") or 0)
@@ -529,7 +529,7 @@ def project(facts, child_states=None, liveness=None, external_links=None,
         ent["status"] = st
         ent["doneAt"] = n.get("ts") or 0
         if st == "interrupted":
-            # a414：CLI notification 自报的中断=确定性证据（区别于静默猜测）
+            # a397：CLI notification 自报的中断=确定性证据（区别于静默猜测）
             ent["deadEvi"] = True
         ent["lastActive"] = max(ent["lastActive"], ent["doneAt"])
         if n.get("summary"):
@@ -610,7 +610,7 @@ def project(facts, child_states=None, liveness=None, external_links=None,
         if fg_final is not None and ent["status"] in ("running",):
             ent["status"], ent["doneAt"], ent["brief"] = fg_final
             if ent["status"] == "interrupted":
-                ent["deadEvi"] = True   # a414：前台 result 自证取消=真证据
+                ent["deadEvi"] = True   # a397：前台 result 自证取消=真证据
             ent["lastActive"] = max(ent["lastActive"], ent["doneAt"])
             continue
         # ENDED 3：子代理尾探终局（最低优先级终态——前台 result/notify 在上）
@@ -620,7 +620,7 @@ def project(facts, child_states=None, liveness=None, external_links=None,
             if co.get("summary"):
                 ent["brief"] = co["summary"]
             if ent["status"] == "interrupted":
-                ent["deadEvi"] = True   # a414：转写尾终局=真证据
+                ent["deadEvi"] = True   # a397：转写尾终局=真证据
             ent["lastActive"] = max(ent["lastActive"], co.get("lastActive") or 0)
             continue
         # ENDED 4：证据不足——不装 done，按「派发在途 vs 历史残影」分诊
@@ -643,7 +643,7 @@ def project(facts, child_states=None, liveness=None, external_links=None,
             # 工具执行，间隔后仍在写。co 缺失时才回落 ent.lastActive。
             _la = int((co or {}).get("lastActive") or 0) \
                 or int(ent.get("lastActive") or 0)
-            # a414（用户实锤：切走再切回，实际还在跑的子代理被显示停止）：
+            # a397（用户实锤：切走再切回，实际还在跑的子代理被显示停止）：
             # 静默判死必须让位于「本代派发+进程活」硬证据——守望/长静默
             # 工具型代理转写可静默小时级而进程真在跑。代次判别：派发时刻
             # t0 ≥ 当前 CLI 进程启动 = 本代代理，生死随本进程，进程活即活。
@@ -661,7 +661,7 @@ def project(facts, child_states=None, liveness=None, external_links=None,
                 ent["doneAt"] = _la
             elif not proc_alive or (not busy and not ent.get("bg")):
                 # 进程死 / 回合越界（前台）：CLI 必写完成证据，缺失=中断。
-                # a414：bg 豁免 busy——父回合空闲是后台代理的正常形态，
+                # a397：bg 豁免 busy——父回合空闲是后台代理的正常形态，
                 # 「busy=False 就判死」正是切会话回来误停的根因之一
                 ent["status"] = "interrupted"
                 ent["lost"] = True

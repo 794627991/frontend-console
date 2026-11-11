@@ -180,7 +180,7 @@ function buildProxyTab() {
   const qReloginBtn = $p('[data-px-q-relogin]');
   const qLogoutBtn = $p('[data-px-q-logout]');
   const qAutoEl = $p('[data-px-q-auto]');
-  // a457：独立的自动重登开关（注意不能与「强制重登」按钮同属性——
+  // a448：独立的自动重登开关（注意不能与「强制重登」按钮同属性——
   // 原写成 data-px-q-relogin 会与按钮撞车，querySelector 取到的是按钮）
   const qAutoLoginEl = $p('[data-px-q-autologin]');
   const hrStatsEl = $p('[data-px-hr-stats]');
@@ -205,7 +205,7 @@ function buildProxyTab() {
     HEALTHY: 'px-healthy', RETRY: 'px-retry', FAILED: 'px-failed', STOPPED: 'px-stopped',
   };
 
-  // a464：操作反馈（点按钮后的结果）用 _msgKeep 写，带 6s 保鲜期——
+  // a452：操作反馈（点按钮后的结果）用 _msgKeep 写，带 6s 保鲜期——
   // 期间轮询的状态文案让位，避免用户看不到自己刚点的结果。
   function _msgKeep(text, bad) {
     msgEl.dataset.keep = '1';
@@ -318,7 +318,7 @@ function buildProxyTab() {
     return `上次刷新 ${t} (${ago}s 前)`;
   }
 
-  // a448（用户需求「代理主界面也增加模型负载情况」）：模型实时负载表。
+  // a442（用户需求「代理主界面也增加模型负载情况」）：模型实时负载表。
   // 数据由后端 /api/proxy/status 的 model_loads 下发（仅上游是 lanz 时）。
   // 口径与 lanz 平台一致：pct>85 拥挤 / >70 繁忙 / >=40 正常 / 其余空闲。
   function _renderModelLoads(j) {
@@ -359,11 +359,11 @@ function buildProxyTab() {
     else if (state === 'fetch_err') _setQStatus('查询失败', 'px-failed');
     else if (!j.has_credentials) _setQStatus('● 未登录', 'px-stopped');
     _setQButtons(state || (j.has_credentials ? '' : undefined));
-    // a464（审计 P2）：这批是「状态说明」，每 3s 轮询都会重写 msgEl，会把
+    // a452（审计 P2）：这批是「状态说明」，每 3s 轮询都会重写 msgEl，会把
     // 用户刚点「强制重登/刷新」得到的操作反馈立刻盖掉（用户看不到结果，
     // 容易连点）。规则：操作反馈设置了 dataset.keep 且在 6s 保鲜期内就
     // 让位——只听状态、不写消息。
-    // a462（审计）：locked 必须无条件覆盖——它能压住操作反馈。否则用户
+    // a452（审计）：locked 必须无条件覆盖——它能压住操作反馈。否则用户
     // 刚点完「强制重登」只看到「稍候看登录状态」，3s 后才看到锁定警告，
     // 期间很可能再点一次，反而把 SSO 锁定计时续期。
     const _holdMsg = _msgHeld();
@@ -383,12 +383,12 @@ function buildProxyTab() {
     qLastEl.textContent = _qLastText();
     // 自动刷新 checkbox 同步（后端是真相源；用户点击瞬间先本地翻转防抖动）
     if (document.activeElement !== qAutoEl) qAutoEl.checked = j.quota_auto !== false;
-    // a457：自动重登开关同步（独立开关，缺省 true）
+    // a448：自动重登开关同步（独立开关，缺省 true）
     if (qAutoLoginEl && document.activeElement !== qAutoLoginEl)
       qAutoLoginEl.checked = j.quota_auto_relogin !== false;
 
     const ov = j.quota_overview;
-    // a464（审计 P1）：只在**字段没被用户动过**时回填。原判据 `!qPwdEl.value`
+    // a452（审计 P1）：只在**字段没被用户动过**时回填。原判据 `!qPwdEl.value`
     // 把「用户主动清空」也当成「空着待填」——想换密码时删空后停 3s，旧密码
     // 被填回；没全选就粘贴则拼成错密码，登录必失败。改用 dirty 标记：用户
     // 一旦编辑过该字段（input 事件）就不再自动写，直到保存/登出复位。
@@ -396,7 +396,7 @@ function buildProxyTab() {
       qUserEl.value = j.quota_username;
     if (!qPwdEl._dirty && j.quota_password && !qPwdEl.value)
       qPwdEl.value = j.quota_password;
-    // a464（审计 P2）：额度概览没就绪时也要渲染模型负载——后端 model_loads
+    // a452（审计 P2）：额度概览没就绪时也要渲染模型负载——后端 model_loads
     // 明确不依赖 quota_login 状态，挂在 !ov 之后会「悬浮卡有、面板没有」。
     _renderModelLoads(j);
     if (!ov) { quotaViewEl.innerHTML = '<div class="px-hint">登录后显示额度（10 分钟自动刷新）</div>'; return; }
@@ -420,7 +420,7 @@ function buildProxyTab() {
       }).join('') + '</div>';
     }
     quotaViewEl.innerHTML = html;
-    // a464：模型负载已在函数开头渲染过（额度过览未就绪时也要显示），
+    // a452：模型负载已在函数开头渲染过（额度过览未就绪时也要显示），
     // 这里不再重复调用。
     // 模型用量排名表（老 GUI q_model_tree 平移：模型/tokens/费用/积分/请求数）
     const rank = j.quota_rank || [];
@@ -440,7 +440,7 @@ function buildProxyTab() {
     }
   }
 
-  // a421：billion-context 唯一安装入口（用户令：移出资源包/安装库，代理
+  // a407：billion-context 唯一安装入口（用户令：移出资源包/安装库，代理
   // 面板联网下载一键装）。引擎在=不显示；不在=入口+进度（1s 轮询驱动）
   function _renderBiliInstall(j) {
     let row = document.getElementById('px-bili-inst');
@@ -545,7 +545,7 @@ function buildProxyTab() {
       const direct = wrap.querySelector('[data-px-direct]');
       if (direct) direct.textContent = '原 base_url（直连网关）：' + (j.direct_url || '(未设置)');
       toggleBtn.textContent = j.running ? '■ 停止代理' : '▶ 启动代理';
-    // a462（第二轮审计）：这里原来无条件 _msg，3s 一轮把用户刚点的操作
+    // a452（第二轮审计）：这里原来无条件 _msg，3s 一轮把用户刚点的操作
     // 反馈盖掉（例如常驻的「已有实例在跑」提示压掉「自动刷新已开启」）。
     if (j.already_running) { if (!_msgHeld()) _msg('检测到已有 Claude 代理实例在 37349 端口（原独立工具在跑）——面板仅展示，复用不杀', false); }
     else if (j.port_busy) { if (!_msgHeld()) _msg('端口 37349 被其他程序占用，无法启动', true); }
@@ -566,7 +566,7 @@ function buildProxyTab() {
         msgEl.dataset.biliKeep = '1';
         _msg(j.bili_last_err, true);
       } else if (msgEl.dataset.biliKeep === '1' && !_msgHeld()) {
-        // a462（审计）：原来这里删的是**共用的** dataset.keep，把操作反馈
+        // a452（审计）：原来这里删的是**共用的** dataset.keep，把操作反馈
         // 的 6s 保鲜期一并摧毁（实际只剩不到 3s）。bili 用自己的标志。
         delete msgEl.dataset.biliKeep;
         _msg('');
@@ -795,7 +795,7 @@ function buildProxyTab() {
 
   // 密码明文/密文眼睛切换（SSH 客户端同款）：点击切换 input type，
   // 图标状态用 CSS class 表达（睁眼=password 可切显示，闭眼=明文中）
-  // a464：用户动过就不自动回填（清空也算动过——否则想换密码时旧值被写回，
+  // a452：用户动过就不自动回填（清空也算动过——否则想换密码时旧值被写回，
   // 再粘贴就拼成错密码）。保存/登出时复位。
   qUserEl.addEventListener('input', () => { qUserEl._dirty = true; });
   qPwdEl.addEventListener('input', () => { qPwdEl._dirty = true; });
@@ -816,7 +816,7 @@ function buildProxyTab() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({username: u, password: p})});
       const j = await r.json();
-      // a462（审计）：只在输入框内容仍是**本次提交的那份**时清 dirty。
+      // a452（审计）：只在输入框内容仍是**本次提交的那份**时清 dirty。
       // 请求在途期间用户若全选删空密码框（input 置 dirty），无条件清 dirty
       // 会让下一轮轮询把刚保存的旧密码填回去，用户接着输入就拼成错密码。
       if (j.ok) {
@@ -857,7 +857,7 @@ function buildProxyTab() {
       conn.quotaTs = 0;
       qPwdEl.value = '';
       qUserEl.value = '';   // a455：用户名也清——否则下次自动回填残留旧账号
-      qPwdEl._dirty = false; qUserEl._dirty = false;   // a464：解除 dirty
+      qPwdEl._dirty = false; qUserEl._dirty = false;   // a452：解除 dirty
       quotaViewEl.innerHTML = '<div class="px-hint">已断开。登录后显示额度</div>';
       quotaRankEl.innerHTML = '';
       qLastEl.textContent = '上次刷新 -';
@@ -867,7 +867,7 @@ function buildProxyTab() {
     } catch(e) { _msg('请求失败: ' + e, true); }
   };
   if (qAutoLoginEl) qAutoLoginEl.onchange = async (e) => {
-    // a457：自动重登独立开关（用户令：不许复用「自动刷新」那个开关，
+    // a448：自动重登独立开关（用户令：不许复用「自动刷新」那个开关，
     // 刷新=拉额度，重登=登录失败后要不要自己再登，两件事）
     try {
       await fetch('/api/proxy/quota', {method: 'POST',

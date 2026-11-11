@@ -14,7 +14,7 @@
      + .o 同名映射兜底 → manifest.json（编译白名单）
   2. ctags 全量（多语言，tags 排序文本）
   3. 纯 struct 读 .o ELF 符号表（defined FUNC/OBJECT）→ symbols.json
-     （a436 起无第三方依赖；原 pyelftools 因打包缺子模块弃用）
+     （a427 起无第三方依赖；原 pyelftools 因打包缺子模块弃用）
 
 决策链（definition，精→粗）：
   nm 符号锁定 → 白名单 in_build 唯一 → 路径公共祖先深度（零配置组件消歧）
@@ -32,7 +32,7 @@ import time
 _CTAGS_EXE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "vendor", "ctags", "ctags.exe")
 # 可索引语言（与 ctags --languages 一致；探测用 CODE_EXTS 对应后缀）
-# a415 P0-4（内网报告实测：不含 Asm 时 850 个 .S 零 tag——entry.S/head.S
+# a398 P0-4（内网报告实测：不含 Asm 时 850 个 .S 零 tag——entry.S/head.S
 # 启动与异常处理代码全丢；加 Asm 仅 +3s，缺失 850→0）
 NAV_LANGS = "C,C++,Asm,Python,JavaScript,TypeScript,Java,Go,Rust"
 CODE_EXTS = {".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hh", ".hxx",
@@ -42,28 +42,28 @@ CODE_EXTS = {".c", ".h", ".cpp", ".hpp", ".cc", ".cxx", ".hh", ".hxx",
 # a415R2 N13：补 .s（.S 汇编单元进白名单后，查询侧 in_build 判定/同名
 # 映射没跟上——F12 会跳到未编译的同名 .S）
 _UNIT_EXTS = {".c", ".cpp", ".cc", ".cxx", ".s"}
-# 生成文件指纹扫描的 rg --max-filesize（a372：原 4M 恰好漏掉 4.06M 的
+# 生成文件指纹扫描的 rg --max-filesize（a343：原 4M 恰好漏掉 4.06M 的
 # Cython routes.c——写进 gen_files.json 的 scan_max 字段，旧库读到不一致
 # 即自动补扫，不需要用户重建索引）
 _GEN_SCAN_MAX = "32M"
-# a415 P1-5（内网报告 §2.5 实测：工具自身缓存目录 11841 个文件白扫——
+# a398 P1-5（内网报告 §2.5 实测：工具自身缓存目录 11841 个文件白扫——
 # .history 1864 / .cache 8117 / .ua 1856 / .codegraph 4）
 _SKIP_DIRS = {".git", "node_modules", ".svn", ".hg", ".history", ".cache",
               ".ua", ".codegraph", ".agents", ".codex", ".vscode",
               ".tmp_versions", ".buildroot-ccache", "__pycache__"}
-# a415：收录范围配置文件名（工程根，随 SVN 走团队共享——报告 §九推荐位）
+# a398：收录范围配置文件名（工程根，随 SVN 走团队共享——报告 §九推荐位）
 SCOPE_FILE = ".fcpk-scope.json"
-# a416（内网报告·用户令「只要有白名单一定用白名单」）：非 C/C++ 语言的
+# a400（内网报告·用户令「只要有白名单一定用白名单」）：非 C/C++ 语言的
 # "中间文件"——收录集出现任意一个即视为编译过，按白名单走不许私自全量
 #   Python: .pyc/.pyo（__pycache__ 目录本身在 _ARTIFACT_DIRS 探测）
 #   JS/TS : .js.map/.d.ts.map/.tsbuildinfo   Java: .class
 #   Go    : .a/.test                          Rust : .d（dep-info）
 _AUX_ARTIFACT_EXTS = (".pyc", ".pyo", ".class", ".tsbuildinfo",
                       ".js.map", ".d.ts.map", ".a", ".test", ".d")
-# a416：产物目录——存在即算"编译过"（探测计数在剪枝前），内容不索引
+# a400：产物目录——存在即算"编译过"（探测计数在剪枝前），内容不索引
 _ARTIFACT_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache",
                   ".ruff_cache", "node_modules"}
-# a417（内网报告）：软错误集——悬空符号链接（SMB 解析到不存在共享根：
+# a401（内网报告）：软错误集——悬空符号链接（SMB 解析到不存在共享根：
 # winerror 59/errno 22）与拒绝访问等单点不可读跳过；真断连靠连续计数闸
 _SOFT_ERRNOS = {2, 3, 5, 13, 22, 206, 1920, 1921}
 _SOFT_WINERR = {2, 3, 5, 53, 59, 206, 1920, 1921}
@@ -189,9 +189,9 @@ def status(root):
     out = {"root": root, "has_code": probe["has_code"],
            "probe_files": probe["code_files"], "indexed": bool(meta),
            "lib_dir": ld if meta else "",
-           # a407：查询后端能力下发——前端档位下拉无 sqlite3 时藏 sql 档
+           # a390：查询后端能力下发——前端档位下拉无 sqlite3 时藏 sql 档
            "sqlite_ok": sqlite_capable()}
-    # a415：收录范围检测（工程 .fcpk-scope.json > 已存范围；浅读秒级，
+    # a398：收录范围检测（工程 .fcpk-scope.json > 已存范围；浅读秒级，
     # 面板建库前即显示"检测到工程配置"）
     _sc, _sc_src = load_scope(root)
     if _sc or _sc_src:
@@ -201,7 +201,7 @@ def status(root):
                         "include": (_sc or {}).get("include", [])[:16],
                         "artifact_roots": (_sc or {}).get("artifact_roots", [])[:8]}
     else:
-        # a416：零配置形态识别下发（面板显示"检测到 sbuilder 方案"，
+        # a400：零配置形态识别下发（面板显示"检测到 sbuilder 方案"，
         # 白名单档即用——不写死平台模板，只认结构特征）
         _dsc, _dkind = detect_scope(root)
         if _dsc:
@@ -230,7 +230,7 @@ def status(root):
             # R35-5（实锤：UI 档位下拉数据链断裂）：backend 必须下发
             "backend": meta.get("backend", ""),
             "backend_auto": bool(meta.get("backend_auto")),
-            # a415R（审计#14）：本次建库所用范围随 meta 下发（面板
+            # a398（审计#14）：本次建库所用范围随 meta 下发（面板
             # 「本次建库范围」行的数据源）
             "scope": meta.get("scope") or None,
         }
@@ -314,7 +314,7 @@ def rebind(old_root, new_root):
 # ------------------------------------------------------------------ 建库管线
 
 def _is_remote_fs(path):
-    """网盘/UNC 判定（a413）：远程 FS 是 RTT 受限（每目录一次 SMB 往返），
+    """网盘/UNC 判定（a396）：远程 FS 是 RTT 受限（每目录一次 SMB 往返），
     并发分片近线性提速；本地盘并发反而慢（GIL/队列开销，实测 13179 文件
     4.3s vs 单线程 1.7s）——本地走单 worker"""
     try:
@@ -330,10 +330,10 @@ def _is_remote_fs(path):
 def _walk_files(root, subs=None, should_cancel=None, say=None,
                 excl_names=(), excl_paths=(), stats=None):
     """生成 (abs_path, rel_posix)（rel 一律相对 root）。
-    a411→a413（用户实锤：W: 网盘大库阶段 1 扫描磨到像卡死）：网盘瓶颈是
+    a394→a396（用户实锤：W: 网盘大库阶段 1 扫描磨到像卡死）：网盘瓶颈是
     RTT——每目录一次 SMB 往返、单线程串行干等；并发分片 + 8 worker 近线性
     提速。停滞检测（120s 告警/300s 失败）与取消（消费侧循环头/DONE 双查）。
-    a415：①subs=收录范围（scope.include 的 rel 目录列表；None=全 root）
+    a398：①subs=收录范围（scope.include 的 rel 目录列表；None=全 root）
     ②excl_names/excl_paths=scope 排除（名字任意层级/路径前缀，posix rel）
     ③P0-1 环防护：SMB 把 sysfs 自链符号链接展成无 reparse 标记的实体目录
     （内网报告 §2.1 实测单链 56 层多分叉组合爆炸，深度截断只砍最深分支、
@@ -346,11 +346,11 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
     say = say or (lambda _m: None)
     stats = stats if stats is not None else {}
     stats.setdefault("pruned", 0)
-    N_WORKERS = 8 if _is_remote_fs(root) else 1   # a413：网盘并发/本地单线程
+    N_WORKERS = 8 if _is_remote_fs(root) else 1   # a396：网盘并发/本地单线程
     out_q = _q.Queue(maxsize=256)
     _DONE = object()
     _err = [None]
-    # a415R（审计#17）：Windows 大小写不敏感——排除/跳过比较全部 lower
+    # a398（审计#17）：Windows 大小写不敏感——排除/跳过比较全部 lower
     _skip = {s.lower() for s in (_SKIP_DIRS | set(excl_names or ()))}
     _excl = tuple(sorted(p.strip("/").lower() for p in (excl_paths or ())
                          if p and p != "."))
@@ -369,7 +369,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
         return ds, fs
 
     def _keep_dir(name):
-        # a415R（审计#23）：不跳通用点目录——.libs/.pio 里的 .o/.cmd 是合法
+        # a398（审计#23）：不跳通用点目录——.libs/.pio 里的 .o/.cmd 是合法
         # 产物（旧版就没跳）；点目录的 ctags 语义在 files.txt 写出端过滤
         return name.lower() not in _skip
 
@@ -384,7 +384,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 bases.append(p)
             else:
                 say("  ⚠ 收录目录不存在，已跳过：%s" % s)
-    # a415R（审计#15）：重叠/重复 include 去重 + 剔除被包含的基（同树双走
+    # a398（审计#15）：重叠/重复 include 去重 + 剔除被包含的基（同树双走
     # = .cmd/.o 计数翻倍、bmap 歧义误判）。a415R2 N22：比较基准补尾分隔
     # 符——盘符根（C:\）无尾 sep 时 startswith(k+sep) 恒假，去重失效双走
     bases.sort(key=lambda b: b.lower())
@@ -402,7 +402,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
             if _excluded(os.path.relpath(base, root).replace(os.sep, "/").lower()):
                 continue
             l1_ds, b_fs = _scandir(base)
-            # a416：种子层同探测产物目录（L1 在 worker 之前被过滤）
+            # a400：种子层同探测产物目录（L1 在 worker 之前被过滤）
             stats["artifact_dirs"] = stats.get("artifact_dirs", 0) + sum(
                 1 for d in l1_ds if d.lower() in _ARTIFACT_DIRS)
             l1_ds = [d for d in l1_ds if _keep_dir(d)]
@@ -429,10 +429,10 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
         work_q.put(s)
     _active = [0]
     _alock = _th.Lock()
-    _abandoned = [False]   # a415R（审计#21）：消费侧退出后 worker 放弃投递
+    _abandoned = [False]   # a398（审计#21）：消费侧退出后 worker 放弃投递
 
     def _loop_prune(r, sub):
-        """a415R（审计#2）：环防护收紧——只统计 sub 以下的路径段（base 段
+        """a398（审计#2）：环防护收紧——只统计 sub 以下的路径段（base 段
         不算）、阈值 >3（审计建模：4 条回环路由下 >6 要磨 1.5 万目录/48min，
         >3 只 224 个）、另加绝对路径长度上限兜底。返回 True=剪枝。
         a415R2 N15：r==sub（种子根自身）直接放行——原 tail 取整条绝对
@@ -454,7 +454,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
     def _worker():
         # try/finally 包全程：取消 return 也不许跳过 _active 递减——否则
         # DONE 永远不发、消费侧死等停滞超时（自审实锤）
-        _soft_errs = [0]   # a423R BUG-3：连续软错误计数——worker 全程
+        _soft_errs = [0]   # a409 BUG-3：连续软错误计数——worker 全程
                            # 跨 sub 累加（每 sub 重置会让多子树分摊绕过闸）
         try:
             while True:
@@ -463,13 +463,13 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 except _q.Empty:
                     break
                 try:
-                    # a415R2 N5 + 内网报告 a417：onerror 分级。原软错误集漏了
+                    # a415R2 N5 + 内网报告 a401：onerror 分级。原软错误集漏了
                     # 悬空符号链接（rootfs 的 lib64->/usr/lib 被 SMB 解析到不
                     # 存在的共享根：scandir=winerror 5，walk=winerror 59/
                     # errno 22）→ 判 SMB 断连整库失败。扩集 {13,22,53,59}，
                     # 但加连续计数闸：真断连时每个待访目录都报错，很快超
                     # _CONSEC_LIMIT 判真断仍抛错；悬空软链零散几个不触发。
-                    # a423R BUG-3：_soft_errs 定义已上移到 while 之前
+                    # a409 BUG-3：_soft_errs 定义已上移到 while 之前
                     #（跨 sub 累加）——原在 per-sub 循环内每棵子树重置，
                     # 55 个软错误分两子树（30+25）即绕过闸静默成功（审计实测）
                     def _on_err(e):
@@ -477,7 +477,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                         en = getattr(e, "errno", None)
                         if we in _SOFT_WINERR or en in _SOFT_ERRNOS:
                             _soft_errs[0] += 1
-                            # a471（第二轮审计 P2）：8 个 worker 并发改同一个
+                            # a453（第二轮审计 P2）：8 个 worker 并发改同一个
                             # stats，读-改-写会丢失更新（阶段末「跳过 N 个
                             # 不可读目录」偏小）。同函数里的 artifact_dirs /
                             # pruned 已有 _alock，这里漏了。
@@ -488,16 +488,16 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                             return
                         _err[0] = e
                     for r, ds, fs in os.walk(sub, onerror=_on_err):
-                        # a433：暴露 worker 当前目录（停滞告警用——用户能看到
+                        # a424：暴露 worker 当前目录（停滞告警用——用户能看到
                         # 到底卡在哪个目录上，而不是只知道「没进展」）
                         _cur_d[_th.current_thread().name] = r
-                        # a416（用户令·白名单优先）：产物目录存在即算"编译过"
+                        # a400（用户令·白名单优先）：产物目录存在即算"编译过"
                         # ——探测计数**在剪枝之前**（__pycache__ 里的 .pyc
                         # 目录一剪就永远扫不到）；探测完照常剪掉不索引
                         _arts_hit = sum(1 for d in ds
                                         if d.lower() in _ARTIFACT_DIRS)
                         if _arts_hit:
-                            # a465（审计 P2）：stats 跨 8 个 worker 共享，裸
+                            # a452（审计 P2）：stats 跨 8 个 worker 共享，裸
                             # 读-改-写会丢更新（artifact_dirs 还参与
                             # _has_artifact 判档）。与 _active 同用 _alock。
                             with _alock:
@@ -516,7 +516,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                             continue
                         if should_cancel and should_cancel():
                             return
-                        # a415R：有界投递+放弃检查（消费侧取消/异常后 worker
+                        # a398：有界投递+放弃检查（消费侧取消/异常后 worker
                         # 不再卡死在满队列上——每次泄漏 8 线程的旧账）
                         while True:
                             if _abandoned[0]:
@@ -529,7 +529,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 except Exception as e:   # SMB 断连等：记录，其余子树继续
                     _err[0] = e
         finally:
-            # a465（审计 P2）：worker 退出必须从 _cur_d 摘掉自己——原来只递减
+            # a452（审计 P2）：worker 退出必须从 _cur_d 摘掉自己——原来只递减
             # _active，停了告警仍会打印已结束 worker 的最后目录，并把「在跑
             # worker 数」算多（用户看到的进度信息是错的）。
             try:
@@ -552,8 +552,8 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
 
     _n = min(N_WORKERS, len(seeds))
     _active[0] = _n
-    _cur_d = {}          # a433：worker 当前正在扫描的目录（线程名→路径）
-                         # a434 BUG：必须在**线程启动之前**赋值——worker 内
+    _cur_d = {}          # a424：worker 当前正在扫描的目录（线程名→路径）
+                         # a425 BUG：必须在**线程启动之前**赋值——worker 内
                          # 引用它，放到 start() 之后是竞态（本地单线程侥幸赢，
                          # 远程 8 worker 必输：cannot access free variable
                          # '_cur_d' where it is not associated with a value）
@@ -575,7 +575,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
     _last_dir = [root]
     _last_say = [0.0]
     _n_out = [0]
-    # a432→a433（用户实锤：日志停在「已处理 97500」后 2 分钟无输出，
+    # a423→a424（用户实锤：日志停在「已处理 97500」后 2 分钟无输出，
     # 而原告警阈值 120s 只报一次——用户完全不知道卡在哪）：
     # ① 告警 15s 起、每 15s 重复（不再只报一次）
     # ② 附带 worker 当前正在扫描的目录（_cur_d）
@@ -590,15 +590,15 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 _n_out[0] += 1
                 yield x
         while True:
-            # 循环头检查：取消先于一切（a412 单测实锤）
+            # 循环头检查：取消先于一切（a395 单测实锤）
             if should_cancel and should_cancel():
                 raise Cancelled()
             try:
-                item = out_q.get(timeout=2.0)   # a433：2s 粒度，停滞可感知
+                item = out_q.get(timeout=2.0)   # a424：2s 粒度，停滞可感知
             except _q.Empty:
                 item = None
             if item is _DONE:
-                # a412：DONE 分支必须先查 cancel（producer/worker 边界见取消
+                # a395：DONE 分支必须先查 cancel（producer/worker 边界见取消
                 # 发 DONE 与消费侧 get 竞态，否则取消被吞、walk 假完成）
                 if should_cancel and should_cancel():
                     raise Cancelled()
@@ -617,7 +617,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                         _workers = [v for v in list(_cur_d.values()) if v]
                     except RuntimeError:
                         _workers = []
-                    # a462（审计 P2）：原实现逐个 worker 报当前目录，每次停滞
+                    # a452（审计 P2）：原实现逐个 worker 报当前目录，每次停滞
                     # 最多刷 9 行；那些目录名对用户没有价值（他只需要知道
                     # 「卡住了、还在跑」），却会把 400 条日志上限冲刷掉，让
                     # 阶段结论（递归 include 截断告警、收录方式选择等）被裁没。
@@ -633,7 +633,7 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 _n_out[0] += 1
                 yield x
     finally:
-        _abandoned[0] = True   # a415R：消费侧退出（含异常）→ worker 放弃投递
+        _abandoned[0] = True   # a398：消费侧退出（含异常）→ worker 放弃投递
 
 
 class Cancelled(Exception):
@@ -641,7 +641,7 @@ class Cancelled(Exception):
 
 
 class _Beat(object):
-    """a432（用户令：所有等待过程必须给日志，绝不让用户觉得卡死）：纯
+    """a423（用户令：所有等待过程必须给日志，绝不让用户觉得卡死）：纯
     Python 循环的心跳节拍器。每 `interval` 秒报一次进度。
     用法：
         b = _Beat(say, 2.0)
@@ -658,7 +658,7 @@ class _Beat(object):
         self._n = 0
 
     def tick(self, done=None, total=None, label=None, *largs):
-        """a465（审计 P2）：节流必须在**取参之前**生效。原来 label 是已格式化
+        """a452（审计 P2）：节流必须在**取参之前**生效。原来 label 是已格式化
         好的字符串，调用点每项都构造一次（20 万个 .o 就是 20 万次无用
         %/len），节流形同虚设。现在支持传模板 + 参数：只有真正要报时才
         格式化。用法：`b.tick(i, n, "  白名单映射 %d/%d", i, n)`。
@@ -683,11 +683,11 @@ def _parse_cmd_file(p, src_roots=()):
     """Kbuild .cmd：`cmd_xxx.o := <cc> ... -c ... src.c`——命令行自带源文件
     路径（多 .c 合一 .o 的成员文件各有自己的 .cmd，天然正确）。返回源文件
     绝对路径或 None。
-    a415 P0-2（内网报告 §2.2）：基准顺序——
+    a398 P0-2（内网报告 §2.2）：基准顺序——
     ① .cmd 所在目录（旧行为）
     ③ 候选源码根 src_roots（显式配置最优先；sbuilder/output 外挂形态，
       报告 §3.3）
-    ② 后缀推断（a415R BUG-A：树内编译形态 source_roots 配
+    ② 后缀推断（a398 BUG-A：树内编译形态 source_roots 配
       "." 解析不了 arch/arm/... 相对路径——若 .cmd 所在目录恰好以
       dirname(src) 结尾，剥掉后缀即构建根；a415R2 N6：排在 ③ 后——
       产物树源码副本会劫持 ②）"""
@@ -734,7 +734,7 @@ def _parse_cmd_file(p, src_roots=()):
 def _read_symbols_from_o(o_path):
     """读 ELF 符号表：defined FUNC/OBJECT。返回 [符号名]。
 
-    a436（实锤：打包版 11020/11020 全失败——`ModuleNotFoundError:
+    a427（实锤：打包版 11020/11020 全失败——`ModuleNotFoundError:
     No module named 'elftools.elf.elffile'`。PyInstaller 只收了 elftools
     顶层包、子模块没收，`import elftools` 通过但真用时崩）：**弃用
     pyelftools，改纯 struct 直接解析**。.o 是小文件，只需 section header
@@ -751,7 +751,7 @@ def _read_symbols_from_o(o_path):
 
 _ELF_MAGIC = b"\x7fELF"
 # (st_info & 0xF) 取值：1=OBJECT 2=FUNC
-# a440：不能只收 FUNC/OBJECT——交叉编译的 .S 产物，汇编器默认把全局符号
+# a434：不能只收 FUNC/OBJECT——交叉编译的 .S 产物，汇编器默认把全局符号
 # 标成 STT_NOTYPE(0)，只收 1/2 会让 asm 里的 _start/entry_*/stext 全部丢失
 # （本项目 NAV_LANGS 显式含 Asm）。10=STT_GNU_IFUNC（glibc 的 memcpy 等）。
 # NOTYPE 里的内部符号（$a/$d/$t/$x、.L 标签、binutils 映射符）由后面的
@@ -786,7 +786,7 @@ def _elf_defined_syms(data, max_syms=400000):
             sh_fmt = e + "IIQQQQIIQQ"
         else:
             return []
-        # a440：ei_data 必须显式是 1(LE)/2(BE)——原实现把 0(DATANONE)/3
+        # a434：ei_data 必须显式是 1(LE)/2(BE)——原实现把 0(DATANONE)/3
         # 都当大端「猜字节序」
         if ei_data not in (1, 2):
             return []
@@ -795,7 +795,7 @@ def _elf_defined_syms(data, max_syms=400000):
         sh_size = struct.calcsize(sh_fmt)
         if e_shentsize < sh_size:
             return []
-        # a440：ELF 扩展节数格式——e_shnum==0 时真值在 section 0 的 sh_size
+        # a434：ELF 扩展节数格式——e_shnum==0 时真值在 section 0 的 sh_size
         if e_shnum == 0:
             if e_shoff + sh_size > len(data):
                 return []
@@ -824,7 +824,7 @@ def _elf_defined_syms(data, max_syms=400000):
                                      # st_shndx, st_value, st_size
         ssize = struct.calcsize(sfmt)
 
-        # a440：定位 .symtab 时**逐个校验**（原实现取第一个 SHT_SYMTAB 就
+        # a434：定位 .symtab 时**逐个校验**（原实现取第一个 SHT_SYMTAB 就
         # break，若它 size/entsize/link 有问题，后面存在合法 symtab 也会被
         # 误判整文件无符号）。校验项：非空、entsize 足够、sh_link 指向真正的
         # SHT_STRTAB(3) 且范围合法——否则会把 PROGBITS 节当字符串表用，
@@ -877,7 +877,7 @@ def _elf_defined_syms(data, max_syms=400000):
             t = st_info & 0xF
             if t not in _ELF_WANT_TYPE:      # FUNC / OBJECT / NOTYPE / IFUNC
                 continue
-            # a465（审计 P2）：NOTYPE 里还有 STB_LOCAL(binding=0) 的汇编局部
+            # a452（审计 P2）：NOTYPE 里还有 STB_LOCAL(binding=0) 的汇编局部
             # 标号（entry_foo / bss_start 之类，不以 $/./.L 开头，名字过滤
             # 兜不住）。它们不是可跳转的全局定义，收进 symbols 会把错误文件
             # 拉进同名符号候选、打乱消歧排序。只对 NOTYPE 用 binding 收紧
@@ -887,7 +887,7 @@ def _elf_defined_syms(data, max_syms=400000):
                 continue
             if st_shndx == 0:                # SHN_UNDEF：引用不是定义
                 continue
-            # a440 修正：SHN_ABS 是 0xFFF1、SHN_COMMON 是 0xFFF2，
+            # a434 修正：SHN_ABS 是 0xFFF1、SHN_COMMON 是 0xFFF2，
             # `>= 0xFF00` 会把两者一并丢掉（glibc 的 stdin/stdout 是 ABS 对象，
             # 收进来才对）。这里精确排除非「真实节」的特殊索引（0xFF00~0xFF1F），
             # 并保留 ABS/COMMON。
@@ -911,18 +911,18 @@ def _elf_defined_syms(data, max_syms=400000):
 
 
 # ------------------------------------------------------------------ 收录范围
-# a415（内网报告《收录方案定稿》档B）：把「索引目标」与「白名单来源」彻底
+# a398（内网报告《收录方案定稿》档B）：把「索引目标」与「白名单来源」彻底
 # 分开——include 收录 / artifact_roots 只读 .cmd.o 推白名单 / source_roots
 # 是 .cmd 源路径解析基准 / header_roots 无条件全收 / fallback_full 兜无产物
 # 目录 / exclude_names+exclude_paths 排除。配置三来源：工程 .fcpk-scope.json
 # （团队共享，随 SVN 走）> 库目录 scope.json（UI 手选/导入保存）> 无=全量
 
 def _detect_arch(root, say=None):
-    """a415 P1-7（报告 §六·补）：arm/arm64 自动识别，返回 'arm'/'arm64'/None。
+    """a398 P1-7（报告 §六·补）：arm/arm64 自动识别，返回 'arm'/'arm64'/None。
     判据优先级：①.config/autoconf 的 CONFIG_ARM64=y / CONFIG_ARM=y
     ②arch/<a> 下谁的 .o/.cmd 产物多 ③None=无法判定（配置占位符两个都收，
     慢但不会错）。kernel 根候选：kernel/kernel_sdk > kernel > root。
-    a415R（审计#26）：逐候选试到底（原第一个判不出就放弃）"""
+    a398（审计#26）：逐候选试到底（原第一个判不出就放弃）"""
     say = say or (lambda _m: None)
     result = None
     for cand in ("kernel/kernel_sdk", "kernel", "."):
@@ -973,7 +973,7 @@ def _detect_arch(root, say=None):
 
 def _norm_scope(cfg, root):
     """校验+归一 scope 配置。返回 (ok, scope|err_msg)。脏配置 (False, 原因)。
-    a415R（审计#16/BUG-E）：严校验——include 非数组/字段拼错=显式 bad（原
+    a398（审计#16/BUG-E）：严校验——include 非数组/字段拼错=显式 bad（原
     静默归一整根=一次手误绕过收录范围）；拒绝绝对路径/盘符/../ 段；'./x'
     'a//b' 规范化（原样导致 exclude_paths 失效）"""
     if not isinstance(cfg, dict):
@@ -1038,7 +1038,7 @@ def _norm_scope(cfg, root):
 
 
 def scope_store_path(root):
-    """a415R（审计#13）：已存范围的独立存储位（DATA_DIR/nav-scopes/<md5>.json）
+    """a398（审计#13）：已存范围的独立存储位（DATA_DIR/nav-scopes/<md5>.json）
     ——不放库目录（删索引/数据清理会连带删掉用户手选/导入的范围）"""
     import hashlib as _hl
     d = os.path.join(_nav_root() + "-scopes")
@@ -1054,7 +1054,7 @@ def load_scope(root, store=None):
     """加载 scope：工程 .fcpk-scope.json > 独立存储位 scope.json（store=
     scope_store_path(root)）。返回 (scope|None, source)——
     source ∈ project/saved/''/bad:<err>。
-    a415R（审计#20）：utf-8-sig 兼容 BOM（Windows 记事本写 JSON 常带）"""
+    a398（审计#20）：utf-8-sig 兼容 BOM（Windows 记事本写 JSON 常带）"""
     import json as _json
     p = os.path.join(root, SCOPE_FILE)
     if os.path.isfile(p):
@@ -1094,13 +1094,13 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
                       quiet_rounds=None):
     """从已收集的 .cmd 列表提取 -I 目录（真实编译参数）。返回 (dirs, 扫描数)。
 
-    a431：原实现**再走一遍整树**找 .cmd，source_roots 含 "." 时 →
+    a422：原实现**再走一遍整树**找 .cmd，source_roots 含 "." 时 →
     对 12 万文件 SMB 全树 walk，卡死且取消无效。现改为直接用阶段 1
     已经扫到的 .cmd 列表（零额外 I/O），并加取消点。
 
-    a432（用户质疑「超过 4000 怎么办」——硬上限会丢 -I）：改为**收敛
+    a423（用户质疑「超过 4000 怎么办」——硬上限会丢 -I）：改为**收敛
     早停**而非截断。
-    a440（对抗审查：早停 + 排序 = 系统性地漏 -I）：cmd_abs_list 是并发
+    a434（对抗审查：早停 + 排序 = 系统性地漏 -I）：cmd_abs_list 是并发
     扫描产出的无序列表，早停在其中一段上收敛，等价于「按扫描顺序随机
     抽样」，同一工程两次建库可能收敛到不同 -I 集（G10 实测收录清单
     10173→9871，少 300 个头文件）。读 .cmd 是纯本地小文件顺序读，一万个
@@ -1108,7 +1108,7 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
     （quiet_rounds=None 关闭早停）。保留参数仅为兼容旧的调用方。
 
     base_dirs：.cmd 里 -I 为相对路径时的解析基准（产物根/源码根）。"""
-    # a465：用有序去重列表保存 -I——gcc 语义是「按 -I 出现顺序取第一个」，
+    # a452：用有序去重列表保存 -I——gcc 语义是「按 -I 出现顺序取第一个」，
     # set 会丢掉这个顺序，而字典序不是 -I 顺序。_dir_seen 负责去重。
     dirs = []
     _dir_seen = set()
@@ -1118,14 +1118,14 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
             dirs.append(p)
     n = 0          # 已打开的 .cmd 数（含解析失败——空洞不能白吃收敛额度）
     _parsed = 0    # 真正解析出命令行的 .cmd 数
-    _quiet = 0     # a435：按**解析成功的 .cmd** 计无新增，不按打开数
+    _quiet = 0     # a426：按**解析成功的 .cmd** 计无新增，不按打开数
     _bases = [os.path.normpath(b) for b in base_dirs if os.path.isdir(b)]
     _probe = 0
-    # a465（审计 P2）：-I 解析结果缓存。1 万个 .cmd × 平均 30 个相对 -I ×
+    # a452（审计 P2）：-I 解析结果缓存。1 万个 .cmd × 平均 30 个相对 -I ×
     # 最多 5 个 base 逐个 isdir，SMB 上每次都是一次 RTT（分钟级纯等待）；
     # 而 .cmd 里反复出现的是同一批 include 目录，缓存命中率极高。
     _isdir_c = {}
-    # a471（第二轮审计 P2）：缓存加容量上限。1 万 .cmd × 30 个相对 -I ×
+    # a453（第二轮审计 P2）：缓存加容量上限。1 万 .cmd × 30 个相对 -I ×
     # 最多 5 个 base = 可达百万条长路径常驻（数百 MB），本地盘上没有 I/O
     # 收益时纯增内存。超过阈值后停止写入——已缓存的仍然有效。
     _ISDIR_C_MAX = 200000
@@ -1136,7 +1136,7 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
             if len(_isdir_c) < _ISDIR_C_MAX:
                 _isdir_c[p] = v
         return v
-    # a440：cmd_abs_list 来自并发目录扫描（顺序不稳定），而下面有收敛早停
+    # a434：cmd_abs_list 来自并发目录扫描（顺序不稳定），而下面有收敛早停
     # ——顺序不同会在不同的 .cmd 处收敛，提到不同的 -I 集，导致同一工程
     # 两次建库的收录清单漂移。排序使收敛点与结果都确定可复现。
     _cmd_seq = sorted(cmd_abs_list)
@@ -1157,7 +1157,7 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
                     % (n, len(_cmd_seq), _parsed, len(dirs)))
         _before = len(dirs)
         _got = False
-        # a465（审计 P2）：日志口径按注释兑现——n 是「已打开数（含解析失败）」，
+        # a452（审计 P2）：日志口径按注释兑现——n 是「已打开数（含解析失败）」，
         # 原来 n+=1 写在识别到 cmd_ 行之后，空/异常 .cmd 根本走不到，n 恒等于
         # _parsed，日志「已扫 7000/10000（可解析 7000）」掩盖了 3000 个失败。
         n += 1
@@ -1178,7 +1178,7 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
                             continue
                         d2 = d2.strip("'\"")
                         if os.path.isabs(d2):
-                            # a465：绝对 -I 也走缓存（交叉工具链目录被上万个
+                            # a452：绝对 -I 也走缓存（交叉工具链目录被上万个
                             # .cmd 重复引用，SMB 上每次 isdir 都是一次往返）
                             _hit = _isdir(d2)
                             if _hit:
@@ -1193,7 +1193,7 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
         except OSError:
             pass
         if not _got:
-            continue          # a435：空/异常 .cmd 不消耗收敛额度
+            continue          # a426：空/异常 .cmd 不消耗收敛额度
         _parsed += 1
         if len(dirs) > _before:
             _quiet = 0
@@ -1207,14 +1207,14 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
     """白名单单元 BFS 递归解析 #include，返回触达的 .h 绝对路径集合。
     解析顺序：当前目录 > -I 目录。深度上限防 include 环。
 
-    a431（实测卡死）：原实现对每个未命中的 include 名 × 几十个
+    a422（实测卡死）：原实现对每个未命中的 include 名 × 几十个
     -I 目录逐个 os.path.isfile——SMB 上每次 stat 都是网络往返，几十万
     次必卡。现改为**一次建 -I 目录的倒排索引**（文件名 → 所在 -I 目录），
     后续解析纯内存字典查，零网络 I/O：
       ① _ls(inc_dir) 只列一次目录项（懒加载、按需、带取消）
       ② 同名头文件在多个 -I 目录时按 -I 顺序取第一个（gcc 语义）
       ③ 当前目录相对 include 仍走 _isfile（通常紧邻，量小）"""
-    # a465（审计 P2）：注释写「按 -I 顺序取第一个（gcc 语义）」，实现却是
+    # a452（审计 P2）：注释写「按 -I 顺序取第一个（gcc 语义）」，实现却是
     # sorted(字典序)——两者在 `-Iarch/arm/include` 与 `-Iinclude` 都有
     # `asm/foo.h` 时给出相反结果。gcc 的 -I 顺序才是语义正源：让调用方把
     # 有序序列传进来（_extract_inc_dirs 已按 .cmd 顺序累积），这里只做
@@ -1235,7 +1235,7 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
             if should_cancel and should_cancel():
                 raise Cancelled()
 
-    # a465（审计 P2）：_isfile 是热点路径——子路径 include 每个都按 -I 顺序
+    # a452（审计 P2）：_isfile 是热点路径——子路径 include 每个都按 -I 顺序
     # 逐个 stat，SMB 上每次都是往返；单个文件 300 个 include × 50 个目录 =
     # 15000 次，而唯一的取消检查在外层「每 500 个文件」。这里也接检查点。
     def _isfile(p):
@@ -1246,7 +1246,7 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
                 v = os.path.isfile(p)
             except OSError:
                 v = False
-            if len(_exists) > 200000:   # a432：防无界增长（大库数万头文件）
+            if len(_exists) > 200000:   # a423：防无界增长（大库数万头文件）
                 _exists.clear()
             _exists[p] = v
         return v
@@ -1269,7 +1269,7 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
     def _lookup(nm):
         """按 -I 顺序找头文件，返回绝对路径或 None。
 
-        a432：带子路径的 include（`<linux/foo.h>`，内核工程占绝大多数）
+        a423：带子路径的 include（`<linux/foo.h>`，内核工程占绝大多数）
         不能走顶层 listdir 索引——末级名在 -I 的子目录里，顶层永远没有。
         这类直接按 -I 顺序拼路径 stat（路径确定，通常第一个 -I 就命中，
         且 _exists 缓存去重）。裸文件名才走 listdir 倒排（`<foo.h>`
@@ -1292,19 +1292,19 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
         return None
 
     reach = set()
-    # a440：初始队列必须**排序**——units_abs 来自 set，迭代顺序受 Python
+    # a434：初始队列必须**排序**——units_abs 来自 set，迭代顺序受 Python
     # 字符串 hash 随机化影响；访问顺序不同会让 max_depth 截断掉不同分支，
     # 同一工程两次建库的清单文件数因此漂移（实测 11231 / 11242）。
     # 同时改 LIFO→BFS 分层：每个文件总在**最小深度**首次访问，深度上限
     # 只截断真正超深的引用，不会因为先走了深分支而把浅层文件饿死。
     queue = [(p, 0) for p in sorted(units_abs)]
     scanned = set()
-    # a465（审计 P2）：入队去重。原来只在出队时看 scanned，同一份头文件被
+    # a452（审计 P2）：入队去重。原来只在出队时看 scanned，同一份头文件被
     # N 个父文件 include 就会入队 N 次——kernel 形态（1 万 .c / 5 万头文件 /
     # 平均出度 50）queue 峰值可达数十万到百万条元组（数百 MB），且深度截断
     # 计数对同一超深文件重复累加。_queued 与 scanned 同源口径（小写路径）。
     _queued = {p.lower() for p, _d in queue}
-    _cut_depth = 0          # a440：因深度上限被丢弃的节点数（必须上报）
+    _cut_depth = 0          # a434：因深度上限被丢弃的节点数（必须上报）
     _n = 0
     _head = 0               # BFS 游标（比 popleft 省 list 搬移）
     while _head < len(queue):
@@ -1351,14 +1351,14 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
                     _queued.add(_hl)
                     queue.append((hit, depth + 1))
     if _cut_depth and say:
-        # a440：深度截断是索引覆盖的隐含损失，必须让用户看见（不许静默）
+        # a434：深度截断是索引覆盖的隐含损失，必须让用户看见（不许静默）
         say("  ⚠ 递归 include 深度超过 %d 层：%d 处引用被截断"
             "（超大工程可能出现，可在设置中调整）" % (max_depth, _cut_depth))
     return reach
 
 
 def detect_scope(root, say=None):
-    """a416→a427（内网报告·用户重申设计）：原实现只认 sbuilder 布局，
+    """a400→a418（内网报告·用户重申设计）：原实现只认 sbuilder 布局，
     产物在源码树内、无 sbuilder/output/build 的工程直接返回 None——
     build() 里 `if sc:` 整段白名单判档被跳过，明明扫到大量 .cmd 仍
     全量索引（实测 tags 达数百 MB）。
@@ -1375,7 +1375,7 @@ def detect_scope(root, say=None):
             kernel_roots.append(cand)
             break
     # 判据放宽：有内核根/有 sbuilder/有常见源码目录 = 代码工程——返回
-    # 隐式 scope 让白名单判档生效，绝不静默全量（a418 的"必须有内核根"
+    # 隐式 scope 让白名单判档生效，绝不静默全量（a402 的"必须有内核根"
     # 门槛随之作废：tier=auto 下误检出不丢覆盖——零产物自动回全量）
     _has_code_dirs = any(
         os.path.isdir(os.path.join(root, d))
@@ -1390,7 +1390,7 @@ def detect_scope(root, say=None):
                 k + "/arch/${arch}/include",
                 k + "/arch/${arch}/include/uapi"]
     if os.path.isdir(os.path.join(root, "uboot")):
-        # a437（实测：部分 u-boot 是 SCons 等非 Kbuild 工程，**没有**
+        # a428（实测：部分 u-boot 是 SCons 等非 Kbuild 工程，**没有**
         # arch/<arch>/include——原实现硬编码这一条，会报「头文件区未命中
         # 收录集(0 文件)」）→ 按目录存在性逐条探测，不假设标准布局。
         _ub = os.path.join(root, "uboot")
@@ -1402,7 +1402,7 @@ def detect_scope(root, say=None):
             _ub_sub = []
         _added_ub = False
         for _d in _ub_sub:
-            # a437：逐架构探测（u-boot 只有 arch/arm/include 时不该再列
+            # a428：逐架构探测（u-boot 只有 arch/arm/include 时不该再列
             # arch/arm64/include，否则日志报「头文件区未命中收录集(0 文件)」）
             _arch_dir = os.path.join(_ub, _d, "arch")
             if not os.path.isdir(_arch_dir):
@@ -1475,7 +1475,7 @@ def detect_scope(root, say=None):
 def _expand_patterns(patterns, dirs_set):
     """scope 路径模式（支持 ${arch} 已替换后的通配，如
     uboot/*/arch/arm/include）→ 展开为命中目录集合。
-    a415R（审计#5/BUG-C）：①目录集须含**祖先目录**（arch/arm/include 直下
+    a398（审计#5/BUG-C）：①目录集须含**祖先目录**（arch/arm/include 直下
     零文件、头文件全在 asm/ 子目录——原样匹配不到，u-boot asm 整区静默丢）
     ②按路径段逐段 fnmatch（原整串 fnmatch 的 * 跨 /，语义错）③大小写
     不敏感（Windows 口径统一）"""
@@ -1515,7 +1515,7 @@ def _scope_summary(sc):
 
 def build(root, log=None, progress=None, should_cancel=None,
           backend="auto", scope=None, ask_tier=None):
-    """收录范围化建库（a415 档B）。scope：None=自动发现（工程
+    """收录范围化建库（a398 档B）。scope：None=自动发现（工程
     .fcpk-scope.json > 已存范围 > 全量）；dict=内联配置（API 层建库成功后
     落盘独立存储位）。log=callable(str)；progress=callable(done,total,label)。
     ask_tier=callable(info)->"full"|"whitelist"|"cancel"：白名单覆盖率偏低
@@ -1535,7 +1535,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     say("阶段 0/4：解析收录范围…")
     prog(1, "解析收录范围")
 
-    # ---- 阶段 0：收录范围解析（a415 档B，内网报告《收录方案定稿》）----
+    # ---- 阶段 0：收录范围解析（a398 档B，内网报告《收录方案定稿》）----
     sc, sc_src = None, ""
     if scope is not None:
         if not isinstance(scope, dict):
@@ -1551,13 +1551,13 @@ def build(root, log=None, progress=None, should_cancel=None,
             say("  ⚠ scope 配置解析失败（%s）——按全量建库" % sc_src[4:])
             sc, sc_src = None, ""
     if sc is None:
-        # a416→a427：零配置形态识别——结构检测（sbuilder 外挂/源码树内产物）
+        # a400→a418：零配置形态识别——结构检测（sbuilder 外挂/源码树内产物）
         _dsc, _dkind = detect_scope(root, say=say)
         if _dsc:
             sc = _dsc
             sc_src = "detect"
     if sc is None:
-        # a427（内网报告·用户重申设计·重点）：detect_scope() 放宽后极少数树
+        # a418（内网报告·用户重申设计·重点）：detect_scope() 放宽后极少数树
         # 仍返回 None（根下连常见源码目录名都没有）。此时**也必须**有隐式
         # scope，否则 `if sc:` 整段白名单判档被跳过——扫到 .cmd/.o 仍全量
         # 索引（「自动」档 tags 撑到数百 MB 的根因）。铁律：只要有白名单一定用白名单
@@ -1577,7 +1577,7 @@ def build(root, log=None, progress=None, should_cancel=None,
             _src_label = "自动检测（%s 方案）" % _dkind
         say("收录范围：%s［来源：%s］" % (_scope_summary(sc),
                                         _src_label or sc_src))
-        # P1-7：${arch} 占位替换（a415R 审计#26/#4：arch 钉住值优先；全列表
+        # P1-7：${arch} 占位替换（a398 审计#26/#4：arch 钉住值优先；全列表
         # 字段替换；判不出时**按 key 各自展开**——原三组结果互相污染）
         _arch_keys = ("include", "artifact_roots", "source_roots",
                       "header_roots", "fallback_full", "exclude_paths")
@@ -1597,7 +1597,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                         out_l.extend(p.replace("${arch}", a)
                                      for a in ("arm", "arm64"))
                 sc[k] = out_l
-    # tier=auto 的判档**后置到 index walk 之后**（a415R 审计#6/BUG-D：原用
+    # tier=auto 的判档**后置到 index walk 之后**（a398 审计#6/BUG-D：原用
     # shallow_probe，其 60 文件即早退 → code_files 封顶 60，<5万恒真=auto
     # 恒判 full，大库收录范围被整体绕过）
 
@@ -1612,20 +1612,20 @@ def build(root, log=None, progress=None, should_cancel=None,
     cmd_count = cmd_files = o_count = 0
     unit_by_base = {}   # basename（无后缀）-> [rel, ...] 编译单元源文件
     pending_o = []      # 未被 .cmd/同目录覆盖的 .o
-    cmd_abs = []        # a431：已扫到的 .cmd 绝对路径（供 -I 提取复用，零额外 I/O）
-    all_rels = set()    # a411：全量 rel 集合（同目录同名映射走 set 查，零网络 I/O）
-    dirs_files = {}     # a415：rel 目录 → [文件名]（档B 同目录 .h 补收）
-    all_dirs = set()    # a415：出现过的目录集合（header_roots glob 展开用）
+    cmd_abs = []        # a422：已扫到的 .cmd 绝对路径（供 -I 提取复用，零额外 I/O）
+    all_rels = set()    # a394：全量 rel 集合（同目录同名映射走 set 查，零网络 I/O）
+    dirs_files = {}     # a398：rel 目录 → [文件名]（档B 同目录 .h 补收）
+    all_dirs = set()    # a398：出现过的目录集合（header_roots glob 展开用）
     _src_roots_abs = [os.path.normpath(os.path.join(
         root, s.replace("/", os.sep))) for s in (sc["source_roots"] if sc else [])]
     wstat = {"pruned": 0}
-    _aux_n = 0            # a423：非 C/C++ 中间文件计数（白名单优先判据）
+    _aux_n = 0            # a409：非 C/C++ 中间文件计数（白名单优先判据）
     _last_prog = 0.0    # 用户令：1s 一拍的过程显示计时
-    _last_tot = -1      # a412：计数停滞可见——大目录/非代码区穿越时计数
+    _last_tot = -1      # a395：计数停滞可见——大目录/非代码区穿越时计数
     _last_tot_t = time.time()   # 不动（walk 活着），标签提示"无新增"防误判卡死
 
     def _eat_cmd(abs_p, rel):
-        """a415：.cmd 消费抽出（index walk 与 artifact walk 共用）。
+        """a398：.cmd 消费抽出（index walk 与 artifact walk 共用）。
         返回 True=解析出源文件。"""
         src = _parse_cmd_file(abs_p, _src_roots_abs)
         if not (src and os.path.isfile(src)):
@@ -1654,10 +1654,10 @@ def build(root, log=None, progress=None, should_cancel=None,
             excl_paths=(sc["exclude_paths"] if sc else ()), stats=wstat):
         all_rels.add(rel)
         low = rel.rsplit("/", 1)[-1].lower()   # a415R2 N2：移出 if sc（原 _fn 仅 scope 分支赋值，全量建库必崩）
-        if sc:   # a415R（审计#29）：全量建库不建字典白占内存
+        if sc:   # a398（审计#29）：全量建库不建字典白占内存
             _d = rel.rpartition("/")[0]
             dirs_files.setdefault(_d, []).append(rel.rsplit("/", 1)[-1])
-            # a415R（审计#5）：祖先目录一并入集（include 直下零文件的
+            # a398（审计#5）：祖先目录一并入集（include 直下零文件的
             # header_root 通配匹配靠它）
             while _d not in all_dirs:
                 all_dirs.add(_d)
@@ -1670,18 +1670,18 @@ def build(root, log=None, progress=None, should_cancel=None,
         elif low.endswith(".o"):
             o_files.append(rel)
             o_count += 1
-            # a411：同目录同名映射延后到 walk 结束用集合查（原逐 .o
+            # a394：同目录同名映射延后到 walk 结束用集合查（原逐 .o
             # os.path.isfile——网盘上 2.3 万 .o × 每个多次 stat = 数万次
             # SMB 往返，扫描像卡死）
         elif any(low.endswith(e) for e in _AUX_ARTIFACT_EXTS):
-            _aux_n += 1   # a423：非 C/C++ 中间文件（.pyc/.class/.js.map…）
+            _aux_n += 1   # a409：非 C/C++ 中间文件（.pyc/.class/.js.map…）
         else:
             b, ext = os.path.splitext(low)
-            if ext in _UNIT_EXTS | {".s"}:   # a415R（审计#7/BUG-A）：.S 汇编单元也进 basename 兜底池
+            if ext in _UNIT_EXTS | {".s"}:   # a398（审计#7/BUG-A）：.S 汇编单元也进 basename 兜底池
                 unit_by_base.setdefault(b, set()).add(rel)
         # 用户令：全部过程显示 1s 一更新、同一行、不刷屏——中间进度走
         # prog()（前端 progress 文本同一行刷新），say() 只留阶段头和终态
-        # a411：min(28,_tot/800) 在 2.2 万文件即顶格 30%，之后进度条假死
+        # a394：min(28,_tot/800) 在 2.2 万文件即顶格 30%，之后进度条假死
         # ——改渐进逼近 30%（单调递增永不到顶，扫描活着条就动）
         _tot = cmd_count + o_count + len(unit_by_base)
         _now = time.time()
@@ -1697,10 +1697,10 @@ def build(root, log=None, progress=None, should_cancel=None,
                  "扫描中：产物 %d（.cmd %d/.o %d）· 源文件 %d%s" % (
                      _tot, cmd_count, o_count, len(unit_by_base), _hint))
 
-    # ② artifact walk（a415 档B：sbuilder/output 这类产物外挂树——14 万
+    # ② artifact walk（a398 档B：sbuilder/output 这类产物外挂树——14 万
     # 源码不进索引，但 .cmd/.o 是白名单真源。报告 §3.3：2285 个 .o.cmd
     # 中 2280 个靠 source_roots 基准解析回 kernel/kernel_sdk）。
-    # a415R（审计#19）：exclude_paths 里非产物根祖先的项照传（精确排除
+    # a398（审计#19）：exclude_paths 里非产物根祖先的项照传（精确排除
     # test/sys 这类环目录），产物根本身/其祖先剔除（否则整个产物源被剪）
     if sc and sc["artifact_roots"]:
         say("  产物源扫描（只读 .cmd/.o，不索引源码）：%s"
@@ -1716,7 +1716,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                      if ep and _keep_ep(ep))
         _w2 = {"pruned": 0}
         _a_n0, _a_o0 = cmd_files, o_count
-        # a440 修正：初值必须为 0。原写 `[_a_n0 + _a_o0]`（阶段 1 已收的
+        # a434 修正：初值必须为 0。原写 `[_a_n0 + _a_o0]`（阶段 1 已收的
         # .cmd/.o 数）——既让「已处理」把阶段 1 的数量算进产物树遍历数，
         # 又让「去重跳过 = 遍历数 - 未跳过数」凭空多出这些数量（产物树里
         # 一个重复都没有也会报「去重跳过 500」）。三个计数口径各自独立。
@@ -1726,7 +1726,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                 root, subs=sc["artifact_roots"],
                 should_cancel=should_cancel, say=say,
                 excl_names=sc["exclude_names"], excl_paths=_ep2, stats=_w2):
-            # a433（用户质疑「为什么扫描 4 万却处理 9.6 万」）：先计数再跳过，
+            # a424（用户质疑「为什么扫描 4 万却处理 9.6 万」）：先计数再跳过，
             # 让「已处理」= 遍历到的文件总数，与 include∩artifact 去重无关
             _a_tot += 1
             if rel in all_rels:
@@ -1752,10 +1752,10 @@ def build(root, log=None, progress=None, should_cancel=None,
         say("  ⚠ 环防护剪枝 %d 个目录（SMB 符号链接自链，报告 §2.1）"
             % wstat["pruned"])
 
-    # a411：同目录同名映射（walk 内收集全量集合，set 查零 I/O）。
-    # a415R（审计#7）：候选后缀补 .S/.s（entry.S 靠 .o 同名兜底）+ 大小写
+    # a394：同目录同名映射（walk 内收集全量集合，set 查零 I/O）。
+    # a398（审计#7）：候选后缀补 .S/.s（entry.S 靠 .o 同名兜底）+ 大小写
     # 不敏感（.o 与 .S 大小写形态不保证一致——用 lower 索引一次建好）
-    # a440：o_files 由并发目录扫描产出，顺序不稳定。下面用 setdefault 记录
+    # a434：o_files 由并发目录扫描产出，顺序不稳定。下面用 setdefault 记录
     # 「源 → 该源对应的 .o」，顺序不同会选中不同的 .o（同一源被多个产物
     # 覆盖时），进而让 manifest/symbols 两次建库不一致。排序固定。
     o_files.sort()
@@ -1776,7 +1776,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                 break
         else:
             pending_o.append(orel)
-    # a436（实测：产物树里大量 .o 与源不同目录，靠上溯+命名约定能救回
+    # a427（实测：产物树里大量 .o 与源不同目录，靠上溯+命名约定能救回
     # 其中约六成）：原实现只看「当前目录 + 一级子目录」，
     # 且不认 libtool/CMake 的命名约定——libcurl 的
     # `lib/.libs/libcurl_la-base64.o` 对应 `lib/base64.c`（在**上两层**、
@@ -1784,7 +1784,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     # 现改为：① 沿祖先逐层找（最多 8 层，每层「直接同名」+「一级子目录同名」）
     #         ② 名字先按 libtool/CMake 约定剥离前缀再试
     #         ③ 歧义时取路径深度最接近的（不猜，只在一处命中时采用）
-    # a440：all_dirs / pending_o 都是并发扫描产出的无序容器。两个不同 .o
+    # a434：all_dirs / pending_o 都是并发扫描产出的无序容器。两个不同 .o
     # 可能都能推出同一个源文件，`setdefault` 让先遍历到的那个胜出——顺序
     # 不稳定就等于 manifest 不稳定。排序后先到者恒为字典序最小的 .o。
     _dsub = {}
@@ -1829,7 +1829,7 @@ def build(root, log=None, progress=None, should_cancel=None,
         d = os.path.dirname(stem)
         _hit = None
         _amb = []
-        # a437（实测：SCons 等非 Kbuild 工程的产物在 out/<mach>/obj/<cmp>/src/x.o，
+        # a428（实测：SCons 等非 Kbuild 工程的产物在 out/<mach>/obj/<cmp>/src/x.o，
         # 源码在 drivers/<cmp>/src/x.c 或 components/<cmp>/src/x.c——
         # 中间 mach/obj 两层不是源码路径，靠 8 层上溯永远找不到。
         # 解法：把 out/obj 这类构建根剥掉，用剩余相对路径直接查）
@@ -1903,11 +1903,11 @@ def build(root, log=None, progress=None, should_cancel=None,
 
     # ③ 档B 最终清单（tier=whitelist）：编译单元 + 同目录头 + header_roots
     # 无条件全收 + fallback_full 兜底（报告 §4.1）。
-    # a423（内网报告·用户令「只要有白名单一定用白名单，决不允许私自全建」）
+    # a409（内网报告·用户令「只要有白名单一定用白名单，决不允许私自全建」）
     # **白名单优先**：收录集内扫到任何中间文件（.cmd/.o/.pyc/.class/
     # .js.map…或 __pycache__/node_modules 等产物目录）→ 必走白名单，
     # tier 字段（含显式 full）不再能放行全量；零中间文件=唯一合法降档。
-    # 原 a415R 的"≥5 万代码文件且 compiled"阈值判档作废（实测：手选
+    # 原 a398 的"≥5 万代码文件且 compiled"阈值判档作废（实测：手选
     # 少数目录时 tier=full 会私自全建，tags 撑到数 GB）
     if sc:
         _has_artifact = bool(compiled) or o_count > 0 or cmd_files > 0 \
@@ -1919,11 +1919,11 @@ def build(root, log=None, progress=None, should_cancel=None,
             say("  收录档位：白名单（发现 %d 个 .cmd · %d 个 .o · %d 个其他"
                 "中间文件）" % (cmd_files, o_count, _aux_n))
         elif _has_artifact:
-            # a423 折中：仅非 C/C++ 中间文件（.pyc 等）——白名单暂无法从
+            # a409 折中：仅非 C/C++ 中间文件（.pyc 等）——白名单暂无法从
             # 这些推导，按报告字面强制白名单会让 Python 工程一律报错不可
             # 建。全量收录但**显式告警**（不静默，用户可看到为什么全量）
             sc["tier"] = "full"
-            # a423R BUG-2：计数并上产物目录（.pyc 全在被剪的 __pycache__
+            # a409 BUG-2：计数并上产物目录（.pyc 全在被剪的 __pycache__
             # 里，散置后缀恒 0——原文案"发现 0 个"自相矛盾）
             say("  ⚠ 发现 %d 个非 C/C++ 中间文件/产物目录（.pyc 等）但暂无法"
                 "推导编译白名单（只支持 Kbuild .cmd/.o）——按全量收录"
@@ -1947,14 +1947,14 @@ def build(root, log=None, progress=None, should_cancel=None,
                 _pset = _expand_patterns([pat], all_dirs)
                 if not sum(1 for r in all_rels if _under(r.lower(), _pset)):
                     say("  ⚠ %s未命中收录集（0 文件）：%s" % (_label, pat))
-        # a415R（审计#3）：单元与收录集求交——.cmd 解析出的源在 include
+        # a398（审计#3）：单元与收录集求交——.cmd 解析出的源在 include
         # 之外/排除区（sbuilder/output 的 buildroot 源码副本）绝不进 ctags
         # 清单；compiled 全量保留供符号表阶段用。
         # a415R2 N19/CASE-1：交集按小写归一（include 写 kernel 磁盘 Kernel
         # 时原大小写敏感求交全丢）
         _units = {_rel_by_l[u.lower()] for u in compiled.keys()
                   if u.lower() in _rel_by_l}
-        # a437/a438/a439：工程里存在编译产物、却几乎推不出源码单元时，
+        # a428/a431/a432：工程里存在编译产物、却几乎推不出源码单元时，
         # 白名单建库会让整棵源码树进不了索引。原实现直接 raise「白名单为
         # 空」；现改为把实际数据交给用户，由用户选择「只收白名单」还是
         # 「全量收源码」。
@@ -1987,7 +1987,7 @@ def build(root, log=None, progress=None, should_cancel=None,
             _choice = "full"
             if ask_tier is not None:
                 say("  等待用户选择建库方式…")
-                # a440：回调可能抛异常（HTTP 层异常/线程被回收）——不兜住的话
+                # a434：回调可能抛异常（HTTP 层异常/线程被回收）——不兜住的话
                 # 建库线程直接死掉，用户只看到「失败」却不知道为什么，且任务槽
                 # 的 ask_tier 可能残留。异常一律按「全量收源码」继续。
                 try:
@@ -2016,7 +2016,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                     "所选方式「仅白名单」推导出的源码单元为 0，无法建库。"
                     "请重新建库并选择「全量收源码」，或先编译工程")
         if not _closed_src and len(_units) < len(compiled):
-            # a440：这不是异常而是收录范围的正常结果（buildroot 解压副本、
+            # a434：这不是异常而是收录范围的正常结果（buildroot 解压副本、
             # exclude_paths 命中的目录），但「不进索引」意味着这些源在跳转
             # 里查不到——必须同时给出用户可执行的判断依据，否则只能干看着。
             _n_out = len(compiled) - len(_units)
@@ -2027,10 +2027,10 @@ def build(root, log=None, progress=None, should_cancel=None,
         # a430：头文件改为递归 include 推导（取代 header_roots 全量——
         # 实测 51% 永不被引用 + hal_inc 收录 0）。三层兜底：-I 提取 →
         # 标准 include 路径 → 原 header_roots
-        # a431：-I 直接从阶段 1 已扫到的 .cmd 列表提取（原实现对 source_roots
+        # a422：-I 直接从阶段 1 已扫到的 .cmd 列表提取（原实现对 source_roots
         # 整树再 walk 一遍——source_roots 含 "." = 全树文件 SMB 全量穿越，
         # 卡死且取消无效）
-        # a471（第二轮审计 P2）：显式 source_roots 必须优先于产物根。gcc 解析
+        # a453（第二轮审计 P2）：显式 source_roots 必须优先于产物根。gcc 解析
         # 相对 -I 的基准是「.cmd 所在构建根」，产物树里若带一份同名镜像目录，
         # 先命中产物副本 → 该路径不在收录集 → 被丢弃 → 整支 include 漏收。
         # 显式根是用户声明的主源码树，比产物镜像可信。
@@ -2044,7 +2044,7 @@ def build(root, log=None, progress=None, should_cancel=None,
         say("  编译参数：从 %d 个 .cmd 提取 %d 个 -I 目录"
             % (_n_cmd, len(_inc_dirs)))
         if not _inc_dirs:
-            # a465：_extract_inc_dirs 现返回有序列表（保 -I 语义），兜底同样
+            # a452：_extract_inc_dirs 现返回有序列表（保 -I 语义），兜底同样
             # 用列表按「标准顺序」追加，不能 .add
             _inc_dirs = []
             for _a in ("arm", "arm64"):
@@ -2063,7 +2063,7 @@ def build(root, log=None, progress=None, should_cancel=None,
         _t0 = time.time()
         _reached = _resolve_includes(_units_abs, _inc_dirs,
                                      should_cancel=should_cancel, say=say)
-        # a465（审计 P1）：裸 relpath 在跨盘时抛 ValueError——绝对 -I 指向
+        # a452（审计 P1）：裸 relpath 在跨盘时抛 ValueError——绝对 -I 指向
         # 别的盘（C: 的工具链头）时整个建库中断。跨盘/异常一律丢弃（这些头
         # 本就在收录集外，进不了索引）。
         def _rel_of(p):
@@ -2098,7 +2098,7 @@ def build(root, log=None, progress=None, should_cancel=None,
         if _always:
             say("  无条件收录：%d 个文件（%s）"
                 % (len(_always), "、".join(sc.get("always_include") or ())))
-        # a423R BUG-1（审计实锤：手选 [kernel,tools] 时 tools 零单元被静默
+        # a409 BUG-1（审计实锤：手选 [kernel,tools] 时 tools 零单元被静默
         # 整目录剔除，与选择器"全部代码递归收录"承诺直接矛盾）：手选范围
         # （manual）按收录目录逐个核覆盖——零单元目录自动整目录兜底；
         # 低覆盖（<50%）目录显式告警提示用 JSON 配 fallback_full
@@ -2134,7 +2134,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     def _dot_path(rel):
         return any(seg.startswith(".") for seg in rel.split("/"))
 
-    # a440：final_files 是 set，直接写盘的话 files.txt 每次顺序都不同
+    # a434：final_files 是 set，直接写盘的话 files.txt 每次顺序都不同
     # （同一工程两次建库 diff 满是噪声，也妨碍「结果可复现」的验收）。
     _list_pool = sorted(r for r in (final_files if final_files is not None
                                     else all_rels) if not _dot_path(r))
@@ -2154,14 +2154,14 @@ def build(root, log=None, progress=None, should_cancel=None,
     prog(30, "ctags 索引")
     tags_tmp = os.path.join(ld, "tags.tmp")
     tags = os.path.join(ld, "tags")
-    # a415 P0-3（报告 §2.3 实测：-R root 的 ctags 撞同一个 SMB 自链环，
+    # a398 P0-3（报告 §2.3 实测：-R root 的 ctags 撞同一个 SMB 自链环，
     # test/sys 子树 300s 不结束）：改 -L 文件清单——范围控制只有 _walk_files
     # 一处（排除/环防护/收录规则单点），阶段 1 收录什么 ctags 就吃什么，
     # 不再出现「阶段 1 排除了、阶段 2 又收进来」。点文件跳过对齐旧
     # --exclude=.* 语义（a369R）
     listfile = os.path.join(ld, "files.txt")
     _n_list = 0
-    # a415R（审计#23）：点语义过滤已前移（manifest 前的 _list_pool）；此处
+    # a398（审计#23）：点语义过滤已前移（manifest 前的 _list_pool）；此处
     # 只写清单。a415R2 N21：文件名含孤立代理字符时跳过该文件（原整库失败）
     say("  写 ctags 文件清单：%d 个文件…" % len(_list_pool))
     _bt = _Beat(say)
@@ -2186,7 +2186,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     # a361（用户实锤：30% 死等无文件进度）：大库 ctags 阶段数分钟只有一句
     # "ctags 索引"——心跳线程监控 tags.tmp 增长，每 3 秒报已写 MB，死等变
     # 活进度；ctags 完成后心跳自停
-    # a412（用户实锤：取消后 ctags 阶段无法取消）：subprocess.run 阻塞期
+    # a395（用户实锤：取消后 ctags 阶段无法取消）：subprocess.run 阻塞期
     # 取消全程无效（R15-3 只在跑完后补查）——改 Popen，心跳 1s 查 cancel
     # 即杀进程，网盘大库数分钟的 ctags 全程可取消
     import threading as _th
@@ -2216,7 +2216,7 @@ def build(root, log=None, progress=None, should_cancel=None,
             if int(sz) != _last:
                 _last = int(sz)
                 prog(30 + min(45, sz / 10), "ctags 写入 %d MB" % _last)
-            # a440：去掉超时上限后，ctags 若卡死必须仍有可见信号——
+            # a434：去掉超时上限后，ctags 若卡死必须仍有可见信号——
             # tags 连续 30s 不增长就报一次，用户至少知道卡在哪一步
             if sz == _lastsz:
                 _stall += 1
@@ -2229,10 +2229,10 @@ def build(root, log=None, progress=None, should_cancel=None,
                 _stall = 0
     _hb = _th.Thread(target=_heartbeat, daemon=True)
     _hb.start()
-    # a440：去掉 ctags 的 60 分钟硬上限（纯本地/网盘遍历耗时多久都可接受，
+    # a434：去掉 ctags 的 60 分钟硬上限（纯本地/网盘遍历耗时多久都可接受，
     # 超时反而丢掉整份索引）。取消由上面的心跳线程 kill 进程 → communicate
     # 立即返回。
-    # a465（审计 P2）：「取消由心跳 kill」只在该函数传了 should_cancel 时成立
+    # a452（审计 P2）：「取消由心跳 kill」只在该函数传了 should_cancel 时成立
     # ——build() 是公共函数，脚本/测试直接调用时不传，心跳里的取消判断恒假，
     # communicate() 就再也无法被唤醒。这种调用形态下保留一个兜底超时。
     try:
@@ -2250,7 +2250,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     finally:
         _hb_stop.set()
     # R15-3（实锤：取消被吞）：已取消则不落盘 tags/不写 meta（半成品库会被
-    # status 误判 indexed）；a412 起取消在阻塞期内就杀进程，这里统一收尾
+    # status 误判 indexed）；a395 起取消在阻塞期内就杀进程，这里统一收尾
     if should_cancel and should_cancel():
         try:
             os.remove(tags_tmp)
@@ -2276,7 +2276,7 @@ def build(root, log=None, progress=None, should_cancel=None,
         % (os.path.getsize(tags) / 1048576))
     with open(tags, encoding="utf-8", errors="replace") as f:
         for _ln in f:
-            if not _ln.startswith("!"):   # a415R（审计#22）： !_TAG_ 伪标签不计符号数
+            if not _ln.startswith("!"):   # a398（审计#22）： !_TAG_ 伪标签不计符号数
                 tag_lines += 1
     say("  tags：%d 个符号 / %.1f MB" % (tag_lines, os.path.getsize(tags) / 1048576))
     prog(75, "ctags 索引完成")
@@ -2296,12 +2296,12 @@ def build(root, log=None, progress=None, should_cancel=None,
                        "auto-generated", "AUTOGENERATED"]
         # R28-2（实锤：清单 7 项只传 5 个 -e）：循环全量传，下标手写漏
         # index 5/6（auto-generated/AUTOGENERATED 永不生效）
-        # a372（用户实锤：build/_cython/routes.c 4.06M 恰超 4M 上限被
+        # a343（用户实锤：build/_cython/routes.c 4.06M 恰超 4M 上限被
         # max-filesize 跳过——指纹头明明有 "Generated by Cython" 却漏进
         # 黑名单，引用混入 35 条生成文件命中）→ 32M。写盘带 scan_max 供
         # 旧库重扫判定（references 读到 scan_max 不一致即自动补扫）
-        # a415：指纹扫描同走收录范围（原 -- root 在全树上
-        # 白扫）；a415R（审计#8）：排除规则同步成 rg -g；a415R2 N8/WB#8b：
+        # a398：指纹扫描同走收录范围（原 -- root 在全树上
+        # 白扫）；a398（审计#8）：排除规则同步成 rg -g；a415R2 N8/WB#8b：
         # rg 以 root 为 cwd + **相对路径**——-g '!x/**' 按 cwd 锚定，原先
         # 绝对路径参数下 exclude_paths 的 glob 永远匹配不上
         _rg_paths = (list(sc["include"]) if sc else ["."])
@@ -2312,9 +2312,9 @@ def build(root, log=None, progress=None, should_cancel=None,
             for en in sc["exclude_names"]:
                 _rg_g += ["-g", "!**/%s/**" % en]
         say("  生成文件指纹扫描（rg）…")
-        # a432（用户令：绝不让用户以为卡死）：原 subprocess.run 阻塞零输出
+        # a423（用户令：绝不让用户以为卡死）：原 subprocess.run 阻塞零输出
         # ——改 Popen + 1s 心跳计时，并把取消接进来
-        # a435（用户质疑「为啥要限制时间？没必要吧」）：**去掉 300s 上限**。
+        # a426（用户质疑「为啥要限制时间？没必要吧」）：**去掉 300s 上限**。
         # 这是一个纯本地扫描，跑了多久都能接受；超时反而会静默丢掉整份
         # 生成文件黑名单（引用结果里混入生成代码）。只保留取消能力。
         _rg_cmd = [rgp, "-l", "--no-messages", "--no-ignore", "-F",
@@ -2341,7 +2341,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                     except Exception:
                         pass
                     raise Cancelled()
-                # a440：去掉超时上限后必须仍有可见进展——rg 在网盘上卡住
+                # a434：去掉超时上限后必须仍有可见进展——rg 在网盘上卡住
                 # 时原先一行日志都没有（违「不许让用户觉得卡死」）。每 30s
                 # 报一次仍在扫描，读秒本身交给前端独立计时器。
                 if time.time() - _say_t >= 30.0:
@@ -2357,7 +2357,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                     _gp = os.path.join(root, _gp)
                 _gen.add(os.path.normcase(os.path.normpath(_gp)))
     except Cancelled:
-        # a465（审计 P1）：取消必须穿透——原先 Cancelled 继承 Exception，被下面
+        # a452（审计 P1）：取消必须穿透——原先 Cancelled 继承 Exception，被下面
         # 的兜底 `except Exception` 当成「rg 失败」吞掉，流程继续往下；工程没有
         # .o 时（阶段 3 唯一的取消点整段跳过）最终还会写 meta 报「✓ 索引完成」，
         # 用户点了取消却拿到一份成功索引。
@@ -2369,19 +2369,19 @@ def build(root, log=None, progress=None, should_cancel=None,
     if _gen:
         say("  生成文件黑名单：%d 个（Cython/lex/protobuf 等指纹）" % len(_gen))
 
-    # ---- 阶段 3：ELF 符号表（a436：自研解析，无第三方依赖）----
+    # ---- 阶段 3：ELF 符号表（a427：自研解析，无第三方依赖）----
     say("阶段 3/4：读取 .o 符号表（符号级消歧）…")
     prog(78, "符号表")
     symbols = {}
-    # a436：原 `import elftools` 探测已删除——打包版只装了顶层包、子模块
+    # a427：原 `import elftools` 探测已删除——打包版只装了顶层包、子模块
     # 缺失，探测通过但真用必崩（11020/11020 全失败实锤）。改纯 struct 解析。
-    # a390（用户实锤：阶段 3 没有过程显示）：白名单→.o 映射构建按文件数
+    # a369（用户实锤：阶段 3 没有过程显示）：白名单→.o 映射构建按文件数
     # 报进度——大库数千条可见推进；无 .o 时显式两步文案（不再是两行秒过）
     o_rel_to_src = {}
     _mi, _mt = 0, len(compiled)
     say("  构建白名单→.o 映射：%d 项…" % _mt)
     _bt = _Beat(say)
-    # a440：compiled 的插入顺序取决于并发扫描（.cmd 阶段）与排序后的 .o
+    # a434：compiled 的插入顺序取决于并发扫描（.cmd 阶段）与排序后的 .o
     # 阶段混合，不稳定。同一 .o 被多个源映射时（增量/并存产物），下面的
     # 反向表是「后写覆盖」——必须按确定顺序遍历，否则同一工程两次建库
     # 的符号归因源不同。排序遍历固定胜者。
@@ -2399,7 +2399,7 @@ def build(root, log=None, progress=None, should_cancel=None,
     if o_files:
         done = 0
         used = 0
-        _err_kinds = {}     # a435：异常类型 → 次数（原全静默，0 符号无从查）
+        _err_kinds = {}     # a426：异常类型 → 次数（原全静默，0 符号无从查）
         _err_first = []     # 首次样本消息（限 3 条）
         _bt = _Beat(say)
         for orel in o_files:
@@ -2415,7 +2415,7 @@ def build(root, log=None, progress=None, should_cancel=None,
             try:
                 names = _read_symbols_from_o(o_abs)
             except Exception as _e:
-                # a435（用户实锤：11020 个 .o 读出来 0 符号，日志只报
+                # a426（用户实锤：11020 个 .o 读出来 0 符号，日志只报
                 # 「符号表：0 符号 / 0 个 .o」，异常被 continue 吞光）：
                 # 分类统计 + 保留首样本，让失败原因可诊断
                 _k = "%s: %s" % (type(_e).__name__, str(_e)[:80])
@@ -2441,17 +2441,17 @@ def build(root, log=None, progress=None, should_cancel=None,
                 say("     × %d 次  %s" % (_c, _k))
             for _s in _err_first:
                 say("     样本：%s" % _s)
-    # a440：符号 → 源文件列表在查询侧可能被当作「候选顺序」直接使用，
+    # a434：符号 → 源文件列表在查询侧可能被当作「候选顺序」直接使用，
     # 落盘前排序保证两次建库的 symbols.json 完全一致（o_files 已排序，
     # 这里再兜一层，防止将来有人改动上游遍历顺序）
     _write_json(os.path.join(ld, "symbols.json"),
                 {"version": 1,
                  "symbols": {k: sorted(v) for k, v in symbols.items()}})
 
-    # ---- 阶段 4：sqlite 快查索引（a390 三档后端；auto 按符号数判档）----
+    # ---- 阶段 4：sqlite 快查索引（a369 三档后端；auto 按符号数判档）----
     # ctags-mem-v2 实测：600 万符号全量 dict ≈ 8GB 常驻；sqlite 0~4ms/50MB
     _bk_user = (backend or "auto").strip().lower()
-    # a410（用户令：不允许全量方案）：memory 入参一律按 auto 重判
+    # a393（用户令：不允许全量方案）：memory 入参一律按 auto 重判
     # （api 层已显式拒，这里防御旧调用方）；只留 readtags/sqlite 两档
     if _bk_user == "memory":
         _bk_user = "auto"
@@ -2459,9 +2459,9 @@ def build(root, log=None, progress=None, should_cancel=None,
         _bk_user = "auto"
     _was_auto = _bk_user == "auto"
     if _was_auto:
-        # a407：无 sqlite3 能力（旧版 exe 打包缺件）大库自动 readtags——
+        # a390：无 sqlite3 能力（旧版 exe 打包缺件）大库自动 readtags——
         # 不出现吓人的"构建失败"字样（readtags 查询速度相近，实测不慢）
-        # a410：全量方案下线——小库也走 readtags（零建库成本，查询同级）
+        # a393：全量方案下线——小库也走 readtags（零建库成本，查询同级）
         if sqlite_capable():
             _bk_user = "sqlite" if tag_lines >= 200000 else "readtags"
         else:
@@ -2507,7 +2507,7 @@ def build(root, log=None, progress=None, should_cancel=None,
             "cmd_count": cmd_count, "cmd_files": cmd_files, "o_count": o_count,
             "symbols": len(symbols),
             "backend": _bk_user, "backend_auto": _was_auto,
-            # a415：收录范围随库记录（重建/状态展示用；scope=None 的旧式
+            # a398：收录范围随库记录（重建/状态展示用；scope=None 的旧式
             # 全量建库不写该键，status 读旧 meta 无扰动）
             **({"scope": {"name": sc["name"], "tier": sc["tier"],
                           "source": sc_src,
@@ -2543,7 +2543,7 @@ _manifest_cache = {"key": None, "data": None}
 _cache_lock = threading.Lock()
 
 
-# ================= a390：三档查询后端（ctags-mem-v2 §4）=================
+# ================= a369：三档查询后端（ctags-mem-v2 §4）=================
 # memory：全量 dict（小库 <20 万符号，现状路径）
 # readtags：readtags.exe 二分查找（零建库，~0.2s/次，~10MB）
 # sqlite：tags.db 快查（0~4ms，~50MB，建库 ~38s/600 万行）
@@ -2553,7 +2553,7 @@ _sqlite_capable = None
 
 
 def sqlite_capable():
-    """运行环境是否带 sqlite3（a407 用户实锤：exe 打包漏件——excludes
+    """运行环境是否带 sqlite3（a390 用户实锤：exe 打包漏件——excludes
     'src' 后函数内 import sqlite3 不进模块图，_sqlite3.pyd/sqlite3.dll
     没被收集 → No module named 'sqlite3'，阶段 4 回退。spec 已补
     hiddenimports；此探测供 UI 档位下拉/auto 判档/端点早拒用）"""
@@ -2603,7 +2603,7 @@ def _build_tag_db(tags_path, db_path, say=None, prog=None):
                         except ValueError:
                             pass
                     elif seg == "file:":
-                        file_scope = 1   # a425：文件内可见标记（原先丢弃）
+                        file_scope = 1   # a414：文件内可见标记（原先丢弃）
                     elif not kind and seg and ":" not in seg and seg != "file":
                         kind = seg   # --fields=+Kn 裸值 kind
                 rows.append((name, path, lineno, kind, file_scope))
@@ -2787,7 +2787,7 @@ class _ReadtagsBackend(object):
                 except ValueError:
                     pass
             elif seg == "file:":
-                file_scope = 1   # a425：文件内可见标记（原先丢弃）
+                file_scope = 1   # a414：文件内可见标记（原先丢弃）
             elif not kind and seg and ":" not in seg and seg != "file":
                 kind = seg
         return (name, path, lineno, kind, file_scope)
@@ -2917,7 +2917,7 @@ def _open_tags(ld):
     bk = (meta or {}).get("backend") or "auto"
     if bk == "auto":
         n = (meta or {}).get("code_files") or 0
-        # a410：全量方案下线——auto 小库也走 readtags。旧库显式
+        # a393：全量方案下线——auto 小库也走 readtags。旧库显式
         # backend=memory 仍按原档查询（读兼容，不强制迁移；切档即迁）
         bk = "sqlite" if n >= 200000 else "readtags"
     if bk == "sqlite":
@@ -3040,7 +3040,7 @@ def _load_tags(ld):
                         except ValueError:
                             pass
                     elif seg == "file:":
-                        file_scope = 1   # a425：文件内可见标记
+                        file_scope = 1   # a414：文件内可见标记
                     elif not kind and seg and ":" not in seg and seg != "file":
                         # a383（存量 bug 实锤）：本库 ctags --fields=+Kn 产长名
                         # 裸值 kind（class/variable/function…，不带 kind: 前缀）
@@ -3112,7 +3112,7 @@ def symbols(file_path, q, limit=50, **kwargs):
     # a383（Ctrl+Shift+O 文件内符号）：scope=file 精确到本文件，空查询给
     # 全量（按行号排——文件大纲语义），有 q 时子串过滤
     if kwargs.get("scope") == "file":
-        # a390：三档后端统一 by_path（sqlite 走 idx_path 毫秒级——
+        # a369：三档后端统一 by_path（sqlite 走 idx_path 毫秒级——
         # _file_sym_cache 倒排副本退役（ctags-mem-v2：内存翻倍元凶）；
         # readtags 档退化为 -l 全扫（慢，UI 已有提示）
         target = file_path   # tags 内路径为绝对正斜杠原样
@@ -3207,7 +3207,7 @@ def references(file_path, symbol, limit=200):
     # tags 收录集（路径集——只在此域内报引用）+ 生成文件黑名单（a365R2：
     # 内容指纹判定的生成代码——ctags 对生成 .c 一样收符号，tags 域过滤
     # 不掉它们，黑名单才是真过滤源；tags_set 只兜底防域外垃圾）
-    # a390：tags 收录域改后端 files()（sqlite DISTINCT 毫秒级；memory 档
+    # a369：tags 收录域改后端 files()（sqlite DISTINCT 毫秒级；memory 档
     # 即 dict 遍历；readtags -l 一次性解析——_tags_files_cache 退役）
     _be = _open_tags(ld)
     tags_set = set(os.path.normcase(os.path.normpath(
@@ -3220,7 +3220,7 @@ def references(file_path, symbol, limit=200):
         _genf["generated"] = [
             g if os.path.isabs(g) else os.path.join(root, g)
             for g in _genf["generated"]]
-    # R28-3（旧库无 gen_files.json 垃圾回涌）+ a372（旧库 scan_max 是旧上限
+    # R28-3（旧库无 gen_files.json 垃圾回涌）+ a343（旧库 scan_max 是旧上限
     # ——4M 时代漏掉的 >4M 生成文件）：两种都触发即时补扫并落盘——升级即
     # 生效，不需要用户重建索引
     if not isinstance(_genf, dict) or _genf.get("scan_max") != _GEN_SCAN_MAX:
@@ -3257,7 +3257,7 @@ def references(file_path, symbol, limit=200):
                     creationflags=0x08000000, env={"LC_ALL": "C", **os.environ})
     except Exception as e:
         return {"ok": False, "err": "rg 失败：%s" % e, "items": []}
-    # 定义行集合（排除）——a371R：definition 候选已镜像去重，但引用结果过滤
+    # 定义行集合（排除）——a342：definition 候选已镜像去重，但引用结果过滤
     # 需要未去重的全 def 行（dist 镜像 def 在 15 行、src 在 15 行，行号不同——
     # deflines 用去重后集合会漏排镜像 def）。all_deflines 是 (path, line) 元组
     dres = definition(file_path, symbol)
@@ -3328,7 +3328,7 @@ def definition(file_path, symbol):
         return {"symbol": symbol, "auto": False, "mode": "no-index",
                 "candidates": [], "err": "该文件不在任何索引库内——请先在文件树右键建立索引"}
     _be = _open_tags(ld)
-    # a390R（真机实锤：R1 成功后全接口灭）：此处不得 close——_TagDB 连接由
+    # a369（真机实锤：R1 成功后全接口灭）：此处不得 close——_TagDB 连接由
     # _tagdb_cache 生命周期管理（换库时关旧），查询方关共享连接=后续全灭
     cands = _be.lookup(symbol)
     if not cands:
@@ -3371,7 +3371,7 @@ def definition(file_path, symbol):
 
     out = []
     for path, lineno, kind, file_scope in cands:
-        # a425 修复 A（内网报告 a419 缺陷一）：ctags file: 标记=该符号仅本
+        # a414 修复 A（内网报告 a419 缺陷一）：ctags file: 标记=该符号仅本
         # 源文件可见。发起跳转的文件不是它自己时该候选根本不可见，必须剔除
         # ——否则 11% 的 file-scope 符号（局部 static/局部宏）全当全局候选
         # 抢真定义（实测 pr_warn 被 uboot 工具的 fprintf 局部宏抢走）
@@ -3398,7 +3398,7 @@ def definition(file_path, symbol):
             "nm_lock": bool(nm_lock and rel == nm_lock),
         })
 
-    # a425 修复 B+C-2（内网报告 a419 缺陷二）：排序加两档——
+    # a414 修复 B+C-2（内网报告 a419 缺陷二）：排序加两档——
     # ③ 第三方源码副本降权（先于 in_build）：sbuilder/board 的 optee/atf/
     # musl 树自带构建产物（1823 个 .o）→ in_build=True 抢走 copy_to_user
     # 这类内核真定义；④ 头文件宏优先（in_build 之后，dist 之前）：头文件
@@ -3423,10 +3423,10 @@ def definition(file_path, symbol):
         )
 
     out.sort(key=rank)
-    # a369R：定义候选镜像去重（引用侧 a368 同款）——dist 类发布镜像是
+    # a369R：定义候选镜像去重（引用侧 a340 同款）——dist 类发布镜像是
     # 源码完整拷贝，同名同 kind 的镜像副本让 F12 弹 N 个"多候选"实际是
     # 同一符号。按 basename+kind 去重保留排序最前者（源码本体近镜像远）。
-    # a371R：去重前的全部 def 行以 all_deflines 透出——references 的
+    # a342：去重前的全部 def 行以 all_deflines 透出——references 的
     # deflines 排除集需要它（镜像 def 行号与本体不同，用去重后集合漏排）
     _all_deflines = [(c["path"], c["line"]) for c in out]
     if len(out) > 1:

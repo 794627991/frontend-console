@@ -59,10 +59,10 @@ MANIFEST = [
     # a309R：OnlyOffice DS（word/excel/ppt 全功能编辑，可选）——探测 80 口
     {"kind": "onlyoffice", "name": "OnlyOffice 全功能编辑", "hard": False,
      "fix": "离线资源包内静默安装（约 10 分钟，弹 UAC 确认）"},
-    # a421（用户令）：billion-context 移出安装库（内网装不上是常态）——
+    # a407（用户令）：billion-context 移出安装库（内网装不上是常态）——
     # 唯一入口=代理面板联网下载（proxy.py /api/proxy/bili_install）。
     # bili_ok() 探测保留：旧包已装机器/系统 npm 全局两种存量继续可用
-    # S37-6（P3）：a386 铺了安装器但没进面板清单——外部依赖页无此项，
+    # S37-6（P3）：a360 铺了安装器但没进面板清单——外部依赖页无此项，
     # 错误文案"设置→外部依赖安装"成死路
     {"kind": "codegraph", "name": "Claude 代码图引擎（codegraph）",
      "hard": False,
@@ -244,10 +244,10 @@ def probe_claude():
     try:
         from .claude_conn import _resolve_claude_exe, ClaudeNotFoundError
         exe, _shim = _resolve_claude_exe()
-        # a464（审计 P1）：能解析到路径 ≠ 能跑。npm update 中途失败会把包写成
+        # a452（审计 P1）：能解析到路径 ≠ 能跑。npm update 中途失败会把包写成
         # 半成品（入口被删/替换中），此时 _resolve 仍能命中缓存里的旧路径，
         # 装完照报成功、CLI 实际不可用。要求 --version 真有输出才算 ok。
-        # a469（第二轮审计 P2）：超时/起不来 ≠ 缺安装。杀毒首扫新 exe、慢盘
+        # a452（第二轮审计 P2）：超时/起不来 ≠ 缺安装。杀毒首扫新 exe、慢盘
         # 上 --version 常超 8s，原来一律判 missing，刚装好的 CLI 被报安装
         # 失败（install 侧据此抛 InstallError）。超时给 30s 并判 unknown。
         try:
@@ -367,7 +367,7 @@ def _run_ver(argv, timeout=8, strict=False):
 class _VerUnknown(Exception):
     """--version 探测**没跑出结论**（超时/进程起不来），区别于「跑通了但没输出」。
 
-    a469（第二轮审计 P2）：_run_ver 的 docstring 写明「超时/失败返回空
+    a452（第二轮审计 P2）：_run_ver 的 docstring 写明「超时/失败返回空
     （探测失败≠缺失）」，但 install 侧把空一律当 missing——企业杀毒首扫新
     解压的 claude.exe、慢盘上 --version 超过 8s 时，刚装好的 CLI 会被报
     「npm 装完但 claude 不可用」。三态区分由此补上。

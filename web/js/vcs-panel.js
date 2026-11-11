@@ -1,5 +1,5 @@
 // ============================================================
-// vcs-panel.js (a440，用户令「版本独立成自带入口，与 Claude 解耦」)：
+// vcs-panel.js (a434，用户令「版本独立成自带入口，与 Claude 解耦」)：
 // 原 24-vcs.js 是 Claude 对话页的子窗格伪 tab（_SUB_VCS），只有打开 Claude
 // 界面才存在；版本本身与 Claude 无关（看的是 git/svn 工作副本），故迁为
 // 主区独立 tab——顶栏「Claude」与「计算器」之间新增入口。
@@ -12,7 +12,7 @@
 // 状态：VCS = {root, data, log, out, busy, sel:Set, ts}
 // ============================================================
 const VCS = { root: '', data: null, log: null, out: '', busy: false, sel: new Set(), ts: 0,
-  // a444（审计 P2）：最近提交里「已展开改动清单」的 rev 集合 + 清单缓存。
+  // a438（审计 P2）：最近提交里「已展开改动清单」的 rev 集合 + 清单缓存。
   // 原实现只把展开态放在 DOM 上，_vcsPaint 重建 innerHTML 就全折叠了。
   exp: new Set(), cfCache: new Map() };
 window.VCS = VCS;                 // 调试/兼容：原 VCS 的读取方
@@ -34,7 +34,7 @@ const _VCS_ST_TXT = { M: '改', A: '增', D: '删', R: '移', '?': '未纳管', 
 // 与本功能无关的 harness 状态（_sub/_hgWrap）已全部解耦，Claude 页面不开也能用。
 function vcsPanelTeardown() {
   _vcsHistClose();                 // v3.5.133（designer D10）：弹窗防御性关闭
-  // a444（审计 P1）：挂 body 的确认弹窗没有宿主可跟随销毁——面板已关但
+  // a438（审计 P1）：挂 body 的确认弹窗没有宿主可跟随销毁——面板已关但
   // 弹窗还盖在全窗上，误点「执行」会对已销毁面板发真实 git add / pull。
   try { if (window._hgModalReg) window._hgModalReg.closeAll(); } catch (_) {}
   _vpAlive = false;
@@ -43,7 +43,7 @@ function vcsPanelTeardown() {
   // root 保留：下次打开还是同一个工程
   VCS.data = null; VCS.log = null; VCS.out = ''; VCS.busy = false;
   VCS.sel = new Set();
-  VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set(); VCS.cfGen = (VCS.cfGen || 0) + 1;   // a444：展开态与清单缓存随面板关闭清；a469 代际+1 作废在途
+  VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set(); VCS.cfGen = (VCS.cfGen || 0) + 1;   // a438：展开态与清单缓存随面板关闭清；a452 代际+1 作废在途
 }
 function buildVcsPanelTab() {
   for (const pid in connections) {
@@ -85,7 +85,7 @@ function buildVcsPanelTab() {
   return conn;
 }
 // 在场期 60s 轻轮询（git 改动/外部命令后自动跟上；不改动列表重扫）
-// a443：失活自停（旧 harness 伪 tab 同语义）——面板不在前台时白扫本地面没意义；
+// a437：失活自停（旧 harness 伪 tab 同语义）——面板不在前台时白扫本地面没意义；
 // 切回由 switchTab 的 vcs 钩子经 _vcsActivate → _vcsTickStart 重新武装
 function _vcsTickStart() {
   if (_vcsTick) return;
@@ -879,8 +879,8 @@ function _vcsPaint() {
         ? `<div class="hg-vcs-hlfoot">已显示最近 20 / 共 ${VCS.total || VCS.log.length} 条——点上方历史按钮看全部</div>` : '')
       : '');
   _vcsBind(true);
-  if (!VCS.log) return;   // a444：无提交列表（还没加载/加载失败）就没有展开态要恢复
-  // a444（审计 P2）：展开态存数据层，重绘后自动恢复（原来只在 DOM 上，
+  if (!VCS.log) return;   // a438：无提交列表（还没加载/加载失败）就没有展开态要恢复
+  // a438（审计 P2）：展开态存数据层，重绘后自动恢复（原来只在 DOM 上，
   // _vcsPaint 重建 innerHTML 即全部折叠——30s 内切回版本 tab 必现）。
   // 展开的提交需要重新拉文件清单（DOM 里的内容也随重绘没了）。
   // 清掉已不在当前列表（切工程/刷新掉出前 20）的记录后再重建，避免白拉。
@@ -941,7 +941,7 @@ function _vcsFileHtml(f, i) {
     (f.st === '?' ? `<button class="btn ghost icon-btn" name="hg_vcs_addone" data-rel="${esc(f.rel)}" title="svn add / git add 纳入版本控制" style="flex-shrink:0;">＋</button>` : '') +
     `</div>`;
 }
-// a444（审计 P2）：提交行的改动清单加载/渲染（点击与重绘恢复共用一份）。
+// a438（审计 P2）：提交行的改动清单加载/渲染（点击与重绘恢复共用一份）。
 // 缓存按 rev 存，重绘后直接重放，不再重复打接口。
 function _vcsLoadCommitFiles(rev, box) {
   box.style.display = 'block';
@@ -959,12 +959,12 @@ function _vcsLoadCommitFiles(rev, box) {
   const cached = VCS.cfCache.get(rev);
   if (cached) { render(cached); return; }
   if (box.dataset.loaded) return;      // 已渲染过且无缓存变化
-  // a444：在途去重——连续两次 _vcsPaint 会各拿一个新 box，旧回调因
+  // a438：在途去重——连续两次 _vcsPaint 会各拿一个新 box，旧回调因
   // document.contains 判假被丢弃，但请求已经白发了一发。按 rev 记在途。
   if (!VCS.cfPending) VCS.cfPending = new Set();
   if (VCS.cfPending.has(rev)) { box.innerHTML = '<div class="hg-vcs-empty">加载中…</div>'; return; }
   VCS.cfPending.add(rev);
-  // a469（第二轮审计 P2）：记代际号。teardown / 换工程会把 cfCache 换成新
+  // a452（第二轮审计 P2）：记代际号。teardown / 换工程会把 cfCache 换成新
   // Map，旧工程的在途结果若照写，会污染「本该已清空」的新 Map（换工程后
   // rev 恰好相同就渲染出错误的文件清单）。回调首行校验代际。
   const cfGen = VCS.cfGen = (VCS.cfGen || 0) + 1;
@@ -976,7 +976,7 @@ function _vcsLoadCommitFiles(rev, box) {
     .then(j => {
       VCS.cfPending.delete(rev);
       if (cfGen !== VCS.cfGen) return;   // 面板已关/已换工程，结果作废
-      // a466（审计 P2）：缓存先写，再做存活检查。原来存活检查在 set 之前，
+      // a452（审计 P2）：缓存先写，再做存活检查。原来存活检查在 set 之前，
       // 请求途中 _vcsPaint 重绘（30s 轮询）会让旧 box 失效 → 直接 return，
       // 结果永不进缓存，新 box 一直停在「加载中…」，要再触发一次重绘才恢复。
       if (j.ok) VCS.cfCache.set(rev, j.files || []);
@@ -1015,7 +1015,7 @@ function _vcsBind(paintRoots) {
         VCS.chgGen = (VCS.chgGen || 0) + 1;   // v3.5.275 F3-A：作废在途扫描链
         VCS.root = sel.value; localStorage.setItem('hg-vcs-root', sel.value);
         VCS.data = null; VCS.log = null; VCS.sel = new Set();
-        VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set(); VCS.cfGen = (VCS.cfGen || 0) + 1;   // a444：换工程，展开态/缓存在途都属于旧工程；a469 代际+1 作废在途
+        VCS.exp = new Set(); VCS.cfCache = new Map(); VCS.cfPending = new Set(); VCS.cfGen = (VCS.cfGen || 0) + 1;   // a438：换工程，展开态/缓存在途都属于旧工程；a452 代际+1 作废在途
         _vcsReload(); _vcsReloadLog();
       };
     }
@@ -1063,7 +1063,7 @@ function _vcsBind(paintRoots) {
       if (!rev || !box) return;
       if (box.style.display !== 'none') {          // 再点收起
         box.style.display = 'none';
-        VCS.exp.delete(rev);                       // a444：收起也要落数据态
+        VCS.exp.delete(rev);                       // a438：收起也要落数据态
         return;
       }
       VCS.exp.add(rev);

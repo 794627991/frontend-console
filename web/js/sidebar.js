@@ -206,7 +206,7 @@ function refreshSidebar() {
       const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex' || conn.meta.kind === 'diff' || conn.meta.kind === 'bindiff';
       const isClaude = conn.meta.kind === 'claude';
       const isHarness = conn.meta.kind === 'harness';
-      // a440：版本面板（独立主区 tab）无连接语义，关闭走 closeEditorTab
+      // a434：版本面板（独立主区 tab）无连接语义，关闭走 closeEditorTab
       // （触发 _edCloseNow 的清理链）；误走 closeConnection 会发必然 404 的
       // /api/disconnect
       const isVcs = conn.meta.kind === 'vcs';
@@ -244,7 +244,7 @@ function refreshSidebar() {
           if (isLog) closeLogViewer(pid);
           else if (isEdit) closeEditorTab(pid);
           else if (isHarness) _harnessClose(pid);   // harness：SSE 清理 + 后端 /api/harness/disconnect
-          else if (isVcs) closeEditorTab(pid);      // a440：版本面板（脏检查/清理链走通用）
+          else if (isVcs) closeEditorTab(pid);      // a434：版本面板（脏检查/清理链走通用）
           else closeConnection(pid);
           return; }
         switchTab(pid);
@@ -486,7 +486,7 @@ function renderRecentList() {
     return;
   }
   el.innerHTML = '';
-  // a429（用户令）：固定项置顶区——不按 SSH/串口分类，一行 = 类型前缀 +
+  // a430（用户令）：固定项置顶区——不按 SSH/串口分类，一行 = 类型前缀 +
   // label（例：串口 COM1 @115200 / SSH gaoyi13@ip / 文件 xxx.c）；
   // 下方为非固定的原状分组列表
   const pinned = _recentList.map((it, i) => ({it, i})).filter(x => x.it.pin);
@@ -529,7 +529,7 @@ function _recentItemEl(it, i, pinned) {
   // file 类型按后缀出专属 SVG 图标（file-icons.js），其余用类型 emoji
   const ico = it.type === 'file' ? fileIconHtml(it.label || it.data?.name || '', 14)
                                  : (RECENT_ICON[it.type] || '·');
-  // a429：固定项显示形态=「类型前缀 label」（如 串口 COM1 @115200），
+  // a430：固定项显示形态=「类型前缀 label」（如 串口 COM1 @115200），
   // 不再依赖分组头
   const nameHtml = pinned
     ? `<span class="pin-type">${esc(RECENT_TYPE_NAME[it.type] || it.type)}</span> ${esc(showLabel)}`
@@ -545,7 +545,7 @@ function _recentItemEl(it, i, pinned) {
     if (e.target.dataset.del !== undefined) { e.stopPropagation(); removeRecentItem(i); return; }
     openRecentItem(it);
   };
-  // a429（用户令）：右键菜单——固定/取消固定（无条件保存+置顶）
+  // a430（用户令）：右键菜单——固定/取消固定（无条件保存+置顶）
   d.oncontextmenu = (e) => {
     e.preventDefault();
     if (typeof buildCtxMenu !== 'function') return;

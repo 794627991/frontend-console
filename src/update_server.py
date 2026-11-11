@@ -187,7 +187,7 @@ def _offline_pkg():
       rank 2 = 派生全量（重名副本 / `-副本` 链 / `-v2` 尾巴 / 无应用名前缀）
       rank 1 = 子集包
       （备份件在门户侧不可见；zip 通道已退役，不再作为回退）
-    a349R（第20轮）：同档决胜不再是 mtime，也不是大小，而是 pkgname.pkg_pref
+    a334（第20轮）：同档决胜不再是 mtime，也不是大小，而是 pkgname.pkg_pref
     的语义分（子集 基础>claude>拓展，全量按版本号，备份先行）。可见性与
     分类统一由 src.pkgname 判定（第 8~12 轮出现过四轮口径分裂，别再各写一套正则）。
 
@@ -200,7 +200,7 @@ def _offline_pkg():
     except OSError:
         return None
     best = None
-    # a343R（第14轮 P2-1）：zip 通道已退役——只有目录里**一个资源包都没有**时
+    # a330（第14轮 P2-1）：zip 通道已退役——只有目录里**一个资源包都没有**时
     # 才允许回退。原实现把 zip 与「被过滤掉的备份 fcpk」同置 rank，mtime 决胜
     # 时 zip 会赢，门户就把 3.9 时代的旧格式包发给同事（客户端根本不认）。
     from src.pkgname import (pkg_rank as _pr, pkg_derived as _derived,
@@ -212,14 +212,14 @@ def _offline_pkg():
     # 现统一走 pkgname.is_res_pkg。
     for n in sorted(names):
         _ln = n.lower()
-        # a344R（第15轮 P2-1）：zip 通道已按用户命令彻底退役——客户端
+        # a331（第15轮 P2-1）：zip 通道已按用户命令彻底退役——客户端
         # （res_boot / res_install）只认 .fcpk，把 zip 发给同事等于给一个
         # 打不开的文件。原先「没有 fcpk 时回退 zip」+ 备份被过滤后又回退
         # zip 的两条路径，都只是在喂废数据。
         if not _is_res(n):
             continue
         p = os.path.join(root, n)
-        # a343R（第14轮 P2-5）：同名**目录**也会命中 glob/文件名判定
+        # a330（第14轮 P2-5）：同名**目录**也会命中 glob/文件名判定
         # （解压残留、OneDrive 占位），门户会把它当 0 字节资源包展示，
         # 点下载直接 500
         if not os.path.isfile(p):
@@ -235,7 +235,7 @@ def _offline_pkg():
         rank = _pr(n, require_prefix=APP_NAME, filter_backup=True)
         if rank < 0:
             continue
-        # a349R（第20轮 P1-1，实锤）：a348 的「按大小决胜」方向错了——体积与
+        # a334（第20轮 P1-1，实锤）：a333 的「按大小决胜」方向错了——体积与
         # "能不能装上"无关，641MB 的 `-基础`（含 webview2+dotnet 两个硬项）
         # 被 874MB 的 `-拓展`（只有 onlyoffice）压掉，装完仍缺 → 死循环。
         # 改用语义优先分 pkg_pref：子集按 基础>claude>拓展，全量按版本号；
@@ -248,12 +248,12 @@ def _offline_pkg():
         return None
     return {"file": best[0], "version": best[3], "size": best[2],
             "mtime": int(best[1][4] * 1000), "format": best[4],
-            # a345R（第16轮）：subset 不能用 rank==1 推断——备份全量也是 1，
+            # a332（第16轮）：subset 不能用 rank==1 推断——备份全量也是 1，
             # 会被误标成「子集包，不能用于全新机器」。用分类函数判。
             "subset": _cls(best[0]) == "subset",
-            # a343R（第14轮 P3-2）：派生/留档包（rank 2）与备份件（rank 0）
+            # a330（第14轮 P3-2）：派生/留档包（rank 2）与备份件（rank 0）
             # 也要能标注——它们可能是旧版本，不该被当成最新完整包
-            # a344R（第15轮 P3-1）：derived 只由派生特征判定，不再用 rank
+            # a331（第15轮 P3-1）：derived 只由派生特征判定，不再用 rank
             # 值域推断——无前缀的正牌包 rank 也是 2，会被误标成「派生/留档」。
             "derived": _derived(best[0]),
             "url": "/" + quote(best[0])}

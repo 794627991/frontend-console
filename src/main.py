@@ -578,7 +578,7 @@ def _setup_job_object():
                 ("PeakJobMemoryUsed", ctypes.c_size_t)]
 
         kernel32 = ctypes.windll.kernel32
-        # a399R-4（实测实锤）：ctypes 默认 restype=c_int 在 64 位下截断
+        # a382-4（实测实锤）：ctypes 默认 restype=c_int 在 64 位下截断
         # 句柄（CreateJobObjectW 返回的 HANDLE 也会截）——全部显式声明
         kernel32.CreateJobObjectW.restype = ctypes.c_void_p
         kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
@@ -596,7 +596,7 @@ def _setup_job_object():
         if not kernel32.SetInformationJobObject(
                 hJob, 9, ctypes.byref(info), ctypes.sizeof(info)):
             return
-        # a399R-4（实测实锤）：GetCurrentProcess 返回伪句柄（-1），经 ctypes
+        # a382-4（实测实锤）：GetCurrentProcess 返回伪句柄（-1），经 ctypes
         # 默认 restype=c_int 在 64 位下截断 → AssignProcessToJobObject 报
         # ERROR_INVALID_HANDLE(6)。改 OpenProcess 拿真句柄
         PROCESS_SET_QUOTA = 0x0100
@@ -1184,14 +1184,14 @@ def main():
                 proxy_shutdown()
             except Exception:
                 pass   # proxy 模块异常不拖累主工具退出
-        # CPU 优先还原（a359 的 perf_boost 在 atexit 里有还原，但主进程
+        # CPU 优先还原（a335 的 perf_boost 在 atexit 里有还原，但主进程
         # 挂住时 atexit 不走——这里显式再触发一次）
         try:
             from src.perf_boost import restore_and_exit as _pb_restore
             _pb_restore()
         except Exception:
             pass
-        # a399R-3：os._exit 跳 atexit——补调三个注册在 atexit 里的清理
+        # a382-3：os._exit 跳 atexit——补调三个注册在 atexit 里的清理
         try:
             from src import snip as _snip_kill
             _snip_kill.kill_snip_windows()
@@ -1210,7 +1210,7 @@ def main():
             pass
         # 用户实锤（内网）终修：全部优雅清理完成后，最后一步杀子进程+硬退
         # ——taskkill /T /F 树杀含自身（进程被 TerminateProcess），所以
-        # 必须放在全部清理之**后**（a399R-2：原位置在 worker/proxy/perf
+        # 必须放在全部清理之**后**（a382-2：原位置在 worker/proxy/perf
         # 之前=自杀后余下清理全被剥夺）。Job Object 是内核级兜底（主进程
         # 任何方式退出都杀子进程），taskkill 是即时清
         try:

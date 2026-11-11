@@ -139,7 +139,7 @@ def _in_obj(inp, cap=4000):
 
 
 def _settle_result_usage(red, data, ms):
-    """result 帧的账务结算（a463 抽出）：TPS 累计、上下文真值落地、估值清零。
+    """result 帧的账务结算（a452 抽出）：TPS 累计、上下文真值落地、估值清零。
 
     抽出来是为了让两个入口共用：正常收口路径，以及 hold 期早退路径
     （主链回合已结束但后台子代理还在飞时 _reduce_cli 跳过组头收口，
@@ -163,7 +163,7 @@ def _settle_result_usage(red, data, ms):
         red._cache_r += (u.get("cache_read_input_tokens") or 0)
         red._cache_n += fin
         red._tps["hit"] = round(red._cache_r * 100.0 / red._cache_n, 1)
-    # 估值清零（a463：hold 早退路径同样要清）
+    # 估值清零（a452：hold 早退路径同样要清）
     red._live_chars = 0
     red._tps["liveToks"] = 0
 
@@ -586,12 +586,12 @@ class V4Feed(object):
                         self._last_turn_rid = rid
                     self._merge_turn = False
                 self._live_chars = 0       # a153：新回合肥字账归零
-                # a463（审计 P1）：只清字符账不清估值——上回合被中断/报错
+                # a452（审计 P1）：只清字符账不清估值——上回合被中断/报错
                 # （没有 result 帧）时 liveToks 留着旧值，新回合若输出不足
                 # 32 档不刷新，整回合旁注都显示上回合的「生成中 +X」。
                 self._tps["liveToks"] = 0
-                # a469（第二轮审计 P1）：只改内存不发 state 帧，前端与快照都
-                # 拿不到清零——a463 的修复实际未生效。四个清零点都要发帧。
+                # a452（第二轮审计 P1）：只改内存不发 state 帧，前端与快照都
+                # 拿不到清零——a452 的修复实际未生效。四个清零点都要发帧。
                 ds.append(P.d_state({"busy": True, "curTurn": turn,
                                      "tps": dict(self._tps)}))
             elif t == "turn_complete":
@@ -617,7 +617,7 @@ class V4Feed(object):
                 # turn_complete）——标记后 _reduce_cli 的 result 兜底不收口
                 self._held = True
             elif t == "turn_error":
-                # a463（审计 P1）：报错的回合没有 result 帧，估值账必须在这里清，
+                # a452（审计 P1）：报错的回合没有 result 帧，估值账必须在这里清，
                 # 否则下一回合旁注串上一回合的「生成中 +X」。
                 self._live_chars = 0
                 self._tps["liveToks"] = 0
@@ -627,7 +627,7 @@ class V4Feed(object):
                                         err=data.get("brief") or "")
                     if d:
                         ds.append(d)
-                # a469：清零必须随 state 帧下发（见 turn_started 同条注释）
+                # a452：清零必须随 state 帧下发（见 turn_started 同条注释）
                 ds.append(P.d_state({"busy": False, "tps": dict(self._tps)}))
                 self._held = False    # 与 turn_complete 对称：hold 不跨回合残留
             # S3 修复（a116）：原首个 `elif t == "interrupted"` 已删除——
@@ -824,11 +824,11 @@ class V4Feed(object):
                         if d2:
                             ds.append(d2)
                 ds.append(P.d_state({"busy": False}))
-                # a463（审计 P1）：中断的回合没有 result 帧，估值账在这里清，
+                # a452（审计 P1）：中断的回合没有 result 帧，估值账在这里清，
                 # 否则下一回合旁注显示上一回合的「生成中 +X」。
                 self._live_chars = 0
                 self._tps["liveToks"] = 0
-                # a469：清零必须随 state 帧下发（见 turn_started 同条注释）
+                # a452：清零必须随 state 帧下发（见 turn_started 同条注释）
                 ds.append(P.d_state({"tps": dict(self._tps)}))
             elif t == "sysnote":
                 # 系统提示不占位（用户拍板 a39：「系统提示 · 已注入…」气泡
@@ -1087,7 +1087,7 @@ class V4Feed(object):
                         continue
                     # a48（用户定调「回答形态要 a42 效果」）：ask_user 的
                     # 回答在后端人类可读化——原始 JSON {"问题":"答案"} →
-                    # 「回答：问题 → 答案；…」（a375：去 emoji——前端 a373 已改无 emoji 前缀
+                    # 「回答：问题 → 答案；…」（a375：去 emoji——前端 a344 已改无 emoji 前缀
                     # 幂等契约，产出端同步）。数据在后端整合（红线），
                     # 前端 live/回放/体全场景直接吃到成品文本
                     _tn = _tr.get("tool") if _tr else ""
@@ -1132,17 +1132,17 @@ class V4Feed(object):
             # （后台子代理在飞）session 不发 turn_complete，结果帧照常到达，
             # 此时**不**收口（避免组头提前 success 而 busy 仍 True）。
             if getattr(self, "_held", False):
-                # a463（审计 P1）：早退只该跳过「组头收口」，账务必须照做——
+                # a452（审计 P1）：早退只该跳过「组头收口」，账务必须照做——
                 # 原实现在这里直接 return，跳过了下方 ctxLive=_fin 与
                 # liveToks/_live_chars 归零。后果：主链回合已结束，容量卡
                 # 下方仍挂「生成中 +X（估值）」，且字符继续累加到旧账。
                 _settle_result_usage(self, data, data.get("duration_ms"))
-                # a469（第二轮审计 P1）：清零只改内存时前端收不到——hold 期间
+                # a452（第二轮审计 P1）：清零只改内存时前端收不到——hold 期间
                 # 容量卡一直挂着上一回合的「生成中 +X（估值）」直到下次 assistant
                 # 块攒够 32 token 才发新帧。这里补一帧。
                 ds.append(P.d_state({"tps": dict(self._tps)}))
                 return ds
-            # a463：_ms 必须在 if rid 之外取——原只在 rid 分支内赋值，下面
+            # a452：_ms 必须在 if rid 之外取——原只在 rid 分支内赋值，下面
             # 结算路径在 rid 为假时引用它会 UnboundLocalError。
             _ms = data.get("duration_ms")
             rid = self._turn_rows.get(turn) if turn else None

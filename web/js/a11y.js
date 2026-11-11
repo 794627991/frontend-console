@@ -24,9 +24,9 @@
     [/file-rename|ed-rename/, '重命名'],
   ];
 
-  let _a11ySeq = 0;   // a470：补 id 时的唯一序号（见下方 fix 注释）
+  let _a11ySeq = 0;   // a453：补 id 时的唯一序号（见下方 fix 注释）
   function fix(el) {
-    // a447（用户实锤两处截图）：浏览器自动填充建议层（Edge 深色「保存的信息」
+    // a441（用户实锤两处截图）：浏览器自动填充建议层（Edge 深色「保存的信息」
     // 面板）会挂到被它认作表单字段的文本框上。统一加 autocomplete=off；
     // 弹窗（hgModal）与提问卡另外用 type=search 彻底隔离（那两处样式自持，
     // 改 type 不影响其它模块）。全局不改 type——会打断 input[type=text]
@@ -54,17 +54,17 @@
       el.setAttribute('aria-label', label);
     }
     // DevTools 另一条：A form field element should have an id or name
-    // a447：type=search 的输入框是「为了躲浏览器自动填充黑窗」才改成 search
+    // a441：type=search 的输入框是「为了躲浏览器自动填充黑窗」才改成 search
     // 的。给它们补回 name 会把字段重新变成浏览器可记忆的表单字段，自动填充
     // 建议层又冒出来——跳过。
-    // a466（审计 P0：主因没除）：只豁免 search 不够——设置页/连接弹窗/识图/
+    // a452（审计 P0：主因没除）：只豁免 search 不够——设置页/连接弹窗/识图/
     // 提示词等大量文本框只是加了 autocomplete="off"、仍是 type=text，observer
     // 照样补回 name（而且是从 className 派生的重复名 dd-input/field），
     // Edge 一旦判成用户名/地址启发式就直接忽略 off、黑窗照弹。凡是**显式
     // 声明了 autocomplete="off" 的控件**都不补 name：那是「我不参与表单
     // 记忆」的明确意图，补名等于把它打回可记忆字段。
     const _ac = (el.getAttribute('autocomplete') || '').trim().toLowerCase();
-    // a470（第二轮审计 P2）：补 **id** 而不是 name。DevTools 那条告警
+    // a453（第二轮审计 P2）：补 **id** 而不是 name。DevTools 那条告警
     // （A form field element should have an id or name）id 也算满足，而
     // name 会重新让控件进入浏览器的字段记忆启发式——正是本规则想除的根因。
     // 另外用「class + 全局序号」保证唯一：原实现同 class 的多个无名字段会

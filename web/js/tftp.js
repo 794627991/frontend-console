@@ -123,14 +123,14 @@ async function refreshTftp() {
   const resizer = $('tftpResizer');
   const pane = $('tftpPane');
   if (!resizer || !pane) return;
-  // 恢复记忆高度。a461（用户实锤：拖好高度下次启动又回去了）：原实现
+  // 恢复记忆高度。a451（用户实锤：拖好高度下次启动又回去了）：原实现
   // `if (h >= 180 && h <= innerHeight - 200)` 越界就**整个丢弃**，回落到
   // CSS 的 50%——用户在最大化窗口里拖到 900px，下次以小窗口启动就判越界、
   // 记忆等于没存。改为 clamp 到合法区间：越界说明窗口尺寸变了，不是记忆
   // 失效；存的值本身保留，窗口再变大仍能恢复原高度。
   let _savedH = 0;
   try { _savedH = parseInt(localStorage.getItem('tftpPaneH') || '', 10) || 0; } catch(e) {}
-  // a464（审计 P2）：上下限不能都用视口算——窗口 <380 时
+  // a452（审计 P2）：上下限不能都用视口算——窗口 <380 时
   // `max(180, innerHeight-200)` 退化成 180，min/max 互相抵消，面板固定
   // 180px；而 .tftp-pane 是 flex-shrink:0 + 父容器 overflow:hidden，容器
   // 不足时底部文件列表被整块裁掉且用户无法再缩小。下限改成跟**父容器
@@ -138,10 +138,10 @@ async function refreshTftp() {
   function _paneBounds() {
     const parent = pane.parentElement;
     const avail = parent ? parent.clientHeight : window.innerHeight;
-    // a469（第二轮审计 P2）：hi 可小于 60（窗口高<260 或父容器高<120），
+    // a452（第二轮审计 P2）：hi 可小于 60（窗口高<260 或父容器高<120），
     // 原来 lo 仍被 Math.max(60, ...) 强抬到 60 → 返回值 [60,60] 下限反超
     // 上限，clamp 退化成常量、把高度钉死 60px（还超出可用高度，父容器
-    // overflow:hidden 继续裁）——正是 a464 想修的场景在极极端尺寸下的残存。
+    // overflow:hidden 继续裁）——正是 a452 想修的场景在极极端尺寸下的残存。
     // 上限低于 60 时下限跟着降，保证 lo <= hi 恒成立。
     const hi = Math.max(0, Math.min(window.innerHeight - 200, avail - 60));
     const lo = Math.max(0, Math.min(60, hi));
@@ -153,7 +153,7 @@ async function refreshTftp() {
   }
   if (_savedH >= 60) pane.style.height = _clampPaneH(_savedH) + 'px';
   // 窗口尺寸变化后重新套用（恢复的是上次的意图高度，不是上次的像素）。
-  // a464：用 rAF 合并——原来每个 resize 事件都同步读写一次 style，拖窗口
+  // a452：用 rAF 合并——原来每个 resize 事件都同步读写一次 style，拖窗口
   // 时连续强制重排。
   let _rszPending = false;
   window.addEventListener('resize', () => {
@@ -173,7 +173,7 @@ async function refreshTftp() {
   });
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
-    // 向上拖增大：clientY 减小 → 高度增加。a464：上下限与恢复同一口径
+    // 向上拖增大：clientY 减小 → 高度增加。a452：上下限与恢复同一口径
     // （原硬编码 180 / innerHeight-200，小窗口下与恢复逻辑打架）
     const [_lo, _hi] = _paneBounds();
     const h = Math.max(_lo, Math.min(startH + (startY - e.clientY), _hi));
@@ -186,7 +186,7 @@ async function refreshTftp() {
     document.body.style.userSelect = '';
     try {
       localStorage.setItem('tftpPaneH', pane.offsetHeight);
-      _savedH = pane.offsetHeight;   // a461：同步内存值，resize 才有正确意图高度
+      _savedH = pane.offsetHeight;   // a451：同步内存值，resize 才有正确意图高度
     } catch(e) {}
   });
 })();

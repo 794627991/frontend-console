@@ -286,7 +286,7 @@
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         path: o.path, kinds: o.kinds || null, force: !!o.force,
-        mode: o.mode || 'offline'   // a326 批2：online 走在线安装（无需 path）
+        mode: o.mode || 'offline'   // a322 批2：online 走在线安装（无需 path）
       })
     }).then(function (j) {
       // a333R（第4轮 P1-2，实测 UI 卡死）：清理必须放在启动成功之后。
@@ -303,7 +303,7 @@
       // 条目就走 seq；全部无 seq（旧后端/混合状态）才退回下标游标。原实现
       // 对无 seq 条目既不跳过也不推进，同一行会每 700ms 重放一次。
       var seenSeq = 0, seenIdx = 0, resMode = null;   // a333R：模式锁定
-      // a334R（第5轮 P2-3，实测窄窗口）：所有清理只清**自己的** timer。
+      // a328（第5轮 P2-3，实测窄窗口）：所有清理只清**自己的** timer。
       // 原来回调内 clearInterval(_resPollTimer) 读的是全局当前值——A 的飞行中
       // poll 晚于 B 的启动返回时，会把 B 刚建的 timer 掐掉，B 的 onDone 永不
       // 执行，设置页 busy 永久卡住。

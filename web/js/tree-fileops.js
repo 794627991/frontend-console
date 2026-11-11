@@ -334,7 +334,7 @@
     if (isDir && typeof window.NavJump === 'object' && window.NavJump.ui) {
       items.push({ icon: CI.search, label: '代码索引…', action: () => window.NavJump.ui(path) });
     }
-    // a417（用户令）：根目录的移除入口只留根行 ✕（file-tree.js root-x，
+    // a401（用户令）：根目录的移除入口只留根行 ✕（file-tree.js root-x，
     // 同一 /api/tree/remove_root）——右键「移除根」重复入口删除
     if (typeof buildCtxMenu === 'function') buildCtxMenu(e.clientX, e.clientY, items);
   });

@@ -136,7 +136,7 @@
           if (base > 0 && mx > 0) {
             // v4.1（用户定调）：胶囊只按真值 base 算，不叠生成中估值——
             // 口径与圆环/容量卡统一（估值要下一轮才成为 input）
-            // a463（审计 P1）：显示用 floor、判色用 round，与 fx.js 圆环
+            // a452（审计 P1）：显示用 floor、判色用 round，与 fx.js 圆环
             // 完全同档。原来先 round 再拿它判色，79.6% 会出现「胶囊橙 80%、
             // 圆环蓝 80%」同屏矛盾；display floor 也避免 99.5% 看起来满格。
             const _p = Math.min(100, base / mx * 100);
@@ -645,7 +645,7 @@
         if (base > 0 && mx0 > 0) {
           const mx = mx0;
           // v4.1（用户定调）：侧栏详情同胶囊——只按真值 base，不叠估值
-          // a470（第二轮审计 P2）：显示 floor、判色 round，与胶囊/圆环同档。
+          // a453（第二轮审计 P2）：显示 floor、判色 round，与胶囊/圆环同档。
           // 原来 round 后拿它判色，79.6% 会出现「胶囊 79%、详情 80% 亮橙」。
           const _p2 = Math.min(100, base / mx * 100);
           ctxTxt = Math.floor(_p2) + '% · ' +

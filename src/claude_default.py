@@ -384,7 +384,7 @@ def _register_codegraph_mcp():
     _stale = (not _cur) or (_cur.get("command") != _want["command"]) or (
         list(_cur.get("args") or []) != _want["args"])
     if _stale:
-        # a386：内置 bundle 绝对路径直启（node.exe --liftoff-only
+        # a360：内置 bundle 绝对路径直启（node.exe --liftoff-only
         # codegraph.js serve --mcp）——不依赖 npm shim 在 PATH
         servers["codegraph"] = _want
         d["mcpServers"] = servers

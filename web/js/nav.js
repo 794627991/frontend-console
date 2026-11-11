@@ -40,7 +40,7 @@
   }
 
   // ============================================================
-  // a360R（用户需求2，VSCode 同款）：导航历史 back / forward
+  // a336（用户需求2，VSCode 同款）：导航历史 back / forward
   // VSCode 的命令是 workbench.action.navigateBack / navigateForward，默认
   // Alt+← / Alt+→（macOS Ctrl+- / Ctrl+Shift+-）。默认与 VSCode 一致用 Alt+← / Alt+→，键位可在设置页录制修改
   // （与 F12 那三项放一起）。
@@ -150,7 +150,7 @@
   function navigateForward() { _navStep(1); }
 
   // 跳转类动作统一入口：先记下「从哪跳的」，再执行跳转。
-  // a360R（关键）：**目标和来源都要进栈**。只压来源的话，第一次跳转后栈里
+  // a336（关键）：**目标和来源都要进栈**。只压来源的话，第一次跳转后栈里
   // 只有 [A]、游标停在 0，navigateBack 直接判「已经是最早的位置」——永远
   // 回不去。VSCode 的语义是「跳到 B 之后，历史里有 A 和 B 两项」，
   // back 回到 A、forward 再回到 B。
@@ -527,7 +527,7 @@
   }
 
   function keyLabel(spec) {
-    // a360R：方向键显示为箭头（Ctrl+ARROWLEFT 太丑，VSCode 也是画箭头）
+    // a336：方向键显示为箭头（Ctrl+ARROWLEFT 太丑，VSCode 也是画箭头）
     const ARROW = { arrowleft: '←', arrowright: '→',
                     arrowup: '↑', arrowdown: '↓' };
     return spec.split('+').map(p =>
@@ -726,7 +726,7 @@
       if (ed && matchKey(e, NAV_KEYS.fsym)) {   // a383：Ctrl+Shift+O 文件内符号
         e.preventDefault(); e.stopPropagation(); showFileSymbols(ed);
       }
-      // a360R（用户需求2）：导航历史 back / forward。
+      // a336（用户需求2）：导航历史 back / forward。
       // a375R（第1轮审计 P2-4/P1-1）：接管范围要精确——不能一律放行，也不能
       // 一律抢。四个方向的真实归属：
       //   · Monaco 编辑器内：接管（VSCode 同款；Alt+←/→ 在 Windows Monaco 里
@@ -775,15 +775,15 @@
   }
 
   let _pollTimer = null;
-  let _navClockTimer = null;   // a435：独立计时器
+  let _navClockTimer = null;   // a426：独立计时器
 
   function ui(path) {
-    // a462：切换目录查看 ≠ 放弃正在等选择的任务，只收面板不取消建库
+    // a452：切换目录查看 ≠ 放弃正在等选择的任务，只收面板不取消建库
     _closePanel(false);
     const ov = document.createElement('div');
     ov.id = 'navIdxPanel';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:9999;display:flex;align-items:center;justify-content:center;';
-    // a409（用户实锤：点一下背景进度就没了，任务还在跑却看不到过程）：
+    // a392（用户实锤：点一下背景进度就没了，任务还在跑却看不到过程）：
     // 任务运行中禁背景关闭（资源安装弹窗同款①；✕/关闭仍可关——重开有恢复式显示②兜底）
     ov.addEventListener('mousedown', function (e) {
       if (e.target !== ov) return;
@@ -798,7 +798,7 @@
     _renderProbe(card, path);
   }
 
-  // a462（审计 P2）：_closePanel 的「弹窗还在 ⇒ 关面板即放弃建库」语义只
+  // a452（审计 P2）：_closePanel 的「弹窗还在 ⇒ 关面板即放弃建库」语义只
   // 适用于**用户真的关闭**。ui()（右键另一个目录）也走 _closePanel，会把
   // 正在等用户选建库方式的任务静默取消——用户只觉得换了个目录，任务没了。
   // 加 cancelIfAsking 参数：切面板传 false，只收弹窗不动任务。
@@ -810,7 +810,7 @@
       _td.remove();
       // 弹窗还在说明建库线程正卡在「等用户选建库方式」。真正的关闭动作下
       // 用户再没有任何途径作答，后端会白等 10 分钟——视为放弃建库。
-      // a462：只是切换到另一个目录查看时不取消（那不是放弃）。
+      // a452：只是切换到另一个目录查看时不取消（那不是放弃）。
       if (cancelIfAsking !== false)
         fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
     }
@@ -819,7 +819,7 @@
   }
 
   function _h(tag, txt, html) {
-    // a373（用户铁律：UI 禁 emoji）：html=true 时可插 ICO16 SVG 图标串
+    // a344（用户铁律：UI 禁 emoji）：html=true 时可插 ICO16 SVG 图标串
     const e = document.createElement(tag);
     if (txt !== undefined) { if (html) e.innerHTML = txt; else e.textContent = txt; }
     return e;
@@ -842,7 +842,7 @@
     btns.appendChild(closeB);
     card.appendChild(btns);
     let j = null;
-    // a409 恢复式显示（资源安装同款②）：先查任务槽（零扫描即时）——本目录
+    // a392 恢复式显示（资源安装同款②）：先查任务槽（零扫描即时）——本目录
     // 任务还在跑就直接恢复进度视图；误关/关完重开都能接上过程
     try {
       const pr = await fetch('/api/nav/poll');
@@ -861,7 +861,7 @@
     _renderState(card, path, j, st);
   }
 
-  // a410（用户令：建库就要能选后端+全量方案下线）：档位下拉公共构造——
+  // a393（用户令：建库就要能选后端+全量方案下线）：档位下拉公共构造——
   // 只剩 readtags/sqlite 两方案；sqlite 无能力（旧 exe 缺件）藏项；
   // withAuto 给首次建库多一个『自动』档（按库大小自动判）；旧库 meta
   // backend=memory 显示兜底 readtags
@@ -880,12 +880,12 @@
     return sel;
   }
 
-  // a415（内网报告档B + 用户令：手动指定目录多选 UI 要做好、支持子目录）：
+  // a398（内网报告档B + 用户令：手动指定目录多选 UI 要做好、支持子目录）：
   // 收录范围行——检测到的配置展示 + 档位下拉 + 导入 JSON + 目录树多选。
   // 返回 div；当前选择经 card._scopeSel 闭包交给 _startBuild
-  // a415（内网报告档B + 用户令：手动指定目录多选 UI 要做好、支持子目录）：
+  // a398（内网报告档B + 用户令：手动指定目录多选 UI 要做好、支持子目录）：
   // 收录范围行——检测到的配置展示 + 档位下拉 + 导入 JSON + 目录树多选 +
-  // 清除已存。a415R 审计#1（P0 XSS）：配置名一律 textContent，绝不拼
+  // 清除已存。a398 审计#1（P0 XSS）：配置名一律 textContent，绝不拼
   // innerHTML；#9：下拉活性——载荷每次按下拉现值组装，导入/手选挂
   // card._scopeCfg 供 'cfg' 档引用；#10：全量档=显式整根 scope
   function _scopeRow(card, path, j) {
@@ -911,7 +911,7 @@
       _headTxt('收录范围：配置解析失败（' + sc.source.slice(4) + '）——将按全量');
       head.style.color = 'var(--neon-red,#e5484d)';
     } else if (j.scope_detect && j.scope_detect.kind === 'sbuilder') {
-      // a416/a418：零配置形态识别（用户定调：只显示检测到 sbuilder 方案，
+      // a400/a402：零配置形态识别（用户定调：只显示检测到 sbuilder 方案，
       // 不写死平台模板）——产物树只读 .cmd/.o 不索引；档位按产物规模自动判
       _headTxt('检测到 sbuilder 方案（产物外挂 sbuilder/output/build，只读产物不索引副本）——自动档按产物规模判白名单/全量；零产物目录如未收录可加 fallback_full');
     } else {
@@ -928,7 +928,7 @@
       ['follow', (sc && sc.source === 'project') ? '跟随工程配置' : (sc && sc.source === 'saved') ? '跟随已存范围' : '自动'],
       ['whitelist', (j.scope_detect && j.scope_detect.kind === 'sbuilder')
         ? '白名单（sbuilder 方案）' : '白名单'],
-      // a423：白名单优先——全量档仅在收录集零中间文件时实际生效
+      // a409：白名单优先——全量档仅在收录集零中间文件时实际生效
       ['full', '全量（仅收录集零中间文件时生效）'],
     ];
     const renderSel = () => {
@@ -938,7 +938,7 @@
     };
     renderSel();
     row.appendChild(sel);
-    // 导入 JSON（a415R#9：导入只挂 cfg+切档，不锁死下拉）
+    // 导入 JSON（a398#9：导入只挂 cfg+切档，不锁死下拉）
     const bImp = _h('button', '导入 JSON', false);
     bImp.className = 'btn ghost';
     bImp.style.cssText = 'padding:2px 10px;font-size:11px;';
@@ -970,7 +970,7 @@
     bPick.style.cssText = 'padding:2px 10px;font-size:11px;';
     bPick.onclick = () => _scopePick(path, dirs => {
       if (!dirs || !dirs.length) return;
-      // a423（内网报告·用户令「只要有白名单一定用白名单」）：手选目录
+      // a409（内网报告·用户令「只要有白名单一定用白名单」）：手选目录
       // **不指定档位**（原写死 full=私自全建，实测 tags 撑到数百 MB）——
       // 后端按收录集有无中间文件判：有→白名单，零→全量（唯一降档）。
       // a415R3 BUG-2：勾「整个目录」根行时 dirs=[''] 映射成 '.'
@@ -984,7 +984,7 @@
       showBanner('已选 ' + dirs.length + ' 个目录（整目录递归收录），点「建立索引」生效', 3500);
     });
     row.appendChild(bPick);
-    // 清除已存范围（a415R#10：有 saved 才显示）
+    // 清除已存范围（a398#10：有 saved 才显示）
     if (sc && sc.source === 'saved') {
       const bClr = _h('button', '清除已存范围', false);
       bClr.className = 'btn ghost';
@@ -1006,7 +1006,7 @@
       row.appendChild(bClr);
     }
     box.appendChild(row);
-    // a415R#9：载荷按下拉**现值**组装（导入/手选经 cfg 档引用，可随时切走/切回）
+    // a398#9：载荷按下拉**现值**组装（导入/手选经 cfg 档引用，可随时切走/切回）
     card._scopeSel = () => {
       const cfg = card._scopeCfg || null;
       const v = sel.value || 'follow';
@@ -1023,9 +1023,9 @@
     return box;
   }
 
-  // a415：目录树多选弹层——懒加载（SMB 大目录不整树拉）、勾父=子随父
+  // a398：目录树多选弹层——懒加载（SMB 大目录不整树拉）、勾父=子随父
   // 收录（继承态锁定）、最小顶集语义零歧义。
-  // a415R（审计#28）四修：顶层去重复渲染/折叠根隐藏子项/勾整根后子项
+  // a398（审计#28）四修：顶层去重复渲染/折叠根隐藏子项/勾整根后子项
   // 继承锁定（inh!==null 判空串）/条目超限提示
   function _scopePick(root, cb) {
     const ov = document.createElement('div');
@@ -1142,7 +1142,7 @@
           if (!kids[rel].dirs.length || kids[rel].truncated) tree.appendChild(_emp);
         }
       };
-      // 根行展开由 mkRow 内部递归渲染（a415R#28：去掉外层重复循环）
+      // 根行展开由 mkRow 内部递归渲染（a398#28：去掉外层重复循环）
       mkRow('', '（整个目录 ' + (root.split(/[\\/]/).pop() || root) + '）', true, 0);
     };
     (async () => {
@@ -1186,9 +1186,9 @@
       }
       st.textContent = '✓ 发现代码文件（浅层抽样 ' + (j.probe_files || 0) + ' 个）。'
         + '首次索引需扫描全目录——网盘挂载的大库可能数分钟，结果存工具数据目录（不写工程目录）。';
-      // a415：收录范围行（检测配置/档位/导入 JSON/目录树多选）
+      // a398：收录范围行（检测配置/档位/导入 JSON/目录树多选）
       st.appendChild(_scopeRow(card, path, j));
-      // a410（用户实锤：建索引时不给选项，想选 readtags/sql 都不行）：建立
+      // a393（用户实锤：建索引时不给选项，想选 readtags/sql 都不行）：建立
       // 按钮旁挂档位下拉（自动=按库大小判；全量方案已下线不提供）
       const fbSel = _bkSel('auto', j.sqlite_ok !== false, true);
       bAdd.onclick = () => _startBuild(card, path, fbSel.value);
@@ -1216,20 +1216,20 @@
       warn2.style.color = '#e8a33d';
       st.appendChild(warn2);
     }
-    if (m.scope && m.scope.name) {   // a415：本次建库所用范围（meta 记录）
+    if (m.scope && m.scope.name) {   // a398：本次建库所用范围（meta 记录）
       st.appendChild(_h('div', '本次建库范围：' + m.scope.name +
         '（' + (m.scope.tier || '') + '，' +
         ((m.scope.include && m.scope.include.length) || 0) + ' 目录）——换范围用下方控件重选后重建'));
     }
-    st.appendChild(_scopeRow(card, path, j));   // a415：换范围重选入口
+    st.appendChild(_scopeRow(card, path, j));   // a398：换范围重选入口
     const bRe = _h('button', ICO16.refresh + ' 重建', true);
     bRe.className = 'btn primary';
     // 用户实锤：重建按钮不传 backend——想建 sqlite 却走 auto 全部重建。
     // 改为传下拉当前值（重建尊重用户选的档位）
     bRe.onclick = () => _startBuild(card, path, bkSel.value);
-    // a390：查询后端切换（重建按钮左侧下拉；sqlite 走任务槽带进度）
-    // a407：后端无 sqlite3 能力（旧版 exe 打包缺件）——藏 sql 档
-    // a410（用户令：不允许全量方案）：档位只剩 readtags/sqlite；旧库
+    // a369：查询后端切换（重建按钮左侧下拉；sqlite 走任务槽带进度）
+    // a390：后端无 sqlite3 能力（旧版 exe 打包缺件）——藏 sql 档
+    // a393（用户令：不允许全量方案）：档位只剩 readtags/sqlite；旧库
     // meta.backend=memory 显示/复位兜底 readtags（切档即迁移）
     const _sqlOk = j.sqlite_ok !== false;
     const _curBk = m.backend || (m.code_files >= 200000 ? 'sqlite' : 'readtags');
@@ -1287,7 +1287,7 @@
     _renderCodegraph(st, path, btns, card);
   }
 
-  // a360：codegraph 区块——状态行 + 建/重建 + 增量同步 + 删除
+  // a336：codegraph 区块——状态行 + 建/重建 + 增量同步 + 删除
   async function _renderCodegraph(st, path, btns, card) {
     let j = null;
     try {
@@ -1304,7 +1304,7 @@
       const e = _h('div', (j.err || '不可用'));
       e.style.color = 'var(--muted)';
       line.appendChild(e);
-      // a409（用户实锤：.codegraph 残留/损坏 → status 解析失败 → 零按钮，
+      // a392（用户实锤：.codegraph 残留/损坏 → status 解析失败 → 零按钮，
       // 重建/更新菜单全没）：排除"未安装"外都给重建出口（build 的 init
       // --force 无条件清场，能修复半成品/损坏的 .codegraph）
       if ((j.err || '').indexOf('未安装') === -1) {
@@ -1320,7 +1320,7 @@
     const info = _h('div');
     line.appendChild(info);
     const mkBtn = (label, cls) => {
-      const b = _h('button', label, true);   // a373：label 可含 ICO16 SVG
+      const b = _h('button', label, true);   // a344：label 可含 ICO16 SVG
       b.className = cls;
       b.style.cssText = 'padding:2px 10px;font-size:11px;margin-left:6px;';
       return b;
@@ -1368,7 +1368,7 @@
         if (!j.ok) { showBanner('启动失败：' + (j.err || ''), 4000, true); return; }
         // R26-2（实锤：codegraph 任务 UI 零反馈）：真开进度面板——与
         // ctags 建库同款（轮询同通道，日志/进度/取消/完成通知全有）
-        // a471（第二轮审计 P2）：必须用发起时那张卡片。原来在回调里取
+        // a453（第二轮审计 P2）：必须用发起时那张卡片。原来在回调里取
         // `panel.firstChild`——请求在途时用户关了面板又对另一目录开了新
         // 面板，就会把 B 的卡片强行换成 A 的 codegraph 进度（poll 显示旧
         // root），随后 B 的正常渲染又覆盖它，留下指向已 detach 节点的
@@ -1383,7 +1383,7 @@
     // 用户实锤：重建按钮不传 backend → 后端走 auto → 想建 sqlite 却走
     // 全部重建流程。改为传下拉当前值（重建尊重用户选的档位）
     const body = backend ? { root: path, backend: backend } : { root: path };
-    // a415：收录范围载荷（_scopeRow 选择/导入/手选经 card._scopeSel 闭包）
+    // a398：收录范围载荷（_scopeRow 选择/导入/手选经 card._scopeSel 闭包）
     const _sc = (card._scopeSel && card._scopeSel()) || null;
     if (_sc) Object.assign(body, _sc);
     fetch('/api/nav/build', { method: 'POST',
@@ -1392,11 +1392,11 @@
       .then(r => r.json())
       .then(j => {
         if (!j.ok) { showBanner('启动失败：' + (j.err || ''), 4000, true); return; }
-        // a462（审计 P1）：面板可能在 fetch 在途时已被关闭（慢盘上点完立刻
+        // a452（审计 P1）：面板可能在 fetch 在途时已被关闭（慢盘上点完立刻
         // 点背景，此时 dataset.running 还没置位，遮罩仍可关）。原实现照样
         // _renderProgress，在已脱离 DOM 的 card 上重建轮询与计时器，之后
         // 无人清理（_closePanel 早跑过了），后台每 800ms 空转到任务结束。
-        // a471（第二轮审计 P2）：只按 id 查面板还不够——期间用户可能在
+        // a453（第二轮审计 P2）：只按 id 查面板还不够——期间用户可能在
         // 另一目录打开了**新**面板，id 命中但 card 已不属于它。原实现会把
         // A 的进度渲染到脱离 DOM 的卡片上，还把 B 面板设成 running，用户在
         // B 点关闭会取消掉一个他以为不存在的任务。必须校验 card 仍连通。
@@ -1406,11 +1406,11 @@
       .catch(e => showBanner('启动失败: ' + e, 4000, true));
   }
 
-  // a438：白名单覆盖率偏低时的建库方式选择弹窗——把实际数据显示给用户，
+  // a431：白名单覆盖率偏低时的建库方式选择弹窗——把实际数据显示给用户，
   // 由用户决定「只收白名单」还是「全量收源码」，不再由代码写死阈值行为。
   function _askTierDialog(info, txt) {
     const ov = document.createElement('div');
-    ov.id = 'navTierDialog';   // a439：可被 _closePanel 统一清理
+    ov.id = 'navTierDialog';   // a432：可被 _closePanel 统一清理
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);' +
       'z-index:10050;display:flex;align-items:center;justify-content:center;';
     const card = document.createElement('div');
@@ -1476,7 +1476,7 @@
     if (txt) txt.textContent = '等待选择建库方式…';
 
     function _postTier(choice) {
-      // a462（审计 P2）：后端 10 分钟超时撤销提问后，前端还没轮询到，
+      // a452（审计 P2）：后端 10 分钟超时撤销提问后，前端还没轮询到，
       // 此时点选项拿到 409。原来无条件写「已选择：…」，用户以为选项生效，
       // 实际已按超时默认（全量）继续。先如实显示「提交中」，按结果再定。
       if (txt) txt.textContent = '提交选择…';
@@ -1499,11 +1499,11 @@
 
   function _renderProgress(card, path) {
     const _ov = document.getElementById('navIdxPanel');
-    if (_ov) _ov.dataset.running = '1';   // a409：背景关闭禁令配套标记
+    if (_ov) _ov.dataset.running = '1';   // a392：背景关闭禁令配套标记
     card.innerHTML = '';
-    // a462：本轮的定时器句柄（闭包私有），清理只动自己
+    // a452：本轮的定时器句柄（闭包私有），清理只动自己
     let _myPoll = null, _myClock = null;
-    // a435（需求：独立计时器 hh:mm:ss）：与进度条/阶段文案分离，只此一处报时间；
+    // a426（需求：独立计时器 hh:mm:ss）：与进度条/阶段文案分离，只此一处报时间；
     // 其余日志里的「已用 Ns」全部去掉，避免多处读秒互相打架
     const headRow = _h('div');
     headRow.style.cssText = 'display:flex;align-items:baseline;gap:10px;';
@@ -1513,7 +1513,7 @@
       'font-size:15px;font-weight:600;color:var(--accent);letter-spacing:.5px;';
     headRow.appendChild(clock);
     card.appendChild(headRow);
-    // a435：基准先用本地时刻，首次 poll 拿到后端 started 后校正
+    // a426：基准先用本地时刻，首次 poll 拿到后端 started 后校正
     // （关面板重开/刷新页面仍显示真实已用时间，不从 0 重数）
     let _t0 = Date.now();
     let _synced = false;
@@ -1548,18 +1548,18 @@
     const bCancel = _h('button', '取消');
     bCancel.className = 'btn ghost';
     bCancel.onclick = () => {
-      // a439：若建库正卡在「等用户选建库方式」，取消要同时把弹窗收掉
+      // a432：若建库正卡在「等用户选建库方式」，取消要同时把弹窗收掉
       const _td = document.getElementById('navTierDialog');
       if (_td) _td.remove();
       fetch('/api/nav/cancel', { method: 'POST' });
     };
     btns.appendChild(bCancel);
     card.appendChild(btns);
-    let _rowByKey = {};   // a433：进度行 key -> DOM 节点（同类日志原地刷新）
-    let _lastSeq = 0;     // a433：按 seq 增量拉取（后端裁剪后下标不再错位）
-    let _tierAsked = false;   // a438：建库方式弹窗只弹一次
+    let _rowByKey = {};   // a424：进度行 key -> DOM 节点（同类日志原地刷新）
+    let _lastSeq = 0;     // a424：按 seq 增量拉取（后端裁剪后下标不再错位）
+    let _tierAsked = false;   // a431：建库方式弹窗只弹一次
     if (_pollTimer) clearInterval(_pollTimer);
-    // a462（审计 P1：误清后来任务的定时器）：句柄已在本函数顶部声明为
+    // a452（审计 P1：误清后来任务的定时器）：句柄已在本函数顶部声明为
     // _myPoll/_myClock，回调结束时只清自己的。原来清的是模块级当前值——
     // 任务 A 的末次 poll 在途中，用户重开面板起了任务 B，A 的回调返回
     // done 时清掉的是 B 的 interval，B 的进度与日志永久停在初值。
@@ -1574,12 +1574,12 @@
         bar.style.width = (s.percent || 0) + '%';
         txt.textContent = (s.phase || '') + ' · ' + (s.percent || 0) + '%' + (s.cancelling ? ' · 正在取消…' : '');
         const lg = s.log || [];
-        // a440：后端日志上限 400 条，轮询间隔内产出过多时中间条目会被裁掉。
+        // a434：后端日志上限 400 条，轮询间隔内产出过多时中间条目会被裁掉。
         // 后端上报已被裁掉的最大 seq，前端发现自己的进度落后于它才提示
         // （进度行原地替换也消耗 seq，不能只看条数或首条 seq）。
         const _drop = s.log_dropped || 0;
         if (_drop > _lastSeq) {
-          // a462（审计 P2）：log_dropped 是**被裁掉的最后一条的 seq**，不是
+          // a452（审计 P2）：log_dropped 是**被裁掉的最后一条的 seq**，不是
           // 条目数。进度行原地替换同样消耗 seq，直接相减会把「合并」算成
           // 「丢失」（实际裁掉 100 条却提示省略 320 条）。改用对数估算：
           // 两者之比只有量级意义，措辞也据此降级为「约」。
@@ -1601,35 +1601,35 @@
           if (e.key) _rowByKey[e.key] = d;
         }
         log.scrollTop = log.scrollHeight;
-        // a438：白名单覆盖率偏低——弹窗让用户选建库方式（给实际数据）
+        // a431：白名单覆盖率偏低——弹窗让用户选建库方式（给实际数据）
         if (s.ask_tier && !_tierAsked) {
           _tierAsked = true;
           _askTierDialog(s.ask_tier, txt);
         } else if (!s.ask_tier && _tierAsked) {
-          // a440：后端已撤销提问（10 分钟超时按全量继续 / 任务取消），
+          // a434：后端已撤销提问（10 分钟超时按全量继续 / 任务取消），
           // 弹窗若还开着必须收掉——否则用户点了只会拿到 409
           const _td3 = document.getElementById('navTierDialog');
           if (_td3) _td3.remove();
           _tierAsked = false;
         }
         if (!s.done) return;
-        // a471（第二轮审计 P2）：DONE 分支必须校验「本轮是否仍是当前轮」。
+        // a453（第二轮审计 P2）：DONE 分支必须校验「本轮是否仍是当前轮」。
         // 任务 A 结束瞬间其 poll 请求在途（慢盘 >1.6s），用户已在另一目录
         // 起任务 B 并弹出建库方式弹窗——A 的回调会把 B 的弹窗删掉、解除
         // B 面板的 dataset.running（B 的后端白等 10 分钟后按 full 继续，
         // 用户的选择丢失）。不是当前轮就直接返回，什么都不清。
         if (_pollTimer !== _myPoll) return;
-        // a462：只清本轮自己的定时器；模块级引用若已指向别的任务则不碰
+        // a452：只清本轮自己的定时器；模块级引用若已指向别的任务则不碰
         clearInterval(_myPoll);
         if (_myClock) clearInterval(_myClock);
         if (_pollTimer === _myPoll) _pollTimer = null;
         if (_navClockTimer === _myClock) _navClockTimer = null;
         _myPoll = _myClock = null;
-        // a440：任务已终态，遗留的建库方式弹窗必须收掉（否则挡住结果）
+        // a434：任务已终态，遗留的建库方式弹窗必须收掉（否则挡住结果）
         const _td2 = document.getElementById('navTierDialog');
         if (_td2) _td2.remove();
         const _ov2 = document.getElementById('navIdxPanel');
-        if (_ov2) delete _ov2.dataset.running;   // a409：任务终态解除背景关闭禁令
+        if (_ov2) delete _ov2.dataset.running;   // a392：任务终态解除背景关闭禁令
         if (s.ok_done) {
           // R27-2（实锤：codegraph 任务完成恒"0 符号"）：result 按 kind 分流——
           // ctags 用 code_files（符号数），codegraph 用 files（文件数）
@@ -1653,6 +1653,6 @@
   // 供 file-tree.js 右键入口 + editor 检测复用 + 设置页热应用
   window.NavJump = { registerAll: registerAll, ui: ui, applyKeys: applyKeys,
                      getKeys: () => ({ ...NAV_KEYS }), keyLabel: keyLabel,
-                     // a360R：导航历史（设置页/右键菜单可直接触发）
+                     // a336：导航历史（设置页/右键菜单可直接触发）
                      goBack: navigateBack, goForward: navigateForward };
 })();

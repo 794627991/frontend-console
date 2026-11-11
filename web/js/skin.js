@@ -90,8 +90,8 @@ function applyStyle(id, persist) {
   applyStyle(style, false);
 })();
 
-// a278 性能模式开关；a461 全局化：挂 data-perf 即全风格生效（style.css
-// a461 块全局掐 transition/循环动画/backdrop-filter；a278 仅极光皮肤的
+// a278 性能模式开关；a451 全局化：挂 data-perf 即全风格生效（style.css
+// a451 块全局掐 transition/循环动画/backdrop-filter；a278 仅极光皮肤的
 // 光斑/blur 规则保留作叠加）。虚机软件渲染卡顿大户实锤（devtools 追踪
 // GPUTask 1331ms）。持久化搭 /api/theme 顺车（perf_mode 键）。
 function togglePerfMode(on) {

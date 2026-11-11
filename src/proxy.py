@@ -536,7 +536,7 @@ def bili_reprobe():
     return bool(BILI_NODE and BILI_ENTRY)
 
 
-# ---- a421：billion-context 唯一安装入口——代理面板联网下载 ----
+# ---- a407：billion-context 唯一安装入口——代理面板联网下载 ----
 # 移出默认资源包/安装库后的替代链路：npm 全局装（机器需 Node ≥22 + npm，
 # 资源库有 node 安装器；内网无外联时装不上属预期，入口如实报错）。
 # 检测链 _detect_bili_cmd ② 天然认 npm 全局装，装完 bili_reprobe 即生效
@@ -739,7 +739,7 @@ def _is_lockout_msg(msg):
     因为 600s 一次的退避重登一直在续期）。所以必须在文案层识别出来，
     一旦命中就停登，等用户手动触发。
 
-    a461（审计 P0：判据闭合成环）：原实现里的「锁定」二字是子串匹配，而
+    a451（审计 P0：判据闭合成环）：原实现里的「锁定」二字是子串匹配，而
     `lanz_quota._classify_nonjson` 的**密码错误**文案自带警示语「注意：
     连续错误会锁定 SSO 账号」——警示语被当成锁定事实，用户密码输错一次
     就永久停登，改对密码也不自愈。所以不能匹配裸「锁定」，必须匹配
@@ -759,7 +759,7 @@ def _is_lockout_msg(msg):
     # 密码错误文案里的「会锁定 SSO 账号」是警示语，不是事实。
     if "已被 sso 锁定" in m:
         return True
-    # a462（审计）：优先级3 —— 服务端登录页 `<div id="msg">` 若给出中文提示
+    # a452（审计）：优先级3 —— 服务端登录页 `<div id="msg">` 若给出中文提示
     # （如「您的账号已被锁定」），_classify_nonjson 不命中英文关键词就落到
     # 「登录失败…服务端提示: …」。必须认带「已」的确定措辞，仍不得恢复裸
     # 「锁定」。注意不能匹配「账号已锁定」——优先级4 兜底文案「可能账号
@@ -773,7 +773,7 @@ def _is_lockout_msg(msg):
 def _cfg_get_quota_auto():
     """「自动刷新(10min)」：定时拉额度。config.json 的 proxy_quota_auto，
     默认 True。注意这里**只管刷新额度**，不管登录失败后要不要重登——
-    自动重登是独立开关 proxy_quota_auto_relogin（a457 用户令：不许混为一谈）。"""
+    自动重登是独立开关 proxy_quota_auto_relogin（a448 用户令：不许混为一谈）。"""
     try:
         from src.app_state import cfg_read
         v = (cfg_read() or {}).get("proxy_quota_auto")
@@ -785,7 +785,7 @@ def _cfg_get_quota_auto():
 def _epoch_changed(w, cred, cred_now, cur_epoch):
     """内层负载循环的「换代」判据：凭据变了、或两个 epoch 计数任一变了。
 
-    a462（审计）：`cur_epoch` 是 `(cur_cred_epoch, cred_epoch)` **二元组**，
+    a452（审计）：`cur_epoch` 是 `(cur_cred_epoch, cred_epoch)` **二元组**，
     原来这里写成 `getattr(self, "_cur_cred_epoch", 0) != cur_epoch`——int 与
     tuple 恒不等 → 内层每轮必 break，600s 的全量刷新被退化成 20s 一次。
     抽成独立函数是为了让测试**直接调真实判据**，而不是在测试里复刻表达式。
@@ -796,7 +796,7 @@ def _epoch_changed(w, cred, cred_now, cur_epoch):
 
 
 def _cfg_get_auto_relogin():
-    """a457：自动重登独立开关。config.json 的 proxy_quota_auto_relogin，
+    """a448：自动重登独立开关。config.json 的 proxy_quota_auto_relogin，
     默认 True（用户令：默认开启，可手动关闭）。"""
     try:
         from src.app_state import cfg_read
@@ -836,12 +836,12 @@ class LanzQuotaWorker:
         self._emit = emit
         self._cred = None
         self._auto = _cfg_get_quota_auto()   # 自动刷新(10min)：拉额度
-        self._auto_relogin = _cfg_get_auto_relogin()   # a457：自动重登（独立）
+        self._auto_relogin = _cfg_get_auto_relogin()   # a448：自动重登（独立）
         self._login_failed = False
         self._login_err = ""
         self._locked = False                 # a454：SSO 锁定 → 停登等手动
-        self._cred_epoch = 0                 # a461：凭据提交计数（同值重提也能唤醒）
-        self._refresh_req = False            # a461：手动刷新请求（唤醒后必须拉一次全量）
+        self._cred_epoch = 0                 # a451：凭据提交计数（同值重提也能唤醒）
+        self._refresh_req = False            # a451：手动刷新请求（唤醒后必须拉一次全量）
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -850,11 +850,11 @@ class LanzQuotaWorker:
     def submit_credentials(self, user, pwd):
         with self._lock:
             self._cred = (user, pwd)
-            # a461（审计 P2）：只比较凭据值时，用户把**同一组**账号密码再提交
+            # a451（审计 P2）：只比较凭据值时，用户把**同一组**账号密码再提交
             # 一次无法跳出锁定停登循环（元组相等），界面一直停在锁定态。用
             # epoch 给「提交动作」本身发信号。
             self._cred_epoch += 1
-            # a461（审计 P1）：换账号/改密码要清掉上一个账号的锁定态，
+            # a451（审计 P1）：换账号/改密码要清掉上一个账号的锁定态，
             # 否则账号 A 被锁的 _locked/_login_err 会传给账号 B。
             self._locked = False
             self._login_err = ""
@@ -864,7 +864,7 @@ class LanzQuotaWorker:
         with self._lock:
             self._cred = None
             self._login_failed = False
-            self._locked = False      # a461：登出必须清锁定态
+            self._locked = False      # a451：登出必须清锁定态
             self._login_err = ""
             self._cred_epoch += 1
         self._wake.set()
@@ -872,7 +872,7 @@ class LanzQuotaWorker:
     def refresh_now(self):
         """手动刷新。a454：同时解除锁定停登——用户手动点了就是要再试一次，
         这是解锁后唯一的主动出口（自动重登已被锁定拦住）。
-        a461（审计 P1：点刷新对额度无效）：原实现只 _wake.set()，而内层循环
+        a451（审计 P1：点刷新对额度无效）：原实现只 _wake.set()，而内层循环
         醒来先判 `now - last_full >= 600` 未到期就跳过，手动刷新等于没刷。
         加一次性标志，内层消费后必拉一次全量。"""
         with self._lock:
@@ -900,7 +900,7 @@ class LanzQuotaWorker:
     def set_auto(self, on):
         """自动刷新开关：只管「每 10 分钟拉额度」。a454 落 config.json，
         否则控制台一重启就又开回来（用户实锤：关了也没用）。
-        a457：**不再**在这里解除锁定——刷新与重登是两件事，锁定停登只由
+        a448：**不再**在这里解除锁定——刷新与重登是两件事，锁定停登只由
         set_auto_relogin(True)/手动刷新/强制重登解除。"""
         with self._lock:
             self._auto = bool(on)
@@ -909,7 +909,7 @@ class LanzQuotaWorker:
             self._wake.set()   # 开启时唤醒，避免卡在 wait(None)
 
     def set_auto_relogin(self, on):
-        """a457：自动重登独立开关（用户令：不许复用「自动刷新」开关）。
+        """a448：自动重登独立开关（用户令：不许复用「自动刷新」开关）。
         开启＝登录失败时按退避自动重登；关闭＝只等用户手动刷新/强制重登。
         默认开启（config.json 缺省即 True）。"""
         with self._lock:
@@ -942,7 +942,7 @@ class LanzQuotaWorker:
                     self._wake.wait(5)
                     self._wake.clear()
                     continue
-                # a461：凭据「提交动作」也算换代信号——用户把同一组账号密码
+                # a451：凭据「提交动作」也算换代信号——用户把同一组账号密码
                 # 再提交一次时 cred 元组相等，只比值得不到任何变化，会卡在
                 # 锁定停登循环里出不来。把 _cred_epoch 并入 epoch。
                 with self._lock:
@@ -953,7 +953,7 @@ class LanzQuotaWorker:
                     client = lanz_quota.LanzClient(*cred)
                     cur_cred = cred
                     cur_epoch = epoch
-                    # a462（审计实锤：cur_epoch 是元组，下面却拿 int 比，
+                    # a452（审计实锤：cur_epoch 是元组，下面却拿 int 比，
                     # 恒不等 → 内层每轮必 break，600s 全量刷新退化成 20s）。
                     # 复用同一份快照，不要二次读共享字段。
                     epoch_of_cred = epoch[1]
@@ -974,16 +974,16 @@ class LanzQuotaWorker:
                                 if not self._locked or self._cred != cred:
                                     break
                                 if self._cred_epoch != epoch_of_cred:
-                                    break   # a461：同一凭据重提也要能跳出
+                                    break   # a451：同一凭据重提也要能跳出
                             self._wake.wait(5)
                             self._wake.clear()
                         continue
-                    # a452：SSO 连续失败会锁号（实测 "Too many attempts"）。
+                    # a446：SSO 连续失败会锁号（实测 "Too many attempts"）。
                     # 固定 60s 重试等于持续敲锁定账号，改指数退避 60→120→
                     # 300→600s 封顶；成功一次即归零。
                     fail_n += 1
                     wait = min(self.LOGIN_RETRY_WAIT * (2 ** min(fail_n - 1, 4)), 600)
-                    # a457：是否自动重登看**独立开关** _auto_relogin，
+                    # a448：是否自动重登看**独立开关** _auto_relogin，
                     # 与「自动刷新(拉额度)」解耦（用户令：不许混为一谈）
                     if not auto_relogin:
                         self._wake.wait(None)
@@ -992,17 +992,17 @@ class LanzQuotaWorker:
                     self._wake.clear()
                     continue
                 fail_n = 0
-                # a452（严重回归修复）：负载查询必须复用**这一个** client。
+                # a446（严重回归修复）：负载查询必须复用**这一个** client。
                 # 原先 _get_model_loads 自己 new LanzClient 并每 20s 登录一次，
                 # 同一 SSO 账号两个会话互相踢——worker 刚登录就被踢回 SSO
                 # 登录页，表现为「一直登录失败」，还会触发风控锁号。
-                # a452：负载 20s 级变化，额度 600s 级。切三段等待，负载每
+                # a446：负载 20s 级变化，额度 600s 级。切三段等待，负载每
                 # LOAD_TTL 走一次 _fetch_loads（同一 client，零新登录）。
                 self._cur_client = client
                 last_full = 0.0
                 while not self._stop.is_set():
                     now = time.time()
-                    # a461（审计 P1：点刷新对额度无效）：手动刷新请求必须
+                    # a451（审计 P1：点刷新对额度无效）：手动刷新请求必须
                     # 立即拉一次全量，不能被下面 600s 的到期判定吃掉。
                     with self._lock:
                         force_full = self._refresh_req
@@ -1010,7 +1010,7 @@ class LanzQuotaWorker:
                     if force_full or now - last_full >= (self.REFRESH_INTERVAL if auto else 1e9):
                         last_full = time.time()
                         if not self._fetch_all(client, cred):
-                            break        # a462：会话过期 → 回外层走 _ensure_login
+                            break        # a452：会话过期 → 回外层走 _ensure_login
                     if not self._fetch_loads(client):
                         break            # 会话失效 → 回外层按 60s 退避重登
                     self._wake.clear()
@@ -1020,7 +1020,7 @@ class LanzQuotaWorker:
                     self._wake.wait(LOAD_TTL if auto else None)
                     with self._lock:
                         cred_now, auto_now = self._cred, self._auto
-                    # a462：cur_epoch 是 (cur_cred_epoch, cred_epoch) 二元组，
+                    # a452：cur_epoch 是 (cur_cred_epoch, cred_epoch) 二元组，
                     # 必须逐项比。原来 `int != tuple` 恒真，内层每轮都 break。
                     if _epoch_changed(self, cred, cred_now, cur_epoch):
                         break            # 凭据/重登变了 → 回外层重建 client
@@ -1029,7 +1029,7 @@ class LanzQuotaWorker:
                 log.exception("LanzQuotaWorker _run 循环异常，继续运行")
 
     def _fetch_loads(self, client):
-        """拉模型负载（a452）：复用 worker 的 client，绝不另建会话。
+        """拉模型负载（a446）：复用 worker 的 client，绝不另建会话。
 
         返回 True=继续；False=会话失效——**不在负载通道里自己重登**。账号
         一旦被 SSO 风控锁定，20s 一次的重登会持续加重锁定，交给外层
@@ -1090,7 +1090,7 @@ class LanzQuotaWorker:
         except lanz_quota.LanzAuthError as e:
             msg = str(e)
             with self._lock:
-                # a462（审计）：旧账号的 login() 在途时用户提交了新账号，
+                # a452（审计）：旧账号的 login() 在途时用户提交了新账号，
                 # 这里若照写 _locked/_login_err，会把旧账号的锁定态喂给新
                 # 账号（界面闪一次误导性的「账号已被 SSO 锁定」）。持锁区
                 # 内只能直接比字段——_cred_changed 会重新 acquire 死锁。
@@ -1107,7 +1107,7 @@ class LanzQuotaWorker:
                 self._emit("login_err", msg)
             return False
         except lanz_quota.LanzNetworkError as e:
-            # a461（审计 P1）：锁定文案不只从 LanzAuthError 出来——_fetch_text
+            # a451（审计 P1）：锁定文案不只从 LanzAuthError 出来——_fetch_text
             # 在 HTTP 401/403/500 时把响应体拼进 LanzNetworkError，锁定页的
             # "Too many attempts" 会走这条。只认 LanzAuthError 就漏判，外层
             # 按 60→600s 退避持续重登，把 SSO 锁定反复续期。
@@ -1121,7 +1121,7 @@ class LanzQuotaWorker:
                 self._emit("login_err", msg)
             return False
         except lanz_quota.LanzError as e:
-            # a461：同理，_request 在 code!=2001/3001 时抛的通用 LanzError
+            # a451：同理，_request 在 code!=2001/3001 时抛的通用 LanzError
             # 也可能带锁定文案（"API 返回错误 code=… msg=Too many attempts"）。
             msg = "登录失败: %s" % e
             with self._lock:
@@ -1136,11 +1136,11 @@ class LanzQuotaWorker:
     def _fetch_all(self, client, cred=None):
         """拉额度全量。返回 True=继续，False=会话已过期，调用方须回外层重登。
 
-        a461：原 `for attempt in (1, 2)` 的重试只服务于「会话过期 → force
+        a451：原 `for attempt in (1, 2)` 的重试只服务于「会话过期 → force
         重登 → 再取一次」这一条（唯一 continue 的路径，已删）。现在会话
         过期直接返回 False，循环只跑一轮。
 
-        a462（审计）：原来这里只 emit 不返回状态，内层靠紧随的
+        a452（审计）：原来这里只 emit 不返回状态，内层靠紧随的
         _fetch_loads 也报 3001 才 break。若 dashboard 走 /v1/ai-resource 已
         过期、而 models 走 /v1/openai/models 仍 2001（两条网关路径），内层
         永不回外层 → 额度面板永久「会话过期，等待重新登录」直到手动重登。
@@ -1159,7 +1159,7 @@ class LanzQuotaWorker:
                                 "ts": time.time()})
             return True
         except lanz_quota.LanzSessionExpired:
-            # a461（审计 P1）：这里原有 `client.login(force=True)` 私有重登，
+            # a451（审计 P1）：这里原有 `client.login(force=True)` 私有重登，
             # 绕过了 _ensure_login 的锁定识别、_auto_relogin 开关和锁定停登
             # ——自动重登关着照样重登、账号已锁照样再敲一次把锁定计时续期。
             # 刷新路径不允许自带重登：如实报会话过期，交给外层 _run 统一
@@ -1187,7 +1187,7 @@ _quota_login = None     # 登录态独立槽 {"state": online/logging/error/fetc
                          # 用户实锤合槽后前端永远显示「登录中」）
 _quota_ov = {}           # dashboard.overview 缓存（托盘菜单/tooltip 用）
 _quota_rank = []         # dashboard.modelRank 缓存（模型用量排名表）
-# a448（用户需求）：模型实时负载。与额度同源（LanzClient.get_model_loads），
+# a442（用户需求）：模型实时负载。与额度同源（LanzClient.get_model_loads），
 # 但负载变化快——额度 600s 一刷太慢，单独 20s TTL 按需刷新（status 轮询驱动，
 # 面板/悬浮卡不看就不拉）。_quota_loads_busy 防并发重复拉。
 _quota_loads = []
@@ -1327,7 +1327,7 @@ def _invalidate_cred_cache(cred):
     global _cred_cache, _cred_cached
     _cred_cache = cred
     _cred_cached = True
-    # a448：凭据变了，模型负载也失效（换号后负载/权限都不同）
+    # a442：凭据变了，模型负载也失效（换号后负载/权限都不同）
     global _quota_loads, _quota_loads_ts, _quota_loads_err
     with _quota_loads_lock:
         _quota_loads = []
@@ -1339,7 +1339,7 @@ LOAD_TTL = 20.0   # 模型负载缓存时长（秒）：status 1s 轮询，20s �
 
 
 def _is_lanz_api():
-    """当前真正请求的 API 是否走 lanz 网关（a448 用户定调）。
+    """当前真正请求的 API 是否走 lanz 网关（a442 用户定调）。
 
     判据是「上游是谁」而非「是否直连」：本机重试代理恒启动，代理模式的
     base_url 是 127.0.0.1:37349/v3/xxx，其上游由 _direct_url 决定——只要
@@ -1356,9 +1356,9 @@ def _is_lanz_api():
 
 
 def _get_model_loads(force=False):
-    """模型实时负载（a448）。返回 (列表, 错误串)。
+    """模型实时负载（a442）。返回 (列表, 错误串)。
 
-    a452（严重回归修复）：**只读缓存，绝不自己登录**。
+    a446（严重回归修复）：**只读缓存，绝不自己登录**。
     原实现在这里 new LanzClient 并 login()，与 LanzQuotaWorker 的会话同时
     存在于同一个 SSO 账号下——两个会话互相踢，worker 刚登好就被踢回 SSO
     登录页（用户实锤「一直登录失败」，还触发风控）。现在负载统一由 worker
@@ -2358,7 +2358,7 @@ def _status_payload():
         # v2.2.2：同事机无 headroom 时 _detect 返回 None，exists(None) 抛
         # TypeError 炸掉整个 status（面板「状态获取失败」）——先判 None
         "bili_ready": bool(BILI_NODE and BILI_ENTRY),
-        # a421：联网安装进度（唯一入口=代理面板；running/log 驱动前端按钮态）
+        # a407：联网安装进度（唯一入口=代理面板；running/log 驱动前端按钮态）
         "bili_install": {"running": _bili_inst["running"],
                          "done": _bili_inst["done"],
                          "ok": _bili_inst["ok"],
@@ -2370,7 +2370,7 @@ def _status_payload():
         "quota_login": qlogin,
         "quota_user": (qlogin or {}).get("user") if qlogin else None,
         "quota_auto": _quota._auto if _quota is not None else True,
-        # a457：自动重登是独立开关（与「自动刷新」互不替代）
+        # a448：自动重登是独立开关（与「自动刷新」互不替代）
         "quota_auto_relogin": (_quota._auto_relogin
                                if _quota is not None else True),
         "has_credentials": cred is not None,
@@ -2389,12 +2389,12 @@ def _status_payload():
             pass   # 额度明细格式异常不拖死整个 status
     if rank:
         data["quota_rank"] = rank
-    # a448（用户需求）：模型负载。只在「API 是 lanz」且已存凭据时给——不是
+    # a442（用户需求）：模型负载。只在「API 是 lanz」且已存凭据时给——不是
     # lanz 网关（如智谱）时这份数据无意义，前端据此决定是否显示负载列。
     # 不依赖 quota_login 状态：负载查询自己登录（20s 缓存兜住频率），
     # worker 没跑过时也能出数（首次开面板即见）。
     try:
-        # a471（第二轮审计 P2）：同时下发「本上游是否支持负载」。原来只有
+        # a453（第二轮审计 P2）：同时下发「本上游是否支持负载」。原来只有
         # 有数据/有错误时才带字段，非 lanz 网关（智谱等）两者都缺——前端无法
         # 区分「不支持」与「还没到」，悬浮卡会永久停在「负载加载中…」。
         if _is_lanz_api() and _get_credentials():
@@ -2443,7 +2443,7 @@ def _api_compression():
 
 @proxy_bp.route("/api/proxy/bili_install", methods=["POST"])
 def _api_bili_install():
-    """a421：billion-context 唯一安装入口——联网 npm 全局装（异步，进度走
+    """a407：billion-context 唯一安装入口——联网 npm 全局装（异步，进度走
     /api/proxy/status 的 bili_install 字段）。已在跑/已装幂等处理"""
     if BILI_NODE and BILI_ENTRY:
         return jsonify({"ok": True, "msg": "已安装，无需重复"})
@@ -2512,12 +2512,12 @@ def _api_quota_refresh():
     j = request.get_json(silent=True) or {}
     if "auto" in j:
         # 自动刷新开关（GUI checkbox 平移）：{auto: bool}
-        # a457：只管「每 10 分钟拉额度」，与自动重登解耦
+        # a448：只管「每 10 分钟拉额度」，与自动重登解耦
         _quota.set_auto(bool(j.get("auto")))
         return jsonify({"ok": True, "msg": "自动刷新已开启（10min）" if j.get("auto")
                         else "自动刷新已关闭"})
     if "auto_relogin" in j:
-        # a457（用户令）：自动重登独立开关，与「自动刷新」互不影响
+        # a448（用户令）：自动重登独立开关，与「自动刷新」互不影响
         on = bool(j.get("auto_relogin"))
         _quota.set_auto_relogin(on)
         return jsonify({"ok": True,

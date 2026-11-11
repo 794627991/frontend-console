@@ -137,7 +137,7 @@ def res_cancel():
 def res_install_api():
     """后台装资源包。body: {path, kinds?, force?, mode?: 'online'}
 
-    a326 批2：mode='online' 走在线安装（有网直接装，不要求 path/离线包）；
+    a322 批2：mode='online' 走在线安装（有网直接装，不要求 path/离线包）；
     默认（无 mode 或 'offline'）维持原离线包流程不变。两者共用同一任务槽
     与 poll 通道——正在跑时任一模式再点都 409。
     """
@@ -217,7 +217,7 @@ def res_install_api():
             # 原来只勾 pydeps/node 而两者都 absent 时仍报"完成"；红条全装路径
             # 也会漏掉 soft 项。现在按 MANIFEST 里被请求的 kind 求交集，
             # 文案区分硬/软（硬=装不全不能用，软=相关功能不可用）。
-            # a334R（第5轮 P1-1，实锤盲区）：全集必须用 res_install.ORDER 而不是
+            # a328（第5轮 P1-1，实锤盲区）：全集必须用 res_install.ORDER 而不是
             # MANIFEST——bili 在 ORDER 里但不在 MANIFEST 里（红条也不探测它），
             # 只按 MANIFEST 求交集会把 bili 缺失彻底静默，恰好是本条要修的
             # "一句完成盖过去"。MANIFEST 只用来取中文名，缺名的用 kind 兜底。
@@ -278,7 +278,7 @@ def res_install_api():
 
 @res_bp.route("/api/resources/net_check")
 def res_net_check():
-    """a326 批2：在线安装预检（各官方直链连通性）——前端禁用态依据。
+    """a322 批2：在线安装预检（各官方直链连通性）——前端禁用态依据。
     缓存 60s（每次点开设置页不重复探）。"""
     import time as _t
     with _lock:
@@ -294,7 +294,7 @@ def res_net_check():
 
 @res_bp.route("/api/resources/latest")
 def res_latest():
-    """a326 批3：claude 在线升级检查。npm registry JSON 直查（不依赖 npm
+    """a322 批3：claude 在线升级检查。npm registry JSON 直查（不依赖 npm
     命令，秒回）；current 零进程开销读本机 package.json（d05df34 同款）。
     upgradable = latest 严格大于 current（semver 分段数字比较）。"""
     kind = request.args.get("kind", "claude")

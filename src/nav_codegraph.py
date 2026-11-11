@@ -19,7 +19,7 @@ import subprocess
 
 
 def _cg_argv():
-    """完整启动 argv 前缀（a386 用户令工具内置——工作机无 npm 实锤）：
+    """完整启动 argv 前缀（a360 用户令工具内置——工作机无 npm 实锤）：
     ①安装态/npm 态 bundle（node.exe + lib 自带运行时，标准 APPDATA 位）
     ②开发态 offline_assets/codegraph/
     ③npm which codegraph（真全局安装，cmd shim 形态）
@@ -143,7 +143,7 @@ def build(root, log=None, progress=None, should_cancel=None):
                         p0.kill()
                 except Exception:
                     pass
-                # a420（用户实锤：『正在取消…』卡死）：node 阻塞在 SMB 读上
+                # a405（用户实锤：『正在取消…』卡死）：node 阻塞在 SMB 读上
                 # 时 TerminateProcess 迟迟不落地，communicate() 干等——5s
                 # 没死就 taskkill /T /F 硬杀（含子进程树）
                 _kill_t0 = _cgt.time()
@@ -181,7 +181,7 @@ def build(root, log=None, progress=None, should_cancel=None):
     try:
         if not _cg_argv():
             return False, "codegraph 不可用（工具资源包安装后可用）"
-        # a368R（用户定调：隐藏目录优先排除）：codegraph 实测会收
+        # a340（用户定调：隐藏目录优先排除）：codegraph 实测会收
         # .history/x.c 这类隐藏目录文件（files 表实锤）。CLI 无 --exclude
         # 参数（help 实核）——官方机制是工程根 codegraph.json 的 exclude
         # （project-config.d.ts 佐证，实测 ".history/ 等 pattern"生效：
@@ -199,8 +199,8 @@ def build(root, log=None, progress=None, should_cancel=None):
             if not isinstance(excl, list):
                 excl = []
             need = [p for p in (".*", ".*/*") if p not in excl]
-            # a420（用户实锤：G10 卡 10% 不动+取消无效）：codegraph 自带
-            # 扫描器走进 sbuilder/output 的 SMB 自链环出不来（a402 关了
+            # a405（用户实锤：G10 卡 10% 不动+取消无效）：codegraph 自带
+            # 扫描器走进 sbuilder/output 的 SMB 自链环出不来（a385 关了
             # 它的 watchdog，环树里无人收尸）。范围联动排除——把 ctags
             # 档B 范围（工程配置/已存/sbuilder 检测）的排除项与产物外挂树
             # 同步进 codegraph.json，从根上不进 output
@@ -227,7 +227,7 @@ def build(root, log=None, progress=None, should_cancel=None):
                     _json2.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
-        # a420：Popen 前再查一次取消（status 调用最长 60s 窗口内点取消
+        # a405：Popen 前再查一次取消（status 调用最长 60s 窗口内点取消
         # 也不该白跑）
         if should_cancel and should_cancel():
             raise CgCancelled("用户取消 codegraph")
@@ -284,7 +284,7 @@ def sync(root, log=None, should_cancel=None):
     _stop = _th.Event()
     _proc = [None]
     def _watch():
-        # 取消监视线程：cancel 即杀子进程（a420：同 build 心跳，5s 不死硬杀）
+        # 取消监视线程：cancel 即杀子进程（a405：同 build 心跳，5s 不死硬杀）
         import time as _tw
         while not _stop.wait(1.0):
             if should_cancel and should_cancel():

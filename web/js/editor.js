@@ -1236,7 +1236,7 @@ async function _edReloadFromDisk(conn) {
   } catch(e) { showBanner('重读失败: ' + e, 4000, true); }
 }
 
-// a372（用户实锤：引用/跳转落点概率性错位无高亮）：已打开 tab 的内容是
+// a343（用户实锤：引用/跳转落点概率性错位无高亮）：已打开 tab 的内容是
 // 打开时点的旧版本，磁盘后续被改（外部工具/构建/另一会话）——引用面板
 // 的行号来自 rg 搜磁盘新版，jump 按行号盲跳旧版 tab = 落点内容错位
 // （旧版 2174 行是新版 469 行的内容），selectLine 高亮落在不相关的行。
@@ -1280,7 +1280,7 @@ function _edStopDiskWatch(conn) {
 function _edOnSwitchEditor(conn) {
   if (!conn || !conn.meta || conn.meta.kind !== 'editor' || conn.isDiff) return;
   if (conn.fileMtime) _edStartDiskWatch(conn);
-  // a360R（用户需求1，VSCode 同款）：切到编辑器 tab 时，文件树同步定位到
+  // a336（用户需求1，VSCode 同款）：切到编辑器 tab 时，文件树同步定位到
   // 该文件——已打开的根目录逐级展开并滚动到可见。
   // 只对「在树根之下」的绝对路径生效：treeReveal 内部先判 inRoot，不在任何
   // 根下的独立文件直接返回 false，不会去动树（用户明确要求：单独打开的
@@ -1490,7 +1490,7 @@ function _edCloseNow(conn) {
   // _dsEditor：OnlyOffice 编辑器实例（内部 iframe/websocket 不销毁即常驻）；
   // _pdfTask/_pdfDoc：pdf.js 文档与 worker（100MB 级 PDF 关 tab 不清即驻留）；
   // _pdfIO：页面虚拟化 IntersectionObserver；_outlineRO：docx 大纲栏
-  // ResizeObserver（a314 自绘条已删，_ovSbV/H 挂载点不再产生——清理段保留
+  // ResizeObserver（a313 自绘条已删，_ovSbV/H 挂载点不再产生——清理段保留
   // 防御旧引用，无害）
   if (conn._dsEditor) { try { conn._dsEditor.destroyEditor(); } catch(e){} conn._dsEditor = null; }
   if (conn._pdfTask) { try { conn._pdfTask.destroy(); } catch(e){} conn._pdfTask = null; conn._pdfDoc = null; }
@@ -1502,7 +1502,7 @@ function _edCloseNow(conn) {
       if (h._ovSbH) { clearTimeout(h._ovSbH.hideT); h._ovSbH = null; }
     });
   }
-  // a440：版本面板（独立主区 tab，meta.kind='vcs'）的模块级状态收尾
+  // a434：版本面板（独立主区 tab，meta.kind='vcs'）的模块级状态收尾
   if (conn.meta && conn.meta.kind === 'vcs') {
     try { if (typeof vcsPanelTeardown === 'function') vcsPanelTeardown(); } catch(e){}
   }
@@ -2390,7 +2390,7 @@ async function openFileSmart(path, mode, opts) {
       const _c = buildEditorTab(j.name, j.text, path, j.mtime || null);
       if (_c) {
         _c.usedEnc = j.used_enc || null;
-        // a372：去重分支拿到的是已打开 tab（内容可能是旧版）——跳前校验
+        // a343：去重分支拿到的是已打开 tab（内容可能是旧版）——跳前校验
         // 磁盘 mtime，不 dirty 先重读（行号=磁盘新版口径，落点才对得上）
         await _edJumpFresh(_c);
         jump(_c, opts);   // 新开即跳；去重分支（switchTab 已返回 conn）同跳

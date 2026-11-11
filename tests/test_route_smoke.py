@@ -31,7 +31,7 @@ _TMP_WSEQ = _tempfile.mkdtemp(prefix="wseq_smoke_")
 import src.eventlog.store as _S
 from src.harness import v4feed as _F
 _S._WSEQ_DIR = _TMP_WSEQ
-# a469（第二轮审计 P1）：冒烟改用 worker_app 后路由数从 2 变 42，写盘端点
+# a452（第二轮审计 P1）：冒烟改用 worker_app 后路由数从 2 变 42，写盘端点
 # 真正打到——harness 元数据文件的路径也要重定向，否则任何漏网的写端点
 # （历史上 /delete 就不校验空 sid，直接 _meta_save 原子重写真实文件）会把
 # 用户的 ~/.serialconsole_pro/claude_harness.json 改掉。与上面的 wseq 同理。
@@ -61,7 +61,7 @@ SKIP_POST = {'/connect',
              # 打回关闭态）。后端已加空 body 400 防御，此处一并改打安全形
              # 态——GET 探测存在性即可。
              '/vision',
-             # a469（第二轮审计 P1）：/delete 空 body 会真写
+             # a452（第二轮审计 P1）：/delete 空 body 会真写
              # ~/.serialconsole_pro/claude_harness.json——routes.py 对空 sid
              # 不校验，直接 _meta_load → _meta.pop("") → _meta_save()（原子
              # 重写真实文件）。冒烟改用 worker_app 后路由数从 2 变 42，这条

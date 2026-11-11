@@ -243,7 +243,7 @@ window.treeInvalidate = treeInvalidate;
 // a209批3：reveal 到树（搜索结果点击文件头定位）——逐父段展开到目标，
 // 期间显示 loading（复用展开态）；目标不可达（截断/权限）时提示
 async function treeReveal(path, opts) {
-  // a360R（用户需求1）：编辑器打开文件时同步定位到文件树。
+  // a336（用户需求1）：编辑器打开文件时同步定位到文件树。
   // 前提：该文件在已打开的根目录之下（else 直接返回，不打扰用户）。
   // 调用方传 {scroll:true} 时才滚动到可见——搜索结果点击（旧调用方）
   // 本来就靠这个定位，一并受益；不传时保持原行为（仅高亮）。
@@ -374,14 +374,14 @@ window.treeReveal = function (path, opts) {
   }
 };
 
-// a360R：把目标行滚到可视区中部（VSCode 资源管理器 reveal 同款观感）。
+// a336：把目标行滚到可视区中部（VSCode 资源管理器 reveal 同款观感）。
 // 虚拟列表自行管理 scrollTop，这里直接写滚动位置并让 _tvPaint 重绘窗口。
 function _tvScrollToPath(path) {
   const host = $('treeRoots');
   if (!host) return;
   const i = _TV.idx.get(path);
   if (i === undefined || !_TV.tops) return;
-  // a360R：侧栏 sheet 可能没切到「文件树」（pane display:none → clientHeight=0）。
+  // a336：侧栏 sheet 可能没切到「文件树」（pane display:none → clientHeight=0）。
   // 此时先算出 desirable scrollTop，等可见时再补一次——否则这次定位的滚动
   // 白丢，用户切过去只能看到高亮在视口外。
   const apply = function () {
@@ -462,7 +462,7 @@ function _tvCrumbsPaint() {
   const wrap = el.closest('.tree-scroll-wrap');
   const show = () => {
     const wasHidden = el.hidden || !wrap || !wrap.classList.contains('has-crumbs');
-    // a444（审计 P2）：让位式会让视口矮 22px、maxScroll 涨 22px。浏览器不会
+    // a438（审计 P2）：让位式会让视口矮 22px、maxScroll 涨 22px。浏览器不会
     // 自动补这段差值——「End 键 / 拖滚动条到底」这类一次性跳到底的路径会
     // 停在旧 max 上，末行下沿被裁 10px，要再滚一次才真到底。
     // 只在「切换前就已贴底」时补，其它位置一律不动用户视野（短树里刚滚

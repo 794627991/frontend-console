@@ -1380,7 +1380,7 @@ def api_theme():
                         "perf_mode": bool(cfg.get("perf_mode", False)),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
-                        # a360R：加 back/fwd（导航历史后退/前进）
+                        # a336：加 back/fwd（导航历史后退/前进）
                         "nav_keys": cfg.get("nav_keys", {"def": "f12",
                                                          "ref": "shift+f12",
                                                          "sym": "ctrl+t", "fsym": "ctrl+shift+o",
@@ -1464,11 +1464,11 @@ def api_theme():
     if _hk_updates:
         _save_config({**_load_config(), **_hk_updates})
     # a346：代码跳转快捷键（def=转定义 ref=查引用 sym=工作区符号
-    # a360R：back/fwd=导航历史后退/前进）——与搜索热键同法：仅落 config
+    # a336：back/fwd=导航历史后退/前进）——与搜索热键同法：仅落 config
     # （nav.js 页面内 keydown 消费+热应用）。
     # R21-3：主键白名单收紧（单字母/数字/f1-f12——录制框旧正则只锚首字符
     # 时 enter 等被落库，改键后该键无法输入）。
-    # a360R：方向键也合法（VSCode 的导航历史就是 Alt+←/→ 一类），但必须带
+    # a336：方向键也合法（VSCode 的导航历史就是 Alt+←/→ 一类），但必须带
     # 修饰——裸方向键是编辑器/终端基础操作，落库会让整机输入瘫痪。
     # R21-6：写入加锁防并发丢更新
     if "nav_keys" in data and isinstance(data["nav_keys"], dict):
@@ -1562,7 +1562,7 @@ def api_theme():
 _RECENT_MAX = 20  # 列表上限，防无限膨胀
 def _recent_add(item):
     """记录一条最近打开（去重置顶），返回更新后的列表。
-    a429（用户令）：固定项（pin）无条件保存——重开同 key 保持固定；
+    a430（用户令）：固定项（pin）无条件保存——重开同 key 保持固定；
     _RECENT_MAX 上限只裁未固定项，固定项永不淘汰。"""
     cfg = _load_config()
     recent = cfg.get("recent", [])
@@ -1626,7 +1626,7 @@ def api_recent():
         _save_config({**_load_config(), "recent": []})
         return jsonify({"ok": True})
     data = request.get_json(force=True) or {}
-    # a429：固定/取消固定（按 key 定位，翻转 pin 并即时落盘——无条件保存）
+    # a430：固定/取消固定（按 key 定位，翻转 pin 并即时落盘——无条件保存）
     if data.get("pin_toggle"):
         _key = str(data["pin_toggle"]).strip()
         cfg = _load_config()
@@ -1651,11 +1651,11 @@ def api_recent():
                 continue
             _e = {"type": t, "key": it["key"], "label": (it.get("label") or "").strip(),
                   "ts": it.get("ts") or 0, "data": it.get("data") or {}}
-            if it.get("pin"):        # a429：回写保固定标记
+            if it.get("pin"):        # a430：回写保固定标记
                 _e["pin"] = True
             keep.append(_e)
         keep.sort(key=lambda x: -x.get("ts", 0))  # 按 ts 新→旧
-        # a429：固定项无条件保存——上限只裁未固定，固定项恒排置顶区
+        # a430：固定项无条件保存——上限只裁未固定，固定项恒排置顶区
         #（原 [:_RECENT_MAX] 会把旧 ts 的固定项整条裁掉，实测 ⑥ 实锤）
         _pinned = [x for x in keep if x.get("pin")]
         _unpinned = [x for x in keep if not x.get("pin")][:_RECENT_MAX]

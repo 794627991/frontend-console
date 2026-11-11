@@ -23,7 +23,7 @@ sys.path.insert(0, ROOT)
 
 import src.harness.session as S
 
-# a469（第二轮审计 P2）：补丁只在**脚本模式**打。这是脚本式测试
+# a452（第二轮审计 P2）：补丁只在**脚本模式**打。这是脚本式测试
 # （`if __name__ == "__main__"`），pytest 下 0 条用例被收集，但模块顶层
 # 照常执行——原来无条件覆盖 session._meta_load/_meta_save 且从不还原，
 # 之后所有测试的 sync_meta 都不落盘（潜伏污染，只是当前没有用例恰好撞上）。
@@ -31,11 +31,11 @@ if __name__ == "__main__":
     # 隔离：sync_meta 只写内存字典，_meta_load 空操作（会话注册/标题路径不读真实盘）
     S._meta_load = lambda: None
     S._meta_save = lambda: None
-    # a460：必须**原地清空**，不能 `S._meta = {}` 重绑定——session._meta 与
+    # a451：必须**原地清空**，不能 `S._meta = {}` 重绑定——session._meta 与
     # harness.meta._meta 是同一 dict 的两个别名，重绑定只换 session 侧那一个，
     # 后续测试（test_bg_hold 等）往 meta._meta 写、session.stale_hold_repair
     # 读 session._meta 就永远读空（全量跑必挂、单跑本文件却过=典型别名分裂）。
-    # a469：清空同样只在脚本模式做——pytest 下清掉的是上一个测试文件留下的
+    # a452：清空同样只在脚本模式做——pytest 下清掉的是上一个测试文件留下的
     # 共享 dict，属跨文件污染。
     S._meta.clear()
 

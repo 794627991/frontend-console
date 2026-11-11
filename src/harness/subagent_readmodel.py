@@ -264,7 +264,7 @@ class SubagentReadModel(object):
             proj = project(self._facts, child_states=child_states,
                            liveness={"proc_alive": proc_alive,
                                      "busy": bool(getattr(s, "busy", False)),
-                                     # a414：进程代锚点——本代派发的代理
+                                     # a397：进程代锚点——本代派发的代理
                                      # 静默不判死（守望型实锤误杀）
                                      "proc_started_ms":
                                          int(getattr(s, "_proc_started_ms", 0) or 0),

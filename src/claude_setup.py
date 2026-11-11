@@ -59,7 +59,7 @@ def _log(msg):
 # 离线资源搜索位（按优先级）：
 # 1. 用户自定义目录（config.json 的 offline_pkg_dir——a32x 起 UI 入口已随
 #    旧 zip 通道退役，只保留"高级用户手工改 config.json"这条路）
-# 2. 工具同目录 offline_pkg/ —— a326 起资源已统一迁入 offline_assets/，
+# 2. 工具同目录 offline_pkg/ —— a322 起资源已统一迁入 offline_assets/，
 #    这里仅作历史遗留目录兼容读取（新装机器上没有这个目录）
 # 不再写死 D:\AI\安装环境（用户定：那只是本机的资源目录，别的机器没有）。
 
@@ -87,11 +87,11 @@ def _offline_pkg_dirs():
             dirs.append(custom)
     except Exception:
         pass
-    # 2. 工具同目录 offline_pkg/（a326 起仅历史遗留兼容读取）
+    # 2. 工具同目录 offline_pkg/（a322 起仅历史遗留兼容读取）
     app_dir = _app_dir()
     dirs.append(os.path.join(app_dir, "offline_pkg"))
     dirs.append(os.path.join(app_dir, "dist", "offline_pkg"))
-    # a326：源码场景的统一资源目录（仓库 offline_assets/；exe 场景无此目录，
+    # a322：源码场景的统一资源目录（仓库 offline_assets/；exe 场景无此目录，
     # isdir 检查自然跳过）
     dirs.append(os.path.join(app_dir, "offline_assets"))
     # 去重保序
@@ -330,7 +330,7 @@ def _npm_install_global(force=False):
     把全局位钉到 %APPDATA%\\npm（用户目录，npm 官方推荐的用户级配置位），
     全程零提权。装完写 PATH + 广播，新起进程直接可见。
 
-    a459（用户实锤：已经装过还每次跑全量 install -g，几百 MB 白下载，还可能
+    a450（用户实锤：已经装过还每次跑全量 install -g，几百 MB 白下载，还可能
     把可用版本换掉）：已装且非强制时改走 `npm update -g`——只拉版本差异，
     装不上（离线/registry 不通）就保留现有安装并如实说明，绝不因为「更新
     失败」把用户手上能用的 CLI 弄坏。"""
@@ -344,10 +344,10 @@ def _npm_install_global(force=False):
     env["npm_config_prefix"] = npm_dir
     env["npm_config_cache"] = os.path.join(appdata, "npm-cache")
     pkg = "@anthropic-ai/claude-code"
-    # a469（第二轮审计 P2）：判据用**实际** prefix，不再是 env 里那个待写入的
+    # a452（第二轮审计 P2）：判据用**实际** prefix，不再是 env 里那个待写入的
     # 位置。原来硬传 npm_dir（%APPDATA%\npm），_claude_installed 的默认分支
     # 永不执行——用户 CLI 装在 Program Files 或自定 prefix 时一律判未装，每次
-    # 全量 install -g，a459 想省的下载一分没省（_npm_prefix 成了死代码）。
+    # 全量 install -g，a450 想省的下载一分没省（_npm_prefix 成了死代码）。
     # 只在「实际 prefix 里确实装着」时才跟随它，否则仍装到用户目录：
     # Program Files 的 update 要提权（UAC），免提权是本函数的既定设计。
     if not force:
@@ -380,14 +380,14 @@ def _npm_install_global(force=False):
 def _npm_prefix():
     """npm 实际全局 prefix（`npm prefix -g`），拿不到就退回 %APPDATA%\\npm。
 
-    a464（审计 P2）：原实现把「已装」判据硬编码到 %APPDATA%\\npm——用户 CLI
+    a452（审计 P2）：原实现把「已装」判据硬编码到 %APPDATA%\\npm——用户 CLI
     装在 nodejs MSI 默认的 Program Files、或改过 prefix 时，此目录下没有包，
     于是一律判未装、又走全量 install，本次改动想省的下载对这类机器无效。
     """
     _, npm = _node_ok()
     if npm:
         try:
-            # a469（第二轮审计 P2）：node 走管道输出 UTF-8，而 text=True 用
+            # a452（第二轮审计 P2）：node 走管道输出 UTF-8，而 text=True 用
             # locale(cp936) 解码——用户名含中文或 .npmrc 自定 prefix 含中文时
             # 必然乱码，isdir 恒 False 静默降级回 APPDATA（这次改动的目的之一
             # 就是别钉死 APPDATA）。另补 CREATE_NO_WINDOW：pythonw 无控制台
@@ -413,7 +413,7 @@ def _npm_prefix():
 def _claude_installed(npm_dir=None):
     """是否已装**可用**的 claude-code：package.json 与它的 bin 入口都在。
 
-    a464（审计 P2）三处修正：
+    a452（审计 P2）三处修正：
     - 原判据「两文件任一存在」，install 中断留下 package.json 而入口缺失时
       也判已装（docstring 说用 package.json 精确判，实现与说法相反）。
     - 目录来源改为 npm 实际 prefix（见 _npm_prefix），不再钉死 APPDATA。
@@ -431,7 +431,7 @@ def _claude_installed(npm_dir=None):
             d = json.load(f)
     except (OSError, ValueError):
         return False
-    # a469（第二轮审计 P2）：json.load 对 []、""、数字都成功，随后 d.get 抛
+    # a452（第二轮审计 P2）：json.load 对 []、""、数字都成功，随后 d.get 抛
     # AttributeError 且不在上面的 except 覆盖范围内——install 中断把
     # package.json 写成非对象时，走不到 npm install -g 的覆盖修复路径。
     if not isinstance(d, dict):

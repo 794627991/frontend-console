@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""a462（第二轮对抗审计）：LanzQuotaWorker 状态机与容错回归。
+"""a452（第二轮对抗审计）：LanzQuotaWorker 状态机与容错回归。
 
 钉三个真实缺陷，都是「不报错但结果错」的那类——测试靠断言最终状态，
 不靠异常：
@@ -83,7 +83,7 @@ def test_fetch_all_network_error_keeps_session():
 
 
 # ---- 2. 内层循环的换代判据 --------------------------------------------
-# a469（第二轮审计）：原来这两条在测试体内**复刻**了判据表达式，从未调用
+# a452（第二轮审计）：原来这两条在测试体内**复刻**了判据表达式，从未调用
 # 源码——把 proxy.py 改回 `cur_epoch != self._cred_epoch` 的 int 比较，测试
 # 依旧全绿。改成直调生产函数 `_epoch_changed`。
 def test_epoch_tuple_compare_does_not_break_every_round():

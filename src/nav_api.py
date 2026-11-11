@@ -21,7 +21,7 @@ _state = {"running": False, "phase": "", "log": [], "done": False,
 
 
 def _log(msg):
-    """a433（用户令：同类日志不许刷屏，只占同一行）：按「进度行键」合并。
+    """a424（用户令：同类日志不许刷屏，只占同一行）：按「进度行键」合并。
 
     进度类消息用 `\\r` 前缀标记为可覆盖行——同键的后续消息**原地替换**
     最后一条，而不是追加。前端按 seq 变化就地更新那一行。
@@ -55,7 +55,7 @@ def _log(msg):
         if _key:
             _state.setdefault("_prog_row", {})[_key] = len(_lg) - 1
         # 裁剪会移动下标——重置进度行索引（下一次退化为追加，可接受）。
-        # a440：记录被裁掉的最后一条 seq——前端据此判断自己是否漏了日志
+        # a434：记录被裁掉的最后一条 seq——前端据此判断自己是否漏了日志
         # （进度行原地替换也会消耗 seq，只比对 log_seq 会把合并误判成丢失）
         if len(_lg) > 400:
             _cut = len(_lg) - 400
@@ -91,10 +91,10 @@ def _guard(path):
 
 @nav_bp.route("/api/nav/scope_tree")
 def nav_scope_tree():
-    """a415：收录范围手选目录树（懒加载一层）。?root=&rel=
+    """a398：收录范围手选目录树（懒加载一层）。?root=&rel=
     返回 {ok, dirs:[{name, rel, sub}], files}——sub=是否有子目录（展开箭头）。
     跳过 _SKIP_DIRS/点目录（与建库 walk 同规则——所见即所收）。
-    a415R（审计#27）：盘符根边界（root=C:\\ 时 normpath 无尾_sep 导致全
+    a398（审计#27）：盘符根边界（root=C:\\ 时 normpath 无尾_sep 导致全
     越界）、尾斜杠归一、realpath 防根内符号链接逃逸、条目上限、rel isabs"""
     import os
     from src import nav_index
@@ -200,8 +200,8 @@ def nav_build():
     from src import nav_index
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
-    backend = str(d.get("backend") or "auto").strip().lower()   # a390 三档
-    # a410（用户令：不允许全量方案）：memory 显式拒绝给明确反馈
+    backend = str(d.get("backend") or "auto").strip().lower()   # a369 三档
+    # a393（用户令：不允许全量方案）：memory 显式拒绝给明确反馈
     if backend == "memory":
         return jsonify({"ok": False, "err": "全量内存模式已下线"
                         "（600 万符号 ≈8GB 常驻实锤），请用 readtags 或 sqlite"}), 400
@@ -215,12 +215,12 @@ def nav_build():
         return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
     if not os.path.isdir(root):   # FD-2 终审（P4）：D-5 只落了 isabs 半截——不存在的绝对路径仍真启动任务
         return jsonify({"ok": False, "err": "目录不存在：%s" % root[:120]}), 400
-    # a407：显式点 sql 档但环境无 sqlite3（旧版 exe 打包缺件）——早拒说人话，
+    # a390：显式点 sql 档但环境无 sqlite3（旧版 exe 打包缺件）——早拒说人话，
     # 不让任务跑到阶段 4 才"构建失败"吓人（auto 由 build 内部自动降 readtags）
     if backend == "sqlite" and not nav_index.sqlite_capable():
         return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"
                         "（旧版打包缺件，升级新版修复；readtags 模式查询速度相近）"}), 400
-    # a415：收录范围（档B）。a415R（审计#11）：校验/互斥全过之后再处理
+    # a398：收录范围（档B）。a398（审计#11）：校验/互斥全过之后再处理
     # scope 三参数（原 409 拒绝时 scope.json 已被删）。scope=dict 内联配置
     # （UI 导入 JSON/手选目录）建库成功后落独立存储位（复用）；scope_tier=
     # 用已发现配置强制档位；scope_clear=清已存范围（回全量）
@@ -242,7 +242,7 @@ def nav_build():
             _sc_d, _src_d = nav_index.load_scope(
                 root, store="" if d.get("scope_clear") else None)
             if not _sc_d:
-                # a416：无配置时白名单档走零配置形态识别（sbuilder 方案）
+                # a400：无配置时白名单档走零配置形态识别（sbuilder 方案）
                 _sc_d, _dk = nav_index.detect_scope(root)
             if _sc_d:
                 _sc_d["tier"] = d["scope_tier"]
@@ -276,10 +276,10 @@ def nav_build():
                       phase=str(label or "处理中"))
 
     def ask_tier(info):
-        """a438：白名单覆盖率偏低时暂停，等用户在弹窗里选建库方式。
+        """a431：白名单覆盖率偏低时暂停，等用户在弹窗里选建库方式。
         返回 "full" | "whitelist"；用户取消任务时返回 "cancel"。
 
-        a439：不能用裸 evt.wait()——用户点「取消」或关掉面板时没有任何
+        a432：不能用裸 evt.wait()——用户点「取消」或关掉面板时没有任何
         路径能唤醒它，建库线程会永久挂起（running 状态卡死，下次建库被拒）。
         改分片轮询：0.2s 一轮，同时检查 should_cancel；超时兜底 10 分钟。"""
         _ask = {"evt": threading.Event(), "choice": None, "info": info}
@@ -295,7 +295,7 @@ def nav_build():
                     _log("等待建库方式选择超时（10 分钟），按全量收源码继续")
                     break
         finally:
-            # a462（审计 P2）：清空必须走 finally——等待期间线程被异常打断
+            # a452（审计 P2）：清空必须走 finally——等待期间线程被异常打断
             # 时若不执行，ask_tier 会残留非空，poll 持续下发数据、/api/nav/tier
             # 持续返回 200，前端弹窗反复出现，直到下一次建库才被 reset。
             with _lock:
@@ -313,7 +313,7 @@ def nav_build():
                                   should_cancel=should_cancel,
                                   backend=backend, scope=scope,
                                   ask_tier=ask_tier)
-            # a415R（审计#13）：建库**成功后**才落盘范围（原先落盘——失败/
+            # a398（审计#13）：建库**成功后**才落盘范围（原先落盘——失败/
             # 取消后范围与索引对不上）；独立存储位（删索引不连带删范围）
             if scope is not None:
                 _ok_sc, _sc_n = nav_index._norm_scope(scope, root)
@@ -350,18 +350,18 @@ def nav_poll():
                         "cancelling": _state["cancel"],
                         "cancelled": _state["cancelled"],
                         "log_seq": _state["log_seq"], "root": _state["root"],
-                        # a435：任务启动时刻（前端独立计时器基准——关面板
+                        # a426：任务启动时刻（前端独立计时器基准——关面板
                         # 重开后仍能显示真实已用时间，而非从 0 重数）
                         "started": _state.get("ts") or 0,
-                        # a438：等待用户选择建库方式时的数据（无则 null）
+                        # a431：等待用户选择建库方式时的数据（无则 null）
                         "ask_tier": (_state.get("ask_tier") or {}).get("info"),
-                        # a440：已被裁剪的日志最大 seq——前端据此提示省略
+                        # a434：已被裁剪的日志最大 seq——前端据此提示省略
                         "log_dropped": _state.get("log_dropped") or 0})
 
 
 @nav_bp.route("/api/nav/tier", methods=["POST"])
 def nav_tier():
-    """a438：用户对「白名单覆盖率偏低」弹窗的选择。body {choice}：
+    """a431：用户对「白名单覆盖率偏低」弹窗的选择。body {choice}：
     full=全量收源码 / whitelist=只收白名单 / cancel=放弃建库。"""
     d = request.get_json(force=True, silent=True) or {}
     choice = str(d.get("choice") or "").strip().lower()
@@ -443,19 +443,19 @@ def nav_rebind():
 
 @nav_bp.route("/api/nav/reindex", methods=["POST"])
 def nav_reindex():
-    """a390：已建库切换查询后端（不重建 tags）。body {root, backend}"""
+    """a369：已建库切换查询后端（不重建 tags）。body {root, backend}"""
     import os
     from src import nav_index
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
     backend = str(d.get("backend") or "").strip().lower()
-    # a410（用户令：不允许全量方案）：memory 显式拒绝
+    # a393（用户令：不允许全量方案）：memory 显式拒绝
     if backend == "memory":
         return jsonify({"ok": False, "err": "全量内存模式已下线"
                         "（600 万符号 ≈8GB 常驻实锤），请用 readtags 或 sqlite"}), 400
     if backend not in ("readtags", "sqlite"):
         return jsonify({"ok": False, "err": "backend 须为 readtags/sqlite"}), 400
-    # a407：同 build——sqlite 无能力早拒（切换任务同样不该跑到一半失败）
+    # a390：同 build——sqlite 无能力早拒（切换任务同样不该跑到一半失败）
     if backend == "sqlite" and not nav_index.sqlite_capable():
         return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"
                         "（旧版打包缺件，升级新版修复；readtags 模式查询速度相近）"}), 400

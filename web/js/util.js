@@ -33,7 +33,7 @@ let activePortId = null;
   let _pinned = new Set();         // 固定的 portId
   const _GROUP_LABEL = {
     serial: '串口', ssh: 'SSH', telnet: 'Telnet',
-    // a468（第二轮审计）：claude 与 harness 原来都叫「Claude」，抽屉里同时
+    // a452（第二轮审计）：claude 与 harness 原来都叫「Claude」，抽屉里同时
     // 出现两个同名同图标的胶囊，✕ 确认文案也一模一样，用户分不清关的是
     // 会话组还是对话面板组。harness 按它自己的 tab 标签「Claude 对话」命名。
     claude: 'Claude', harness: 'Claude 对话',
@@ -54,7 +54,7 @@ let activePortId = null;
     hex: 3, bindiff: 3, office: 3, bitcalc: 3, vcs: 3, note: 3, claude: 4, harness: 5, proxy: 6 };
   // 用户需求：同类只开一个时不收进抽屉（平铺直达，一点即达），开第二个才收。
   // _SINGLE_KINDS = 设计上不会多开的类型（兜底：即便数量判定放宽也不收）
-  // a467（审计 P1）：claude **不在**此列——后端 server.py 允许 `claude:{n}`
+  // a452（审计 P1）：claude **不在**此列——后端 server.py 允许 `claude:{n}`
   // 自增多开（连开多个会话是常态）。把它当单例兜底会让 _isFlat 短路，
   // 多个 claude tab 永不进抽屉，tab 栏被平铺占满压成图标态。
   const _SINGLE_KINDS = new Set(['harness', 'bitcalc', 'proxy', 'vcs']);
@@ -64,7 +64,7 @@ let activePortId = null;
     for (const pid in connections) {
       const c = connections[pid];
       if (!c || !c.tab) continue;
-      // a467（审计 P2）：pin 住的 tab 不进抽屉（建组/显隐循环都排除 pinned），
+      // a452（审计 P2）：pin 住的 tab 不进抽屉（建组/显隐循环都排除 pinned），
       // 计数口径必须同源——否则 pin 一个编辑器后再开第二个就直接进抽屉了。
       if (_pinned.has(pid)) continue;
       const g = _groupOf(c);
@@ -103,7 +103,7 @@ let activePortId = null;
   // 清理已关 pid + 补未被 touch 过的 tab（逐个插队首 → 打开序倒序）
   function _mruSync() {
     for (let i = _mruList.length - 1; i >= 0; i--) {
-      // a467（审计 [存疑]）：判据与 _kindCount/建组统一用 c.tab——某模块
+      // a452（审计 [存疑]）：判据与 _kindCount/建组统一用 c.tab——某模块
       // 「先摘 tab、后删 connections」的两步窗口里，只判 connections 会让
       // 该 pid 继续占用排名下标。
       { const _c = connections[_mruList[i]]; if (!_c || !_c.tab) _mruList.splice(i, 1); }
@@ -119,9 +119,9 @@ let activePortId = null;
   let _uiConfirmPending = null;   // {resolve, cleanup}：当前挂起的一轮（覆盖前先结算）
   function _uiConfirm(title, msg, okLabel, danger) {
   return new Promise(resolve => {
-    // a467（审计 P2）：单例 DOM 复用时旧 Promise 会永远挂着（yes.onclick 被
+    // a452（审计 P2）：单例 DOM 复用时旧 Promise 会永远挂着（yes.onclick 被
     // 覆盖）。这里先以「取消」结算上一个，再接管新内容。
-    // a468（第二轮审计）：不能只 resolve——上一轮的 finish 因
+    // a452（第二轮审计）：不能只 resolve——上一轮的 finish 因
     // `_uiConfirmPending !== resolve` 直接 return，document keydown 监听
     // 永远不会被 remove（双击胶囊 ✕ 每次泄漏一个常驻监听）。改为调它自己
     // 的 cleanup。
@@ -156,7 +156,7 @@ let activePortId = null;
     yes.textContent = okLabel || '确定';
     yes.className = 'btn' + (danger ? ' danger' : ' primary');
     const finish = v => {
-      // a467：只结算自己这一轮——单例 DOM 被下一次调用接管后，旧按钮的
+      // a452：只结算自己这一轮——单例 DOM 被下一次调用接管后，旧按钮的
       // 残留 handler 不能再 resolve 新 Promise（否则新弹窗被误判为取消）。
       if (!_uiConfirmPending || _uiConfirmPending.resolve !== resolve) return;
       _uiConfirmPending = null;
@@ -193,12 +193,12 @@ let activePortId = null;
       return c && c.tab && !_pinned.has(p) && _groupOf(c) === group;
     });
     if (!pids.length) return;
-    // a468（第二轮审计）：busy 必须覆盖**整个**确认过程。原来在 await 之后
+    // a452（第二轮审计）：busy 必须覆盖**整个**确认过程。原来在 await 之后
     // 才置位，双击胶囊 ✕ 两次都能通过守卫，第二次的 _uiConfirm 会覆盖掉
     // 第一次的弹窗（用户只看到一份，但两个 Promise 链在跑）。
     _closeAllBusy = true;
     let toClose = [];
-    // a468（第二轮审计）：确认框 .modal 是 z-index:100，而 ⋮/分组下拉是
+    // a452（第二轮审计）：确认框 .modal 是 z-index:100，而 ⋮/分组下拉是
     // z-index:9999——列表压在遮罩之上，点「全部关闭」按钮时若列表恰好盖住
     // 按钮区域，会先命中列表项（切 tab / 关单个 tab）。弹确认前先收列表。
     _groupCloseList();
@@ -213,9 +213,9 @@ let activePortId = null;
         '。确定关闭？',
         '全部关闭', true);
       if (!ok) return;
-      // a467（审计 P2）：确认框挂着时可能又开了同类 tab——确认后重算，
+      // a452（审计 P2）：确认框挂着时可能又开了同类 tab——确认后重算，
       // 否则「已关闭 N 个」按旧快照报数且新 tab 留在原地。
-      // a468（第二轮审计）：重算为空时**不再回退** pids——那会去关一个已经
+      // a452（第二轮审计）：重算为空时**不再回退** pids——那会去关一个已经
       // 不存在的 tab，且横幅报的是实际没关的数量。空就按 0 报。
       toClose = Object.keys(connections).filter(p => {
         const c = connections[p];
@@ -489,11 +489,11 @@ let activePortId = null;
   document.addEventListener('click', e => {
     if (!e.isTrusted) return;
     if (!list || list.contains(e.target) || e.target === btn) return;
-    // a467（审计 P1）：胶囊 ✕ 在列表外，但它属于「关闭整组」这个危险动作的
+    // a452（审计 P1）：胶囊 ✕ 在列表外，但它属于「关闭整组」这个危险动作的
     // 确认入口——被这里 close+stop 拦掉后要再点第二次才生效（第一次只收
     // 列表）。✕ 的事件交给它自己的 onclick 处理。
     if (e.target.closest && e.target.closest('.tab-drawer-x')) return;
-    // a468（第二轮审计 P1）：同理放行**整个胶囊**。列表开着时点另一个胶囊，
+    // a452（第二轮审计 P1）：同理放行**整个胶囊**。列表开着时点另一个胶囊，
     // 原来 close+stop 在捕获阶段吃掉事件，胶囊的 onclick 收不到 → 第一次
     // 点击只收起列表、不切 tab。这里只收列表，不 stopPropagation。
     if (e.target.closest && e.target.closest('.tab-drawer')) { close(); return; }
@@ -750,9 +750,9 @@ let activePortId = null;
     _groupDocClose = e => {
       if (!e.isTrusted) return;
       if (!groupList || groupList.contains(e.target)) return;
-      // a467（审计 P1）：点同一胶囊的 ✕ 时别先收下拉再吃掉事件
+      // a452（审计 P1）：点同一胶囊的 ✕ 时别先收下拉再吃掉事件
       if (e.target.closest && e.target.closest('.tab-drawer-x')) return;
-      // a468（第二轮审计 P1）：同 ⋮ 列表——胶囊本体点击必须放行，否则分组
+      // a452（第二轮审计 P1）：同 ⋮ 列表——胶囊本体点击必须放行，否则分组
       // 下拉开着时第一次点别的胶囊只收起下拉、不切 tab。
       if (e.target.closest && e.target.closest('.tab-drawer')) { _groupCloseList(); return; }
       _groupCloseList();
@@ -1276,7 +1276,7 @@ function sortKeyFn(pid) {
   // 第8轮盲测缺陷2：bitcalc/proxy 原落默认桶（SSH 前）与 ⋮ 列表组序
   // （编辑器类/代理）矛盾——补齐桶位对齐 _GROUP_ORDER
   if (pid.startsWith('bitcalc:')) return [3, pid];  // 计算器：编辑器类桶
-  if (pid.startsWith('vcs:')) return [3, pid];      // 版本控制：编辑器类桶（a441）
+  if (pid.startsWith('vcs:')) return [3, pid];      // 版本控制：编辑器类桶（a435）
   if (pid.startsWith('proxy:')) return [6, pid];    // 代理面板：最后
   return [1, pid];  // SSH：字典序
 }

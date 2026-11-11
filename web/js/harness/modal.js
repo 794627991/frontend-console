@@ -1,5 +1,5 @@
 // harness modal.js (v3.0 自 buildClaudeHarnessTab 拆出,定义体零改动,缩进保持原样)
-  // a444（审计 P1）：挂 body 的弹窗没有宿主容器可跟随销毁。登记一张收口表，
+  // a438（审计 P1）：挂 body 的弹窗没有宿主容器可跟随销毁。登记一张收口表，
   // 由宿主模块（版本面板）teardown 时调 closeAll() 统一 close——close 会走
   // 正常 resolve(null)，调用方的 .then 拿到「取消」，不会误发写请求。
   window._hgModalReg = (function () {
@@ -7,7 +7,7 @@
     return {
       add(ov, close, host) { m.set(ov, { close, host: host || null }); },
       del(ov) { m.delete(ov); },
-      // a470（第二轮审计 P2）：支持按宿主收口。原来是全局单例无宿主维度——
+      // a453（第二轮审计 P2）：支持按宿主收口。原来是全局单例无宿主维度——
       // 关 Claude tab 会把版本面板（挂 body）正在用的确认框一起 close 掉，
       // 用户操作被打断。host 缺省时只关 body（即无人认领）那批。
       closeAll(host) {
@@ -23,7 +23,7 @@
   // 挂载点：harness 已建时挂 _hgWrap（跟随 Claude tab 隐藏/销毁），未建时挂
   // body——版本面板已独立成主区 tab，它也要用这个弹窗，而 _hgWrap 只有打开
   // Claude 界面才有值
-  // a443（审计实锤，两条）：① _hgWrap 在 Claude tab 关闭后仍是变量里的死
+  // a437（审计实锤，两条）：① _hgWrap 在 Claude tab 关闭后仍是变量里的死
   // 引用（已脱离文档），继续挂进去弹窗永远不可见；② .hg-modal-ov 是
   // position:absolute + inset:0，包含块取最近的 positioned 祖先——挂进
   // display:none 的 _hgWrap（Claude tab 非当前时）实测尺寸 0×0，用户点
@@ -32,7 +32,7 @@
     try {
       const w = (typeof _hgWrap !== 'undefined') ? _hgWrap : null;
       if (!w || !document.contains(w)) return document.body;
-      // a466（审计 P2）：不能只用 offsetParent !== null 判「可见」——
+      // a452（审计 P2）：不能只用 offsetParent !== null 判「可见」——
       // position:fixed 元素的 offsetParent 恒为 null，宿主一旦改成 fixed
       // 悬浮形态，harness 内弹窗就会永远退回 body、遮罩盖全窗。
       // 显式放行 fixed/sticky，其余仍用 offsetParent 判隐藏祖先。
@@ -44,7 +44,7 @@
   }
   // 弹窗归属：用「创建时的活动 tab」而不是宿主节点。宿主节点在 harness tab
   // 非当前时恒为 body（_hgWrap 不可见），与版本面板的弹窗撞在一起，关 Claude
-  // tab 会把别人的确认框一起收掉（a470 审计 P2）。
+  // tab 会把别人的确认框一起收掉（a453 审计 P2）。
   function _hgModalOwner() {
     try {
       if (typeof activePortId !== 'undefined' && activePortId) return activePortId;
@@ -58,7 +58,7 @@
       ov.innerHTML = `<div class="hg-modal"><div class="hg-modal-title">${esc(title)}</div>${bodyHtml}<div class="hg-modal-acts"></div></div>`;
       const acts = ov.querySelector('.hg-modal-acts');
       const inp0 = ov.querySelector('input');
-      // a444（审计 P1）：弹窗落 body 时不再随任何 tab 销毁，必须显式收口。
+      // a438（审计 P1）：弹窗落 body 时不再随任何 tab 销毁，必须显式收口。
       // 统一 close()：摘 DOM + 登记处退册 + resolve(null)（幂等）。
       let done = false;
       let reg = null;
@@ -79,14 +79,14 @@
       ov.addEventListener('click', (e) => { if (e.target === ov) close(null); });
       const host = _hgModalHost();
       host.appendChild(ov);
-      // a447（用户实锤截图「重命名会话」也弹黑窗）：浏览器自动填充建议层
+      // a441（用户实锤截图「重命名会话」也弹黑窗）：浏览器自动填充建议层
       // 是 Edge 自绘的深色面板，样式完全不受我们控制。弹窗里所有文本类
       // 输入框统一改 type=search + autocomplete=off 并去掉 name——Chromium
       // 对「疑似表单字段」会忽略 autocomplete=off，但搜索框不入库。
       // 视觉差异由 style.css 的 .hg-modal input 规则抹平。
       try {
         ov.querySelectorAll('input').forEach((inp) => {
-          // a470（第二轮审计 P2）：改为**白名单**。原黑名单漏了
+          // a453（第二轮审计 P2）：改为**白名单**。原黑名单漏了
           // button/submit/reset/image（改成 search 会变成可见文本框、点击
           // 行为失效）和 datetime-local/month/week（改型后 value 格式与取值
           // 语义都变）。只改纯文本类，其余一律原样。
@@ -102,7 +102,7 @@
       // 弹窗登记到收口表；宿主被拆（tab 关闭）时统一 close——否则弹窗会
       // 盖在全窗上，误点主按钮还会对已销毁的面板发真实写请求（实测
       // POST /api/vcs/add）。
-      // a466（审计 P2）：宿主是 _hgWrap 时也要登记。原来只登记 body 的，
+      // a452（审计 P2）：宿主是 _hgWrap 时也要登记。原来只登记 body 的，
       // 挂 wrap 的弹窗 DOM 会随 wrap 移除，但 Promise 永不 resolve——
       // `await hgModal(...)` 的调用链（如技能卸载确认）永久挂起，闭包与
       // 调用方状态都不释放。
@@ -114,7 +114,7 @@
         }
       } catch (_) {}
       const inp = inp0;
-      // a470（第二轮审计 P2）：Esc 原来只绑在 inp 上——hgConfirm（删除会话/
+      // a453（第二轮审计 P2）：Esc 原来只绑在 inp 上——hgConfirm（删除会话/
       // 纳入版本控制/Pull/卸载技能）这类无输入框的弹窗整段监听不注册，
       // 按 Esc 毫无反应。改为同时绑 ov（tabindex 让它能收键盘事件）。
       ov.setAttribute('tabindex', '-1');
@@ -130,7 +130,7 @@
   }
   // 自建弹窗（不走 hgModal）的收口入口：ov 为遮罩节点，closeFn 负责摘 DOM
   // 与必需的 resolve。调用方在 appendChild 之后调一次即可。
-  // a470（第二轮审计 P1）：登记时必须包一层——自建弹窗的 closeFn 只摘 DOM
+  // a453（第二轮审计 P1）：登记时必须包一层——自建弹窗的 closeFn 只摘 DOM
   // 不退册，收口表里的条目连同整棵弹窗 DOM 永久保留（反复开关 N 次就攒 N 棵）。
   function hgModalTrack(ov, closeFn) {
     try {

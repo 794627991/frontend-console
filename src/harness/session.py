@@ -61,7 +61,7 @@ class HarnessSession:
         self.last_active = self.created
         # ---- 运行时（进程相关，不持久化）----
         self._proc = None
-        # a414：当前 CLI 进程代锚点（ms，Popen 落笔）——子代理投影的静默
+        # a397：当前 CLI 进程代锚点（ms，Popen 落笔）——子代理投影的静默
         # 判死用它做代次判别：本代派发的代理生死随本进程，进程活即活
         # （守望/长静默工具型转写可静默小时级）；前代派发（跨代残影）不豁免
         self._proc_started_ms = 0
@@ -359,7 +359,7 @@ class HarnessSession:
             raise
         self.alive = True
         self.busy = False
-        self._proc_started_ms = int(time.time() * 1000)   # a414：进程代锚点
+        self._proc_started_ms = int(time.time() * 1000)   # a397：进程代锚点
         # v2.35：本进程实例已见的 init 事件数——第 2 个起是「新回合起跑」
         # （CLI 自发回合：后台任务完成通知/协作回传续跑），据此补置 busy
         self._init_n = 0

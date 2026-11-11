@@ -434,7 +434,7 @@
             // 投影没追上），此时链是真在跑，不得落定（实测 resumed_1m
             // 被误杀）。
             var _iStaleFn = _g('_regInterruptedStale');
-            // a414：interrupted 采纳落定必须带 deadEvi（确定性死证：进程死/
+            // a397：interrupted 采纳落定必须带 deadEvi（确定性死证：进程死/
             // 前代残影/回合越界/CLI 自报）。本代进程活的静默代理（守望/长
             // 静默工具型）后端已不判死；此处 !false 兜底：老链路无字段时
             // 维持 a124 原行为（30min 失联闸）
@@ -448,7 +448,7 @@
                 a.doneAt = _iAt || Date.now();
                 a.interrupted = true;
                 a.stopped = false;
-                a.deadEvi = true;   // a414：死证随档（窗格定稿诊断可辨）
+                a.deadEvi = true;   // a397：死证随档（窗格定稿诊断可辨）
               }
             }
           } else if (!a.err && ent.status === 'err') {
@@ -824,7 +824,7 @@
               _orig.rounds = (_orig.rounds || 1) + 1;
               _orig.done = false; _orig.doneAt = 0; _orig.err = false;
               _orig.interrupted = false; _orig.lost = false;
-              _orig.deadEvi = false;   // a414：复活清死证
+              _orig.deadEvi = false;   // a397：复活清死证
               // P1-5 修复（a116）：续派开新轮的本地时间戳。冷同步规则①
               // （running + readmodel done/err → 落定）在 readmodel 增量刷新
               // 追上本次 send 之前拿到的是**上一轮**的 done/err，会把刚复活
@@ -1174,7 +1174,7 @@
       // → 当前环分母。都不要用固定 2M：实测累计口径约 1.4M（20 轮×70K），
       // 2M 拦不住等于放行（a255 假 100% 回归面）。
       // 注意 ctxWinBy 与 ctxBadMaxBy 由同一 /ctx 响应写入，前者有值后者必有值，
-      // 拿窗口当第二源是死分支（a432 的错误修法）
+      // 拿窗口当第二源是死分支（a423 的错误修法）
       var _bmBy = _HG.ctxBadMaxBy || {};
       var _bm = (_HG.sid && _bmBy[_HG.sid]) || 0;
       if (!(_bm > 0)) {

@@ -107,7 +107,7 @@ def pick_fcpk(initial_dir=None):
 
 
 def _search_dirs():
-    """自动找包的候选目录（a343R 第14轮 P1-3：抽出来供测试打桩）。
+    """自动找包的候选目录（a330 第14轮 P1-3：抽出来供测试打桩）。
 
     原实现把四个目录内联在 autofind_fcpk 里，测试只能桩 _app_dir，
     仍会读真实 `~/Desktop`、`~/Downloads` —— 发布者桌面放着资源包是
@@ -137,23 +137,23 @@ def autofind_fcpk():
                                  pkg_pref as _pf, pkg_backup as _bk)
     except Exception:
         return ""
-    # a342R（第13轮 P2-2）：stat 必须容错——Desktop/Downloads 常被 OneDrive
+    # a329（第13轮 P2-2）：stat 必须容错——Desktop/Downloads 常被 OneDrive
     # 重定向或杀软隔离，glob 与 stat 之间文件消失会让整条闸门兜底路径抛异常，
     # 用户看到的是"复查运行环境"而不是"包找不到"。
-    # a349R（第20轮 P3-3）：容错方式从「返回 0」改为「剔除该候选」——
+    # a334（第20轮 P3-3）：容错方式从「返回 0」改为「剔除该候选」——
     # 返回 0 会让 stat 失败者排最后而非消失，唯一候选时会被选中再报错。
     cands = []
     for d in _search_dirs():
         if d and os.path.isdir(d):
             for p in glob.glob(os.path.join(d, "*.fcpk")):
-                # a334R（第5轮 P2-1）：名字判定必须用 basename——原实现拿
+                # a328（第5轮 P2-1）：名字判定必须用 basename——原实现拿
                 # 完整路径做 `"资源包" in p`，工具解压在含"资源包"的目录里时，
                 # 同目录别家的 other-tool.fcpk 也会被选中。
                 _bn = os.path.basename(p).lower()
                 # a341R：闸门也要前缀过滤，否则同目录别家的资源包会被选走。
-                # a342R（第13轮 P2-1）：但**不**过滤备份——闸门的目标是
+                # a329（第13轮 P2-1）：但**不**过滤备份——闸门的目标是
                 # "找到能用的包"，唯一一份包叫 `-备份` 时必须还能装。
-                # a343R（第14轮 P2-5）：目录也可能叫 *.fcpk（解压残留/
+                # a330（第14轮 P2-5）：目录也可能叫 *.fcpk（解压残留/
                 # OneDrive 占位），必须验 isfile，否则闸门选中目录后
                 # fcpk.is_fcpk 打不开
                 if not os.path.isfile(p):
@@ -161,7 +161,7 @@ def autofind_fcpk():
                 _r = _rk(_bn, require_prefix=_AN)
                 if _r < 0:
                     continue
-                # a349R（第20轮 P3-3）：stat 失败的候选直接剔除。原实现
+                # a334（第20轮 P3-3）：stat 失败的候选直接剔除。原实现
                 # _sz/_mt 吞 OSError 返回 0，唯一候选 stat 失败时会被选中
                 # 再弹「资源包有问题」。
                 try:
@@ -171,10 +171,10 @@ def autofind_fcpk():
                 cands.append((_r, _pf(_bn), 1 if _bk(_bn) else 0, p, _s, _m))
     if not cands:
         return ""
-    # a349R（第20轮 P1-1）：排序键 = rank > 备份完整包 > 语义优先分 > size > mtime。
-    # a348 用 size 做主键导致「874MB 拓展包」压过「641MB 基础包」→ 装完仍缺
+    # a334（第20轮 P1-1）：排序键 = rank > 备份完整包 > 语义优先分 > size > mtime。
+    # a333 用 size 做主键导致「874MB 拓展包」压过「641MB 基础包」→ 装完仍缺
     # webview2/dotnet → 死循环。语义分把 基础(3)>claude(2)>拓展(1) 排好。
-    # a349R（第20轮 P3-2）：先按文件名升序稳定排序，再按主键降序稳定排序——
+    # a334（第20轮 P3-2）：先按文件名升序稳定排序，再按主键降序稳定排序——
     # 主键全等时保留**文件名字典序最小**的那个，与门户（sorted(names) 升序
     # 遍历 + 只保留最大）完全一致。
     cands.sort(key=lambda t: os.path.basename(t[3]))

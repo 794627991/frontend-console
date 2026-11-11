@@ -32,7 +32,7 @@ from src.harness.session import HarnessSession   # noqa: E402
 def _mk_session():
     """最小桩会话：不真起 CLI 进程，只挂审计状态机要用的属性。
 
-    a460：这里必须**每次**把 app_state.CONFIG_FILE 指回本文件的临时配置。
+    a451：这里必须**每次**把 app_state.CONFIG_FILE 指回本文件的临时配置。
     _audit_settle 走 roles_cfg() 真读盘，而 CONFIG_FILE 是模块级全局——
     test_roles_routing 在 import 时会把它改成自己的临时目录且不还原，于是
     pytest 同进程跑全量时，本文件读到的线值来自别人，4 条用例假失败

@@ -103,8 +103,8 @@ def build():
             _publish_debug(app_dir)
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
-        _refresh_offline_codegraph()   # a386：codegraph 同款（用户令工具内置——工作机无 npm 实锤）
-        # a326：offline_pkg 三处分散资源已统一迁入 offline_assets/（MANIFEST
+        _refresh_offline_codegraph()   # a360：codegraph 同款（用户令工具内置——工作机无 npm 实锤）
+        # a322：offline_pkg 三处分散资源已统一迁入 offline_assets/（MANIFEST
         # 入库、本体 gitignore），旧 _sync_offline_pkg 双目录同步随之退役；
         # 其尾部的 README 随包复制挪到这里
         try:
@@ -137,7 +137,7 @@ def _bundle_webview2(app_dir):
     发布包不再随带。回滚：skip_dirs 去掉 "runtime" + 主流程恢复调用。
 
     v2.3.7b（用户铁律×2「无条件随包；保底包不能是下载的——不能假设
-    构建机有网络」）：WebView2 Fixed Version 运行时随仓走——a326 起
+    构建机有网络」）：WebView2 Fixed Version 运行时随仓走——a322 起
     本体迁 offline_assets/webview2/（不入 git），MANIFEST.json 入库记录
     版本与获取方式，新检出机器按清单跑 tools/fetch_webview2_fixed.py
     恢复后再打包。
@@ -275,7 +275,7 @@ def _publish(app_dir):
 
 
 def _refresh_offline_codegraph():
-    """a386（用户实锤「说好的工具内置呢」）：codegraph 本体从 npm 全局刷到
+    """a360（用户实锤「说好的工具内置呢」）：codegraph 本体从 npm 全局刷到
     offline_assets/codegraph/（平台 bundle：node.exe + lib，自带运行时——
     同事机零 npm 依赖）。与 claude-code 同款版本比对 + robocopy 镜像。"""
     import json
@@ -382,7 +382,7 @@ def _refresh_offline_claude():
 # v4.1：统一离线资源包 .fcpk（用户拍板：WebView2 移出发布包，格式统一+加密）
 # ---------------------------------------------------------------------------
 
-# ---- a201→a421：billion-context 移出默认打包链（用户令：内网装不上，
+# ---- a201→a407：billion-context 移出默认打包链（用户令：内网装不上，
 # 默认包不背 200MB；唯一安装入口=代理面板联网 npm 装——见 src/proxy.py
 # 的 /api/proxy/bili_install）。原 _prep_bili_dir 组装器随之退役。 ----
 
@@ -428,10 +428,10 @@ def _offline_sources(kinds=None):
             if _take(kind):
                 out.append((p, "install/" + name, kind, mode, None))
     if os.path.isdir(src):
-        # a421：bili 不再入包（唯一入口=代理面板联网装）
+        # a407：bili 不再入包（唯一入口=代理面板联网装）
         cg = os.path.join(src, "codegraph")
         if os.path.isdir(cg) and _take("codegraph"):
-            # a386：codegraph 平台 bundle（node.exe+lib 自带运行时）整目录
+            # a360：codegraph 平台 bundle（node.exe+lib 自带运行时）整目录
             # 全收（bili/claude 同款教训：挑扩展名装出空壳）
             for r, ds, fs in os.walk(cg):
                 ds.sort()
@@ -471,7 +471,7 @@ def _offline_sources(kinds=None):
                         else:
                             link = first_exe
                     out.append((p, arc, "claude", mode, link))
-        # a309R：OnlyOffice DS 安装包（kind=onlyoffice）——a326 迁入
+        # a309R：OnlyOffice DS 安装包（kind=onlyoffice）——a322 迁入
         # offline_assets/onlyoffice/。打包机没下载过则包不含
         oo = os.path.join(src, "onlyoffice",
                           "onlyoffice-documentserver.exe")
@@ -620,7 +620,7 @@ def _build_offline_fcpk(kinds=None, quiet=False, tag=""):
 
 
 def _write_offline_manifest():
-    """a326（用户需求：资源本体不入 git，清单入 git）：扫描 offline_assets/
+    """a322（用户需求：资源本体不入 git，清单入 git）：扫描 offline_assets/
     生成 MANIFEST.json——新检出机器按清单的 url/note 恢复资源本体。
     单文件条目记 sha256（安装器类 <100MB）；目录类（claude-code/
     webview2）记 version+文件数+总大小，不逐文件哈希（1.2 万文件太慢）。
@@ -659,7 +659,7 @@ def _write_offline_manifest():
 
     items = []
     inst = os.path.join(A, "install")
-    urls = {  # 在线恢复/在线安装同源（a326 批2 在线安装复用）
+    urls = {  # 在线恢复/在线安装同源（a322 批2 在线安装复用）
         "git": "https://github.com/git-for-windows/git/releases/download/"
                "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe",
         "node": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi",
@@ -691,14 +691,14 @@ def _write_offline_manifest():
                       "size": os.path.getsize(oo), "sha256": _sha256(oo),
                       "url": "https://www.onlyoffice.com/download.aspx",
                       "note": "DS 安装器；在线安装用官方 download.aspx 直链"})
-    # a421：bili 不再入清单（移出默认包）
+    # a407：bili 不再入清单（移出默认包）
     for kind, sub in (("claude", "claude-code"),
                       ("webview2", "webview2"), ("codegraph", "codegraph")):
         d = os.path.join(A, sub)
         if not os.path.isdir(d):
             continue
         n, sz = _dirstat(d)
-        # a419（用户实锤：codegraph 条目被 manifest 刷新静默丢掉）：a386 只
+        # a419（用户实锤：codegraph 条目被 manifest 刷新静默丢掉）：a360 只
         # 手工补了条目、没教本扫描器——刷新即丢。codegraph 平台 bundle 的
         # package.json 在 lib/ 下（node.exe+lib 布局），先 lib 后根兜底
         _v = _pkgver(d)
@@ -732,7 +732,7 @@ def _write_offline_manifest():
                           "note": "离线 wheel 池，在线安装走 pip"})
     # a419：丢项告警——新清单比旧清单少的 kind 且本体仍在盘上=扫描器没认出
     # （codegraph 静默丢失实锤），必须大声报出来而不是静默写盘等提交。
-    # a421 退役例外：有意移出的资源（bili→代理面板联网装）允许从清单消失
+    # a407 退役例外：有意移出的资源（bili→代理面板联网装）允许从清单消失
     _RETIRED = {"bili"}
     _mf_path = os.path.join(A, "MANIFEST.json")
     try:

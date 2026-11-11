@@ -2112,7 +2112,7 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     render();
     document.body.appendChild(ov);
-    // a466（审计 P1）：自建弹窗也要进收口表——关 Claude tab 时统一关掉，
+    // a452（审计 P1）：自建弹窗也要进收口表——关 Claude tab 时统一关掉，
     // 否则弹窗盖在全窗上，点\"恢复\"还会对已销毁面板发 /api/harness/recover
     try { if (typeof hgModalTrack === 'function') hgModalTrack(ov, close); } catch (_) {}
   };

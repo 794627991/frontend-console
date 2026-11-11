@@ -22,7 +22,7 @@
     _turnHeadStop();   // v3.2：回合秒表随切会话全收
     _hgMentionReset();          // v2.15：@ 引用高亮不跨会话残留
     _HG.rowById = {}; _HG.uidN = 0; _HG.run = null; _HG.grp = null; _HG.histNav = null;   // v2.18：组级抽屉
-    // a463（审计 P2）：tps 里的 liveToks/toks/all/last/hit 都是**本会话**口径，
+    // a452（审计 P2）：tps 里的 liveToks/toks/all/last/hit 都是**本会话**口径，
     // 切换必须清——否则新会话忙碌期旁注取到上一会话的「生成中 +X」，卡内
     // 「本会话累计」也还是别人的数。只在收到 tps patch 时才整体替换是不够的
     // （新会话首帧之前有一段空窗）。

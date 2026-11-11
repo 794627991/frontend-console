@@ -926,7 +926,7 @@
   #treeRoots:focus-visible { box-shadow: inset 0 0 0 1px var(--border-glow); border-radius: 8px; }
   .tree-scroll-wrap { flex: 1; min-height: 0; position: relative; }
   /* 面包屑是 absolute 定位的「顶部条」，树视口让位下移——不用覆盖层。
-     a443（用户实锤：覆盖层压住首行，点不到）：覆盖层虽然零布局参与，但
+     a437（用户实锤：覆盖层压住首行，点不到）：覆盖层虽然零布局参与，但
      会白吃掉视口顶部 22px，被压的那行点不到。改成让位式：crumbs 显示时
      .tree-roots 的 top 下移到 22px，视口整体缩 22px，一行不少。 */
   .tree-roots { position: absolute; inset: 0; overflow-y: auto; overflow-x: auto; padding: 4px 8px 8px; }
@@ -2279,7 +2279,7 @@
 .px-rank-h { color: var(--muted); border-bottom: 1px solid var(--border); }
 .px-rank-r:nth-child(even) { background: var(--bg-card); border-radius: 4px; }
 .px-rank-m { color: var(--fg-bright); word-break: break-all; }
-/* a448：模型实时负载（口径同 lanz 平台：>85 拥挤 / >70 繁忙 / >=40 正常） */
+/* a442：模型实时负载（口径同 lanz 平台：>85 拥挤 / >70 繁忙 / >=40 正常） */
 .px-loads { display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
   font-family: var(--font-mono); font-size: 11px; }
 .px-load-row { display: grid; grid-template-columns: 96px 1fr 82px 62px;
@@ -3266,17 +3266,17 @@ html {
 .hg-modal-title { font-size: var(--fs-xl); font-weight: 600; color: var(--fg-bright, var(--fg)); margin-bottom: 10px; }
 .hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7; }
 .hg-modal-body label { display: block; font-size: var(--fs-cap); color: var(--muted); margin-bottom: 5px; }
-/* a466（审计 P1：复选框看不见勾选态）：全文通用选择器会把 checkbox/radio
+/* a452（审计 P1：复选框看不见勾选态）：全文通用选择器会把 checkbox/radio
    的原生绘制一并抹掉（勾/未勾长得一样，三角色弹窗的「启用三角色」就是
    一个空方块）。appearance:none 只给文本类输入框。
-   a469（第二轮审计 P1：特异性回归）：`:not()` 会把该参数选择器的特异性
+   a452（第二轮审计 P1：特异性回归）：`:not()` 会把该参数选择器的特异性
    计入整条——`.hg-modal-body input:not(...):not(...)` 是 0-3-1，直接压过
    靠后声明的 `.hg-roles-line input`（0-1-1），三角色面板的分级线数字框
    宽度从 74px 被顶成 100%、padding/字号也跟着变，flex 行被撑破。
    用 `:where()` 把内部特异性归零，整条回到 0-1-1，恢复「靠文件顺序决胜」。 */
 .hg-modal-body :where(input:not([type=checkbox]):not([type=radio])) { width: 100%; box-sizing: border-box; padding: 6px 9px; font-size: 12.5px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg);
-  /* a447：modal.js 把文本输入框统一改成 type=search（躲浏览器自动填充黑窗），
+  /* a441：modal.js 把文本输入框统一改成 type=search（躲浏览器自动填充黑窗），
      search 的原生外观/清除按钮要抹平，避免与既有输入框观感不一致 */
   -webkit-appearance: none; appearance: none; }
 .hg-modal-body input[type=checkbox], .hg-modal-body input[type=radio] { width: auto; }
@@ -3715,7 +3715,7 @@ html {
   font-family: inherit; color: var(--fg); background: var(--bg-input);
   border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px;
   outline: none;
-  /* a446：type=search（关浏览器自动填充深色候选层）带来的原生控件要抹平 */
+  /* a440：type=search（关浏览器自动填充深色候选层）带来的原生控件要抹平 */
   -webkit-appearance: none; appearance: none; }
 .h-ask-x::-webkit-search-cancel-button,
 .h-ask-x::-webkit-search-decoration { -webkit-appearance: none; display: none; }
@@ -5341,7 +5341,7 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
    强引用拖住整棵子树无法 GC（ZCode 实测 23.5 万节点泄漏） */
 [data-document-hidden] * { transition: none !important; animation: none !important; }
 
-/* ===== a461：性能模式全局化（用户实锤：虚机里鼠标划过带动画的区域帧率
+/* ===== a451：性能模式全局化（用户实锤：虚机里鼠标划过带动画的区域帧率
    爆降卡成 PPT）——data-perf 原先只在极光皮肤下有规则（a278），默认科技
    风下开了等于没开。虚机=软件渲染（每帧重绘全靠 CPU）+ 远程桌面协议逐帧
    编码传增量，三处逐帧大户一起掐：
@@ -5450,9 +5450,9 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 /* a300：office 滚动条显式豁免全站隐藏（用户令：宽大的条好抓，终端同款 14px） */
 .office-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; position: relative;
   display: flex; flex-direction: column; align-items: center; }
-/* a314（用户令：删自绘条）——恢复 webkit 原生条但强制 14px 宽（能压多宽压
+/* a313（用户令：删自绘条）——恢复 webkit 原生条但强制 14px 宽（能压多宽压
    多宽；Fluent 覆盖层若仍画细条，至少原生条本身宽大可抓） */
-/* a319（用户最终拍板：自绘条彻底删除，接受原生条）——office 三容器回归
+/* a316（用户最终拍板：自绘条彻底删除，接受原生条）——office 三容器回归
    浏览器默认滚动条：scrollbar-width auto，无任何自定义/自绘/覆盖。
    Fluent 覆盖层就是 WebView2 的默认形态，接受它 */
 .office-body, .ov-pdf-main, .xlsx-table-wrap { scrollbar-width: auto; }
@@ -5643,17 +5643,17 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   flex-shrink: 0; width: 14px; height: 14px; margin-left: 1px;
   border-radius: 3px; font-size: 10px; line-height: 1;
   opacity: .35; transition: opacity .15s, color .15s, background .15s;
-  /* a467（审计 P1）：胶囊本体有 -webkit-user-drag: element（style.css:1279），
+  /* a452（审计 P1）：胶囊本体有 -webkit-user-drag: element（style.css:1279），
      CSS 的 user-drag 优先于 HTML draggable 属性——JS 里 mousedown 设
      btn.draggable=false 根本压不住。✕ 上显式关掉，否则按住 ✕ 手抖 2px 就
      变成拖胶囊，鼠标一松不派发 click，关闭整组点了没反应还把胶囊拖走。 */
   -webkit-user-drag: none;
-  /* a467（审计 P2）：14px 热区太小，偏 3~5px 就落到胶囊本体（弹出组列表），
+  /* a452（审计 P2）：14px 热区太小，偏 3~5px 就落到胶囊本体（弹出组列表），
      用 ::after 把命中范围外扩到 22px，视觉尺寸不变。 */
   position: relative;
 }
 .tab-drawer-x::after {
-  /* a469（第二轮审计 P2）：只向右/下扩热区。原来 inset:-4px 四周扩，左侧
+  /* a452（第二轮审计 P2）：只向右/下扩热区。原来 inset:-4px 四周扩，左侧
      4px 压在胶囊的活跃名末尾（✕ 与它只隔 1px margin），点那里会命中 ✕ →
      误触「关闭整组」确认框这个危险动作。 */
   content: ''; position: absolute; inset: -4px -4px -4px 0; border-radius: 5px;
@@ -5675,7 +5675,7 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   45% { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 }
 
-/* a429 最近打开置顶区：固定项（类型前缀行，不分组）*/
+/* a430 最近打开置顶区：固定项（类型前缀行，不分组）*/
 .recent-group-head.t-pin { color: var(--accent, #4cc2ff); }
 .recent-item.pinned .pin-type { color: var(--muted); margin-right: 2px; }
 .recent-item.pinned { border-left: 2px solid var(--accent, #4cc2ff); }

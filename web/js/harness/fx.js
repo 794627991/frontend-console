@@ -110,7 +110,7 @@
     // v2.27.16：记忆窗口带模型归属校验（renderCtxRing 同款）——旧记录无
     // model 字段或与当前模型不符 → 丢弃窗口值，按模型名重推，防 [1M] 会话
     // 残留的 1M 分母跟着小窗口模型走（Lanz-Auto 虚报 /1000.0K）。
-    // a429：只有「双方都有名字且不相等」才算不符。mname 为空是常态
+    // a430：只有「双方都有名字且不相等」才算不符。mname 为空是常态
     // （settings.json 没配模型映射 + 会话 meta.model 为 null，纯默认 CLI
     // 环境即如此），此时归属**未知**，不能当不符——否则合法读数被判坏
     // 清 0 并落账，真值被持久化销毁（旧码只画 0 不落账，反而没丢数据）
@@ -126,7 +126,7 @@
     // 权威值由必然到达的 5s /ctx 补上
     // 恢复判据同样按 badMax（模型真实能力），不能用显示分母——否则
     // (settings, 实报] 的合法用量切回会话时会被整段画 0，出现「先清零再涨」。
-    // 无任何权威 badMax（冷启动、a423 之前的老记忆）时不用旧显示分母判坏：
+    // 无任何权威 badMax（冷启动、a409 之前的老记忆）时不用旧显示分母判坏：
     // 两个方向都会错（误清合法值 / 放行坏值）。改为只设物理上界 2×1M
     // （已知模型最大窗 1M），超过必是「全会话累计口径」坏值，直接判 0；
     // 边界内先按记忆原样显示，精确判坏交给必到的 5s /ctx
@@ -164,7 +164,7 @@
     // 传 0 让下次同样走「分母未知不画」，等 /ctx。
     // 例外：归属可信（同模型）时保留记忆里的 max——窗口是会话属性，判坏只
     // 说明 used 不可信，不该连权威分母一起丢掉，否则之后每次冷启动都要空窗
-    // 到 /ctx（a432 反对的是**跨模型**沿用旧窗口，不是同模型）
+    // 到 /ctx（a423 反对的是**跨模型**沿用旧窗口，不是同模型）
     if (badIsh) _hgCtxSave(sid, 0,
       authWin > 0 ? authWin : (ownTrusted ? (v.max || 0) : 0), effBad, mname);
     // v2.20：记忆里的 max 可能是旧代码存的 256K 兜底值（1M 模型被压成
@@ -198,7 +198,7 @@
       return;
     }
     const pct = Math.min(100, used / ctxMax * 100);
-    // a463（审计 P2）：显示取整不能让 99.5% 看起来像 100%——那正是用户
+    // a452（审计 P2）：显示取整不能让 99.5% 看起来像 100%——那正是用户
     // 投诉的「界面满格但 CLI 没压缩」。展示值用 floor，且真满格时才写 100。
     const pctTxt = Math.floor(pct);
     // 判色用**同一个**取整值，与胶囊（panel.js 先 round 再比）保持同一档，
@@ -299,7 +299,7 @@
     _hgDrawCtxRing(used, ctxMax);
     // 只把真权威 o.badMax 落进记忆：guardMax 在缺 o.badMax 时回落到显示
     // 分母（可能是兜底 256K 或按名字猜的 1M），写进去会被下次恢复当权威
-    // 阈值判坏，绕回 a426/a427 修掉的问题。缺失时传 0 → _hgCtxSave 沿用
+    // 阈值判坏，绕回 a417/a418 修掉的问题。缺失时传 0 → _hgCtxSave 沿用
     // 记忆里的旧 badMax，没有就不写该键
     // model 传空：这里的 o.model/_HG.model 是**网关实报名**（message.model），
     // 而恢复路径的判据 mname 是 settings **配置名**，两者可能完全不同
@@ -391,7 +391,7 @@
           }
           _hgCtxSave(sid, _HG.ctxRing.used, win || _HG.ctxRing.max,
                      j.badMax > 0 ? j.badMax : 0, j.model || '');
-          // a463（审计 P1）：busy 期也要把圆环重画到新真值上。原来这里只改
+          // a452（审计 P1）：busy 期也要把圆环重画到新真值上。原来这里只改
           // _HG.ctxRing 就 return，DOM 要等下一拍 v4bridge 的 tps 帧才更新
           // ——容量卡/胶囊每拍读内存值已是新数，圆环还停在旧值，同屏矛盾。
           // 注意：估值（liveToks）不参与，圆环口径与卡/胶囊一致。
@@ -431,13 +431,13 @@
     // 正是圆环/胶囊已经修掉的那种误导，卡片必须同口径
     const max = (r.max > 0) ? r.max : 0;
     const pct = max > 0 ? Math.min(100, used / max * 100) : 0;
-    // a463：判色与圆环统一用 round 档；显示用 floor 防 99.5% 变 100%
+    // a452：判色与圆环统一用 round 档；显示用 floor 防 99.5% 变 100%
     const pctBand = Math.round(pct);
     const barCol = pctBand >= 95 ? 'var(--neon-red, #e06c75)'
                  : pctBand >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
     const parts = _HG.ctxParts || { sys: 0, mcp: 0 };
     const msg = Math.max(0, used - parts.sys - parts.mcp);
-    // a463（审计 P2）：分母是 used，而 sys/mcp 是进程内固定估值，两者之和
+    // a452（审计 P2）：分母是 used，而 sys/mcp 是进程内固定估值，两者之和
     // 可能超过 used——原来只对 msg 单项 clamp，三行占比合计会到 116%。
     // 归一化：估算部分超过 used 时按比例压缩，保证三行合计 ≈100%。
     const _est = Math.max(0, (parts.sys || 0)) + Math.max(0, (parts.mcp || 0));
@@ -454,7 +454,7 @@
     if (t.sub) tpsBits.push(`子代理 ${_hgCtxCardFmt(t.sub)}`);
     // a264（用户定调）：窗口选择器移除——窗口只走自动链（网关实报→
     // settings.json→[1M]→兜底），不提供用户选项
-    // a463（审计 P2）：显示条件不能含 est——used=0 而 est>0 时会渲染
+    // a452（审计 P2）：显示条件不能含 est——used=0 而 est>0 时会渲染
     // 「0.0K/max（0%）」，而圆环此刻按 noUsed 什么百分比都不显示，两处相反。
     // 分母在、真值还没到时统一说「首轮回复后统计」。
     return `<div class="hg-ctx-head"><b>上下文容量</b><span>${(max > 0 && used > 0) ?
@@ -463,7 +463,7 @@
       `<div class="hg-ctx-bar"><i style="width:${pct}%;background:${barCol}"></i></div>` +
       `<div class="hg-ctx-rows">` +
         row('消息', msg, false) +
-        // a463：估算项按 _estScale 缩放后再显示，保证三行合计 ≈100%
+        // a452：估算项按 _estScale 缩放后再显示，保证三行合计 ≈100%
         row('系统提示词', parts.sys * _estScale, true) +
         row('MCP 工具', parts.mcp * _estScale, true) +
       `</div>` +
