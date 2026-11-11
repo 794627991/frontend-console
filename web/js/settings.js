@@ -318,7 +318,7 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apNoGpuToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 12 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会在启动时提示建议开启（每次启动至多一次）。外网真机保持关闭即享完整 GPU 效果。</div>
+      <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 16 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会在启动时提示建议开启（每次启动至多一次）。外网真机保持关闭即享完整 GPU 效果。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">性能模式（全禁大锤）</div>
@@ -389,10 +389,13 @@ function _stRenderAppearancePane(pane) {
   // a346：代码跳转快捷键已移到「终端设置」（a335：与其它快捷键配置放一起）
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
-  // a468：无GPU加速（动画降帧档）——先于 perf 大锤渲染；两档独立开关
+  // a468：无GPU加速（动画降帧档）——两档独立开关。syncNoGpu 声明在 perf 块
+  // 之前并暴露给两个 onclick（审计 B 轮：perf 开/关的瞬间必须联动刷新
+  // nogpu 按钮的「性能模式生效中」标注，否则滞留误导文案）
+  let syncNoGpu = null;
   const nogpuBtn = pane.querySelector('#apNoGpuToggle');
   if (nogpuBtn && typeof toggleNoGpuMode === 'function') {
-    const syncNoGpu = () => {
+    syncNoGpu = () => {
       const on = document.documentElement.hasAttribute('data-nogpu');
       // 审计 A 轮文案缺口：两档同开时实际生效的是 perf 全禁（CSS 源序覆盖），
       // 如实标注，避免「动画降帧中」误导
@@ -400,7 +403,7 @@ function _stRenderAppearancePane(pane) {
       nogpuBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
         + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
         + '<small style="color:var(--muted);font-weight:400;">　' + (on
-          ? (perfOn ? '已开启（当前性能模式全禁生效中）' : '动画降帧中（补间 100ms · 循环 16 帧/周期 · 无毛玻璃）')
+          ? (perfOn ? '当前性能模式全禁生效中' : '动画降帧中（补间 100ms · 循环 16 帧/周期 · 无毛玻璃）')
           : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
     };
     nogpuBtn.onclick = () => { toggleNoGpuMode(); syncNoGpu(); };
@@ -412,6 +415,7 @@ function _stRenderAppearancePane(pane) {
       perfBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.eyeOff) + ' ' : '')
         + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
         + '<small style="color:var(--muted);font-weight:400;">　' + (on ? '过渡/循环动画与毛玻璃已全局关闭' : '点击全局禁用动画与毛玻璃') + '</small>';
+      if (syncNoGpu) syncNoGpu();   // 审计 B 轮：联动刷新 nogpu 的同开标注
     };
     perfBtn.onclick = () => { togglePerfMode(); syncPerf(); };
     syncPerf();

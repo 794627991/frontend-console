@@ -113,7 +113,7 @@ function togglePerfMode(on) {
   el.toggleAttribute('data-perf', on);
   try {
     fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ perf_mode: on }) });
+      body: JSON.stringify({ perf_mode: on }) }).catch(() => {});
   } catch (_) {}
   return on;
 }

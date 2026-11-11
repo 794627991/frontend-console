@@ -5388,7 +5388,7 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
      transitionend 逻辑依赖，压时长零破坏面。
    ② animation-timing-function: steps(16)——每个动画周期最多 16 帧：循环
      动画（spinner 0.8s=20fps、脉动 1.6s=10fps）从 60fps 持续账单降 67%，
-     观感仍是转圈/呼吸；一次性入场动画（≤400ms）16 帧超刷新率无感差异，
+     观感仍是转圈/呼吸；一次性入场动画（≤400ms）16 帧≈40fps 肉眼平滑，
      ≥0.9s 的闪动类降到 ~11fps（本模式的降帧意图所在）。animationend 照常
      触发（hist.js 思考行 .exit 克隆靠它自拆——a451 用 1ms 而非 none 的
      同一约束，steps 同样满足）。
@@ -5408,10 +5408,11 @@ html[data-nogpu] *, html[data-nogpu] *::before, html[data-nogpu] *::after {
    改动列表，vcs-panel.js:1008）均无任何 offsetHeight/getBoundingClientRect
    测量与拖拽；log-viewer 自带虚拟化、终端是 canvas、Monaco 在 iframe，
    均不需要。contain-intrinsic-size 的 auto 让 Chromium 记住各行首渲尺寸，
-   估高仅影响首滚的滚动条微漂（frow 实高 ~32px、会话卡 ~64px） */
+   估高仅影响首滚的滚动条微漂（frow 实高 ~32px、会话卡 ~53px；审计 B 轮：
+   估高 56px 贴实高，两条规则分列——frow 靠源序后置覆盖自己的估高） */
 html[data-nogpu] .claude-sess, html[data-nogpu] .hg-vcs-frow {
   content-visibility: auto;
-  contain-intrinsic-size: auto 64px;
+  contain-intrinsic-size: auto 56px;
 }
 html[data-nogpu] .hg-vcs-frow { contain-intrinsic-size: auto 32px; }
 
