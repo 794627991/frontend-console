@@ -208,8 +208,39 @@ def _jsonl_path_for(session_id):
 # ---- from claude_harness.py:2699 (_rewind_jsonl) ----
 
 
+def _is_turn_start(L):
+    """a462：新 CLI 转写的回合边界行判定。
+
+    旧转写以 {"type":"result"} 行收尾每个回合；现行 CLI 的转写里已**没有
+    result 行**（实测最新会话：assistant/user/attachment/api-request 等，
+    result 为 0）——三个回滚函数全靠 result 找边界，于是「回滚到此处」
+    自上线以来永远报「没有完整收尾」。
+
+    新边界 = **真实人类消息行**：user 型、非 isMeta、content 不含 tool_result
+    块。isMeta 的 user 行是注入上下文（agent-message / system-reminder /
+    [Image:…]），tool_result 的 user 行是工具回填——都不开回合。"""
+    if '"type":"user"' not in L:
+        return False
+    try:
+        o = json.loads(L)
+    except Exception:
+        return False
+    if o.get("type") != "user":
+        return False
+    if o.get("isMeta") or (o.get("message") or {}).get("isMeta"):
+        return False
+    c = (o.get("message") or {}).get("content")
+    if isinstance(c, list) and any(isinstance(b, dict) and b.get("type") == "tool_result"
+                                    for b in c):
+        return False
+    return True
+
+
 def _rewind_jsonl(session_id, turns=1):
-    """截断转写：保留到最后第 turns 个 result 行（含）。返回 (ok, msg)。"""
+    """截断转写：回退最后 turns 个回合。返回 (ok, msg)。
+
+    a462：回合边界双格式兼容——旧转写按 result 行、新转写按回合起始行
+    （_is_turn_start，见其 docstring）。"""
     p = _jsonl_path_for(session_id)
     if not p:
         return False, "找不到会话转写文件"
@@ -217,13 +248,21 @@ def _rewind_jsonl(session_id, turns=1):
         lines = f.readlines()
     idxs = [i for i, L in enumerate(lines)
             if '"type":"result"' in L]
-    if not idxs:
-        return False, "转写里没有完整回合可回退"
-    # 丢弃最后 turns 个完整回合（未完成的尾部行随之丢弃）；最多退到只剩
-    # 首回合（全退空转写 resume 语义不明，不做）
-    turns = max(1, min(turns, len(idxs) - 1)) if len(idxs) > 1 else 1
-    cut = idxs[len(idxs) - 1 - turns]
-    keep = lines[:cut + 1]
+    if idxs:
+        # 旧格式：保留到最后第 turns 个 result 行（含）。丢弃最后 turns 个
+        # 完整回合（未完成的尾部行随之丢弃）；最多退到只剩首回合
+        # （全退空转写 resume 语义不明，不做）
+        turns = max(1, min(turns, len(idxs) - 1)) if len(idxs) > 1 else 1
+        cut = idxs[len(idxs) - 1 - turns]
+        keep = lines[:cut + 1]
+    else:
+        # a462 新格式：回合 = 从每个回合起始行到下一回合起始行（不含）。
+        # 回退 turns 个 = 删掉最后 turns 段（含未完成的尾段）。
+        starts = [i for i, L in enumerate(lines) if _is_turn_start(L)]
+        if len(starts) < 2:
+            return False, "转写里没有完整回合可回退"
+        turns = max(1, min(turns, len(starts) - 1))
+        keep = lines[:starts[len(starts) - turns]]
     if len(keep) == len(lines):
         return False, "转写尾部没有可丢弃的回合"
     return _rewind_write(p, lines, keep, "已回退 %d 个完整回合" % turns)
@@ -232,28 +271,49 @@ def _rewind_jsonl(session_id, turns=1):
 
 
 def _rewind_jsonl_ts(session_id, ts):
-    """锚点截断（v2.28.14 消息级回滚）：保留到 ts 所属回合的 result 为止
-    ——找第一个 timestamp >= ts 的 result 行，截到它（含）。ts 是该 AI 消息
-    事件的 ISO 时间戳（前端从回放行带入 dataset）。"""
+    """锚点截断（v2.28.14 消息级回滚）：保留到 ts 所属回合结束为止。
+    ts 是该 AI 消息事件的 ISO 时间戳（前端从回放行带入 dataset）。
+
+    a462：ts 所属回合的结束点 = 其后第一个 result 行（旧）或第一个
+    timestamp >= ts 的回合起始行（新，不含该行）。"""
     p = _jsonl_path_for(session_id)
     if not p:
         return False, "找不到会话转写文件"
     with open(p, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
+    has_result = any('"type":"result"' in L for L in lines)
     cut = None
-    for i, L in enumerate(lines):
-        if '"type":"result"' not in L:
-            continue
-        try:
-            o = json.loads(L)
-        except Exception:
-            continue
-        if str(o.get("timestamp") or "") >= ts:
-            cut = i
-            break
+    if has_result:
+        for i, L in enumerate(lines):
+            if '"type":"result"' not in L:
+                continue
+            try:
+                o = json.loads(L)
+            except Exception:
+                continue
+            if str(o.get("timestamp") or "") >= ts:
+                cut = i
+                break
+        if cut is not None:
+            keep = lines[:cut + 1]
     if cut is None:
-        return False, "锚点消息之后没有完整回合"
-    keep = lines[:cut + 1]
+        # a462 新格式：第一条 timestamp >= ts 的回合起始行（ts 消息之后
+        # 的人类消息），截到它之前
+        for i, L in enumerate(lines):
+            if not _is_turn_start(L):
+                continue
+            try:
+                o = json.loads(L)
+            except Exception:
+                continue
+            if str(o.get("timestamp") or "") >= ts:
+                cut = i - 1
+                break
+        if cut is None:
+            return False, "锚点消息之后没有完整回合"
+        if cut < 0:
+            return False, "锚点时间戳早于会话首个回合"
+        keep = lines[:cut + 1]
     if len(keep) == len(lines):
         return False, "已在锚点位置，没有可回退的内容"
     return _rewind_write(p, lines, keep, "已回滚到指定消息")
@@ -264,8 +324,11 @@ def _rewind_jsonl_ts(session_id, ts):
 def _rewind_jsonl_anchor(session_id, anchor):
     """文本锚点截断（v2.28.16 消息级回滚主路径）：锚点 = 某条 AI 消息正文的
     前缀（前端从气泡带入，实时/回放两路都有文本）。从尾部找首条匹配的
-    assistant 行，截到它之后的第一个 result 行（该回合收尾）——「回滚到
-    这条消息所在回合结束」。"""
+    assistant 行，「回滚到这条消息所在回合结束」。
+
+    a462：回合结束点双格式——锚点之后的第一个 result 行（旧转写），或
+    第一个回合起始行（新转写，不含；见 _is_turn_start）。此前只认 result，
+    新 CLI 转写没有 result 行 → 永远报「锚点所在回合没有完整收尾」。"""
     p = _jsonl_path_for(session_id)
     if not p:
         return False, "找不到会话转写文件"
@@ -296,13 +359,22 @@ def _rewind_jsonl_anchor(session_id, anchor):
     if hit is None:
         return False, "锚点消息不在会话记录里"
     cut = None
-    for i in range(hit, len(lines)):
+    for i in range(hit + 1, len(lines)):
+        # 旧转写：result 行是该回合收尾（保留到它含）；新转写：下一回合的
+        # 人类消息行是边界（保留到它不含）——先撞见哪个用哪个
         if '"type":"result"' in lines[i]:
             cut = i
+            keep_incl = True
+            break
+        if _is_turn_start(lines[i]):
+            cut = i
+            keep_incl = False
             break
     if cut is None:
-        return False, "锚点所在回合没有完整收尾"
-    keep = lines[:cut + 1]
+        # 锚点之后既无 result 也无下一回合：锚点就在转写尾部——
+        # 「回滚到它所在回合结束」没有可丢弃的内容
+        return False, "锚点之后没有可回退的内容（它已是最后一条消息）"
+    keep = lines[:cut + 1] if keep_incl else lines[:cut]
     if len(keep) == len(lines):
         return False, "锚点之后没有可回退的内容"
     return _rewind_write(p, lines, keep, "已回滚到指定消息")
