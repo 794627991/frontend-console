@@ -729,7 +729,10 @@ class BiliController:
 
 
 # ---- LanzQuotaWorker（GUI:3371-3544 平移；emit → 直写模块缓存）--------
-_LOCKOUT_KEYS = ("too many attempts", "locked", "error limit")
+# a459（审计遗留）：裸 "locked" 会命中 "unlocked"——SSO 解锁成功的提示若拼进
+# 异常文案，会被误判成锁定而停登（与 a452 修掉的「警示语误判」同族）。
+# locked 的判定挪到 _is_lockout_msg 里先剥 unlocked 再测。
+_LOCKOUT_KEYS = ("too many attempts", "error limit")
 
 
 def _is_lockout_msg(msg):
@@ -752,6 +755,9 @@ def _is_lockout_msg(msg):
     m = str(msg or "").lower()
     # 英文：锁定页/接口返回的原始错误（lanz_quota 会拼进各异常文案）
     if any(k in m for k in _LOCKOUT_KEYS):
+        return True
+    # a459：先剥 unlocked 再测 locked，防止「账号已解锁」被当锁定停登
+    if "locked" in m.replace("unlocked", ""):
         return True
     if "too many" in m and "attempt" in m:
         return True
@@ -923,10 +929,6 @@ class LanzQuotaWorker:
         self._stop.set()
         self._wake.set()
 
-    def wake_loads(self):
-        """催 worker 尽快刷一次负载（仍用它的会话，不新建客户端）。"""
-        self._wake.set()
-
     def _run(self):
         client = None
         cur_cred = object()
@@ -1047,27 +1049,24 @@ class LanzQuotaWorker:
             log.warning("模型负载查询异常: %s", e)
             self._set_loads_err("负载查询异常: %s" % e)
             return True
-        global _quota_loads, _quota_loads_ts, _quota_loads_err, _quota_loads_busy
+        global _quota_loads, _quota_loads_ts, _quota_loads_err
         with _quota_loads_lock:
             _quota_loads = loads
             _quota_loads_ts = time.time()
             _quota_loads_err = ""
-            _quota_loads_busy = False
         return True
 
     def _set_loads_err(self, msg):
-        global _quota_loads_err, _quota_loads_busy
+        global _quota_loads_err
         with _quota_loads_lock:
             _quota_loads_err = msg
-            _quota_loads_busy = False
 
     def _clear_loads(self, msg):
-        global _quota_loads, _quota_loads_ts, _quota_loads_err, _quota_loads_busy
+        global _quota_loads, _quota_loads_ts, _quota_loads_err
         with _quota_loads_lock:
             _quota_loads = []
             _quota_loads_ts = 0.0
             _quota_loads_err = msg
-            _quota_loads_busy = False
 
     def _cred_changed(self, cred):
         with self._lock:
@@ -1189,11 +1188,10 @@ _quota_ov = {}           # dashboard.overview 缓存（托盘菜单/tooltip 用�
 _quota_rank = []         # dashboard.modelRank 缓存（模型用量排名表）
 # a442（用户需求）：模型实时负载。与额度同源（LanzClient.get_model_loads），
 # 但负载变化快——额度 600s 一刷太慢，单独 20s TTL 按需刷新（status 轮询驱动，
-# 面板/悬浮卡不看就不拉）。_quota_loads_busy 防并发重复拉。
+# 面板/悬浮卡不看就不拉；刷新频率由 worker 内层循环的 LOAD_TTL 决定。
 _quota_loads = []
 _quota_loads_ts = 0.0
 _quota_loads_err = ""
-_quota_loads_busy = False
 _quota_loads_lock = threading.Lock()
 _quota_ts = None         # 上次 data 时间戳（前端显示"上次刷新 Ns 前"）
 _quota_lock = threading.Lock()
@@ -1355,7 +1353,7 @@ def _is_lanz_api():
         return False
 
 
-def _get_model_loads(force=False):
+def _get_model_loads():
     """模型实时负载（a442）。返回 (列表, 错误串)。
 
     a446（严重回归修复）：**只读缓存，绝不自己登录**。
@@ -1364,8 +1362,6 @@ def _get_model_loads(force=False):
     登录页（用户实锤「一直登录失败」，还触发风控）。现在负载统一由 worker
     在它自己的 client 上顺带拉（_fetch_loads），这里只取缓存。
     """
-    if force and _quota is not None:
-        _quota.wake_loads()      # 让 worker 尽快刷一次（仍用它的会话）
     with _quota_loads_lock:
         return list(_quota_loads), _quota_loads_err
 

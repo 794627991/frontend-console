@@ -2077,8 +2077,11 @@ function buildClaudeHarnessTab(opts = {}) {
       <div class="hg-recover-list"></div>
       <div class="hg-modal-acts"><button class="btn ghost" data-hg-r-close>关闭</button></div></div>`;
     const _hgListEl = ov.querySelector('.hg-recover-list');
+    // a459：关闭必须走 hgModalTrack 包过的 close（先退册再摘 DOM）——绑裸
+    // close 会让收口表条目连着 detached DOM 一直留到 tab 销毁（a453 声称
+    // 修掉的泄漏在唯一调用点上其实没修到）。注册在下方 appendChild 后，
+    // 拿到返回的 tracked close 再绑按钮。
     const close = () => ov.remove();
-    ov.querySelector('[data-hg-r-close]').onclick = close;
     function render() {
       if (!items.length) {
         _hgListEl.innerHTML = '<div class="hg-list-empty">没有可恢复的会话——列表里的会话和磁盘记录是对得上的</div>';
@@ -2114,7 +2117,10 @@ function buildClaudeHarnessTab(opts = {}) {
     document.body.appendChild(ov);
     // a452（审计 P1）：自建弹窗也要进收口表——关 Claude tab 时统一关掉，
     // 否则弹窗盖在全窗上，点\"恢复\"还会对已销毁面板发 /api/harness/recover
-    try { if (typeof hgModalTrack === 'function') hgModalTrack(ov, close); } catch (_) {}
+    try { if (typeof hgModalTrack === 'function') {
+      const _tc = hgModalTrack(ov, close);
+      if (_tc) ov.querySelector('[data-hg-r-close]').onclick = _tc;
+    } } catch (_) {}
   };
   // 备注/作用域/开关/编辑/删除，整表保存。
   _hgQ('[data-hg-skills-btn]').onclick = () => skRepoOpen();

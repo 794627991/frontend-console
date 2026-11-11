@@ -10,10 +10,15 @@
       // a453（第二轮审计 P2）：支持按宿主收口。原来是全局单例无宿主维度——
       // 关 Claude tab 会把版本面板（挂 body）正在用的确认框一起 close 掉，
       // 用户操作被打断。host 缺省时只关 body（即无人认领）那批。
+      // a459（审计遗留）：原实现 `host === undefined || rec.host === host`
+      // 与本条注释相反——无参调用实际命中**全部**条目（a456 修掉的「vcs
+      // 面板 teardown 关掉所有弹窗」踩的就是这个语义）。按注释兑现：缺省
+      // 只关 host='body'（无人认领）那批。
       closeAll(host) {
+        const want = (host === undefined) ? 'body' : host;
         const hit = [];
         for (const [ov, rec] of m) {
-          if (host === undefined || rec.host === host) hit.push([ov, rec]);
+          if (rec.host === want) hit.push([ov, rec]);
         }
         hit.forEach(([ov]) => m.delete(ov));
         hit.forEach(([, rec]) => { try { rec.close(null); } catch (_) {} });
@@ -132,6 +137,9 @@
   // 与必需的 resolve。调用方在 appendChild 之后调一次即可。
   // a453（第二轮审计 P1）：登记时必须包一层——自建弹窗的 closeFn 只摘 DOM
   // 不退册，收口表里的条目连同整棵弹窗 DOM 永久保留（反复开关 N 次就攒 N 棵）。
+  // a459（审计遗留）：光包 wrapper 只覆盖「closeAll 收口」这条路——调用方
+  // 自己的关闭按钮若绑的还是裸 closeFn，手动关一次仍漏一条登记（Map 拿着
+  // 整棵 detached DOM 到 tab 销毁才清）。返回包好的 close 让调用方绑定。
   function hgModalTrack(ov, closeFn) {
     try {
       if (window._hgModalReg && typeof window._hgModalReg.add === 'function') {
@@ -140,8 +148,10 @@
           try { closeFn(v); } catch (_) {}
         };
         window._hgModalReg.add(ov, wrapped, _hgModalOwner());
+        return wrapped;
       }
     } catch (_) {}
+    return closeFn;
   }
   function hgConfirm(title, msg) {
     return hgModal(title, `<div class="hg-modal-body">${esc(msg)}</div>`,

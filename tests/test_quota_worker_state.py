@@ -169,6 +169,9 @@ def test_lockout_msg_false_on_warning_and_uncertain():
         "用户名或密码错误。 注意：连续错误会锁定 SSO 账号。",
         "会话失效，请求被重定向回 SSO 登录页。可能账号已锁定或凭据失效…",
         "登录失败，被重定向回 SSO 登录页。服务端提示: 验证码错误",
+        # a459：解锁成功的文案含子串 "unlocked"，裸 "locked" 匹配会误判停登
+        "HTTP 200: Your account has been unlocked, please retry",
+        "会话过期。 服务端提示: Account unlocked successfully",
         "",
     ]
     for m in uncertain:
