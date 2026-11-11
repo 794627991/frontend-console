@@ -36,7 +36,7 @@ function vcsPanelTeardown() {
   _vcsHistClose();                 // v3.5.133（designer D10）：弹窗防御性关闭
   // a438（审计 P1）：挂 body 的确认弹窗没有宿主可跟随销毁——面板已关但
   // 弹窗还盖在全窗上，误点「执行」会对已销毁面板发真实 git add / pull。
-  // a455（第二轮审计 P2）：必须限定 owner。收口表改成按 owner 归组后，
+  // a456（第二轮审计 P2）：必须限定 owner。收口表改成按 owner 归组后，
   // 无参调用会关掉**所有**弹窗（含 Claude 面板的），别人的确认框被无辜收掉。
   try { if (window._hgModalReg) window._hgModalReg.closeAll('vcs:panel'); } catch (_) {}
   // 三路审计 C-F2：SSH 配置弹窗自管宿主（挂 body、不进 _hgModalReg 收口

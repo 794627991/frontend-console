@@ -739,7 +739,7 @@ def _is_lockout_msg(msg):
     因为 600s 一次的退避重登一直在续期）。所以必须在文案层识别出来，
     一旦命中就停登，等用户手动触发。
 
-    a451（审计 P0：判据闭合成环）：原实现里的「锁定」二字是子串匹配，而
+    a452（审计 P0：判据闭合成环）：原实现里的「锁定」二字是子串匹配，而
     `lanz_quota._classify_nonjson` 的**密码错误**文案自带警示语「注意：
     连续错误会锁定 SSO 账号」——警示语被当成锁定事实，用户密码输错一次
     就永久停登，改对密码也不自愈。所以不能匹配裸「锁定」，必须匹配
@@ -840,8 +840,8 @@ class LanzQuotaWorker:
         self._login_failed = False
         self._login_err = ""
         self._locked = False                 # a454：SSO 锁定 → 停登等手动
-        self._cred_epoch = 0                 # a451：凭据提交计数（同值重提也能唤醒）
-        self._refresh_req = False            # a451：手动刷新请求（唤醒后必须拉一次全量）
+        self._cred_epoch = 0                 # a452：凭据提交计数（同值重提也能唤醒）
+        self._refresh_req = False            # a452：手动刷新请求（唤醒后必须拉一次全量）
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -850,11 +850,11 @@ class LanzQuotaWorker:
     def submit_credentials(self, user, pwd):
         with self._lock:
             self._cred = (user, pwd)
-            # a451（审计 P2）：只比较凭据值时，用户把**同一组**账号密码再提交
+            # a452（审计 P2）：只比较凭据值时，用户把**同一组**账号密码再提交
             # 一次无法跳出锁定停登循环（元组相等），界面一直停在锁定态。用
             # epoch 给「提交动作」本身发信号。
             self._cred_epoch += 1
-            # a451（审计 P1）：换账号/改密码要清掉上一个账号的锁定态，
+            # a452（审计 P1）：换账号/改密码要清掉上一个账号的锁定态，
             # 否则账号 A 被锁的 _locked/_login_err 会传给账号 B。
             self._locked = False
             self._login_err = ""
@@ -864,7 +864,7 @@ class LanzQuotaWorker:
         with self._lock:
             self._cred = None
             self._login_failed = False
-            self._locked = False      # a451：登出必须清锁定态
+            self._locked = False      # a452：登出必须清锁定态
             self._login_err = ""
             self._cred_epoch += 1
         self._wake.set()
@@ -872,7 +872,7 @@ class LanzQuotaWorker:
     def refresh_now(self):
         """手动刷新。a454：同时解除锁定停登——用户手动点了就是要再试一次，
         这是解锁后唯一的主动出口（自动重登已被锁定拦住）。
-        a451（审计 P1：点刷新对额度无效）：原实现只 _wake.set()，而内层循环
+        a452（审计 P1：点刷新对额度无效）：原实现只 _wake.set()，而内层循环
         醒来先判 `now - last_full >= 600` 未到期就跳过，手动刷新等于没刷。
         加一次性标志，内层消费后必拉一次全量。"""
         with self._lock:
@@ -942,7 +942,7 @@ class LanzQuotaWorker:
                     self._wake.wait(5)
                     self._wake.clear()
                     continue
-                # a451：凭据「提交动作」也算换代信号——用户把同一组账号密码
+                # a452：凭据「提交动作」也算换代信号——用户把同一组账号密码
                 # 再提交一次时 cred 元组相等，只比值得不到任何变化，会卡在
                 # 锁定停登循环里出不来。把 _cred_epoch 并入 epoch。
                 with self._lock:
@@ -974,7 +974,7 @@ class LanzQuotaWorker:
                                 if not self._locked or self._cred != cred:
                                     break
                                 if self._cred_epoch != epoch_of_cred:
-                                    break   # a451：同一凭据重提也要能跳出
+                                    break   # a452：同一凭据重提也要能跳出
                             self._wake.wait(5)
                             self._wake.clear()
                         continue
@@ -1002,7 +1002,7 @@ class LanzQuotaWorker:
                 last_full = 0.0
                 while not self._stop.is_set():
                     now = time.time()
-                    # a451（审计 P1：点刷新对额度无效）：手动刷新请求必须
+                    # a452（审计 P1：点刷新对额度无效）：手动刷新请求必须
                     # 立即拉一次全量，不能被下面 600s 的到期判定吃掉。
                     with self._lock:
                         force_full = self._refresh_req
@@ -1107,7 +1107,7 @@ class LanzQuotaWorker:
                 self._emit("login_err", msg)
             return False
         except lanz_quota.LanzNetworkError as e:
-            # a451（审计 P1）：锁定文案不只从 LanzAuthError 出来——_fetch_text
+            # a452（审计 P1）：锁定文案不只从 LanzAuthError 出来——_fetch_text
             # 在 HTTP 401/403/500 时把响应体拼进 LanzNetworkError，锁定页的
             # "Too many attempts" 会走这条。只认 LanzAuthError 就漏判，外层
             # 按 60→600s 退避持续重登，把 SSO 锁定反复续期。
@@ -1121,7 +1121,7 @@ class LanzQuotaWorker:
                 self._emit("login_err", msg)
             return False
         except lanz_quota.LanzError as e:
-            # a451：同理，_request 在 code!=2001/3001 时抛的通用 LanzError
+            # a452：同理，_request 在 code!=2001/3001 时抛的通用 LanzError
             # 也可能带锁定文案（"API 返回错误 code=… msg=Too many attempts"）。
             msg = "登录失败: %s" % e
             with self._lock:
@@ -1136,7 +1136,7 @@ class LanzQuotaWorker:
     def _fetch_all(self, client, cred=None):
         """拉额度全量。返回 True=继续，False=会话已过期，调用方须回外层重登。
 
-        a451：原 `for attempt in (1, 2)` 的重试只服务于「会话过期 → force
+        a452：原 `for attempt in (1, 2)` 的重试只服务于「会话过期 → force
         重登 → 再取一次」这一条（唯一 continue 的路径，已删）。现在会话
         过期直接返回 False，循环只跑一轮。
 
@@ -1159,7 +1159,7 @@ class LanzQuotaWorker:
                                 "ts": time.time()})
             return True
         except lanz_quota.LanzSessionExpired:
-            # a451（审计 P1）：这里原有 `client.login(force=True)` 私有重登，
+            # a452（审计 P1）：这里原有 `client.login(force=True)` 私有重登，
             # 绕过了 _ensure_login 的锁定识别、_auto_relogin 开关和锁定停登
             # ——自动重登关着照样重登、账号已锁照样再敲一次把锁定计时续期。
             # 刷新路径不允许自带重登：如实报会话过期，交给外层 _run 统一
@@ -2375,7 +2375,7 @@ def _status_payload():
                                if _quota is not None else True),
         "has_credentials": cred is not None,
         "quota_username": (cred or {}).get("username"),
-        # a455（用户实锤：密码框永远是占位符，看不到已保存的密码）：
+        # a448（用户实锤：密码框永远是占位符，看不到已保存的密码）：
         # 凭据本来就明文存本地 lanz_credentials.json，界面却没回填——用户
         # 每次都要重打。只在有凭据时回传，前端仅填空框、保持 type=password。
         "quota_password": (cred or {}).get("password"),
@@ -2393,7 +2393,7 @@ def _status_payload():
     # lanz 网关（如智谱）时这份数据无意义，前端据此决定是否显示负载列。
     # 不依赖 quota_login 状态：负载查询自己登录（20s 缓存兜住频率），
     # worker 没跑过时也能出数（首次开面板即见）。
-    # a455：默认先给 False 再尝试置 True——异常分支（_is_lanz_api 抛错等）
+    # a456：默认先给 False 再尝试置 True——异常分支（_is_lanz_api 抛错等）
     # 被外层 except 吞掉时字段仍在，前端不会因此退回「加载中」死等。
     data["model_loads_supported"] = False
     try:

@@ -442,13 +442,13 @@ class LanzClient:
                 continue
             # a452（审计）：`or {}` 只兜 None/空值，上游把 routeStatus 漂移成
             # list/str 时 rs.get 直接 AttributeError，整批负载被丢且每 20s
-            # 报一次（a451 给 modelTags 修的就是同一类，这里漏了）。
+            # 报一次（a452 给 modelTags 修的就是同一类，这里漏了）。
             rs = m.get("routeStatus")
             if not isinstance(rs, dict):
                 rs = {}
             active = rs.get("total_active")
             mx = rs.get("effective_max_concurrent")
-            # a451（审计 P2）：原判据 isinstance(..., int) 放行 bool（True 被
+            # a452（审计 P2）：原判据 isinstance(..., int) 放行 bool（True 被
             # 当成 1），且未校验 active >= 0——上游口径漂移返回 -1 时算出负
             # pct，前端 width:-N% 与「--」判定全部失配。用 type() is int 精确
             # 排除 bool，并要求非负。
@@ -468,7 +468,7 @@ class LanzClient:
                 level = "normal"
             else:
                 level = "idle"
-            # a451（审计 P2）：modelTags 原假定是 str，服务端返回 list/数字时
+            # a452（审计 P2）：modelTags 原假定是 str，服务端返回 list/数字时
             # `.split` 抛 AttributeError，被上层当「负载查询异常」整批丢弃并
             # 每 20s 报一次。容忍 str（分号分隔）/list/tuple/None。
             _tags = m.get("modelTags")
