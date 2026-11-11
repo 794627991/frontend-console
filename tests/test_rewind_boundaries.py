@@ -171,3 +171,13 @@ def test_turn_start_predicate():
     assert not R._is_turn_start(J(_result("t")))
     # 内容文本里包含 "type":"user" 字面量不得误判（子串预门 + parse 双验）
     assert not R._is_turn_start(J(_asst('说着 "type":"user" 的例子', "t")))
+
+
+def test_harness_version_parse():
+    """a467：版本号自动解析——首个 v4.1.0-aNNN 命中、跨版本前缀不误取。"""
+    from src.harness import _parse_harness_version as P
+    assert P(["v4.1.0-a464 复审", "v4.1.0-a400 x"]) == "4.1.0-a464"
+    assert P(["v3.5.99 老", "v4.1.0-a12 y"]) == "4.1.0-a12"
+    assert P(["v3.5.99 老", "无关"]) == ""
+    assert P([]) == ""
+    assert P(["v4.1.0-a123R 修"]) == "4.1.0-a123"
