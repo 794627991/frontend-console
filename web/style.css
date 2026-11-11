@@ -5754,3 +5754,41 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .recent-group-head.t-pin { color: var(--accent, #4cc2ff); }
 .recent-item.pinned .pin-type { color: var(--muted); margin-right: 2px; }
 .recent-item.pinned { border-left: 2px solid var(--accent, #4cc2ff); }
+
+/* ===== a473：网页 tab（路线 A）——工具栏地址栏 / 收藏星标 / 网页面板 ===== */
+.top-url-bar { width: 260px; max-width: 32vw; padding: 5px 12px; font-size: 12px;
+  font-family: var(--font-mono); color: var(--fg); background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 14px; outline: none;
+  transition: border-color .15s, width .15s; }
+.top-url-bar:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.top-url-bar:focus { border-color: var(--accent); width: 340px; }
+#tabFavBtn { color: var(--muted); }
+#tabFavBtn:hover { color: var(--accent); }
+.web-pane { flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg); }
+.web-bar { display: flex; gap: 6px; align-items: center; padding: 8px 10px;
+  border-bottom: 1px solid var(--border); background: var(--bg-panel); }
+.web-url { flex: 1; min-width: 120px; padding: 6px 12px; font-size: 12px;
+  font-family: var(--font-mono); color: var(--fg); background: var(--bg-input);
+  border: 1px solid var(--border); border-radius: 6px; outline: none; }
+.web-url:focus { border-color: var(--accent); }
+.web-body { flex: 1; min-height: 0; position: relative; background: #fff; }
+.web-frame { position: absolute; inset: 0; width: 100%; height: 100%;
+  border: none; background: #fff; }
+.web-fav-menu { position: fixed; z-index: 10001; min-width: 280px; max-width: 420px;
+  max-height: 60vh; overflow-y: auto; padding: 6px 0;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 10px 36px rgba(0,0,0,.5); }
+.web-fav-title { font-size: 10px; font-weight: 600; color: var(--muted);
+  letter-spacing: 1px; padding: 4px 12px 6px; }
+.web-fav-cur { font-size: 12px; color: var(--accent); padding: 6px 12px;
+  cursor: pointer; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.web-fav-cur:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.web-fav-item { display: flex; gap: 6px; align-items: center; padding: 6px 12px;
+  font-size: 12px; color: var(--fg); cursor: pointer; }
+.web-fav-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.web-fav-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.web-fav-x { color: var(--muted); padding: 0 4px; border-radius: 4px; flex-shrink: 0; }
+.web-fav-x:hover { color: var(--neon-red, #e5484d); }
+.web-fav-empty { font-size: 12px; color: var(--muted); padding: 10px 12px; }

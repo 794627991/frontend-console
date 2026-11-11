@@ -1475,6 +1475,18 @@ def main():
     # 程，已整体拆除——HTTP 服务恢复仅绑 127.0.0.1 的开放原状。
     from src.server import DEBUG_WEB as _dbg_web
     _wv_debug = _dbg_web
+    # a473（用户令：L3 网页操作必须有）：CDP 端口解除 debug 限定——配置键
+    # web_cdp 开启时正常启动也带 --remote-debugging-port（AI 经 devtools_*
+    # MCP 工具操作浏览器：内网换组件/报错分析）。端口只绑 127.0.0.1（CDP
+    # 固有行为），本机单用户工具可接受；默认关，开启需重启生效
+    if not _wv_debug:
+        try:
+            import json as _json
+            from src.app_state import CONFIG_FILE
+            with open(CONFIG_FILE, encoding="utf-8") as _f:
+                _wv_debug = bool((_json.load(_f) or {}).get("web_cdp"))
+        except Exception:
+            _wv_debug = False
     # 滚动条系列终局复盘：启动参数禁 overlay 特性（f3adc75 超集）已退役——
     # 与 CSS scrollbar-color（踢掉 Fluent 绘制的正解）叠加会把滚动条打成
     # 1~2px 畸形（两机制打架，用户实锤）；单独用它也没能稳定送达命令行

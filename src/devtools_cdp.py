@@ -49,8 +49,11 @@ class WsMissing(DevtoolsError):
 
 class CdpUnavailable(DevtoolsError):
     def __init__(self):
-        super().__init__("调试端口未开启——CDP 仅在调试模式启用："
-                         "用 run_debug.bat 启动工具后重试")
+        # a473：CDP 两路开启——run_debug.bat（调试模式）或配置键 web_cdp
+        #（设置→终端设置→「AI 网页操作」打开并重启，正常启动也带端口）
+        super().__init__("CDP 端口未开启。两种开启方式：① 用 run_debug.bat "
+                         "启动（调试模式）；② 设置→终端设置→「AI 网页操作"
+                         "（CDP）」开关打开并重启工具")
 
 
 class TargetNotFound(DevtoolsError):

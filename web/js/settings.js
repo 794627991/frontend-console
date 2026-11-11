@@ -589,6 +589,13 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 16 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会在启动时提示建议开启（每次启动至多一次）。外网真机保持关闭即享完整 GPU 效果。外观页的「性能模式」是更激进的全禁档，两档同开时全禁优先。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">AI 网页操作（CDP）</div>
+        <div class="dd-row" style="margin-top:6px;">
+          <button class="btn ghost" id="tkCdpToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
+        </div>
+        <div class="dd-sub">开启后 Claude 会话可用 devtools_* 工具直接操作内嵌浏览器（读页面/点按钮/填表单/截图/看网络请求）——内网换组件、报错分析都能让 AI 代办。端口仅绑本机（127.0.0.1:9222）。改动需<b>重启工具</b>生效；调试模式（run_debug.bat）本就自带。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
         <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:flex-start;" id="stNavKeysRow"></div>
         <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
@@ -765,6 +772,40 @@ async function _stRenderTermKeysPane(pane) {
   _stNavKeysCard(pane);
   _stBoostCard(pane);   // a378：CPU 优先随用户令移入终端设置
   _stNoGpuCard(pane);   // a472：无GPU加速随用户令移入终端设置（性能类归堆）
+  _stCdpCard(pane);      // a473：AI 网页操作（CDP 端口）开关
+}
+
+// a473：AI 网页操作（CDP）开关——web_cdp 配置键，重启生效（main.py 启动期
+// 读配置决定是否带 --remote-debugging-port；运行中改配置不热生效，按钮如实提示）
+function _stCdpCard(pane) {
+  const btn = pane.querySelector('#tkCdpToggle');
+  if (!btn) return;
+  const sync = (on, live) => {
+    btn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
+      + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
+      + '<small style="color:var(--muted);font-weight:400;">　' + (on
+        ? (live ? 'AI 可用 devtools_* 工具操作浏览器' : '已保存——重启工具后生效')
+        : '点击开启：AI 可操作内嵌浏览器（重启生效）') + '</small>';
+  };
+  fetch('/api/theme').then(r => r.json()).then(j => {
+    const on = !!(j && j.web_cdp);
+    const live = on && !!(window._HG_VER);   // 端口在不在只有重启后可知——保守显示已保存态
+    btn.onclick = () => {
+      const now = !document.documentElement.hasAttribute('data-cdp-cfg');
+      fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ web_cdp: now }) }).then(r => r.json()).then(() => {
+          document.documentElement.toggleAttribute('data-cdp-cfg', now);
+          sync(now, false);
+          showBanner(now ? 'CDP 已开启（配置已保存）——重启工具后生效' : 'CDP 已关闭——重启工具后生效', 4000);
+        }).catch(() => showBanner('保存失败', 2500, true));
+    };
+    document.documentElement.toggleAttribute('data-cdp-cfg', on);
+    // 已开启且本次进程确实带着 CDP（探测一次 /json/version）→ 显示 live 态
+    if (on) {
+      fetch('http://127.0.0.1:9222/json/version').then(r => r.ok).then(ok => sync(on, ok))
+        .catch(() => sync(on, false));
+    } else sync(false, false);
+  }).catch(() => { sync(false, false); });
 }
 
 // a472：无GPU加速开关卡（虚机/远程桌面的动画降帧档）——随用户令从外观页

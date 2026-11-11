@@ -1401,6 +1401,9 @@ def api_theme():
                         "nogpu_mode": bool(cfg.get("nogpu_mode", False)),
                         # a468：远程会话检测（RDP/ICA）——前端据此一次性建议开启
                         "remote_session": _is_remote_session(),
+                        # a473：L3 网页操作——CDP 端口常开（AI 经 devtools_* MCP
+                        # 操作浏览器）；重启生效（WebView2 启动参数期决定）
+                        "web_cdp": bool(cfg.get("web_cdp", False)),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
                         # a336：加 back/fwd（导航历史后退/前进）
@@ -1420,6 +1423,9 @@ def api_theme():
     # a468：无 GPU 加速模式——与 perf_mode（全禁大锤）分档共存
     if "nogpu_mode" in data:
         _save_config({**_load_config(), "nogpu_mode": bool(data["nogpu_mode"])})
+    # a473：L3 网页操作——CDP 端口开关（重启生效；main.py 启动期读配置）
+    if "web_cdp" in data:
+        _save_config({**_load_config(), "web_cdp": bool(data["web_cdp"])})
     if "tab_mode" in data:
         # 白名单：只认 flat/drawer，防脏配置
         if str(data["tab_mode"]).strip() in ("flat", "drawer"):
@@ -1757,6 +1763,59 @@ def api_open_url():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "err": str(e)}), 400
+
+
+@app.route("/api/web/fetch_text", methods=["POST"])
+def api_web_fetch_text():
+    """a473：网页 tab「发给 Claude」——服务端取页转纯文本。
+
+    为什么在服务端做：跨域 iframe 的 DOM 父页读不到（安全边界），取正文
+    只能再走一次 HTTP。SSO 登录态拿不到（cookie 在 WebView2 档里，Flask
+    够不着）——主用目标是无登录态的内网页（Jenkins/svn web 公开视图/
+    构建日志页），带登录态的页面走 AI 的 devtools_* MCP 工具（CDP 在
+    浏览器进程内，带全 cookie）。
+
+    轻量 HTML→文本：去 script/style/注释/标签 + 实体解码，不引依赖。
+    上限：响应体 5MB、正文 40K 字符（Claude 上下文友好）。"""
+    import html as _html
+    import re as _re
+    import urllib.request
+    data = request.get_json(force=True, silent=True) or {}
+    url = str(data.get("url") or "").strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return jsonify({"ok": False, "err": "仅支持 http(s) 链接"}), 400
+    req = urllib.request.Request(url, headers={
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/124.0 Safari/537.36"),
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read(5 * 1024 * 1024)
+            charset = "utf-8"
+            ct = (r.headers.get("Content-Type") or "").lower()
+            m = _re.search(r"charset=([\w-]+)", ct)
+            if m:
+                charset = m.group(1)
+            text = raw.decode(charset, "replace")
+    except Exception as e:
+        return jsonify({"ok": False, "err": "取页失败：%s" % str(e)[:180]})
+    title = ""
+    m = _re.search(r"<title[^>]*>([\s\S]*?)</title>", text, _re.I)
+    if m:
+        title = _html.unescape(_re.sub(r"\s+", " ", m.group(1))).strip()[:120]
+    body = _re.sub(r"<(script|style|noscript)[^>]*>[\s\S]*?</\1>", " ", text, _re.I)
+    body = _re.sub(r"<!--[\s\S]*?-->", " ", body)
+    body = _re.sub(r"<br\s*/?>|</p>|</div>|</tr>|</li>|</h[1-6]>", "\n", body, _re.I)
+    body = _re.sub(r"<[^>]+>", " ", body)
+    body = _html.unescape(body)
+    body = _re.sub(r"[ \t\r\f\v]+", " ", body)
+    body = _re.sub(r"\n\s*\n\s*", "\n", body)
+    body = "\n".join(ln.strip() for ln in body.splitlines() if ln.strip())
+    capped = len(body) > 40000
+    return jsonify({"ok": True, "url": url, "title": title,
+                    "text": body[:40000], "truncated": capped})
 
 
 # ---- 升级功能（v2.1.0）：客户端检查/应用 + 发布端分发服务控制 ----

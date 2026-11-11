@@ -76,6 +76,9 @@ if (window.__HG_DBG__) {
     <button class="btn primary" id="btnDiff" title="文件对比：选两份文件，双栏 diff（VSCode 同款内核）"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;"><rect x="1.5" y="4" width="5.5" height="8.5" rx="1"/><rect x="9" y="3.5" width="5.5" height="8.5" rx="1"/><path d="M7.6 8h1.6M8.2 6.8L9.4 8l-1.2 1.2"/></svg> 对比</button>
   </div>
   <div class="spacer"></div>
+  <!-- a473：工具栏中部网址输入口（用户定调 UI 位）——回车在网页 tab 打开 -->
+  <input id="topUrlBar" class="top-url-bar" spellcheck="false" autocomplete="off"
+         placeholder="内网地址回车打开（Jenkins / svn web / itsm / wiki…）">
   <!-- Proxy 按钮已移入 Claude 对话页输入卡上方（带运行状态显示），原顶部按钮移除 -->
   <button class="btn ghost" id="btnLogs"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;"><path d="M4 2.5h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></svg> 日志库</button>
   <button class="btn ghost" id="btnFiles" title="查看/打开已保存的笔记"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/><path d="M5.5 8.5h5M5.5 11h3.5"/></svg> 笔记</button>
@@ -195,6 +198,7 @@ if (window.__HG_DBG__) {
   <div class="center">
     <div class="tabs" id="tabs">
       <div class="tab-bar-actions"></div>
+      <button class="tab-overflow-btn" id="tabFavBtn" title="网页收藏夹">★</button>
       <button class="tab-overflow-btn" id="tabOverflowBtn" title="所有标签页" style="display:none;">⋮</button>
     </div>
     <div class="term-area" id="termArea">
@@ -541,6 +545,7 @@ if (window.__HG_DBG__) {
 <script src="web/js/tree-search.js?v=__HG_VER__"></script>
 <script src="web/js/bit-calc.js"></script>
 <script src="web/js/vcs-panel.js?v=__HG_VER__"></script>
+<script src="web/js/web-panel.js?v=__HG_VER__"></script>
 <script src="web/js/proxy-panel.js"></script>
 <script src="web/js/proxy-usage.js"></script>
 <script src="web/js/snip.js"></script>
