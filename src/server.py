@@ -1819,7 +1819,7 @@ def _web_html_to_text(html_src):
     body = _re.sub(r"\n\s*\n\s*", "\n", body)
     body = "\n".join(ln.strip() for ln in body.splitlines() if ln.strip())
     if body.startswith("\ufeff"):
-        body = body[1:]   # 审计观察：utf-8 BOM 残留正文首行
+        body = body[1:].lstrip()   # 审计观察：BOM 残留正文首行（连带其后紧邻的标签占位空格）
     return title, body
 
 

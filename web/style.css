@@ -5759,9 +5759,9 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .top-url-bar { width: 260px; min-width: 120px; flex: 0 1 260px; padding: 5px 12px;
   font-size: 12px; font-family: var(--font-mono); color: var(--fg);
   background: var(--bg-input); border: 1px solid var(--border); border-radius: 14px;
-  outline: none; transition: border-color .15s, width .15s; }
+  outline: none; transition: border-color .15s, width .15s, flex-basis .15s; }
 .top-url-bar:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.top-url-bar:focus { border-color: var(--accent); flex-basis: 340px; max-width: 40vw; }
+.top-url-bar:focus { border-color: var(--accent); flex-basis: 340px; max-width: max(280px, 40vw); }
 #tabFavBtn { color: var(--muted); }
 #tabFavBtn:hover { color: var(--accent); }
 .web-pane { flex: 1; min-height: 0; display: flex; flex-direction: column;

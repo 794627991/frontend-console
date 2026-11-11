@@ -796,9 +796,13 @@ function _stCdpCard(pane) {
     btn.onclick = () => {
       const now = !document.documentElement.hasAttribute('data-cdp-cfg');
       fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ web_cdp: now }) }).then(r => r.json()).then(() => {
+        body: JSON.stringify({ web_cdp: now }) }).then(r => r.json())
+        .then(() => fetch('/api/theme').then(r2 => r2.json()))
+        .then(j2 => {
+          // 审计 nano④：POST 后重探活（GET 自带 web_cdp_live）——已 live 的
+          // 进程内切换不再误报「重启生效」（关闭已 live 端口同理需重启）
           document.documentElement.toggleAttribute('data-cdp-cfg', now);
-          sync(now, false);
+          sync(now, !!(j2 && j2.ok && j2.web_cdp_live));
           showBanner(now ? 'CDP 已开启（配置已保存）——重启工具后生效' : 'CDP 已关闭——重启工具后生效', 4000);
         }).catch(() => showBanner('保存失败', 2500, true));
     };

@@ -313,20 +313,27 @@ function _webAct(act, wrap) {
     _webApplyZoom(_webZoomFor(_webNav.stack[_webNav.idx] || ''),
                   _webHostOf(_webNav.stack[_webNav.idx] || ''));
   };
+  // 审计 N1：阅读态下 back/fwd/reload 不给 iframe 赋 URL——已卸载的 iframe
+  // 会在不可见状态复活加载（a355 禁节流下页面 JS 全速燃烧），且阅读文本
+  // 停在旧 URL 上误导。改为：阅读态导航/重载=按新 idx 重新取正文
+  const _go = (u) => {
+    if (_webUi.reader) _webReaderToggle(true);   // 重发 fetch_text（frame 已 blank，幂等）
+    else frame.src = u;
+  };
   if (act === 'back' && _webNav.idx > 0) {
     _webNav.idx--;
-    frame.src = _webNav.stack[_webNav.idx];
+    _go(_webNav.stack[_webNav.idx]);
     c.wrap.querySelector('[data-web-input]').value = _webNav.stack[_webNav.idx];
     c.tab.querySelector('.label').textContent = _webShortUrl(_webNav.stack[_webNav.idx]).slice(0, 24);
     _webSyncUI(); _afterMove();
   } else if (act === 'fwd' && _webNav.idx < _webNav.stack.length - 1) {
     _webNav.idx++;
-    frame.src = _webNav.stack[_webNav.idx];
+    _go(_webNav.stack[_webNav.idx]);
     c.wrap.querySelector('[data-web-input]').value = _webNav.stack[_webNav.idx];
     c.tab.querySelector('.label').textContent = _webShortUrl(_webNav.stack[_webNav.idx]).slice(0, 24);
     _webSyncUI(); _afterMove();
   } else if (act === 'reload' && url) {
-    frame.src = url;
+    _go(url);
   } else if (act === 'read') {
     _webReaderToggle(!_webUi.reader);
   } else if (act === 'sys' && url) {
