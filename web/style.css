@@ -5375,6 +5375,42 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
    强引用拖住整棵子树无法 GC（ZCode 实测 23.5 万节点泄漏） */
 [data-document-hidden] * { transition: none !important; animation: none !important; }
 
+/* ===== a468：无GPU加速模式（虚机/远程桌面主战场，用户令「内网也要有
+   动画但不卡」）——动画降帧而非禁用，与 a451 的 data-perf（全禁大锤）
+   分层共存。本块声明在 data-perf 之前：两档同开时后写的 perf 覆盖取胜。
+
+   帧经济学：虚机每帧成本 = CPU 软件光栅（重绘面积）+ RDP 逐帧增量编码。
+   三刀全砍在帧数上、不砍状态变化：
+   ① transition-duration 200~300ms → 100ms——快速划过列表时任一瞬间处于
+     补间中的元素从 ~9 个降到 ~2 个（每帧重绘面积随之缩），单元素总帧数
+     从 ~18 帧降到 ~6 帧。只压时长、不动 delay/property——现有依赖
+     transition-delay 的显示时序（tooltip 等）保持原样，且全仓无
+     transitionend 逻辑依赖，压时长零破坏面。
+   ② animation-timing-function: steps(12)——每个动画周期最多 12 帧：循环
+     动画（spinner 0.8s=15fps、脉动 1.6s=7.5fps）从 60fps 持续账单降 80%，
+     观感仍是转圈/呼吸；一次性入场动画（≤400ms）12 帧≈40fps 无感差异。
+     animationend 照常触发（hist.js 思考行 .exit 克隆靠它自拆——这是
+     a451 用 1ms 而非 none 的同一约束，steps 同样满足）。
+   ③ backdrop-filter 关闭——软件光栅最贵的绘制（逐像素卷积），状态胶囊/
+     docx 大纲/断连遮罩底层不透明度 ≥82%，无 blur 视觉损失可忽略。 */
+html[data-nogpu] *, html[data-nogpu] *::before, html[data-nogpu] *::after {
+  transition-duration: .1s !important;
+  animation-timing-function: steps(12, end) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* 长列表：视口外行跳过绘制（content-visibility 不碰 DOM/布局/滚动定位——
+   innerHTML 重建、querySelectorAll、checkbox 状态全不受影响；只跳 paint，
+   重绘面积恒等于视口）。只挂**纯展示行**：全仓核对 .hg-srow（会话列表）
+   与 .hg-vcs-frow（版本改动列表）无任何 offsetHeight/getBoundingClientRect
+   测量；log-viewer 自带虚拟化、终端是 canvas、Monaco 在 iframe，均不需要。
+   contain-intrinsic-size 的 auto 让 Chromium 记住各行首渲尺寸，滚动条
+   高度稳定不跳 */
+html[data-nogpu] .hg-srow, html[data-nogpu] .hg-vcs-frow {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 36px;
+}
+
 /* ===== a451：性能模式全局化（用户实锤：虚机里鼠标划过带动画的区域帧率
    爆降卡成 PPT）——data-perf 原先只在极光皮肤下有规则（a278），默认科技
    风下开了等于没开。虚机=软件渲染（每帧重绘全靠 CPU）+ 远程桌面协议逐帧

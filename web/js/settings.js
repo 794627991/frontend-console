@@ -314,11 +314,18 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-sub">整个界面等比缩放（80%–130%）。也可用 Ctrl+= / Ctrl+- 调终端字号，Ctrl+0 全部恢复默认。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
-      <div class="dd-label">性能模式</div>
+      <div class="dd-label">无GPU加速（虚拟机/远程桌面）</div>
+      <div class="dd-row" style="margin-top:6px;">
+        <button class="btn ghost" id="apNoGpuToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
+      </div>
+      <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 12 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会一次性提示建议开启。外网真机保持关闭即享完整 GPU 效果。</div>
+    </div>
+    <div class="dd-cur" style="margin-top:8px;">
+      <div class="dd-label">性能模式（全禁大锤）</div>
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">全局禁用过渡/循环动画与毛玻璃（虚拟机/远程桌面推荐）——hover 补间与逐帧动画是虚机软件渲染的卡顿大头，默认风格同样生效。</div>
+      <div class="dd-sub">全局禁用过渡/循环动画与毛玻璃——比无GPU加速更激进，极端卡顿时用；两档同开时本档优先。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">Tab 模式</div>
@@ -382,6 +389,18 @@ function _stRenderAppearancePane(pane) {
   // a346：代码跳转快捷键已移到「终端设置」（a335：与其它快捷键配置放一起）
   // a278 性能模式开关（极光玻璃 GPU 合成优化）
   const perfBtn = pane.querySelector('#apPerfToggle');
+  // a468：无GPU加速（动画降帧档）——先于 perf 大锤渲染；两档独立开关
+  const nogpuBtn = pane.querySelector('#apNoGpuToggle');
+  if (nogpuBtn && typeof toggleNoGpuMode === 'function') {
+    const syncNoGpu = () => {
+      const on = document.documentElement.hasAttribute('data-nogpu');
+      nogpuBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
+        + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
+        + '<small style="color:var(--muted);font-weight:400;">　' + (on ? '动画降帧中（补间 100ms · 循环 12 帧/周期 · 无毛玻璃）' : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
+    };
+    nogpuBtn.onclick = () => { toggleNoGpuMode(); syncNoGpu(); };
+    syncNoGpu();
+  }
   if (perfBtn && typeof togglePerfMode === 'function') {
     const syncPerf = () => {
       const on = document.documentElement.hasAttribute('data-perf');

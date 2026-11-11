@@ -1342,6 +1342,25 @@ def _calc_hist_clean(items):
     return out
 
 
+def _is_remote_session():
+    """a468：当前是否跑在远程桌面会话里（RDP/ICA/Citrix）。
+
+    无 GPU 加速场景的一次性建议依据（前端据此提示开 nogpu_mode，不自动
+    开——用户在外网真机也用同一份配置，自动开会在切回真机时残留降级）。
+    SESSIONNAME：Console=本机控制台 / RDP-Tcp#N=远程桌面 / ICA-*=Citrix。
+    任何异常按本机会话处理（宁可漏提示不误报）。"""
+    try:
+        sn = (os.environ.get("SESSIONNAME") or "").strip().upper()
+        if sn.startswith("RDP") or sn.startswith("ICA"):
+            return True
+        # CLIENTNAME：RDP 会话里是客户端机器名，控制台会话无此变量
+        if os.environ.get("CLIENTNAME") and sn != "CONSOLE":
+            return True
+    except Exception:
+        pass
+    return False
+
+
 @app.route("/api/theme", methods=["GET", "POST"])
 def api_theme():
     """主题持久化。localStorage 按 origin（127.0.0.1:端口）隔离，而 Flask 每次
@@ -1378,6 +1397,10 @@ def api_theme():
                         "doc_search_hotkey": cfg.get("doc_search_hotkey", "ctrl+f"),
                         "notes_search_hotkey": cfg.get("notes_search_hotkey", "ctrl+alt+f"),
                         "perf_mode": bool(cfg.get("perf_mode", False)),
+                        # a468：无 GPU 加速模式（虚机/远程桌面——动画降帧档）
+                        "nogpu_mode": bool(cfg.get("nogpu_mode", False)),
+                        # a468：远程会话检测（RDP/ICA）——前端据此一次性建议开启
+                        "remote_session": _is_remote_session(),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
                         # a336：加 back/fwd（导航历史后退/前进）
@@ -1394,6 +1417,9 @@ def api_theme():
     data = request.get_json(force=True) or {}
     if "perf_mode" in data:
         _save_config({**_load_config(), "perf_mode": bool(data["perf_mode"])})
+    # a468：无 GPU 加速模式——与 perf_mode（全禁大锤）分档共存
+    if "nogpu_mode" in data:
+        _save_config({**_load_config(), "nogpu_mode": bool(data["nogpu_mode"])})
     if "tab_mode" in data:
         # 白名单：只认 flat/drawer，防脏配置
         if str(data["tab_mode"]).strip() in ("flat", "drawer"):

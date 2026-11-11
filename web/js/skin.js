@@ -79,6 +79,19 @@ function applyStyle(id, persist) {
     const j = await r.json();
     if (j.ok && j.style) style = j.style;
     if (j.ok && j.perf_mode) document.documentElement.setAttribute('data-perf', '');
+    // a468：无 GPU 加速模式（虚机/RDP——动画降帧档），与 perf 分档共存
+    if (j.ok && j.nogpu_mode) document.documentElement.setAttribute('data-nogpu', '');
+    // a468：远程桌面一次性建议（不自动开——外网真机共用同一份配置，
+    // 自动开会在切回真机时残留降级；每次启动至多提示一次）
+    if (j.ok && j.remote_session && !j.nogpu_mode && !j.perf_mode) {
+      try {
+        if (!localStorage.getItem('hg-nogpu-suggest-done')) {
+          localStorage.setItem('hg-nogpu-suggest-done', '1');
+          if (typeof showBanner === 'function')
+            showBanner('检测到远程桌面会话——若界面卡顿，建议开启 设置→外观→无GPU加速（动画降帧优化）', 8000);
+        }
+      } catch (_) {}
+    }
   } catch (_) {}
   if (!style || style === 'default') return;
   // 等 theme.js initTheme 先挂好 data-theme 再挂风格：两份 async fetch
@@ -105,3 +118,21 @@ function togglePerfMode(on) {
   return on;
 }
 window.togglePerfMode = togglePerfMode;
+
+// a468 无 GPU 加速模式（虚机/远程桌面主战场，用户令「内网也要有动画但
+// 不卡」）：动画**降帧而非禁用**——补间 200~300ms→100ms（并发补间元素数
+// 砍 2/3）、循环动画 steps(12)/周期（60fps→12~15fps 级，观感保留）、关
+// backdrop-filter（软件光栅最贵）、长列表视口外行跳过绘制。与 perf（全禁
+// 大锤）分层共存：两档同开时大锤优先（CSS 声明顺序保证）。持久化搭
+// /api/theme 顺车（nogpu_mode 键）。
+function toggleNoGpuMode(on) {
+  const el = document.documentElement;
+  if (on === undefined) on = !el.hasAttribute('data-nogpu');
+  el.toggleAttribute('data-nogpu', on);
+  try {
+    fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nogpu_mode: on }) });
+  } catch (_) {}
+  return on;
+}
+window.toggleNoGpuMode = toggleNoGpuMode;
