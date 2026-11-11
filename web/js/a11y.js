@@ -24,6 +24,7 @@
     [/file-rename|ed-rename/, '重命名'],
   ];
 
+  let _a11ySeq = 0;   // a470：补 id 时的唯一序号（见下方 fix 注释）
   function fix(el) {
     // a447（用户实锤两处截图）：浏览器自动填充建议层（Edge 深色「保存的信息」
     // 面板）会挂到被它认作表单字段的文本框上。统一加 autocomplete=off；
@@ -62,11 +63,16 @@
     // Edge 一旦判成用户名/地址启发式就直接忽略 off、黑窗照弹。凡是**显式
     // 声明了 autocomplete="off" 的控件**都不补 name：那是「我不参与表单
     // 记忆」的明确意图，补名等于把它打回可记忆字段。
-    const _ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+    const _ac = (el.getAttribute('autocomplete') || '').trim().toLowerCase();
+    // a470（第二轮审计 P2）：补 **id** 而不是 name。DevTools 那条告警
+    // （A form field element should have an id or name）id 也算满足，而
+    // name 会重新让控件进入浏览器的字段记忆启发式——正是本规则想除的根因。
+    // 另外用「class + 全局序号」保证唯一：原实现同 class 的多个无名字段会
+    // 拿到同一个 name（office-viewer 的 data-ov-page 就是 name="field"）。
     if (el.type !== 'search' && _ac !== 'off'
         && !el.id && !el.getAttribute('name')) {
       const base = (el.className || '').split(/\s+/)[0] || 'field';
-      el.setAttribute('name', base);
+      el.id = 'a11y-' + base.replace(/[^\w-]/g, '') + '-' + (_a11ySeq++);
     }
   }
 

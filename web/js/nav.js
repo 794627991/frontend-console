@@ -1181,7 +1181,7 @@
         st.style.color = 'var(--neon-red,#e5484d)';
         // R27-3（实锤：未建 ctags 时 codegraph 整体不可见）：两套索引独立
         // ——ctags 不需要 ≠ codegraph 不需要（claude 代码图有自己的价值）
-        _renderCodegraph(st, path, btns);
+        _renderCodegraph(st, path, btns, card);
         return;   // ctags 无按钮：不盲目；codegraph 区块自行决定
       }
       st.textContent = '✓ 发现代码文件（浅层抽样 ' + (j.probe_files || 0) + ' 个）。'
@@ -1194,7 +1194,7 @@
       bAdd.onclick = () => _startBuild(card, path, fbSel.value);
       btns.insertBefore(fbSel, btns.lastChild);
       btns.insertBefore(bAdd, btns.lastChild);
-      _renderCodegraph(st, path, btns);   // R27-3：两套独立，都要可见
+      _renderCodegraph(st, path, btns, card);   // R27-3：两套独立，都要可见
       return;
     }
     const m = j.meta || {};
@@ -1284,11 +1284,11 @@
     // 边缘场景不值得一个按钮（API 端点保留，需要时可程序化调用）
     btns.insertBefore(bRe, btns.lastChild);
     // ---- Claude 代码图（codegraph，喂 claude 会话；与上方 ctags 跳转索引独立）----
-    _renderCodegraph(st, path, btns);
+    _renderCodegraph(st, path, btns, card);
   }
 
   // a360：codegraph 区块——状态行 + 建/重建 + 增量同步 + 删除
-  async function _renderCodegraph(st, path, btns) {
+  async function _renderCodegraph(st, path, btns, card) {
     let j = null;
     try {
       const r = await fetch('/api/nav/cg_status?root=' + encodeURIComponent(path));
@@ -1311,7 +1311,7 @@
         const bFix = _h('button', ICO16.refresh + ' 重建', true);
         bFix.className = 'btn primary';
         bFix.style.cssText = 'padding:2px 10px;font-size:11px;margin-left:6px;';
-        bFix.onclick = () => _cgRun(path, 'build');
+        bFix.onclick = () => _cgRun(path, 'build', card);
         line.appendChild(bFix);
       }
       st.appendChild(line);
@@ -1336,11 +1336,11 @@
     };
     paint(j);
     const bBuild = mkBtn(j.installed ? (ICO16.refresh + ' 重建') : (ICO16.search + ' 建立'), 'btn primary');
-    bBuild.onclick = () => _cgRun(path, 'build');
+    bBuild.onclick = () => _cgRun(path, 'build', card);
     const bSync = mkBtn(ICO16.refresh + ' 增量同步', 'btn ghost');
     bSync.style.display = j.installed ? '' : 'none';
     bSync.title = '代码大改后秒级增量';
-    bSync.onclick = () => _cgRun(path, 'sync');
+    bSync.onclick = () => _cgRun(path, 'sync', card);
     const bDel = mkBtn(ICO16.trash + ' 删除', 'btn ghost');
     bDel.style.cssText += 'color:#e5484d;';
     bDel.style.display = j.installed ? '' : 'none';
@@ -1359,7 +1359,7 @@
     st.appendChild(line);
   }
 
-  function _cgRun(path, mode) {
+  function _cgRun(path, mode, card) {
     fetch('/api/nav/cg_build', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ root: path, mode }) })
@@ -1368,9 +1368,13 @@
         if (!j.ok) { showBanner('启动失败：' + (j.err || ''), 4000, true); return; }
         // R26-2（实锤：codegraph 任务 UI 零反馈）：真开进度面板——与
         // ctags 建库同款（轮询同通道，日志/进度/取消/完成通知全有）
-        const panel = document.getElementById('navIdxPanel');
-        const card = panel && panel.firstChild;
-        if (card) _renderProgress(card, path);
+        // a471（第二轮审计 P2）：必须用发起时那张卡片。原来在回调里取
+        // `panel.firstChild`——请求在途时用户关了面板又对另一目录开了新
+        // 面板，就会把 B 的卡片强行换成 A 的 codegraph 进度（poll 显示旧
+        // root），随后 B 的正常渲染又覆盖它，留下指向已 detach 节点的
+        // interval 无人清理。
+        if (!card || !card.isConnected) return;
+        _renderProgress(card, path);
       })
       .catch(e => showBanner('启动失败: ' + e, 4000, true));
   }
@@ -1392,7 +1396,11 @@
         // 点背景，此时 dataset.running 还没置位，遮罩仍可关）。原实现照样
         // _renderProgress，在已脱离 DOM 的 card 上重建轮询与计时器，之后
         // 无人清理（_closePanel 早跑过了），后台每 800ms 空转到任务结束。
-        if (!document.getElementById('navIdxPanel')) return;
+        // a471（第二轮审计 P2）：只按 id 查面板还不够——期间用户可能在
+        // 另一目录打开了**新**面板，id 命中但 card 已不属于它。原实现会把
+        // A 的进度渲染到脱离 DOM 的卡片上，还把 B 面板设成 running，用户在
+        // B 点关闭会取消掉一个他以为不存在的任务。必须校验 card 仍连通。
+        if (!card.isConnected) return;
         _renderProgress(card, path);
       })
       .catch(e => showBanner('启动失败: ' + e, 4000, true));
@@ -1605,6 +1613,12 @@
           _tierAsked = false;
         }
         if (!s.done) return;
+        // a471（第二轮审计 P2）：DONE 分支必须校验「本轮是否仍是当前轮」。
+        // 任务 A 结束瞬间其 poll 请求在途（慢盘 >1.6s），用户已在另一目录
+        // 起任务 B 并弹出建库方式弹窗——A 的回调会把 B 的弹窗删掉、解除
+        // B 面板的 dataset.running（B 的后端白等 10 分钟后按 full 继续，
+        // 用户的选择丢失）。不是当前轮就直接返回，什么都不清。
+        if (_pollTimer !== _myPoll) return;
         // a462：只清本轮自己的定时器；模块级引用若已指向别的任务则不碰
         clearInterval(_myPoll);
         if (_myClock) clearInterval(_myClock);

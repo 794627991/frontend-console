@@ -2394,12 +2394,18 @@ def _status_payload():
     # 不依赖 quota_login 状态：负载查询自己登录（20s 缓存兜住频率），
     # worker 没跑过时也能出数（首次开面板即见）。
     try:
+        # a471（第二轮审计 P2）：同时下发「本上游是否支持负载」。原来只有
+        # 有数据/有错误时才带字段，非 lanz 网关（智谱等）两者都缺——前端无法
+        # 区分「不支持」与「还没到」，悬浮卡会永久停在「负载加载中…」。
         if _is_lanz_api() and _get_credentials():
+            data["model_loads_supported"] = True
             loads, lerr = _get_model_loads()
             if loads or lerr:
                 data["model_loads"] = loads
                 data["model_loads_err"] = lerr
                 data["model_loads_ts"] = _quota_loads_ts
+        else:
+            data["model_loads_supported"] = False
     except Exception:
         pass   # 负载异常不拖死 status（面板命脉）
     return data

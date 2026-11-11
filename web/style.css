@@ -5341,6 +5341,25 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
    强引用拖住整棵子树无法 GC（ZCode 实测 23.5 万节点泄漏） */
 [data-document-hidden] * { transition: none !important; animation: none !important; }
 
+/* ===== a461：性能模式全局化（用户实锤：虚机里鼠标划过带动画的区域帧率
+   爆降卡成 PPT）——data-perf 原先只在极光皮肤下有规则（a278），默认科技
+   风下开了等于没开。虚机=软件渲染（每帧重绘全靠 CPU）+ 远程桌面协议逐帧
+   编码传增量，三处逐帧大户一起掐：
+   ① transition 全关——hover 态瞬时切换，单帧重绘代替 200-300ms 补间风暴
+     （鼠标快速划过列表时每个元素都触发一轮，全库无 transitionend 监听，实锤安全）；
+   ② animation 保名压时长到 1ms 且只放一遍——不能照抄 a275 的 animation:none：
+     hist.js 思考行翻转的 .exit 克隆靠 animationend 自拆，none 会留永久幽灵行；
+     1ms 一次让清理合同照常履行、入场动画瞬切、infinite 循环（思考脉动/进度
+     条纹/spinner）定格末帧不再逐帧重绘（delay 保留不影响——延迟期零开销）；
+   ③ backdrop-filter 全关——状态胶囊/docx 大纲/断连遮罩三处底层不透明度
+     ≥82%，无 blur 视觉损失可忽略。 */
+html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
+  transition: none !important;
+  animation-duration: .001s !important;
+  animation-iteration-count: 1 !important;
+  backdrop-filter: none !important;
+}
+
 /* ===== a279 批1：MD 预览主题色独立配置（用户定调：不跟随全局，可随时改） =====
    四档：auto（跟随全局暗亮）/ dark / light / paper（护眼=旧版恒亮纸色）
    实现方式：.ed-md-preview 挂主题类，覆盖 --note-* 变量 */

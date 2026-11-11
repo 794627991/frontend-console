@@ -10,7 +10,11 @@
 // 恢复。busy 时不卸载（后台流式 append 依赖 flow 在场，快照覆盖会丢消息）。
 ;(function _hgFlowUnloadInit() {
   const _orig = switchTab;
-  switchTab = function(portId) {
+  // a470（第二轮审计 P1）：必须转发第二个参数 auto。a467 给自动回切加了
+  // 「不计 MRU」语义，但包装器签名只有 (portId)，`switchTab(rest, true)` 的
+  // true 被这里吞掉，terminal-core 收到的 auto 是 undefined → 自动回切照样
+  // 把无关 tab 顶到 MRU 最前，a467 的原现象一字未改。
+  switchTab = function(portId, auto) {
     // isHg/wasHg 必须在 try 块外声明（const 块级作用域——曾定义在 try 内、
     // 块外引用，每次切 tab 必抛 ReferenceError 且真正的切换动作永远不执行，
     // v2.31 未浏览器实测漏网：用户实锤「Claude 对话没反应/打开 settings 失败」）
@@ -33,7 +37,7 @@
     // v2.31：harness tab 激活时右侧「终端助手」面板整体隐藏（v3.3 起会话
     // 动态在 harness 内部分屏——旧换装形态废止，面板对 harness 零用处）
     if (isHg !== wasHg) _hgPanelMode(isHg);
-    return _orig(portId);
+    return _orig(portId, auto);
   };
 })();
 
@@ -66,7 +70,12 @@ function _harnessClose(portId) {
   // a466（审计 P1）：关 tab 必须关掉本 tab 的弹窗。恢复会话/技能仓库/三角色
   // 等弹窗是自建 hg-modal-ov、挂 body 的，不随 wrap 移除——会盖在全窗上，
   // 误点「恢复」还会对已销毁面板发真实写请求。收口表统一 closeAll。
-  try { if (window._hgModalReg) window._hgModalReg.closeAll(); } catch (_) {}
+  // a470（第二轮审计 P2）：按**所有者**收口，不再全局清。表是全局单例，原来
+  // 无条件 closeAll 会把版本面板（挂 body）正在用的确认框一起关掉，用户
+  // 操作被打断。所有者由 modal.js 在创建时按「当时的活动 tab」打标。
+  try {
+    if (window._hgModalReg) window._hgModalReg.closeAll('harness:gui');
+  } catch (_) {}
   // a464（审计 P2）：悬浮负载卡是模块级状态，必须随 tab 一起收——否则鼠标
   // 正停在 Proxy 按钮上时关 tab，按钮随 wrap.remove() 消失且不再派生
   // mouseout，tip 保持 block，20s tick 继续用 detached anchor（rect 全 0）
@@ -111,8 +120,14 @@ function _harnessClose(portId) {
     const ka = sortKeyFn(a), kb = sortKeyFn(b);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : (ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0);
   });
-  if (remaining.length) switchTab(remaining[0], true);   // a467：自动回切不计 MRU
-  else {
+  // a470（第二轮审计 P1）：只有关的是**当前活动** tab 才自动回切。原来无条件
+  // switchTab(remaining[0])——用户在编辑器/日志 tab 上乘关闭一个非活动的
+  // harness tab，上下文会被强行切走（editor.js:1525 有这道门，这里缺）。
+  if (remaining.length && activePortId === portId) {
+    switchTab(remaining[0], true);   // a467：自动回切不计 MRU
+  } else if (!remaining.length) {
+    // 一个都不剩 → 空态。关的是非活动 tab 且仍有剩余时无需任何动作：
+    // activePortId 仍指向一个存在的 tab（被上面的 gate 排除的正是这种情况）。
     activePortId = null;
     termArea.innerHTML = '<div class="empty-state"><div class="big-icon"><svg width="30" height="30" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="12.2" r="1.1"/><path d="M5 9.2a4.2 4.2 0 0 1 6 0"/><path d="M2.7 6.9a7.5 7.5 0 0 1 10.6 0"/></svg></div><div class="title">暂无连接</div><div class="desc">点击顶部「新建连接」选择串口或 SSH，支持同时监控多个连接。每个连接独立标签页，互不干扰。</div></div>';   // a261：信号 path 同库 signal 字形（30px 空态大图标）
   }
@@ -400,6 +415,7 @@ hgLoginRefresh();
 // 时下发 model_loads；有数据才出悬浮卡，不是 lanz 网关时保持原样。
 let _hgProxyLoads = null;     // 最近一次 status 的 model_loads（悬浮时直接用）
 let _hgProxyLoadsErr = '';    // a464：后端下发的 model_loads_err（无数据时给用户原因）
+let _hgProxyLoadsSupported = true;   // a471：上游是否支持负载（非 lanz 网关时 false）
 let _hgLoadsTip = null;
 
 function _hgLoadsTipEl() {
@@ -486,6 +502,8 @@ document.addEventListener('mouseover', ev => {
   // （relatedTarget 不在按钮内）才拉数据 + 重臂定时器，否则悬停时每秒
   // 好几发请求。
   if (btn.contains(ev.relatedTarget)) return;
+  // a471：上游不支持负载（非 lanz 网关）时不出卡、不启 tick
+  if (!_hgProxyLoadsSupported) { hgProxyRefreshState(); return; }
   _hgProxyHoverAnchor = btn;
   hgProxyRefreshState();
   _hgLoadsPaint(btn);
@@ -533,6 +551,16 @@ function hgProxyRefreshState() {
       // a448：悬浮卡的负载数据（无数据时置空，悬浮不出卡）
       _hgProxyLoads = (j.model_loads && j.model_loads.length) ? j.model_loads : null;
       _hgProxyLoadsErr = j.model_loads_err || '';
+      // a471（第二轮审计 P2）：上游不支持负载（非 lanz 网关）→ 直接收起卡片，
+      // 不要停在「负载加载中…」空转（fetch 一直成功但没有数据，永不自愈）。
+      _hgProxyLoadsSupported = j.model_loads_supported !== false;
+      if (!_hgProxyLoadsSupported) {
+        _hgProxyLoadsErr = '';
+        try { if (_hgLoadsTip) _hgLoadsTip.style.display = 'none'; } catch(_) {}
+        _hgProxyHoverAnchor = null;
+        try { _hgLoadsStopTick(); } catch(_) {}
+        return;
+      }
       // a450：卡片在场时跟着刷新（悬停定时器 20s 一拉，数据回来就重绘）
       // a464：数据未到时也要重绘（显示原因/加载中），不能直接 Hide——
       // 原来空数据走 _hgLoadsHide 会把卡片收掉，用户看着像卡没弹出来。

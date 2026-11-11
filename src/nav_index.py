@@ -477,7 +477,12 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                         en = getattr(e, "errno", None)
                         if we in _SOFT_WINERR or en in _SOFT_ERRNOS:
                             _soft_errs[0] += 1
-                            stats["soft_skipped"] = stats.get("soft_skipped", 0) + 1
+                            # a471（第二轮审计 P2）：8 个 worker 并发改同一个
+                            # stats，读-改-写会丢失更新（阶段末「跳过 N 个
+                            # 不可读目录」偏小）。同函数里的 artifact_dirs /
+                            # pruned 已有 _alock，这里漏了。
+                            with _alock:
+                                stats["soft_skipped"] = stats.get("soft_skipped", 0) + 1
                             if _soft_errs[0] > _CONSEC_LIMIT:
                                 _err[0] = e   # 连续爆炸=网络真断
                             return
@@ -1120,11 +1125,16 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
     # 最多 5 个 base 逐个 isdir，SMB 上每次都是一次 RTT（分钟级纯等待）；
     # 而 .cmd 里反复出现的是同一批 include 目录，缓存命中率极高。
     _isdir_c = {}
+    # a471（第二轮审计 P2）：缓存加容量上限。1 万 .cmd × 30 个相对 -I ×
+    # 最多 5 个 base = 可达百万条长路径常驻（数百 MB），本地盘上没有 I/O
+    # 收益时纯增内存。超过阈值后停止写入——已缓存的仍然有效。
+    _ISDIR_C_MAX = 200000
     def _isdir(p):
         v = _isdir_c.get(p)
         if v is None:
             v = os.path.isdir(p)
-            _isdir_c[p] = v
+            if len(_isdir_c) < _ISDIR_C_MAX:
+                _isdir_c[p] = v
         return v
     # a440：cmd_abs_list 来自并发目录扫描（顺序不稳定），而下面有收敛早停
     # ——顺序不同会在不同的 .cmd 处收敛，提到不同的 -I 集，导致同一工程
@@ -2020,10 +2030,14 @@ def build(root, log=None, progress=None, should_cancel=None,
         # a431：-I 直接从阶段 1 已扫到的 .cmd 列表提取（原实现对 source_roots
         # 整树再 walk 一遍——source_roots 含 "." = 全树文件 SMB 全量穿越，
         # 卡死且取消无效）
-        _inc_bases = [os.path.join(root, a.replace("/", os.sep))
-                      for a in (sc["artifact_roots"] or ())]
-        _inc_bases += [os.path.join(root, b.replace("/", os.sep))
-                       for b in sc["source_roots"] if b not in (".", "")]
+        # a471（第二轮审计 P2）：显式 source_roots 必须优先于产物根。gcc 解析
+        # 相对 -I 的基准是「.cmd 所在构建根」，产物树里若带一份同名镜像目录，
+        # 先命中产物副本 → 该路径不在收录集 → 被丢弃 → 整支 include 漏收。
+        # 显式根是用户声明的主源码树，比产物镜像可信。
+        _inc_bases = [os.path.join(root, b.replace("/", os.sep))
+                      for b in sc["source_roots"] if b not in (".", "")]
+        _inc_bases += [os.path.join(root, a.replace("/", os.sep))
+                       for a in (sc["artifact_roots"] or ())]
         _inc_bases.append(root)
         _inc_dirs, _n_cmd = _extract_inc_dirs(
             cmd_abs, _inc_bases, should_cancel=should_cancel, say=say)

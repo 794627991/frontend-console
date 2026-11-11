@@ -645,10 +645,12 @@
         if (base > 0 && mx0 > 0) {
           const mx = mx0;
           // v4.1（用户定调）：侧栏详情同胶囊——只按真值 base，不叠估值
-          const pct = Math.min(100, Math.round(base / mx * 100));
-          ctxTxt = pct + '% · ' +
+          // a470（第二轮审计 P2）：显示 floor、判色 round，与胶囊/圆环同档。
+          // 原来 round 后拿它判色，79.6% 会出现「胶囊 79%、详情 80% 亮橙」。
+          const _p2 = Math.min(100, base / mx * 100);
+          ctxTxt = Math.floor(_p2) + '% · ' +
                    (base / 1000).toFixed(1) + 'K/' + (mx / 1000).toFixed(0) + 'K';
-          warn = pct >= 80;
+          warn = Math.round(_p2) >= 80;
         }
       } catch(_) {}
     }

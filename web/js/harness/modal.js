@@ -3,14 +3,20 @@
   // 由宿主模块（版本面板）teardown 时调 closeAll() 统一 close——close 会走
   // 正常 resolve(null)，调用方的 .then 拿到「取消」，不会误发写请求。
   window._hgModalReg = (function () {
-    const m = new Map();   // ov -> close(v)
+    const m = new Map();   // ov -> {close, host}
     return {
-      add(ov, close) { m.set(ov, close); },
+      add(ov, close, host) { m.set(ov, { close, host: host || null }); },
       del(ov) { m.delete(ov); },
-      closeAll() {
-        const items = [...m.entries()];
-        m.clear();
-        items.forEach(([ov, close]) => { try { close(null); } catch (_) {} });
+      // a470（第二轮审计 P2）：支持按宿主收口。原来是全局单例无宿主维度——
+      // 关 Claude tab 会把版本面板（挂 body）正在用的确认框一起 close 掉，
+      // 用户操作被打断。host 缺省时只关 body（即无人认领）那批。
+      closeAll(host) {
+        const hit = [];
+        for (const [ov, rec] of m) {
+          if (host === undefined || rec.host === host) hit.push([ov, rec]);
+        }
+        hit.forEach(([ov]) => m.delete(ov));
+        hit.forEach(([, rec]) => { try { rec.close(null); } catch (_) {} });
       }
     };
   })();
@@ -35,6 +41,15 @@
       if (pos === 'fixed' || pos === 'sticky' || w.offsetParent !== null) return w;
     } catch (_) {}
     return document.body;
+  }
+  // 弹窗归属：用「创建时的活动 tab」而不是宿主节点。宿主节点在 harness tab
+  // 非当前时恒为 body（_hgWrap 不可见），与版本面板的弹窗撞在一起，关 Claude
+  // tab 会把别人的确认框一起收掉（a470 审计 P2）。
+  function _hgModalOwner() {
+    try {
+      if (typeof activePortId !== 'undefined' && activePortId) return activePortId;
+    } catch (_) {}
+    return 'body';
   }
   function hgModal(title, bodyHtml, buttons) {
     return new Promise((resolve) => {
@@ -71,13 +86,13 @@
       // 视觉差异由 style.css 的 .hg-modal input 规则抹平。
       try {
         ov.querySelectorAll('input').forEach((inp) => {
+          // a470（第二轮审计 P2）：改为**白名单**。原黑名单漏了
+          // button/submit/reset/image（改成 search 会变成可见文本框、点击
+          // 行为失效）和 datetime-local/month/week（改型后 value 格式与取值
+          // 语义都变）。只改纯文本类，其余一律原样。
           const t = (inp.getAttribute('type') || 'text').toLowerCase();
-          if (t === 'checkbox' || t === 'radio' || t === 'file' || t === 'number'
-              || t === 'date' || t === 'time' || t === 'color' || t === 'range'
-              // a466（审计 P2）：password 必须排除——改成 search 会明文显示
-              // （代理凭据/Token 输入一旦走 hgModal 就泄露）。hidden 同理
-              // （改成 search 会变成可见搜索框）。
-              || t === 'password' || t === 'hidden') return;
+          if (t !== 'text' && t !== 'search' && t !== 'email'
+              && t !== 'tel' && t !== 'url') return;
           inp.setAttribute('type', 'search');
           inp.setAttribute('autocomplete', 'off');
           inp.setAttribute('aria-autocomplete', 'none');
@@ -95,10 +110,17 @@
         if (window._hgModalReg
             && typeof window._hgModalReg.add === 'function') {
           reg = window._hgModalReg;
-          reg.add(ov, close);
+          reg.add(ov, close, _hgModalOwner());
         }
       } catch (_) {}
       const inp = inp0;
+      // a470（第二轮审计 P2）：Esc 原来只绑在 inp 上——hgConfirm（删除会话/
+      // 纳入版本控制/Pull/卸载技能）这类无输入框的弹窗整段监听不注册，
+      // 按 Esc 毫无反应。改为同时绑 ov（tabindex 让它能收键盘事件）。
+      ov.setAttribute('tabindex', '-1');
+      ov.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); close(null); }
+      });
       if (inp) { inp.focus(); inp.select();
         inp.addEventListener('keydown', (e) => {
           if (e.key === 'Enter') { const b = buttons[buttons.length - 1]; const v = typeof b.value === 'function' ? b.value(inp) : b.value; close(v); }
@@ -108,10 +130,17 @@
   }
   // 自建弹窗（不走 hgModal）的收口入口：ov 为遮罩节点，closeFn 负责摘 DOM
   // 与必需的 resolve。调用方在 appendChild 之后调一次即可。
+  // a470（第二轮审计 P1）：登记时必须包一层——自建弹窗的 closeFn 只摘 DOM
+  // 不退册，收口表里的条目连同整棵弹窗 DOM 永久保留（反复开关 N 次就攒 N 棵）。
   function hgModalTrack(ov, closeFn) {
     try {
-      if (window._hgModalReg && typeof window._hgModalReg.add === 'function')
-        window._hgModalReg.add(ov, closeFn);
+      if (window._hgModalReg && typeof window._hgModalReg.add === 'function') {
+        const wrapped = (v) => {
+          try { window._hgModalReg.del(ov); } catch (_) {}
+          try { closeFn(v); } catch (_) {}
+        };
+        window._hgModalReg.add(ov, wrapped, _hgModalOwner());
+      }
     } catch (_) {}
   }
   function hgConfirm(title, msg) {

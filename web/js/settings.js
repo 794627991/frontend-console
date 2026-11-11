@@ -314,7 +314,7 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">关闭极光玻璃的毛玻璃/光斑动画（虚机 GPU 推荐）——显著降低每帧 GPU 合成开销。</div>
+      <div class="dd-sub">全局禁用过渡/循环动画与毛玻璃（虚拟机/远程桌面推荐）——hover 补间与逐帧动画是虚机软件渲染的卡顿大头，默认风格同样生效。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">Tab 模式</div>
@@ -383,7 +383,7 @@ function _stRenderAppearancePane(pane) {
       const on = document.documentElement.hasAttribute('data-perf');
       perfBtn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.eyeOff) + ' ' : '')
         + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
-        + '<small style="color:var(--muted);font-weight:400;">　' + (on ? '毛玻璃/光斑已关闭' : '点击关闭 GPU 密集特效') + '</small>';
+        + '<small style="color:var(--muted);font-weight:400;">　' + (on ? '过渡/循环动画与毛玻璃已全局关闭' : '点击全局禁用动画与毛玻璃') + '</small>';
     };
     perfBtn.onclick = () => { togglePerfMode(); syncPerf(); };
     syncPerf();

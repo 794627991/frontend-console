@@ -58,9 +58,10 @@
   }
 
   // 前端必须与后端 smart-case 同口径：后端 `smart_case = not case`，
-  // 即未勾 Aa 时忽略大小写（rg 默认 smart-case）。否则查 `foo` 时
-  // 「Foo bar」后端命中、前端却不标。
-  const _ci = () => !st.caseOn;
+  // 未勾 Aa 时不传 --case-sensitive，rg 走 smart-case——**模式含大写即
+  // 区分大小写**。只按开关判定会让查 `Memcpy` 时前端把行内先出现的
+  // `memcpy` 也标上，与后端命中点错位（a471 审计 P2）。
+  const _ci = (q) => !st.caseOn && !/[A-Z]/.test(q || '');
 
   function _findSpans(text, q) {
     const spans = [];
@@ -71,7 +72,7 @@
       // （组合符/½/Ⅳ 等），但那属于极端字符；宁可少标也不要错位。
       const re = new RegExp('(^|[^\\p{L}\\p{N}_])(' +
         q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-        ')(?![\\p{L}\\p{N}_])', 'gu' + (_ci() ? 'i' : ''));
+        ')(?![\\p{L}\\p{N}_])', 'gu' + (_ci(q) ? 'i' : ''));
       let m;
       while ((m = re.exec(text)) !== null) {
         const start = m.index + m[1].length;
@@ -82,7 +83,7 @@
       return spans;
     }
     // 字面：直接在原文上扫，忽略大小写时用 lower 同长偏移（ASCII 安全）
-    if (_ci()) {
+    if (_ci(q)) {
       const lt = text.toLowerCase(), lq = q.toLowerCase();
       let i = 0;
       while ((i = lt.indexOf(lq, i)) >= 0) {
@@ -124,19 +125,29 @@
   bindToggle(fnEl, 'fnOn');
   // a300 审计 P2：fn 与 \b 后端互斥（-w 会让 fn 的正则恒 0 命中）——开了 fn
   // 就把 \b 视觉置灰，避免用户以为「全词 + 函数」双条件生效。
+  let _wordAutoOff = false;   // syncFnWord 自动关掉全词时置真，由 rexEl 处理器补一次重搜
   function syncFnWord() {
     if (!wordEl) return;
     // a462（审计 P2）：正则模式下 `-w` 仍然生效（后端只与 fn 互斥），
     // 但前端在 regexOn 时不做高亮，用户看不到任何标记、也不知道 -w 把
     // 边界语义改掉了（如查 `foo)` 时 -w 会额外检查尾部字符，结果与直觉
     // 相反）。这里同样置灰 + 明确提示，让用户知道该组合不按预期工作。
+    // a471（第二轮审计 P2）：正则模式下 `-w` 后端仍生效（只与 fn 互斥），
+    // 但原来只是把按钮置灰——`st.wordOn` 仍为 true 并随请求发出去，用户
+    // 看到结果变少却没有任何可关闭的入口（按钮 disabled 点不动），必须先
+    // 关正则。进入正则时直接强制关掉全词，让可见状态与生效状态一致。
+    if (st.regexOn && st.wordOn) {
+      st.wordOn = false;
+      wordEl.classList.remove('on');
+      _wordAutoOff = true;   // 告知调用方：生效条件已变，需要重搜一次
+    }
     const off = st.fnOn || st.regexOn;
     wordEl.disabled = off;
     wordEl.style.opacity = off ? '0.35' : '';
     wordEl.title = st.fnOn
       ? '函数模式已自带定义边界，全词匹配此处不生效'
       : st.regexOn
-        ? '正则模式下全词匹配不参与高亮，且 -w 会改变边界语义——建议只用其一'
+        ? '正则模式与全词互斥（已自动关闭全词）'
         : '全词匹配（同 VSCode \\b：ddr_rank 不匹配 ddr_rank_a）';
   }
   if (fnEl) {
@@ -145,7 +156,14 @@
   }
   if (rexEl) {
     const _origRexToggle = rexEl.onclick;
-    rexEl.onclick = () => { _origRexToggle(); syncFnWord(); };
+    rexEl.onclick = () => {
+      _origRexToggle();
+      _wordAutoOff = false;
+      syncFnWord();
+      // 全词被自动关掉时，本次点击只关了它，模式切换本身还没触发搜索——
+      // 补一次（_origRexToggle 里的 run 用的是旧 wordOn）。
+      if (_wordAutoOff) { _wordAutoOff = false; if (qEl.value.trim()) run(); }
+    };
   }
   syncFnWord();
   // 输入防抖 400ms 自动搜（VSCode 同款即时感；Enter 仍可立即触发、Esc 取消）
