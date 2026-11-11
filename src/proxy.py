@@ -2393,6 +2393,9 @@ def _status_payload():
     # lanz 网关（如智谱）时这份数据无意义，前端据此决定是否显示负载列。
     # 不依赖 quota_login 状态：负载查询自己登录（20s 缓存兜住频率），
     # worker 没跑过时也能出数（首次开面板即见）。
+    # a455：默认先给 False 再尝试置 True——异常分支（_is_lanz_api 抛错等）
+    # 被外层 except 吞掉时字段仍在，前端不会因此退回「加载中」死等。
+    data["model_loads_supported"] = False
     try:
         # a453（第二轮审计 P2）：同时下发「本上游是否支持负载」。原来只有
         # 有数据/有错误时才带字段，非 lanz 网关（智谱等）两者都缺——前端无法
@@ -2404,8 +2407,6 @@ def _status_payload():
                 data["model_loads"] = loads
                 data["model_loads_err"] = lerr
                 data["model_loads_ts"] = _quota_loads_ts
-        else:
-            data["model_loads_supported"] = False
     except Exception:
         pass   # 负载异常不拖死 status（面板命脉）
     return data
