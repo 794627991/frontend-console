@@ -1,23 +1,20 @@
 // ============================================================
-// 网页 tab（a473，用户令：路线 A——工具内浏览内网页面）
-// - iframe 承载：WebView2 应用档 cookie 共享——SSO 在应用内登录一次，
-//   之后所有内网 iframe 免登（比系统浏览器还顺手）
-// - 已知边界（跨域安全模型，如实记录）：
-//   ① 页内点链接后，父页读不到 iframe 当前 URL（地址栏只显示「最近一次
-//      我们发起的导航」）；后退/重载基于自有栈（重载式导航，页内链后退
-//      会重新加载——可控性优先）
-//   ② X-Frame-Options 拒嵌的站点：界面留「系统浏览器打开」一键兜底
-//   ③ 页面 title 拿不到——收藏命名取 URL 短化 + 取页接口回传 title
-// - 「发给 Claude」：POST /api/web/fetch_text（服务端取页转文本，无登录
-//   态页面）→ 填入 Claude 输入框由用户确认发送；带登录态页面走 CDP 工具
+// 网页 tab（a544 终局形态，用户令「最终形态」）——WebView2 真浏览器控件
 //
-// a475（用户令「不止做成，更要做好——性能流畅是根本」·借鉴 Edge/Chrome）：
-// - 睡眠标签页（Edge sleeping tabs）：切走 10 分钟后 iframe 置空省内存
-//   （重 JS 内网页一页 100-300MB 后台零占用），切回自动唤醒恢复
-// - 阅读模式（Reader）：fetch_text 文本视图替代 iframe——零 JS 燃烧、
-//   文本可选中、GBK 已修；同时是拒嵌站点（X-Frame-Options）的完整降级
-// - 会话恢复（session restore）：导航栈持久化，重开网页 tab 回到上次页
-// - 站点缩放记忆（per-site zoom）：Ctrl+滚轮缩放，按 host 记忆
+// 架构：每个网页 tab = 一个完整的 WebView2 浏览器控件实例（Python 侧
+// src/web_tabs.py 管理，与 Edge 标签页同级）——XFO/CSP/document.domain/
+// 防盗链/返回栈等 iframe+代理时代的一切限制结构性消失。本文件只保留
+// 工具栏 UI 与命令转发（REST /api/web/tabs），控件本体在工具窗口内
+// 与本面板的 web-body 区域像素级对齐（布局经 rect 上报）。
+//
+// 地址栏/返回/前进 = 控件原生（SourceChanged/HistoryChanged 事件经
+// ExecuteScriptAsync 回推：__webTabUrl/__webTabHist/__webTabTitle）。
+// 新窗口（target=_blank/window.open）= NewWindowRequested → __webTabNew
+// → 本面板内导航（不弹系统浏览器）。
+//
+// 保留功能：阅读模式（fetch_text）/「发给 Claude」/收藏/会话恢复/
+// 站点缩放（阅读态）。iframe 时代的代理/软过渡/逃逸检测全部退役
+//（用户令「没用全删」）。
 // ============================================================
 const WEB_PORTID = 'web:panel';
 const _webNav = { stack: [], idx: -1 };    // 只记本面板发起的导航
@@ -112,7 +109,6 @@ function buildWebPanelTab(url) {
         <button class="btn ghost icon-btn" data-web="back" title="后退（基于本面板导航记录）">◀</button>
         <button class="btn ghost icon-btn" data-web="fwd" title="前进">▶</button>
         <button class="btn ghost icon-btn" data-web="reload" title="重载">⟳</button>
-        <button class="btn ghost icon-btn" data-web="mode" title="直连：原生加载（快，兼容性好；拒绝嵌入的站切「代理」）">⚡</button>
         <input class="web-url" data-web-input spellcheck="false" autocomplete="off"
                placeholder="输入网址，回车打开">
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">★</button>
@@ -121,10 +117,8 @@ function buildWebPanelTab(url) {
         <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">↗ 浏览器</button>
       </div>
       <div class="web-body" data-web-body>
-        <iframe class="web-frame" data-web-frame
-          referrerpolicy="no-referrer"></iframe>
-        <iframe class="web-frame" data-web-frame2
-          referrerpolicy="no-referrer" style="display:none;"></iframe>
+        <!-- a544：WebView2 控件宿主区（控件由 Python 叠放其上，像素对齐） -->
+        <div class="web-frame web-host"></div>
         <div class="web-reader" data-web-reader style="display:none;"></div>
         <div class="web-sleep" data-web-sleep style="display:none;">
           <div>🌙 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
@@ -148,7 +142,7 @@ function buildWebPanelTab(url) {
   connections[portId] = conn;
 
   const $w = (s) => wrap.querySelector(s);
-  _webEscapeGuard(conn);                   // a516：常驻逃逸检测（a520：双 frame）
+  _webCtlSetup(conn);                      // a544：控件创建 + 布局跟随
   const urlInput = $w('[data-web-input]');
   urlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
@@ -206,277 +200,130 @@ function buildWebPanelTab(url) {
 function _webCur() {
   return connections[WEB_PORTID];
 }
-// a502：Web 代理——iframe src 走 /api/web/proxy（同源无 XFO 限制）。
-// 后端取页后注入 <base>（资源从原始服务器加载）+ 导航拦截 JS（链接
-// 点击经 postMessage 回到父页面 → 再走代理导航）。所有 frame.src 赋值
-// 统一经 _webProxyUrl 包装。
-// a506：query 式升级为路径式 /proxy/<scheme>/<host>/<path>——webpack
-// 取 currentScript.src 的 dirname 做 publicPath，query 式折叠成
-// /api/web/ 导致动态 chunk 全 404；路径式 dirname 还原 CDN 基址。
-// a543 网页双模式：direct=iframe 原生直连（默认——PoC 实证内网代理已
-// 不注入 XFO，博客园/掘金/SSO 等全部原生工作，document.domain/防盗链/
-// 反爬指纹零问题）；proxy=同源代理（GitHub/CSDN 等自发 XFO/CSP 的强
-// 防护站，走已修好的代理链）。per-host 记忆，⚡ 按钮切换。
-const WEB_MODE_KEY = 'fc_web_mode_hosts';
-function _webModeHosts() {
-  try { return JSON.parse(localStorage.getItem(WEB_MODE_KEY) || '{}'); }
-  catch (_) { return {}; }
-}
-function _webModeFor(url) {
-  try { return _webModeHosts()[new URL(url).host] || 'direct'; }
-  catch (_) { return 'direct'; }
-}
-function _webModeSet(url, mode) {
-  try {
-    const h = _webModeHosts();
-    const k = new URL(url).host;
-    if (mode === 'direct') delete h[k]; else h[k] = mode;
-    localStorage.setItem(WEB_MODE_KEY, JSON.stringify(h));
-  } catch (_) {}
-}
-function _webProxyUrl(url) {
-  if (!url || url === 'about:blank') return url;
-  // 直连模式：原始 URL 直接给 iframe（浏览器原生加载）
-  if (_webModeFor(url) === 'direct') return url;
-  // a537：已是相对代理路径（a535 新窗口路由传入）——原样放行
-  if (url.indexOf('/api/web/proxy/') === 0) return url;
-  try {
-    const a = new URL(url);
-    return '/api/web/proxy/' + a.protocol.replace(':', '') + '/' + a.host
-           + a.pathname + a.search;
-  } catch (_) { return '/api/web/proxy?url=' + encodeURIComponent(url); }
-}
-// 代理页面的链接点击 → postMessage → 父页面代理导航
-window.addEventListener('message', (e) => {
-  if (e.data && e.data.__webProxyNav) {
-    _webNavigate(e.data.__webProxyNav);
-  }
-  // a522：iframe 内导航开始（注入 JS 的 beforeunload 通知）→ 点亮加载指示
-  if (e.data && e.data.__pxLoading) {
-    _webLoading(true);
-  }
-});
+// ============ a544：WebView2 控件命令层（终局形态） ============
+let _webTabSeq = 0;                        // 控件实例号（本会话唯一）
 
-// a522：加载指示——URL 栏转圈。softNav 开始 / iframe 内导航开始点亮；
-// commit / iframe load 熄灭。用户实锤：10s 切换无任何反馈像「点了没反应」
-function _webLoading(on) {
+// 控件 REST 调用（src/web_tabs.py 的 /api/web/tabs）
+function _webCtl(d) {
+  d.tab = 'web-' + (_webTabSeq || 1);
+  return fetch('/api/web/tabs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(d)
+  }).then(r => r.json()).catch(() => ({ ok: false }));
+}
+
+// 面板创建：控件 create + 布局跟随（ResizeObserver 持续上报 rect，
+// 物理像素 = DIP × devicePixelRatio——WinForms Bounds 是物理像素）
+function _webCtlSetup(conn) {
+  _webTabSeq = _webTabSeq || 1;
+  conn._tabId = 'web-' + _webTabSeq;
+  const body = conn.wrap.querySelector('[data-web-body]');
+  const host = conn.wrap.querySelector('.web-host');
+  const push = () => {
+    if (conn.wrap.style.display === 'none') return;   // 隐藏时不布局
+    const r = host.getBoundingClientRect();
+    const sx = window.devicePixelRatio || 1;
+    const sy = sx;   // WinForms 同一 DPI
+    _webCtl({ act: 'layout', x: r.left * sx, y: r.top * sy,
+              w: r.width * sx, h: r.height * sy });
+  };
+  conn._ctlResize = new ResizeObserver(push);
+  conn._ctlResize.observe(host);
+  window.addEventListener('resize', push);
+  conn._ctlPush = push;
+  push();
+}
+
+// tab 显示状态联动（switchTab 钩不到——用 display 探针 + 显式调用）
+function _webCtlVisible(on) {
+  const c = _webCur();
+  if (!c || !c._tabId) return;
+  _webCtl({ act: 'show', on: !!on });
+  if (on && c._ctlPush) setTimeout(c._ctlPush, 30);   // 显示后重对齐
+}
+
+// Python 控件事件回推（ExecuteScriptAsync 调入）
+window.__webTabUrl = function (tid, url) {
   const c = _webCur();
   if (!c) return;
-  c.wrap.classList.toggle('web-loading', !!on);
-}
+  c._ctlUrl = url;                          // 真实 URL（含页内跳转）
+  const inp = c.wrap.querySelector('[data-web-input]');
+  if (inp && document.activeElement !== inp) inp.value = url;
+  // 栈：同 host 的页内跳转替换栈顶，跨站 push（会话恢复语义保留）
+  const top = _webNav.stack[_webNav.idx];
+  if (top) {
+    try {
+      const a = new URL(url), b = new URL(top);
+      if (a.host === b.host) _webNav.stack[_webNav.idx] = url;
+      else { _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
+             _webNav.stack.push(url); _webNav.idx = _webNav.stack.length - 1; }
+    } catch (_) {}
+    _webSessionSave();
+  }
+  c.tab.querySelector('.label').textContent = _webShortUrl(url).slice(0, 24);
+};
+window.__webTabHist = function (tid, back, fwd) {
+  const c = _webCur();
+  if (!c) return;
+  c._canBack = back === true; c._canFwd = fwd === true;
+  const bb = c.wrap.querySelector('[data-web="back"]');
+  const ff = c.wrap.querySelector('[data-web="fwd"]');
+  if (bb) bb.disabled = !back;
+  if (ff) ff.disabled = !fwd;
+};
+window.__webTabTitle = function (tid, title) {
+  const c = _webCur();
+  if (c && title) c.tab.querySelector('.label').textContent = title.slice(0, 24);
+};
+// 控件内 window.open / target=_blank → 本面板内导航
+window.__webTabNew = function (url) {
+  if (url) _webNavigate(url);
+};
 
-// a520：双 iframe 软过渡（Edge 式无缝导航）——点击后当前页保持显示，
-// 隐藏的 staging frame 预载新页，就绪瞬间切换。取代"立即替换 src"的
-// 白屏式导航（重站点代理取页 2-5s，白屏闪烁体感差，用户实锤）。
-function _wf(c) {          // 当前显示的 frame
-  return c._cur === 'f2'
-    ? c.wrap.querySelector('[data-web-frame2]')
-    : c.wrap.querySelector('[data-web-frame]');
-}
-function _other(c) {       // 隐藏的 staging frame
-  return c._cur === 'f2'
-    ? c.wrap.querySelector('[data-web-frame]')
-    : c.wrap.querySelector('[data-web-frame2]');
-}
-function _softNav(c, url) {
-  const next = _other(c);
-  c._pend = { url, frame: next, t0: Date.now() };
-  c.wrap.classList.add('web-loading');     // a522：加载指示
-  next.src = _webProxyUrl(url);
-  const poll = () => {
-    const p = c._pend;
-    if (!p || p.frame !== next) return;      // 被更新的导航取代
-    let ready = false;
-    try { ready = !!(next.contentDocument
-                    && next.contentDocument.readyState === 'complete'); }
-    catch (_) { ready = true; }              // 跨域=已加载（逃逸场景）
-    const el = Date.now() - p.t0;
-    if ((ready && el > 2500) || el > 12000) return _commit(c);
-    setTimeout(poll, 400);
-  };
-  setTimeout(poll, 800);
-}
-function _commit(c) {
-  const p = c._pend;
-  if (!p) return;
-  c._pend = null;
-  c.wrap.classList.remove('web-loading');  // a522：熄灭加载指示
-  c._cur = (p.frame === c.wrap.querySelector('[data-web-frame2]')) ? 'f2' : 'f1';
-  const old = _other(c);
-  p.frame.style.display = '';
-  old.style.display = 'none';
-  // 旧 frame 延迟清空（释放渲染进程；防切换瞬闪）
-  setTimeout(() => { if (old !== _wf(c)) old.src = 'about:blank'; }, 600);
-}
-
+// 导航（终局：控件 Navigate，无代理无软过渡）
 function _webNavigate(url) {
   const c = _webCur();
   if (!c || !url) return;
-  const inp = c.wrap.querySelector('[data-web-input]');
+  if (!c._tabId) {                          // 首次（面板刚建）
+    _webTabSeq = _webTabSeq || 1;
+    c._tabId = 'web-' + _webTabSeq;
+  }
   _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
   _webNav.stack.push(url);
   if (_webNav.stack.length > 50) _webNav.stack.shift();
   _webNav.idx = _webNav.stack.length - 1;
-  _webSessionSave();                       // a475 会话恢复
-  c._escN = 0;                             // a516：新导航重置逃逸计数
-  // a475：新导航唤醒休眠态 + 退出阅读态（skipRestore：随后的显式 src 覆盖，
-  // 不做旧 URL 恢复——避免 about:blank→旧URL→新URL 三连导航）
+  _webSessionSave();
   _webWake(c);
   if (_webUi.reader) _webReaderToggle(false, true);
-  _softNav(c, url);                        // a520：软过渡（就绪才切换）
-  inp.value = url;
+  _webCtl({ act: 'create', url });          // 幂等：已有则等价 navigate
+  _webCtlVisible(true);
+  const inp = c.wrap.querySelector('[data-web-input]');
+  if (inp) inp.value = url;
   c.tab.querySelector('.label').textContent = _webShortUrl(url).slice(0, 24);
-  _webApplyZoom(_webZoomFor(url), _webHostOf(url));   // a475 站点缩放记忆
+  _webApplyZoom(_webZoomFor(url), _webHostOf(url));
   _webSyncUI();
-  _webLoadWatch(c, url);
 }
 
-// a516：iframe 常驻逃逸检测——登录成功等场景页面 JS 写 location.href=原始
-// 绝对 URL（拦不住）跳出代理域 → 原始域被透明代理 XFO 拒 → 白屏（用户
-// 实锤：URL 栏停在原始域）。a514 的检测挂在 _webLoadWatch 的 once load
-// 里，只盯导航那一次——登录跳转不经过 _webNavigate，逃逸后的 load 无
-// 人监听（白屏根因）。改为 iframe 创建后常驻监听：每次 load 后 2s 读
-// contentWindow.location.href，跨域（SecurityError）= 逃逸 → 拉回栈顶
-// 代理 URL（CAS/session cookie 都在代理域，拉回即登录态闭环）。
-function _webEscapeGuard(c) {
-  // a543：直连模式下 iframe 本来就是跨域（与工具页不同源）——逃逸检测
-  // 只对代理模式有意义（代理页必须同源；跨域=逃出代理）。直连跳过。
-  const _top = _webNav.stack[_webNav.idx] || '';
-  if (_webModeFor(_top) === 'direct') return;
-  // a520：两个 frame（active + staging）都挂——软过渡期间 staging 逃逸
-  // 同样要拉回（拉回触发重新加载，softNav 的轮询就绪后正常切换）
-  c.wrap.querySelectorAll('iframe.web-frame').forEach(frame => {
-    if (frame._pxGuard) return;
-    frame._pxGuard = true;
-    frame.addEventListener('load', () => {
-      c.wrap.classList.remove('web-loading');   // a543：直连页 load 即熄灭
-      _webSyncFromFrame(c, frame);         // a522：栈同步 + 熄灭指示
-      setTimeout(() => {
-        if (_webUi.reader || _webUi.sleeping) return;
-        let escaped = false;
-        try { void frame.contentWindow.location.href; }
-        catch (_) { escaped = true; }
-        if (!escaped) return;
-        const top = _webNav.stack[_webNav.idx];
-        if (!top) return;
-        c._escN = (c._escN || 0) + 1;
-        console.warn('[web] iframe 逃逸到代理域外，拉回 #' + c._escN, top);
-        if (c._escN <= 3) frame.src = _webProxyUrl(top);
-      }, 2000);
-    });
-  });
-}
-
-// a522：iframe 内自主导航（同站链接放行 / 表单提交 / 302 跟随）后的
-// 收尾——读当前页写入的 __px_orig（同源 sessionStorage 共享）同步导航
-// 栈与 URL 栏（只更 UI 不重载），并熄灭加载指示。
-function _webSyncFromFrame(c, frame) {
-  c.wrap.classList.remove('web-loading');
-  if (frame !== _wf(c)) return;            // staging 的 load 由 softNav 轮询接管
-  // a540：同页判定——页面写入的 __px_orig（代理 _final 规范化形态）与
-  // 点击时入栈的 URL 常有细微差异（尾斜杠/302 规范化），原「全等比对」
-  // 判不同就 push → 返回后页面又写又 push → 栈顶永远钉死在当前页，
-  // 返回键死循环（博客园实锤：文章被反复载 6 次）。同页（host+去尾斜杠
-  // pathname 相同）只更新栈顶形态、不增长栈；跨页才 push。
-  const _samePage = (a, b) => {
-    try {
-      const x = new URL(a), y = new URL(b);
-      return x.host === y.host
-        && x.pathname.replace(/\/+$/, '') === y.pathname.replace(/\/+$/, '');
-    } catch (_) { return a === b; }
+// switchTab 联动（切到/切离网页 tab 时控件显隐）——包一层原 switchTab
+(function () {
+  const orig = window.switchTab;
+  if (typeof orig !== 'function') return;
+  window.switchTab = function (pid) {
+    const prevWeb = _webCur();
+    const wasWeb = prevWeb && prevWeb.wrap.style.display !== 'none';
+    orig(pid);
+    const nowWeb = pid === WEB_PORTID;
+    if (nowWeb !== wasWeb) _webCtlVisible(nowWeb);
   };
-  try {
-    const u = sessionStorage.getItem('__px_orig');
-    if (!u) return;
-    const top = _webNav.stack[_webNav.idx];
-    if (_samePage(u, top)) {
-      if (u !== top) { _webNav.stack[_webNav.idx] = u; _webSessionSave(); }
-      return;
-    }
-    _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
-    _webNav.stack.push(u);
-    _webNav.idx = _webNav.stack.length - 1;
-    _webSessionSave();
-    const inp = c.wrap.querySelector('[data-web-input]');
-    if (inp) inp.value = u;
-    const lbl = c.tab && c.tab.querySelector('.label');
-    if (lbl) lbl.textContent = _webShortUrl(u).slice(0, 24);
-  } catch (_) {}
-}
+})();
 
-// a488：加载失败检测——iframe 导航后 8s 内 load 事件未触发 → 网络不通/
-// DNS 失败，出友好提示层（阅读模式 / 系统浏览器 / 继续等待）。X-Frame-
-// Options 拒嵌时 load 会正常触发（显示空白/错误页），此检测不覆盖——
-// 工具栏的「☰ 阅读」和「↗ 浏览器」按钮始终可用作兜底。
-function _webLoadWatch(c, url) {
-  const err = c.wrap.querySelector('[data-web-err]');
-  if (!err) return;
-  err.style.display = 'none';
-  if (c._loadT) clearTimeout(c._loadT);
-  // a520：软过渡期监控 staging（真正在加载的 frame），无过渡时监控 active
-  const frame = c._pend ? c._pend.frame : _wf(c);
-  let loaded = false;
-  const onLoad = () => {
-    loaded = true;
-    frame.removeEventListener('load', onLoad);
-    if (c._loadT) { clearTimeout(c._loadT); c._loadT = null; }
-    // a493：load 触发后再等 2s——跨域 iframe 被 X-Frame-Options 拒绝时
-    // load 会正常触发但内容是空白/错误页。逃逸检测已由 a516 的常驻
-    // _webEscapeGuard 接管（含不经 _webNavigate 的登录跳转），此处只剩
-    // 跨域空白的轻提示。
-    setTimeout(() => {
-      if (_webNav.stack[_webNav.idx] !== url || _webUi.reader) return;
-      try {
-        const doc = frame.contentDocument;
-        if (doc === null) {
-          // 跨域正常——但可能被 XFO 拒。给一个轻提示（不挡操作）
-          _webMaybeBlank(c, url);
-        }
-      } catch (_) {
-        // SecurityError = 跨域（逃逸场景由 EscapeGuard 拉回）
-      }
-    }, 2000);
-  };
-  frame.addEventListener('load', onLoad, { once: true });
-  // a506：超时分级——代理模式下重站点（GitHub 百余资源串行取）主文档
-  // load 常超 25s，直接弹「页面加载异常」是误报（用户实锤：点继续等待
-  // 能进）。25s 到点先读同源 iframe 的 readyState（代理页同源可读）：
-  // 仍在 loading → 静默延长到 60s；interactive/complete 或读不到 → 弹。
-  const _fire = () => {
-    frame.removeEventListener('load', onLoad);
-    if (_webNav.stack[_webNav.idx] === url && !_webUi.reader) {
-      err.style.display = 'flex';
-    }
-  };
-  c._loadT = setTimeout(() => {
-    let st = '';
-    try { st = frame.contentDocument && frame.contentDocument.readyState; } catch (_) {}
-    if (st === 'loading' && _webNav.stack[_webNav.idx] === url) {
-      c._loadT = setTimeout(_fire, 35000);   // 共 60s
-    } else {
-      _fire();
-    }
-  }, 25000);
-}
-// a493：跨域 iframe 可能被 XFO 拒（空白）——弹轻量提示条（不挡操作）
-function _webMaybeBlank(c, url) {
-  const bar = c.wrap.querySelector('[data-web-blank-hint]');
-  if (!bar) return;
-  bar.style.display = 'flex';
-  // 5 秒后自动收起
-  setTimeout(() => { bar.style.display = 'none'; }, 5000);
-}
-
-// ---- a475：休眠/唤醒（Edge sleeping tabs 等价物）----
+// ---- a475 休眠（a544 适配控件）----
 function _webSleep(c) {
   _webUi.sleeping = true;
   const ov = c.wrap.querySelector('[data-web-sleep]');
-  const frame = _wf(c);
   if (ov) ov.style.display = 'flex';
-  if (frame) frame.src = 'about:blank';    // 释放渲染进程（Chromium 回收）
-  // a520：staging 一并清（软过渡中止：pending 作废 + 双 frame 归零）
-  c._pend = null;
-  _other(c).src = 'about:blank';
+  _webCtl({ act: 'nav', url: 'about:blank' });   // 释放页面
+  _webCtlVisible(false);
 }
 function _webWake(c) {
   if (!_webUi.sleeping) return;
@@ -485,51 +332,46 @@ function _webWake(c) {
   const ov = c.wrap.querySelector('[data-web-sleep]');
   if (ov) ov.style.display = 'none';
 }
-// 切回网页 tab 自动唤醒（switchTab 后由面板自身的 display 变化可见）：
-// 用 1s 轻探针——面板在场且 display 非 none 且休眠中 → 恢复 URL
+// 切回网页 tab 自动唤醒：恢复上次 URL
 setInterval(() => {
   const c = connections[WEB_PORTID];
   if (c && _webUi.sleeping && c.wrap.style.display !== 'none') {
-    _webWake(c);
     const url = _webNav.stack[_webNav.idx];
-    if (url) _wf(c).src = _webProxyUrl(url);
+    _webWake(c);
+    if (url) _webNavigate(url);
   }
 }, 1000);
 
-// ---- a475：阅读模式（Reader）----
+// ---- a475 阅读模式（a544 适配控件）----
 function _webReaderToggle(on, skipRestore) {
   const c = _webCur();
   if (!c) return;
   const rd = c.wrap.querySelector('[data-web-reader]');
-  const frame = _wf(c);
+  const host = c.wrap.querySelector('.web-host');
   const btn = c.wrap.querySelector('[data-web="read"]');
   const url = _webNav.stack[_webNav.idx] || '';
-  // 审计修（状态机）：无 URL 时先退出——内部态不翻（原实现先置 reader=true
-  // 再早退，UI 零变化但状态脏）
   if (on && !url) return;
   _webUi.reader = on;
   if (!on) {
     rd.style.display = 'none';
-    frame.style.display = '';
+    host.style.display = '';
     if (btn) btn.textContent = '☰ 阅读';
-    // 审计修（省内存声明落空）：进阅读时 iframe 已置 about:blank 释放渲染
-    // 进程；切回网页视图必须重载原 URL（与睡眠唤醒同权衡）。skipRestore=
-    // 调用方（_webNavigate）随即将赋新 src，不在此重复导航
-    if (!skipRestore && url) frame.src = _webProxyUrl(url);
+    _webCtlVisible(true);
+    if (!skipRestore && url) _webCtl({ act: 'nav', url });
     return;
   }
   rd.innerHTML = '<div class="web-reader-load">正在取正文…</div>';
   rd.style.display = '';
-  frame.style.display = 'none';
-  frame.src = 'about:blank';   // 释放页面 JS 与渲染进程（a355 禁节流下必须显式卸载）
-  if (btn) btn.textContent = '▦ 网页';
-  // 审计 O1：阅读态连点 back/fwd 会并发多笔取页，旧响应晚归覆盖新正文
-  // （地址栏/栈已是新 URL，阅读区却显示旧页）。序号守卫：只收最新一笔
+  host.style.display = 'none';
+  // 阅读态：控件隐藏 + about:blank 释放页面 JS
+  _webCtlVisible(false);
+  _webCtl({ act: 'nav', url: 'about:blank' });
+  // 序号守卫（审计 O1）：连点 back/fwd 旧响应晚归不覆盖新正文
   const mySeq = (_webUi.rseq = (_webUi.rseq || 0) + 1);
   fetch('/api/web/fetch_text', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }) })
     .then(r => r.json()).then(j => {
-      if (!_webUi.reader || mySeq !== _webUi.rseq) return;   // 已切回/已有更新一笔——丢弃
+      if (!_webUi.reader || mySeq !== _webUi.rseq) return;
       if (!j || !j.ok) {
         rd.innerHTML = '<div class="web-reader-err">取正文失败：'
           + esc(((j && j.err) || '未知')) + '——用 ↗ 浏览器打开</div>';
@@ -545,7 +387,7 @@ function _webReaderToggle(on, skipRestore) {
     });
 }
 
-// ---- a475：站点缩放记忆 ----
+// ---- a475 站点缩放（阅读态 + 宿主区视觉缩放）----
 function _webHostOf(url) {
   try { return new URL(url).host; } catch (_) { return ''; }
 }
@@ -557,9 +399,9 @@ function _webApplyZoom(z, host) {
   const c = connections[WEB_PORTID];
   if (!c) return;
   c._zoom = z;
-  const frame = _wf(c);
+  const hostEl = c.wrap.querySelector('.web-host');
   const rd = c.wrap.querySelector('[data-web-reader]');
-  if (frame) frame.style.zoom = z;
+  if (hostEl) hostEl.style.zoom = z;
   if (rd) rd.style.fontSize = (13 * z) + 'px';
   if (host) { try { localStorage.setItem('web-zoom:' + host, String(z)); } catch (_) {} }
 }
@@ -567,11 +409,7 @@ function _webSyncUI() {
   const c = _webCur();
   if (!c) return;
   const url = _webNav.stack[_webNav.idx] || '';
-  c.wrap.querySelector('[data-web="back"]').disabled = _webNav.idx <= 0;
-  // a543：模式按钮显示当前态（proxy 时高亮）
-  const _mb = c.wrap.querySelector('[data-web="mode"]');
-  if (_mb) _mb.textContent = (_webModeFor(_webNav.stack[_webNav.idx] || '') === 'proxy') ? '🛡' : '⚡';
-  c.wrap.querySelector('[data-web="fwd"]').disabled = _webNav.idx >= _webNav.stack.length - 1;
+  // a544：按钮态由控件事件回推（__webTabHist）维护——这里只管收藏星
   const favs = _webFavs();
   const starred = url && favs.some(f => f.url === url);
   const starBtn = c.wrap.querySelector('[data-web="star"]');
@@ -581,59 +419,27 @@ function _webSyncUI() {
 function _webAct(act, wrap) {
   const c = _webCur();
   if (!c) return;
-  const frame = _wf(c);
   const url = _webNav.stack[_webNav.idx] || '';
-  const _afterMove = () => {
-    // 审计修（E.d）：back/fwd 改 idx 后补会话保存（否则重启恢复到后退前
-    // 的 URL，与「回到上次离开的页面」语义相悖）+ per-host 缩放套用
-    _webSessionSave();
-    _webApplyZoom(_webZoomFor(_webNav.stack[_webNav.idx] || ''),
-                  _webHostOf(_webNav.stack[_webNav.idx] || ''));
-  };
-  // 审计 N1：阅读态下 back/fwd/reload 不给 iframe 赋 URL——已卸载的 iframe
-  // 会在不可见状态复活加载（a355 禁节流下页面 JS 全速燃烧），且阅读文本
-  // 停在旧 URL 上误导。改为：阅读态导航/重载=按新 idx 重新取正文
-  const _go = (u) => {
-    if (_webUi.reader) _webReaderToggle(true);   // 重发 fetch_text（frame 已 blank，幂等）
-    else frame.src = _webProxyUrl(u);
-  };
-  if (act === 'back' && _webNav.idx > 0) {
-    _webNav.idx--;
-    _go(_webNav.stack[_webNav.idx]);
-    c.wrap.querySelector('[data-web-input]').value = _webNav.stack[_webNav.idx];
-    c.tab.querySelector('.label').textContent = _webShortUrl(_webNav.stack[_webNav.idx]).slice(0, 24);
-    _webSyncUI(); _afterMove();
-  } else if (act === 'fwd' && _webNav.idx < _webNav.stack.length - 1) {
-    _webNav.idx++;
-    _go(_webNav.stack[_webNav.idx]);
-    c.wrap.querySelector('[data-web-input]').value = _webNav.stack[_webNav.idx];
-    c.tab.querySelector('.label').textContent = _webShortUrl(_webNav.stack[_webNav.idx]).slice(0, 24);
-    _webSyncUI(); _afterMove();
-  } else if (act === 'mode' && url) {
-    const cur = _webModeFor(url);
-    const next = cur === 'direct' ? 'proxy' : 'direct';
-    _webModeSet(url, next);
-    showBanner(next === 'proxy'
-      ? '已切代理模式（强防护站点用），重载中…'
-      : '已切直连模式（原生加载），重载中…', 2200);
-    _go(url);
-  } else if (act === 'reload' && url) {
-    _go(url);
-  } else if (act === 'read') {
-    _webReaderToggle(!_webUi.reader);
-  } else if (act === 'sys' && url) {
+  if (act === 'back') { _webCtl({ act: 'back' }); return; }
+  if (act === 'fwd') { _webCtl({ act: 'fwd' }); return; }
+  if (act === 'reload') {
+    if (_webUi.reader) _webReaderToggle(true);   // 阅读态重载=重取正文
+    else _webCtl({ act: 'reload' });
+    return;
+  }
+  if (act === 'read') { _webReaderToggle(!_webUi.reader); return; }
+  if (act === 'sys' && url) {
     fetch('/api/open_url', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }) }).catch(() => {});
-  } else if (act === 'star' && url) {
+    return;
+  }
+  if (act === 'star' && url) {
     let favs = _webFavs();
     if (favs.some(f => f.url === url)) {
       favs = favs.filter(f => f.url !== url);
       _webFavsSave(favs);
       showBanner('已取消收藏', 1600);
     } else {
-      // 标题拿不到（跨域）——先取页接口回传 title，失败用 URL 短化。
-      // 审计修：取页最长 15s，窗口期连点会重复收藏——按钮禁用 + 写入按
-      // url 去重 upsert 双保险
       const starBtn = c.wrap.querySelector('[data-web="star"]');
       starBtn.disabled = true;
       let title = _webShortUrl(url);
@@ -642,7 +448,7 @@ function _webAct(act, wrap) {
         .then(r => r.json()).then(j => { if (j && j.ok && j.title) title = j.title; })
         .catch(() => {})
         .finally(() => {
-          const favs = _webFavs().filter(f => f.url !== url);   // 去重 upsert
+          const favs = _webFavs().filter(f => f.url !== url);
           _webFavsSave([{ url, title, ts: Date.now() }, ...favs]);
           starBtn.disabled = false;
           showBanner('已收藏：' + title, 2000);
@@ -651,7 +457,9 @@ function _webAct(act, wrap) {
       return;
     }
     _webSyncUI();
-  } else if (act === 'claude' && url) {
+    return;
+  }
+  if (act === 'claude' && url) {
     const btn = c.wrap.querySelector('[data-web="claude"]');
     btn.disabled = true;
     const old = btn.textContent;
@@ -677,6 +485,7 @@ function _webAct(act, wrap) {
         btn.disabled = false; btn.textContent = old;
         showBanner('取页失败：' + e, 3000, true);
       });
+    return;
   }
 }
 

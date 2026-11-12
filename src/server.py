@@ -395,12 +395,9 @@ def _guard_local_origin():
 def _no_cache_static(resp):
     """静态资源(web/ 下的 JS/CSS)禁缓存：开发迭代频繁，WebView2 若缓存旧 JS，
     重启工具仍加载旧代码，改动"看起来不生效"。HTML/JS/CSS 每次都拉最新。
-    a531 修：web_proxy 蓝图除外——代理响应的缓存分型（静态 max-age=86400/
-    HTML no-store）被本钩子无差别覆盖成 no-store，切换页面的 chunk 每次
-    全量重拉（用户抓包实锤缓存命中 59/969）。"""
-    if (getattr(request, "blueprint", None) != "web_proxy"
-            and resp.mimetype in ("text/html", "application/javascript",
-                                  "text/css", "text/javascript")):
+    """
+    if resp.mimetype in ("text/html", "application/javascript",
+                         "text/css", "text/javascript"):
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
 
@@ -1788,6 +1785,10 @@ def api_open_url():
 # 网页 tab 逻辑；蓝图路由路径不变，404 兜底需 app 级注册故走 register）----
 from src.web_proxy import register as _web_proxy_register
 _web_proxy_register(app)
+# a544：网页 tab 的 WebView2 控件命令通道（终局形态：真浏览器控件，
+# 非 iframe）。装配在 main._patched_ready（需 UI 线程的 Form）。
+from src import web_tabs as _wt
+_wt.register(app)
 
 
 # ---- 升级功能（v2.1.0）：客户端检查/应用 + 发布端分发服务控制 ----

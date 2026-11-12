@@ -906,6 +906,15 @@ def main():
                 sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
             except Exception:
                 pass
+
+            # a544：网页 tab 终局——WebView2 多控件管理器装配（拿 Form，
+            # 每个 tab 一个完整浏览器控件实例）。失败不阻塞主 UI。
+            try:
+                from src import web_tabs as _wt
+                _wt.install(self.form)
+            except Exception as _e:
+                print("[a544] WebTabs install failed: %r" % _e,
+                      file=sys.stderr)
         _EC.on_webview_ready = _patched_ready
         # a536：清 a484-a496 调试期遗留的日志文件（曾无限增长到 3MB）
         try:
@@ -1028,98 +1037,9 @@ def main():
     )
     flask_thread.start()
 
-    # a525：本地 HTTPS(h2) 代理端口——浏览器对 HTTP/1.1 同源 6 连接上限
-    # 是 GitHub 切换 10s+ 的根因（137 资源排队，队尾 19.5s 抓包实锤）；
-    # h2 多路复用单连接无限并发根治。浏览器只在 TLS 上协商 h2 → 本服务
-    # 自签证书在 127.0.0.1 再起一个 https 端口专供代理流量（工具 UI/API
-    # 与 MCP endpoint 仍走原 http 端口零影响；http 页嵌 https iframe 无
-    # mixed-content 问题）。任何一步失败 → 代理回落 http 端口。
-    # a530 三处硬化（用户抓包实锤 h2 请求数 0/968 静默回落）：
-    # ① 端口用 free_port 探测（port+1 硬猜可能被占）
-    # ② certutil 导入转后台线程（Windows 证书确认框阻塞最长 10s，
-    #    且不应卡启动）
-    # ③ serve 线程异常捕获写 traceback 到 stderr——线程内异常默认只打
-    #    一行语义难辨的堆栈；且新增 /api/web/h2 状态端点+前端 boot 打印
-    import traceback as _tb
-    h2_port = free_port()
-    try:
-        import os as _os, datetime as _dt, ipaddress as _ipa
-        from src.app_state import DATA_DIR as _DD
-        _cert = _os.path.join(_DD, "web_h2_cert.pem")
-        _key = _os.path.join(_DD, "web_h2_key.pem")
-        if not (_os.path.isfile(_cert) and _os.path.isfile(_key)):
-            from cryptography import x509 as _x5
-            from cryptography.x509.oid import NameOID as _NO
-            from cryptography.hazmat.primitives import hashes as _hs, serialization as _ser
-            from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
-            _k = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
-            _nm = _x5.Name([_x5.NameAttribute(_NO.COMMON_NAME, u"127.0.0.1")])
-            _c = (_x5.CertificateBuilder()
-                  .subject_name(_nm).issuer_name(_nm)
-                  .public_key(_k.public_key())
-                  .serial_number(_x5.random_serial_number())
-                  .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
-                  .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=3650))
-                  .add_extension(_x5.SubjectAlternativeName(
-                      [_x5.IPAddress(_ipa.ip_address(u"127.0.0.1"))]),
-                      critical=False)
-                  .sign(_k, _hs.SHA256()))
-            with open(_key, "wb") as _f:
-                _f.write(_k.private_bytes(_ser.Encoding.PEM,
-                                          _ser.PrivateFormat.TraditionalOpenSSL,
-                                          _ser.NoEncryption()))
-            with open(_cert, "wb") as _f:
-                _f.write(_c.public_bytes(_ser.Encoding.PEM))
-        # a525 修：自签证书导入当前用户受信根存储（certutil -user 无需
-        # 管理员；首次导入 Windows 弹一次确认）。WebView2 的
-        # CertificateError 事件只对顶层导航触发——子资源（script/css）
-        # 的证书错误不可事件放行（用户实锤 ERR_CERT_AUTHORITY_INVALID
-        # 全灭），必须让证书真正受信。已导入时 certutil 秒过无害。
-        import subprocess as _sp
-        threading.Thread(
-            target=lambda: _sp.run(
-                ["certutil", "-addstore", "-user", "Root", _cert],
-                capture_output=True, timeout=30),
-            daemon=True).start()
-        from hypercorn.config import Config as _HC
-        from hypercorn.asyncio import serve as _hserve
-        import asyncio as _aio
-        _cfg = _HC()
-        _cfg.bind = ["127.0.0.1:%d" % h2_port]
-        _cfg.certfile = _cert
-        _cfg.keyfile = _key
-
-        def _h2_serve():
-            try:
-                from concurrent.futures import ThreadPoolExecutor as _TPE
-
-                async def _h2_main():
-                    # a531：hypercorn 的 WSGI 模式经 loop.run_in_executor(None)
-                    # 跑 Flask——asyncio 默认线程池仅 min(32, CPU+4)，380 个
-                    # h2 并发进来在此排队（抓包实锤中位 1.1s 的主要构成）。
-                    # 换 96 线程大池（Flask threaded 语义下每请求一线程，
-                    # 上游 requests 是 IO 型，线程数给足不亏）
-                    _aio.get_running_loop().set_default_executor(
-                        _TPE(max_workers=96))
-                    await _hserve(
-                        app, _cfg,
-                        # 子线程不能注册 signal handler——用永不触发的 Event
-                        # 替换默认 shutdown trigger
-                        shutdown_trigger=lambda: _aio.Event().wait())
-                _aio.run(_h2_main())
-            except Exception:
-                _tb.print_exc()
-                print("[a530] hypercorn h2 线程退出（代理将保持 http）",
-                      file=sys.stderr)
-        threading.Thread(target=_h2_serve, daemon=True).start()
-        from src import web_proxy as _wp
-        _wp.H2_PORT.clear()
-        _wp.H2_PORT.append(h2_port)
-        print("[a530] h2 代理端口已启用: https://127.0.0.1:%d" % h2_port,
-              file=sys.stderr)
-    except Exception as _e:
-        _tb.print_exc()
-        print("[a530] h2 端口启用失败（代理回落 http）：%r" % _e, file=sys.stderr)
+    # a544：h2 代理端口退役（终局形态为 WebView2 控件，代理流量归零）。
+    # 证书文件遗留（数据目录 web_h2_cert/key.pem）无害——certutil 已导入
+    # 用户受信根的那张自签证书同样无害（只信任 127.0.0.1），不回滚系统。
 
     # 等待 Flask 就绪（50ms 间隔轮询，Flask 通常 ~600ms 起来，首次命中即返回）
     import urllib.request
