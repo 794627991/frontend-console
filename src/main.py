@@ -925,8 +925,24 @@ def main():
             except Exception:
                 pass
         _EC.on_webview_ready = _patched_ready
-    except Exception:
-        pass  # 平台非 edgechromium（非 Windows）无此模块——跳过
+        # 诊断：确认 patch 段执行完毕
+        try:
+            with open(os.path.join(_st.DATA_DIR, "new_window_dbg.log"), "a",
+                      encoding="utf-8") as _f:
+                _f.write("[boot] monkey-patch block completed OK\n")
+        except Exception:
+            pass
+    except Exception as _patch_err:
+        # a496 诊断：原版静默吞掉——patch 可能根本没装上，日志文件不存在
+        # 就说明这条路径走了。写失败原因到同一文件。
+        try:
+            import traceback as _tb
+            with open(os.path.join(_st.DATA_DIR, "new_window_dbg.log"), "a",
+                      encoding="utf-8") as _f:
+                _f.write("[boot] monkey-patch FAILED: %r\n%s\n"
+                         % (_patch_err, _tb.format_exc()))
+        except Exception:
+            pass
 
     # 等 server 预导入完成（通常 webview 导入完时 server 也差不多好了）
     _server_ready.wait(timeout=10)
