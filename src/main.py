@@ -814,13 +814,14 @@ def main():
             return os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
     try:
         from webview.platforms.edgechromium import EdgeChrome as _EC
-        # pythonw 无 stderr，logging 默认写不进任何地方——直接写文件
-        import time as _nw_t
-        _NW_LOG = os.path.join(_dbg_dir(), "new_window_dbg.log")
+        # a536：a484-a496 调试期的新窗口文件日志退役（用户实锤 3MB 无限
+        # 增长；路由功能 a535 已稳定收尾）。WARN 级保留到 stderr（有控制台
+        # 可查），INFO 级全删；patch 失败仍写文件（罕见路径不增长）。
+        import sys as _nw_sys
         def _nw_log(level, msg):
             try:
-                with open(_NW_LOG, "a", encoding="utf-8") as _f:
-                    _f.write("%s [%s] %s\n" % (_nw_t.strftime("%H:%M:%S"), level, msg))
+                if level == "WARN":
+                    print("[new-window] %s" % msg, file=_nw_sys.stderr)
             except Exception:
                 pass
 
@@ -859,10 +860,8 @@ def main():
             def _safe_load(url, *la, **kw):
                 try:
                     _u = str(url or "")
-                    _nw_log("INFO", "[load_url] url=%s" % _u[:200])
                     if _u.startswith(("http://", "https://")) and "127.0.0.1" not in _u:
                         # 外部 URL → 路由到前端网页 tab（不导航主窗口）
-                        _nw_log("INFO", "[load_url] routing to __newWindow")
                         sender.CoreWebView2.ExecuteScriptAsync(
                             "window.__newWindow && window.__newWindow(%s);"
                             % json.dumps(_u))
@@ -872,8 +871,6 @@ def main():
                         import urllib.parse as _up
                         _p = _up.urlsplit(_u).path or "/"
                         if _p != "/" and not _p.startswith(_TOOL_PATHS):
-                            _nw_log("INFO",
-                                    "[load_url] proxy-rel path → web tab: %s" % _p[:80])
                             sender.CoreWebView2.ExecuteScriptAsync(
                                 "(function(){try{var o=sessionStorage."
                                 "getItem('__px_orig');if(!o)return;var b=new URL(o);"
@@ -903,14 +900,8 @@ def main():
             except Exception as _e:
                 _nw_log("WARN", "[cert-error] 挂接失败: %r" % _e)
 
-            # a490 诊断：追踪所有导航事件（含 iframe 内部导航）
-            try:
-                _cvw = sender.CoreWebView2
-                def _on_nav_start(s2, a2):
-                    _nw_log("NAV", "[NavStarting] uri=%s" % str(a2.Uri)[:200])
-                _cvw.FrameNavigationStarting += _on_nav_start
-            except Exception as _e:
-                _nw_log("WARN", "[NavTracker] attach failed: %r" % _e)
+            # a490 诊断已退役（a536）：NavStarting 追踪是 a484-a496 调试期
+            # 产物，功能稳定后纯开销——整块移除
 
             # a495（用户令「必须与浏览器同级体验」）：响应层剥 X-Frame-Options
             # ——浏览器顶层导航不受 XFO 影响，但 iframe 天然受约束；内网代理
@@ -943,12 +934,9 @@ def main():
                         _ref = _hdrs.GetHeader("Referer")
                         if _ref:
                             _hdrs.RemoveHeader("Referer")
-                            _nw_log("INFO", "[Referer-strip] %s -> %s"
-                                % (str(_ref)[:60], str(_req.Uri)[:80]))
                     except Exception as _e:
                         _nw_log("WARN", "[Referer-strip] err: %r" % _e)
                 _cvw.WebResourceRequested += _strip_xfo
-                _nw_log("INFO", "[Referer-strip] filter registered (All)")
             except Exception as _e:
                 _nw_log("WARN", "[XFO-strip] attach failed: %r" % _e)
 
@@ -959,11 +947,11 @@ def main():
             except Exception:
                 pass
         _EC.on_webview_ready = _patched_ready
-        # 诊断：确认 patch 段执行完毕
+        # a536：清 a484-a496 调试期遗留的日志文件（曾无限增长到 3MB）
         try:
-            with open(os.path.join(_dbg_dir(), "new_window_dbg.log"), "a",
-                      encoding="utf-8") as _f:
-                _f.write("[boot] monkey-patch block completed OK\n")
+            _old_dbg = os.path.join(_dbg_dir(), "new_window_dbg.log")
+            if os.path.isfile(_old_dbg):
+                os.remove(_old_dbg)
         except Exception:
             pass
     except Exception as _patch_err:
