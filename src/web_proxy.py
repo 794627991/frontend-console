@@ -297,30 +297,21 @@ _PROXY_NAV_JS = r"""<script>
     arguments[1] = url;
     return _origOpen.apply(this, arguments);
   };
-  // 链接导航拦截。a522 关键演进：**同站链接放行**——只把 href 改写为
-  // 代理 URL、不 preventDefault。页面自身的 SPA 路由（GitHub pjax /
-  // vue-router 等）若接管 click 则零导航零重载（Edge 同款 2s 体验）；
-  // 纯多页站点则退化为 iframe 内导航（仍是代理 URL，EscapeGuard 的
-  // load 监听同步导航栈）。此前一律劫持成父页整页导航——GitHub 切
-  // tab 从 Edge 的 2s（前端路由）劣化成 10s+（重拉全部 JS+hydration）。
-  // 跨站链接仍走父页导航（软过渡）。target=_blank 不碰（新窗口链路）。
+  // 链接导航拦截。a523：统一走父页软过渡（保持旧页 + 转圈 + 就绪切换）。
+  // a522 曾试「同站放行让 SPA 路由接管」——掘金等 vue-router 站点零重载
+  // 完美，但 GitHub 这类 MPA 站点放行后退化成 iframe 内整页导航：无软过
+  // 渡、白屏 5-6s（用户实锤）。两者不可兼得（放行 = 软过渡抢跑不了），
+  // 按用户主诉求（保持界面 + 明确反馈）取软过渡。SPA 站点退化为整页但
+  // 有过渡体验兜底。target=_blank 不碰（新窗口链路）。
   document.addEventListener('click', function(e){
     var a = e.target.closest ? e.target.closest('a[href]') : null;
     if (!a) return;
     if (a.target === '_blank') return;
     var href = a.getAttribute('href')||'';
     if (!href || href[0]==='#' || href.indexOf('javascript:')===0) return;
+    e.preventDefault(); e.stopPropagation();
     var abs = href;
     try { abs = new URL(href, _orig).href; } catch(_){}
-    var px = _px(abs);
-    if (!px) return;                      // 已是代理/不可代理，放行原生
-    try {
-      if (new URL(abs).host === new URL(_orig).host) {
-        a.setAttribute('href', px);       // 同站：改写后放行（SPA 路由接管）
-        return;
-      }
-    } catch(_){}
-    e.preventDefault(); e.stopPropagation();
     window.parent.postMessage({__webProxyNav: abs}, '*');
   }, true);
   // a522：iframe 内导航开始时通知父页点亮加载指示（beforeunload 对

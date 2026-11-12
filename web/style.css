@@ -5794,12 +5794,15 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   border: 1px solid var(--border); border-radius: 6px; outline: none; }
 .web-url:focus { border-color: var(--accent); }
 /* a522：加载指示——导航期间刷新按钮转圈（浏览器同款语义）+ URL 栏
-   边框呼吸 + tab 标签高亮（用户实锤：10s 切换无反馈像「点了没反应」） */
-.web-loading [data-web="reload"] { animation: web-spin .8s linear infinite;
+   边框呼吸 + tab 标签高亮（用户实锤：10s 切换无反馈像「点了没反应」）。
+   a523：animation 加 !important——全局
+   [data-document-hidden] * { animation: none !important }（省电策略）
+   在属性残留时会把指示动画一并禁掉（实测：变色生效动画不动） */
+.web-loading [data-web="reload"] { animation: web-spin .8s linear infinite !important;
   display: inline-block; color: var(--accent); }
 @keyframes web-spin { to { transform: rotate(360deg); } }
 .web-loading .web-url { border-color: var(--accent);
-  animation: web-pulse 1.2s ease-in-out infinite; }
+  animation: web-pulse 1.2s ease-in-out infinite !important; }
 @keyframes web-pulse { 50% { border-color: var(--border); } }
 .web-pane .label { transition: color .2s; }
 .web-loading .label { color: var(--accent); }
