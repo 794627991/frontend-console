@@ -1094,6 +1094,17 @@ def main():
                                           _ser.NoEncryption()))
             with open(_cert, "wb") as _f:
                 _f.write(_c.public_bytes(_ser.Encoding.PEM))
+        # a525 修：自签证书导入当前用户受信根存储（certutil -user 无需
+        # 管理员；首次导入 Windows 弹一次确认）。WebView2 的
+        # CertificateError 事件只对顶层导航触发——子资源（script/css）
+        # 的证书错误不可事件放行（用户实锤 ERR_CERT_AUTHORITY_INVALID
+        # 全灭），必须让证书真正受信。已导入时 certutil 秒过无害。
+        import subprocess as _sp
+        try:
+            _sp.run(["certutil", "-addstore", "-user", "Root", _cert],
+                    capture_output=True, timeout=10)
+        except Exception:
+            pass
         from hypercorn.config import Config as _HC
         from hypercorn.asyncio import serve as _hserve
         import asyncio as _aio
