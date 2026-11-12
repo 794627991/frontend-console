@@ -121,18 +121,29 @@ class WebTabs:
         return {"ok": True}
 
     def _wire(self, tab_id, ctl, url):
-        """初始化 CoreWebView2 → 事件接线 → 首次导航。"""
+        """初始化 CoreWebView2 → 事件接线 → 首次导航。
+
+        a548 修：ContinueWith 回调在线程池线程跑，CoreWebView2 属性
+        只能 UI 线程访问（InvalidOperationException 实锤）——完成动作
+        整体再 BeginInvoke 回 UI 线程。"""
         import System
 
         def _init_done(t):
             try:
-                cvw = ctl.CoreWebView2
-                self._wire_events(tab_id, ctl, cvw)
-                cvw.Navigate(url or "about:blank")
+                t.Result    # 确保异常在此可见
             except Exception as e:
-                _log("ERROR", "init: %r" % e)
+                _log("ERROR", "EnsureCoreWebView2Async: %r" % e)
+                return
+
+            def _on_ui():
+                try:
+                    cvw = ctl.CoreWebView2
+                    self._wire_events(tab_id, ctl, cvw)
+                    cvw.Navigate(url or "about:blank")
+                except Exception as e:
+                    _log("ERROR", "init: %r" % e)
+            self._ui(_on_ui)
         try:
-            import Microsoft.Web.WebView2.WinForms as WF
             task = ctl.EnsureCoreWebView2Async(self._env)
             task.ContinueWith(
                 System.Action[System.Threading.Tasks.Task](_init_done))
@@ -202,20 +213,38 @@ class WebTabs:
 
     def go_back(self, tab_id):
         ctl = self._ctl.get(tab_id)
-        if ctl and ctl.CoreWebView2 and ctl.CoreWebView2.CanGoBack:
-            self._ui(lambda: ctl.CoreWebView2.GoBack())
+        if ctl:
+            def _do():
+                try:
+                    if ctl.CoreWebView2 and ctl.CoreWebView2.CanGoBack:
+                        ctl.CoreWebView2.GoBack()
+                except Exception as e:
+                    _log("WARN", "back: %r" % e)
+            self._ui(_do)
         return {"ok": True}
 
     def go_forward(self, tab_id):
         ctl = self._ctl.get(tab_id)
-        if ctl and ctl.CoreWebView2 and ctl.CoreWebView2.CanGoForward:
-            self._ui(lambda: ctl.CoreWebView2.GoForward())
+        if ctl:
+            def _do():
+                try:
+                    if ctl.CoreWebView2 and ctl.CoreWebView2.CanGoForward:
+                        ctl.CoreWebView2.GoForward()
+                except Exception as e:
+                    _log("WARN", "fwd: %r" % e)
+            self._ui(_do)
         return {"ok": True}
 
     def reload(self, tab_id):
         ctl = self._ctl.get(tab_id)
-        if ctl and ctl.CoreWebView2:
-            self._ui(lambda: ctl.CoreWebView2.Reload())
+        if ctl:
+            def _do():
+                try:
+                    if ctl.CoreWebView2:
+                        ctl.CoreWebView2.Reload()
+                except Exception as e:
+                    _log("WARN", "reload: %r" % e)
+            self._ui(_do)
         return {"ok": True}
 
     def show(self, tab_id, visible):
