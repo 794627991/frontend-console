@@ -1659,7 +1659,13 @@ def main():
     _wv_args = ["--disable-backgrounding-occluded-windows",
                 "--disable-renderer-backgrounding",
                 "--disable-background-timer-throttling",
-                "--disable-features=CalculateNativeWinOcclusion"]
+                "--disable-features=CalculateNativeWinOcclusion",
+                # a501（用户需求「网页里的链接能在工具内点开并显示」）：
+                # 内网代理注入 X-Frame-Options 导致 iframe 子页导航被拒。
+                # a495–a500 五版请求/响应层方案全部无效（pythonnet COM
+                # 对外部 HTTPS 的 Headers 不可访问）——唯一可靠路径是
+                # 渲染引擎层禁用同源检查。桌面工具 WebView2 沙箱内可控。
+                "--disable-web-security"]
     if _wv_debug or _web_cdp_cfg:
         _wv_args.append("--remote-debugging-port=9222")
     _prev = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
