@@ -43,6 +43,11 @@ a = Analysis(
                                           # 表现=机器人永不运行，用户实锤）
         'webview',                       # pywebview（WebView2 桌面窗口）
         'paramiko', 'cryptography', 'nacl',   # SSH 链
+        # a525：h2 代理提速（本地 https/hypercorn + 自签证书 cryptography）。
+        # 函数内 import 静态分析不可达——漏打包实锤模式（同 sqlite3/elftools
+        # 先例）：exe 版起不了 h2 静默回落 http，GitHub 切换仍是 10s 级
+        'hypercorn', 'hypercorn.asyncio', 'hypercorn.config',
+        'h2',
         'winpty',                        # 内嵌 Claude 终端（ConPTY）
         'Crypto', 'Crypto.Cipher', 'Crypto.PublicKey', 'Crypto.Util.Padding',
         'Crypto.Util.number', 'Crypto.Cipher.PKCS1_v1_5',  # CAS 登录 RSA 加密
