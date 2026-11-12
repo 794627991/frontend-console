@@ -121,7 +121,7 @@ function buildWebPanelTab(url) {
       </div>
       <div class="web-body" data-web-body>
         <iframe class="web-frame" data-web-frame
-          referrerpolicy="no-referrer-when-downgrade"></iframe>
+          referrerpolicy="no-referrer"></iframe>
         <div class="web-reader" data-web-reader style="display:none;"></div>
         <div class="web-sleep" data-web-sleep style="display:none;">
           <div>🌙 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
