@@ -90,7 +90,7 @@ def _web_html_to_text(html_src):
 # 静态资源（img/js/css）通过注入 <base> 从原始服务器加载（XFO 不影响
 # 子资源）；<a> 点击由注入的 JS 拦截 → postMessage → 父页面代理导航。
 
-_PROXY_NAV_JS = """<script>
+_PROXY_NAV_JS = r"""<script>
 (function(){
   // a506：路径式代理前缀——webpack 取 currentScript.src 的 dirname 做
   // publicPath，query 式会折叠成 /api/web/ 导致动态 chunk 404；路径式
@@ -136,6 +136,32 @@ _PROXY_NAV_JS = """<script>
       }
     }
   }
+  // a513：innerHTML / document.write 注入的 HTML 串同步重写——这两个
+  // 通道只有 MutationObserver 异步兜底，回调执行前浏览器已开始下载原始
+  // URL → 内网透明代理返回注入页（HTML）→ 脚本执行 Unexpected token
+  // '<'（SSO 工作台实锤）。赋值阶段在字符串上直接替换，窗口归零。
+  function _rwHtml(h){
+    return String(h).replace(
+      /(<(?:script|img|link|source|iframe|video|audio|embed)[^>]*?\s(?:src|href|data-src|poster)\s*=\s*)(["'])((?:(?!\2)[\s\S])*)\2/gi,
+      function(m, pre, q, u){
+        var p = _px(u);
+        return p ? pre + q + p + q : m;
+      });
+  }
+  try{
+    var _ipd = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML') || {};
+    if (_ipd.get && _ipd.set){
+      Object.defineProperty(Element.prototype, 'innerHTML', {
+        get: function(){ return _ipd.get.call(this); },
+        set: function(v){ _ipd.set.call(this, _rwHtml(v)); },
+        configurable: true
+      });
+    }
+  }catch(_){}
+  try{
+    var _odw = document.write.bind(document);
+    document.write = function(h){ return _odw(_rwHtml(h)); };
+  }catch(_){}
   // a503：拦截 createElement——MutationObserver 是异步的（microtask），
   // 浏览器在回调执行前就已经开始下载 src。在 createElement 时就 hook
   // setAttribute，src/href 被设置的第一时间就重写为代理路径。
@@ -411,6 +437,16 @@ def _proxy_core(url):
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Referer": url,
     }
+    # a513：转发浏览器原始请求头（Accept/X-Requested-With 等）——GitHub
+    # 的 hydration XHR 严格校验 Accept（*/* → 400、application/json →
+    # 200，实测）。排除：连接管理类（requests 自管）、Origin（127.0.0.1
+    # 的 Origin 触发目标站 CSRF 拒绝）、Referer（自设目标自指）、Cookie
+    #（下方单独转发）、浏览器缓存控制。
+    _SKIP_IN = {"host", "connection", "content-length", "accept-encoding",
+                "origin", "referer", "cookie", "cache-control", "pragma"}
+    for _k, _v in request.headers:
+        if _k.lower() not in _SKIP_IN:
+            _hdrs[_k] = _v
     # a505：转发浏览器 Cookie——登录后服务器 Set-Cookie 的 session 存在
     # 127.0.0.1 域（代理已透传回来），浏览器后续同源请求自动带上，这里
     # 转发给原始服务器，会话才能贯穿（否则登录成功后下一请求又变未登录）
@@ -567,11 +603,15 @@ def _proxy_core(url):
     else:
         _html = _meta_ref + _html
 
-    # 注入导航拦截 JS（a508：参数化注入原始 URL 做相对解析基准 _orig）
+    # 注入导航拦截 JS（a508：参数化注入原始 URL 做相对解析基准 _orig）。
+    # a513：必须用函数 repl——字符串 repl 会把 JS 正则里的 \s \2 当正则
+    # 替换转义解析（re.PatternError，注入串含 _rwHtml 正则后实锤）
     if "</head>" in _html.lower():
-        _html = _re.sub(r"</head>", _nav + "</head>", _html, count=1, flags=_re.I)
+        _html = _re.sub(r"</head>", lambda _m: _nav + "</head>",
+                        _html, count=1, flags=_re.I)
     elif "</body>" in _html.lower():
-        _html = _re.sub(r"</body>", _nav + "</body>", _html, count=1, flags=_re.I)
+        _html = _re.sub(r"</body>", lambda _m: _nav + "</body>",
+                        _html, count=1, flags=_re.I)
     else:
         _html += _nav
 
