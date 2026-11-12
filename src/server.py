@@ -1856,7 +1856,7 @@ _PROXY_NAV_JS = """<script>
       }
     }
   }
-  // a506：拦截 createElement——MutationObserver 是异步的（microtask），
+  // a503：拦截 createElement——MutationObserver 是异步的（microtask），
   // 浏览器在回调执行前就已经开始下载 src。在 createElement 时就 hook
   // setAttribute，src/href 被设置的第一时间就重写为代理路径。
   var _tags = {IMG:1,SCRIPT:1,LINK:1,SOURCE:1,IFRAME:1,VIDEO:1,AUDIO:1,EMBED:1};
@@ -1912,7 +1912,7 @@ _PROXY_NAV_JS = """<script>
     childList:true, subtree:true,
     attributes:true, attributeFilter:['src','href','data-src']
   });
-  // a507：拦截 fetch / XMLHttpRequest——AJAX 请求也走代理（登录/API 等）
+  // a504：拦截 fetch / XMLHttpRequest——AJAX 请求也走代理（登录/API 等）
   var _origFetch = window.fetch ? window.fetch.bind(window) : null;
   if (_origFetch){
     window.fetch = function(input, init){
@@ -1982,13 +1982,43 @@ def _proxy_url_rewrite(base_url, proxy_base):
     return _to_proxy
 
 
+def _proxy_sanitize_setcookie(sc):
+    """a505：Set-Cookie 透传前的域适配（纯函数供测试）。
+
+    原始服务器的 Set-Cookie 面向自己的域（Domain=10.17.97.73 / Path=/api /
+    Secure / SameSite=None 等），浏览器对照当前域 127.0.0.1 逐条校验：
+    - Domain=非当前域 → 整条拒收（session 直接丢）
+    - Secure → http://127.0.0.1 上存不下
+    - SameSite=None（无 Secure 时）→ 新 Chromium 拒收
+    - Path=/api → 只匹配 /api 前缀，/api/web/proxy 虽碰巧同前缀但非普适
+    处理：剥 Domain/Secure/SameSite，Path 统一改 /。HttpOnly 保留——
+    浏览器请求代理是同源自动带 cookie，JS 读不读得到无关紧要。
+    """
+    _keep = []
+    for _p in (sc or "").split(";"):
+        _pl = _p.strip().lower()
+        if not _pl:
+            continue
+        if (_pl.startswith("domain=") or _pl.startswith("secure")
+                or _pl.startswith("path=") or _pl.startswith("samesite=")):
+            continue
+        _keep.append(_p.strip())
+    if not _keep:
+        return ""
+    return "; ".join(_keep) + "; Path=/"
+
+
 @app.route("/api/web/proxy",
            methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 def api_web_proxy():
     """Web 代理：取页 → 删 XFO → 重写资源 URL 为代理路径 → 注入导航拦截。
 
-    a503：所有子资源（img/js/css/font）也走代理。
-    a507：支持 POST/PUT/DELETE 等——AJAX（登录/API）也走代理。
+    a502：所有子资源（img/js/css/font）也走代理。
+    a504：支持 POST/PUT/DELETE 等——AJAX（登录/API）也走代理。
+    a505：会话三件套——①请求转发浏览器 Cookie ②Set-Cookie 透传（剥
+    Domain/Secure/SameSite、Path 改 /，浏览器存进 127.0.0.1 域）③302 不
+    跟随、Location 代理化后透传（登录 302 的 Set-Cookie 不丢、跳转不逃出
+    代理模式）。
     """
     import ssl as _ssl
     import urllib.request as _ur
@@ -2007,7 +2037,13 @@ def api_web_proxy():
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Referer": url,
     }
-    # a507：转发 Content-Type 和请求体（POST/PUT/PATCH）
+    # a505：转发浏览器 Cookie——登录后服务器 Set-Cookie 的 session 存在
+    # 127.0.0.1 域（代理已透传回来），浏览器后续同源请求自动带上，这里
+    # 转发给原始服务器，会话才能贯穿（否则登录成功后下一请求又变未登录）
+    _ck = request.headers.get("Cookie")
+    if _ck:
+        _hdrs["Cookie"] = _ck
+    # a504：转发 Content-Type 和请求体（POST/PUT/PATCH）
     _body = None
     if request.method in ("POST", "PUT", "PATCH"):
         _body = request.get_data()
@@ -2017,21 +2053,60 @@ def api_web_proxy():
         _hdrs["X-Requested-With"] = request.headers.get("X-Requested-With", "")
     _req = _ur.Request(url, headers=_hdrs, data=_body,
                        method=request.method if request.method != "HEAD" else "GET")
+
+    # a505：禁自动跟随重定向——urllib 默认吞掉 302 中间响应（其 Set-Cookie
+    # 直接丢失），且浏览器看不到跳转。改为透传 30x：Location 代理化后交还
+    # 浏览器跟（跳转仍留在代理模式），Set-Cookie 一并透传。
+    class _NoRedir(_ur.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+            return None   # None → urllib 按 HTTPError(code) 抛出（带响应头）
+
+    _opener = _ur.build_opener(_NoRedir, _ur.HTTPSHandler(context=_ctx))
+
+    def _set_cookies_into(resp, hdrs_obj):
+        """a505：原始响应 Set-Cookie 清洗后透传（可多条）。"""
+        try:
+            _scs = hdrs_obj.get_all("Set-Cookie") or []
+        except Exception:
+            _scs = []
+        for _sc in _scs:
+            _clean = _proxy_sanitize_setcookie(_sc)
+            if _clean:
+                resp.headers.add("Set-Cookie", _clean)
+        return resp
+
     try:
-        _r = _ur.urlopen(_req, timeout=15, context=_ctx)
+        _r = _opener.open(_req, timeout=15)
         _raw = _r.read(5 * 1024 * 1024)
         _ct = _r.headers.get("Content-Type") or ""
         _final = _r.geturl() or url
     except _ur.HTTPError as _he:
-        # a507：转发原始错误码和响应体（401/403/404 等——AJAX 需要看到）
         _raw = b""
         try:
             _raw = _he.read(5 * 1024 * 1024)
         except Exception:
             pass
         _ct = _he.headers.get("Content-Type") or ""
-        return Response(_raw, status=_he.code,
-                       mimetype=_ct.split(";")[0].strip() or "text/plain")
+        # a505：30x 透传——Location 代理化（相对地址基于原始 URL 解析），
+        # Set-Cookie 同步透传（登录 302 的 session 落地在浏览器侧）
+        if 300 <= _he.code < 400:
+            _loc = _he.headers.get("Location") or ""
+            if _loc:
+                from urllib.parse import urljoin as _uj, quote as _q
+                try:
+                    _abs_loc = _uj(url, _loc)
+                except Exception:
+                    _abs_loc = _loc
+                _resp = Response(b"", status=_he.code)
+                _resp.headers["Location"] = (
+                    "http://" + request.host + "/api/web/proxy?url="
+                    + _q(_abs_loc, safe=""))
+                return _set_cookies_into(_resp, _he.headers)
+        # a504：转发原始错误码和响应体（401/403/404 等——AJAX 需要看到）
+        return _set_cookies_into(
+            Response(_raw, status=_he.code,
+                     mimetype=_ct.split(";")[0].strip() or "text/plain"),
+            _he.headers)
     except Exception as e:
         return Response("Proxy fetch failed: %s" % str(e)[:200], status=502)
 
@@ -2047,11 +2122,14 @@ def api_web_proxy():
             r"url\((['\"]?)([^'\")\s]+)\1\)",
             lambda m: "url(%s%s%s)" % (m.group(1), _fn(m.group(2)), m.group(1)),
             _css)
-        return Response(_css, mimetype="text/css")
+        return _set_cookies_into(Response(_css, mimetype="text/css"), _r.headers)
 
     # 非 HTML/CSS 直接透传（图片/字体等二进制资源）
     if "text/html" not in _ct_low and "application/xhtml" not in _ct_low:
-        return Response(_raw, mimetype=_ct.split(";")[0].strip() or "application/octet-stream")
+        return _set_cookies_into(
+            Response(_raw,
+                     mimetype=_ct.split(";")[0].strip() or "application/octet-stream"),
+            _r.headers)
 
     # ---- HTML 处理 ----
     _cs = _web_detect_charset(_ct, _raw)
@@ -2097,10 +2175,13 @@ def api_web_proxy():
         r"(srcset)=['\"]([^'\"]+)['\"]",
         _rw_srcset, _html, flags=_re.I)
 
-    # 删已有 <base>，注入指向原始 URL 的 base（CSS 内残余相对路径兜底）
+    # 删已有 <base>，注入指向原始 URL 的 base（CSS 内残余相对路径兜底）。
+    # a505：referrer 从 no-referrer 放宽为 same-origin——404 兜底路由靠同源
+    # Referer（?url= 原始地址）还原站点；跨域请求本就全走代理、由服务端
+    # 自设 Referer，浏览器侧不发跨域 Referer 的旧约束不受影响。
     _html = _re.sub(r"<base\b[^>]*>", "", _html, count=1, flags=_re.I)
     _base = ('<base href="%s">'
-             '<meta name="referrer" content="no-referrer">'
+             '<meta name="referrer" content="same-origin">'
              % _final.replace('"', "&quot;"))
     if "<head" in _html.lower():
         _html = _re.sub(r"(<head[^>]*>)", r"\1" + _base, _html, count=1, flags=_re.I)
@@ -2115,7 +2196,37 @@ def api_web_proxy():
     else:
         _html += _PROXY_NAV_JS
 
-    return Response(_html, mimetype="text/html; charset=utf-8")
+    return _set_cookies_into(
+        Response(_html, mimetype="text/html; charset=utf-8"), _r.headers)
+
+
+@app.errorhandler(404)
+def _proxy_404_fallback(err):
+    """a505：代理域 404 兜底——登录成功后页面 JS 常写 location.href='/main'
+    这类站内相对跳转（location 赋值浏览器安全限制拦不住），在代理 iframe
+    里解析为 127.0.0.1/main → Flask 404 → 用户看到「跳转失败」。
+
+    兜底链：Referer 是本机代理页（?url= 带原始地址）+ GET + Accept 含
+    text/html（AJAX 404 不动，fetch 期待原状态码）→ 把请求 path+query
+    拼回原始站点 → 302 回代理。重定向目标是 /api/web/proxy（有路由），
+    不会循环；原始站点也 404 时由代理透传状态码、不进本 handler。
+    """
+    _ref = request.headers.get("Referer", "")
+    if (request.method == "GET" and "/api/web/proxy?url=" in _ref
+            and "text/html" in (request.headers.get("Accept") or "")):
+        import re as _re
+        from urllib.parse import urljoin as _uj, unquote as _unq, quote as _q
+        _m = _re.search(r"[?&]url=([^&]+)", _ref)
+        if _m:
+            try:
+                _base = _unq(_m.group(1))
+                _target = _uj(_base, request.full_path.rstrip("?"))
+                if _target.startswith(("http://", "https://")):
+                    return redirect(
+                        "/api/web/proxy?url=" + _q(_target, safe=""), code=302)
+            except Exception:
+                pass
+    return err
 
 
 @app.route("/api/web/fetch_text", methods=["POST"])
