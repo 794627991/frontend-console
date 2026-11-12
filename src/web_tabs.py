@@ -139,6 +139,14 @@ class WebTabs:
             def _on_ui():
                 try:
                     cvw = ctl.CoreWebView2
+                    # a552：密码自动填充（登录态便利，用户令）——开启后
+                    # Chromium 密码管理器弹「保存密码」气泡，下次打开同站
+                    # 自动填充账号密码（密码存 UDF 的 Login Data，持久）
+                    try:
+                        cvw.Profile.PasswordAutofillEnabled = True
+                        cvw.Profile.GeneralAutofillEnabled = True
+                    except Exception as e:
+                        _log("WARN", "autofill: %r" % e)
                     self._wire_events(tab_id, ctl, cvw)
                     cvw.Navigate(url or "about:blank")
                 except Exception as e:
