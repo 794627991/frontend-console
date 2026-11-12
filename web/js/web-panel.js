@@ -122,6 +122,8 @@ function buildWebPanelTab(url) {
       <div class="web-body" data-web-body>
         <iframe class="web-frame" data-web-frame
           referrerpolicy="no-referrer"></iframe>
+        <iframe class="web-frame" data-web-frame2
+          referrerpolicy="no-referrer" style="display:none;"></iframe>
         <div class="web-reader" data-web-reader style="display:none;"></div>
         <div class="web-sleep" data-web-sleep style="display:none;">
           <div>🌙 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
@@ -145,8 +147,7 @@ function buildWebPanelTab(url) {
   connections[portId] = conn;
 
   const $w = (s) => wrap.querySelector(s);
-  const frame = $w('[data-web-frame]');
-  _webEscapeGuard(conn);                   // a516：常驻逃逸检测
+  _webEscapeGuard(conn);                   // a516：常驻逃逸检测（a520：双 frame）
   const urlInput = $w('[data-web-input]');
   urlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
@@ -226,10 +227,51 @@ window.addEventListener('message', (e) => {
   }
 });
 
+// a520：双 iframe 软过渡（Edge 式无缝导航）——点击后当前页保持显示，
+// 隐藏的 staging frame 预载新页，就绪瞬间切换。取代"立即替换 src"的
+// 白屏式导航（重站点代理取页 2-5s，白屏闪烁体感差，用户实锤）。
+function _wf(c) {          // 当前显示的 frame
+  return c._cur === 'f2'
+    ? c.wrap.querySelector('[data-web-frame2]')
+    : c.wrap.querySelector('[data-web-frame]');
+}
+function _other(c) {       // 隐藏的 staging frame
+  return c._cur === 'f2'
+    ? c.wrap.querySelector('[data-web-frame]')
+    : c.wrap.querySelector('[data-web-frame2]');
+}
+function _softNav(c, url) {
+  const next = _other(c);
+  c._pend = { url, frame: next, t0: Date.now() };
+  next.src = _webProxyUrl(url);
+  const poll = () => {
+    const p = c._pend;
+    if (!p || p.frame !== next) return;      // 被更新的导航取代
+    let ready = false;
+    try { ready = !!(next.contentDocument
+                    && next.contentDocument.readyState === 'complete'); }
+    catch (_) { ready = true; }              // 跨域=已加载（逃逸场景）
+    const el = Date.now() - p.t0;
+    if ((ready && el > 2500) || el > 12000) return _commit(c);
+    setTimeout(poll, 400);
+  };
+  setTimeout(poll, 800);
+}
+function _commit(c) {
+  const p = c._pend;
+  if (!p) return;
+  c._pend = null;
+  c._cur = (p.frame === c.wrap.querySelector('[data-web-frame2]')) ? 'f2' : 'f1';
+  const old = _other(c);
+  p.frame.style.display = '';
+  old.style.display = 'none';
+  // 旧 frame 延迟清空（释放渲染进程；防切换瞬闪）
+  setTimeout(() => { if (old !== _wf(c)) old.src = 'about:blank'; }, 600);
+}
+
 function _webNavigate(url) {
   const c = _webCur();
   if (!c || !url) return;
-  const frame = c.wrap.querySelector('[data-web-frame]');
   const inp = c.wrap.querySelector('[data-web-input]');
   _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
   _webNav.stack.push(url);
@@ -241,7 +283,7 @@ function _webNavigate(url) {
   // 不做旧 URL 恢复——避免 about:blank→旧URL→新URL 三连导航）
   _webWake(c);
   if (_webUi.reader) _webReaderToggle(false, true);
-  frame.src = _webProxyUrl(url);
+  _softNav(c, url);                        // a520：软过渡（就绪才切换）
   inp.value = url;
   c.tab.querySelector('.label').textContent = _webShortUrl(url).slice(0, 24);
   _webApplyZoom(_webZoomFor(url), _webHostOf(url));   // a475 站点缩放记忆
@@ -257,22 +299,25 @@ function _webNavigate(url) {
 // contentWindow.location.href，跨域（SecurityError）= 逃逸 → 拉回栈顶
 // 代理 URL（CAS/session cookie 都在代理域，拉回即登录态闭环）。
 function _webEscapeGuard(c) {
-  const frame = c.wrap.querySelector('[data-web-frame]');
-  if (!frame || frame._pxGuard) return;
-  frame._pxGuard = true;
-  frame.addEventListener('load', () => {
-    setTimeout(() => {
-      if (_webUi.reader || _webUi.sleeping) return;
-      let escaped = false;
-      try { void frame.contentWindow.location.href; }
-      catch (_) { escaped = true; }
-      if (!escaped) return;
-      const top = _webNav.stack[_webNav.idx];
-      if (!top) return;
-      c._escN = (c._escN || 0) + 1;
-      console.warn('[web] iframe 逃逸到代理域外，拉回 #' + c._escN, top);
-      if (c._escN <= 3) frame.src = _webProxyUrl(top);
-    }, 2000);
+  // a520：两个 frame（active + staging）都挂——软过渡期间 staging 逃逸
+  // 同样要拉回（拉回触发重新加载，softNav 的轮询就绪后正常切换）
+  c.wrap.querySelectorAll('iframe.web-frame').forEach(frame => {
+    if (frame._pxGuard) return;
+    frame._pxGuard = true;
+    frame.addEventListener('load', () => {
+      setTimeout(() => {
+        if (_webUi.reader || _webUi.sleeping) return;
+        let escaped = false;
+        try { void frame.contentWindow.location.href; }
+        catch (_) { escaped = true; }
+        if (!escaped) return;
+        const top = _webNav.stack[_webNav.idx];
+        if (!top) return;
+        c._escN = (c._escN || 0) + 1;
+        console.warn('[web] iframe 逃逸到代理域外，拉回 #' + c._escN, top);
+        if (c._escN <= 3) frame.src = _webProxyUrl(top);
+      }, 2000);
+    });
   });
 }
 
@@ -285,7 +330,8 @@ function _webLoadWatch(c, url) {
   if (!err) return;
   err.style.display = 'none';
   if (c._loadT) clearTimeout(c._loadT);
-  const frame = c.wrap.querySelector('[data-web-frame]');
+  // a520：软过渡期监控 staging（真正在加载的 frame），无过渡时监控 active
+  const frame = c._pend ? c._pend.frame : _wf(c);
   let loaded = false;
   const onLoad = () => {
     loaded = true;
@@ -342,9 +388,12 @@ function _webMaybeBlank(c, url) {
 function _webSleep(c) {
   _webUi.sleeping = true;
   const ov = c.wrap.querySelector('[data-web-sleep]');
-  const frame = c.wrap.querySelector('[data-web-frame]');
+  const frame = _wf(c);
   if (ov) ov.style.display = 'flex';
   if (frame) frame.src = 'about:blank';    // 释放渲染进程（Chromium 回收）
+  // a520：staging 一并清（软过渡中止：pending 作废 + 双 frame 归零）
+  c._pend = null;
+  _other(c).src = 'about:blank';
 }
 function _webWake(c) {
   if (!_webUi.sleeping) return;
@@ -360,7 +409,7 @@ setInterval(() => {
   if (c && _webUi.sleeping && c.wrap.style.display !== 'none') {
     _webWake(c);
     const url = _webNav.stack[_webNav.idx];
-    if (url) c.wrap.querySelector('[data-web-frame]').src = _webProxyUrl(url);
+    if (url) _wf(c).src = _webProxyUrl(url);
   }
 }, 1000);
 
@@ -369,7 +418,7 @@ function _webReaderToggle(on, skipRestore) {
   const c = _webCur();
   if (!c) return;
   const rd = c.wrap.querySelector('[data-web-reader]');
-  const frame = c.wrap.querySelector('[data-web-frame]');
+  const frame = _wf(c);
   const btn = c.wrap.querySelector('[data-web="read"]');
   const url = _webNav.stack[_webNav.idx] || '';
   // 审计修（状态机）：无 URL 时先退出——内部态不翻（原实现先置 reader=true
@@ -425,7 +474,7 @@ function _webApplyZoom(z, host) {
   const c = connections[WEB_PORTID];
   if (!c) return;
   c._zoom = z;
-  const frame = c.wrap.querySelector('[data-web-frame]');
+  const frame = _wf(c);
   const rd = c.wrap.querySelector('[data-web-reader]');
   if (frame) frame.style.zoom = z;
   if (rd) rd.style.fontSize = (13 * z) + 'px';
@@ -446,7 +495,7 @@ function _webSyncUI() {
 function _webAct(act, wrap) {
   const c = _webCur();
   if (!c) return;
-  const frame = c.wrap.querySelector('[data-web-frame]');
+  const frame = _wf(c);
   const url = _webNav.stack[_webNav.idx] || '';
   const _afterMove = () => {
     // 审计修（E.d）：back/fwd 改 idx 后补会话保存（否则重启恢复到后退前
