@@ -808,18 +808,19 @@ def main():
     try:
         from webview.platforms.edgechromium import EdgeChrome as _EC
         def _on_new_window(self, sender, args):
+            # 审计实锤（卡死根因）：本处理器跑在 UI 线程，pywebview 的
+            # evaluate_js 内部 Semaphore.acquire 等 UI 线程回调——事件未
+            # 返回即死锁。改用 ExecuteScriptAsync fire-and-forget：发起即
+            # 返回、不等待结果，前端 __newWindow 自行消化 URL。
             try:
                 _u = str(args.get_Uri() or "")
                 if _u.startswith(("http://", "https://")):
                     args.set_Handled(True)
                     _js = "window.__newWindow && window.__newWindow(%s);" % json.dumps(_u)
-                    _w = getattr(self, "pywebview_window", None)
-                    if _w is not None:
-                        _w.evaluate_js(_js)
-                    else:
-                        import webview as _wv
-                        if _wv.windows:
-                            _wv.windows[0].evaluate_js(_js)
+                    _wv = getattr(self, "webview", None)   # WebView2 控件
+                    if _wv is not None and _wv.CoreWebView2 is not None:
+                        from System import Func, Object, String
+                        _wv.CoreWebView2.ExecuteScriptAsync(_js)
             except Exception:
                 pass  # 异常时不置 Handled → 走系统默认（系统浏览器），可接受降级
         _EC.on_new_window_request = _on_new_window
@@ -1410,10 +1411,33 @@ def main():
         # preventDefault）。仅非 debug 模式需要——debug 下 pywebview 本就全开
         if not _dbg_web:
             try:
-                _cv2 = window.gui.browser.CoreWebView2
-                _cv2.Settings.AreDefaultContextMenusEnabled = True
+                def _find_core(obj, depth=0):
+                    """深度优先找带 CoreWebView2.Settings 的控件节点
+                    （pywebview 内部结构无公开路径——window.gui.browser
+                    实测不存在；对象树防御性遍历）。"""
+                    import clr
+                    if depth > 6 or obj is None:
+                        return None
+                    try:
+                        st = obj.CoreWebView2.Settings
+                        if st is not None:
+                            return st
+                    except Exception:
+                        pass
+                    for name in ("browser", "webview", "native", "root",
+                                 "Browser", "WebView2", "CoreWebView2"):
+                        try:
+                            r = _find_core(getattr(obj, name, None), depth + 1)
+                            if r is not None:
+                                return r
+                        except Exception:
+                            continue
+                    return None
+                _st = _find_core(window.gui) or _find_core(window)
+                if _st is not None:
+                    _st.AreDefaultContextMenusEnabled = True
             except Exception:
-                pass  # 属性缺失（pywebview 升级变动）不拦启动
+                pass  # 结构变动（pywebview 升级）不拦启动——右键退回屏蔽态
         # --open-file 启动（接管后双击文件、当时无活实例）：窗口就绪后打开该文件
         if open_file_path:
             try:
