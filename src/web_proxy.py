@@ -373,7 +373,7 @@ def _proxy_url_rewrite(base_url, proxy_base):
     return _to_proxy
 
 
-def _proxy_sanitize_setcookie(sc):
+def _proxy_sanitize_setcookie(sc, persist_days=7):
     """a505：Set-Cookie 透传前的域适配（纯函数供测试）。
 
     原始服务器的 Set-Cookie 面向自己的域（Domain=10.17.97.73 / Path=/api /
@@ -384,8 +384,14 @@ def _proxy_sanitize_setcookie(sc):
     - Path=/api → 只匹配 /api 前缀，/api/web/proxy 虽碰巧同前缀但非普适
     处理：剥 Domain/Secure/SameSite，Path 统一改 /。HttpOnly 保留——
     浏览器请求代理是同源自动带 cookie，JS 读不读得到无关紧要。
+
+    a519：会话 cookie（无 Expires/Max-Age）补 7 天持久——CAS 的 CASTGC
+    等 TGT 默认是会话 cookie（浏览器关闭即失效），而代理域 127.0.0.1 的
+    「浏览器」就是 WebView2：每次重启工具 = 会话结束 = 登录态清零 → 用户
+    实锤「每次都要输密码」。内网单用户工具语境，便利优先于会话隔离。
     """
     _keep = []
+    _has_life = False
     for _p in (sc or "").split(";"):
         _pl = _p.strip().lower()
         if not _pl:
@@ -393,10 +399,18 @@ def _proxy_sanitize_setcookie(sc):
         if (_pl.startswith("domain=") or _pl.startswith("secure")
                 or _pl.startswith("path=") or _pl.startswith("samesite=")):
             continue
+        if _pl.startswith(("expires=", "max-age=")):
+            _has_life = True
         _keep.append(_p.strip())
     if not _keep:
         return ""
-    return "; ".join(_keep) + "; Path=/"
+    _out = "; ".join(_keep) + "; Path=/"
+    if not _has_life and persist_days:
+        from email.utils import formatdate
+        import time as _time
+        _out += "; Expires=" + formatdate(
+            _time.time() + persist_days * 86400, usegmt=True)
+    return _out
 
 
 @bp.route("/api/web/proxy",
@@ -513,10 +527,11 @@ def _proxy_core(url):
         _r = _proxy_session().request(
             _method, url, headers=_hdrs, data=_body,
             timeout=15, allow_redirects=False)
-        # a518：上限 5MB → 20MB——现代 SPA 主 bundle 超 5MB 不罕见
+        # a518：上限 5MB → 50MB——现代 SPA 主 bundle 超 5MB 不罕见
         # （SWMS app.js 5.2MB 实锤：截断 → Unexpected end of input →
-        # 页面白屏），runtime/vendor 修复后此处成为最后断点
-        _raw = (_r.content or b"")[:20 * 1024 * 1024]
+        # 页面白屏）。50MB 覆盖极端 vendor 全量包，内存垫得住（内网单
+        # 用户工具语境）
+        _raw = (_r.content or b"")[:50 * 1024 * 1024]
         _ct = _r.headers.get("Content-Type") or ""
         _final = url           # 无跟随重定向，最终地址即请求地址
     except Exception as e:

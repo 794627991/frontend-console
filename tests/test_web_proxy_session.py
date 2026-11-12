@@ -66,11 +66,11 @@ def _patch_sess(monkeypatch, sess):
 def test_sanitize_strips_domain_secure_samesite_path():
     sc = ("sessionid=abc123; Domain=10.17.97.73; Path=/api; Secure; "
           "HttpOnly; SameSite=None")
-    assert W._proxy_sanitize_setcookie(sc) == "sessionid=abc123; HttpOnly; Path=/"
+    assert W._proxy_sanitize_setcookie(sc).startswith("sessionid=abc123; HttpOnly; Path=/; Expires=")
 
 
 def test_sanitize_keeps_attrs_and_appends_path():
-    assert W._proxy_sanitize_setcookie("token=x") == "token=x; Path=/"
+    assert W._proxy_sanitize_setcookie("token=x").startswith("token=x; Path=/; Expires=")
     assert W._proxy_sanitize_setcookie(
         "a=1; Expires=Wed, 21 Oct 2099 07:28:00 GMT") == \
         "a=1; Expires=Wed, 21 Oct 2099 07:28:00 GMT; Path=/"
@@ -111,7 +111,7 @@ def test_setcookie_passthrough_on_html(monkeypatch):
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2F")
     scs = r.headers.getlist("Set-Cookie")
-    assert scs == ["sessionid=abc; Path=/"]
+    assert len(scs) == 1 and scs[0].startswith("sessionid=abc; Path=/")
 
 
 def test_setcookie_multiple(monkeypatch):
@@ -123,7 +123,8 @@ def test_setcookie_multiple(monkeypatch):
     _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2F")
-    assert sorted(r.headers.getlist("Set-Cookie")) == ["a=1; Path=/", "b=2; Path=/"]
+    scs2 = sorted(r.headers.getlist("Set-Cookie"))
+    assert scs2[0].startswith("a=1; Path=/") and scs2[1].startswith("b=2; Path=/")
 
 
 # ---------- 30x：不跟随 + Location 代理化 ----------
@@ -148,7 +149,7 @@ def test_302_passthrough_location_proxied(monkeypatch):
     assert "/api/web/proxy/http/srv/main" in r.headers["Location"]
     assert r.headers["Location"].startswith("http://")
     # 302 中间响应的 Set-Cookie 不丢（urllib 自动跟随时会吞掉）
-    assert r.headers.getlist("Set-Cookie") == ["sessionid=abc; Path=/"]
+    assert r.headers.getlist("Set-Cookie")[0].startswith("sessionid=abc; Path=/")
 
 
 def test_302_absolute_location(monkeypatch):
@@ -180,7 +181,7 @@ def test_401_body_and_setcookie_passthrough(monkeypatch):
                data='{"p":"x"}', content_type="application/json")
     assert r.status_code == 401
     assert r.data == b'{"err":"bad"}'
-    assert r.headers.getlist("Set-Cookie") == ["reset=1; Path=/"]
+    assert r.headers.getlist("Set-Cookie")[0].startswith("reset=1; Path=/")
 
 
 def test_post_body_and_ct_forwarded(monkeypatch):
@@ -278,7 +279,7 @@ def test_path_route_serves_and_forwards(monkeypatch):
     # 还原出的原始 URL（含 query）+ cookie 转发
     assert op.last.url == "http://srv:8765/a/b?q=1"
     assert "s=1" in (op.last.headers.get("Cookie") or "")
-    assert r.headers.getlist("Set-Cookie") == ["s=1; Path=/"]
+    assert r.headers.getlist("Set-Cookie")[0].startswith("s=1; Path=/")
 
 
 def test_path_route_webpack_chunk_semantics(monkeypatch):
@@ -339,3 +340,19 @@ def test_no_store_on_proxy_responses(monkeypatch):
     c = S.app.test_client()
     r = c.get("/api/web/proxy/https/srv/")
     assert "no-store" in r.headers.get("Cache-Control", "")
+
+
+def test_sanitize_session_cookie_persisted():
+    """a519：会话 cookie（无 Expires/Max-Age）补 7 天持久——CAS 的
+    CASTGC 是会话 cookie，WebView2 重启工具=会话结束=TGT 丢失，
+    用户实锤「每次都要输密码」。"""
+    out = W._proxy_sanitize_setcookie("CASTGC=TGT-123; HttpOnly")
+    assert out.startswith("CASTGC=TGT-123; HttpOnly; Path=/; Expires=")
+    # 已有生命周期的原样保留
+    out2 = W._proxy_sanitize_setcookie(
+        "s=1; Expires=Wed, 21 Oct 2099 07:28:00 GMT")
+    assert "2099" in out2 and "Path=/" in out2
+    out3 = W._proxy_sanitize_setcookie("m=1; Max-Age=3600")
+    assert "Max-Age=3600" in out3 and "Expires" not in out3
+    # 可关闭持久化
+    assert "Expires" not in W._proxy_sanitize_setcookie("x=1", persist_days=0)
