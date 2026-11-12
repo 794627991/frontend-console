@@ -336,3 +336,15 @@ def test_importmap_urls_rewritten(monkeypatch):
     assert "http://localhost/api/web/proxy/https/cdn.x.com/b.js?ver=1" in _h
     assert "http://localhost/api/web/proxy/https/other.y.com/c.js" in _h
     assert '"https://cdn.x.com/a.js"' not in _h       # 原始 URL 不残留
+
+
+def test_no_store_on_proxy_responses(monkeypatch):
+    """a510：代理响应禁缓存（WebView2 缓存旧代理产物 → 升级后
+    ERR_CACHE_READ_FAILURE / 执行过期注入逻辑）。"""
+    op = _FakeOpener(_FakeResp(
+        b"<html><head></head><body>ok</body></html>",
+        {"Content-Type": "text/html"}, "http://srv/"))
+    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    c = S.app.test_client()
+    r = c.get("/api/web/proxy/https/srv/")
+    assert "no-store" in r.headers.get("Cache-Control", "")

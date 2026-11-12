@@ -614,6 +614,17 @@ def api_web_fetch_text():
 
 
 def register(app):
-    """挂载到主应用：蓝图 + app 级 404 兜底。"""
+    """挂载到主应用：蓝图 + app 级 404 兜底 + 代理响应禁缓存。"""
     app.register_blueprint(bp)
     app.errorhandler(404)(_proxy_404_fallback)
+
+    @app.after_request
+    def _no_store(resp):
+        """a510：代理响应一律禁缓存。代理产物是动态改写的（URL 重写/
+        注入 JS/会话 cookie 都随版本与页面变化），可缓存毫无收益；
+        WebView2 缓存旧版产物后升级会撞 ERR_CACHE_READ_FAILURE 或执行
+        过期注入逻辑（SSO 页实锤）。no-store=不写不读，最彻底。
+        只作用于本蓝图路由——工具自身响应的缓存策略归 _no_cache_static。"""
+        if request.blueprint == "web_proxy":
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return resp
