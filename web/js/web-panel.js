@@ -214,6 +214,9 @@ function _webCur() {
 // /api/web/ 导致动态 chunk 全 404；路径式 dirname 还原 CDN 基址。
 function _webProxyUrl(url) {
   if (!url || url === 'about:blank') return url;
+  // a537：已是相对代理路径（a535 新窗口路由传入）——原样放行，
+  // 原实现会把它当原始 URL 包进 query 式 → Bad URL（用户实锤）
+  if (url.indexOf('/api/web/proxy/') === 0) return url;
   try {
     const a = new URL(url);
     return '/api/web/proxy/' + a.protocol.replace(':', '') + '/' + a.host

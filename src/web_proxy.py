@@ -309,6 +309,10 @@ _PROXY_NAV_JS = r"""<script>
   var _origOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function(method, url){
     try{
+      // a537：HEAD→GET——hypercorn 对 HEAD+h2 响应带 body 时 ASGI 状态机
+      // 崩（掘金 token 探测 HEAD 500 + ASGI ERROR 实锤；探测只要状态码，
+      // GET body 客户端自弃无碍）
+      if (String(method||'').toUpperCase() === 'HEAD') arguments[0] = 'GET';
       var p = _px(String(url||''));
       if (p) url = p;
     }catch(_){}
