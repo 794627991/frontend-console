@@ -39,6 +39,7 @@ class WebTabs:
 
     def __init__(self, form):
         self._form = form                    # pywebview 的 WinForms Form
+        self._main_cvw = None                # 工具主 UI 的 CoreWebView2（事件推送目标）
         self._ctl = {}                       # tab_id(str) → WebView2 控件
         self._env = None                     # 共享 CoreWebView2Environment
         self._rect = (0, 0, 800, 600)        # 最近一次布局（物理像素）
@@ -150,13 +151,26 @@ class WebTabs:
         except Exception as e:
             _log("ERROR", "_wire: %r" % e)
 
+    def set_main(self, cvw):
+        """a550：登记工具主 UI 的 CoreWebView2——事件推送目标。
+
+        a544 的致命错：_push 用控件自己的 ExecuteScriptAsync——那是往
+        控件加载的外部页面（csdn/juejin）执行 JS，__webTabNew 定义在
+        工具主 UI 文档里，推送全部静默失败：NewWindowRequested 被
+        Handled=True 吞掉后无后续 → 点文章（target=_blank）全无反应
+        =「主界面能开子界面打不开」；地址栏/历史按钮也永不更新。"""
+        self._main_cvw = cvw
+
     def _wire_events(self, tab_id, ctl, cvw):
-        """地址栏推送 + 历史/新窗口。ExecuteScriptAsync fire-and-forget。"""
+        """地址栏推送 + 历史/新窗口。经主 UI ExecuteScriptAsync
+        fire-and-forget（a550：推到工具文档而非网页文档）。"""
         import System
 
         def _push(js):
             try:
-                cvw.ExecuteScriptAsync(js)
+                m = self._main_cvw
+                if m:
+                    m.ExecuteScriptAsync(js)
             except Exception:
                 pass
 

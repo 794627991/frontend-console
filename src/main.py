@@ -824,7 +824,11 @@ def main():
             # 打不开但工具其余功能完好），错误进 stderr 可查
             try:
                 from src import web_tabs as _wt
-                _wt.install(self.form)
+                _inst = _wt.install(self.form)
+                if _inst:
+                    # a550：登记主 UI CoreWebView2——控件事件推送的目标文档
+                    # （推到工具 UI 才能调 __webTabNew 等，详见 web_tabs.set_main）
+                    _inst.set_main(sender.CoreWebView2)
             except Exception as _e:
                 print("[a544] WebTabs install failed: %r" % _e,
                       file=sys.stderr)
