@@ -112,6 +112,7 @@ function buildWebPanelTab(url) {
         <button class="btn ghost icon-btn" data-web="back" title="后退（基于本面板导航记录）">◀</button>
         <button class="btn ghost icon-btn" data-web="fwd" title="前进">▶</button>
         <button class="btn ghost icon-btn" data-web="reload" title="重载">⟳</button>
+        <button class="btn ghost icon-btn" data-web="mode" title="直连：原生加载（快，兼容性好；拒绝嵌入的站切「代理」）">⚡</button>
         <input class="web-url" data-web-input spellcheck="false" autocomplete="off"
                placeholder="输入网址，回车打开">
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">★</button>
@@ -212,10 +213,32 @@ function _webCur() {
 // a506：query 式升级为路径式 /proxy/<scheme>/<host>/<path>——webpack
 // 取 currentScript.src 的 dirname 做 publicPath，query 式折叠成
 // /api/web/ 导致动态 chunk 全 404；路径式 dirname 还原 CDN 基址。
+// a543 网页双模式：direct=iframe 原生直连（默认——PoC 实证内网代理已
+// 不注入 XFO，博客园/掘金/SSO 等全部原生工作，document.domain/防盗链/
+// 反爬指纹零问题）；proxy=同源代理（GitHub/CSDN 等自发 XFO/CSP 的强
+// 防护站，走已修好的代理链）。per-host 记忆，⚡ 按钮切换。
+const WEB_MODE_KEY = 'fc_web_mode_hosts';
+function _webModeHosts() {
+  try { return JSON.parse(localStorage.getItem(WEB_MODE_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+function _webModeFor(url) {
+  try { return _webModeHosts()[new URL(url).host] || 'direct'; }
+  catch (_) { return 'direct'; }
+}
+function _webModeSet(url, mode) {
+  try {
+    const h = _webModeHosts();
+    const k = new URL(url).host;
+    if (mode === 'direct') delete h[k]; else h[k] = mode;
+    localStorage.setItem(WEB_MODE_KEY, JSON.stringify(h));
+  } catch (_) {}
+}
 function _webProxyUrl(url) {
   if (!url || url === 'about:blank') return url;
-  // a537：已是相对代理路径（a535 新窗口路由传入）——原样放行，
-  // 原实现会把它当原始 URL 包进 query 式 → Bad URL（用户实锤）
+  // 直连模式：原始 URL 直接给 iframe（浏览器原生加载）
+  if (_webModeFor(url) === 'direct') return url;
+  // a537：已是相对代理路径（a535 新窗口路由传入）——原样放行
   if (url.indexOf('/api/web/proxy/') === 0) return url;
   try {
     const a = new URL(url);
@@ -316,12 +339,17 @@ function _webNavigate(url) {
 // contentWindow.location.href，跨域（SecurityError）= 逃逸 → 拉回栈顶
 // 代理 URL（CAS/session cookie 都在代理域，拉回即登录态闭环）。
 function _webEscapeGuard(c) {
+  // a543：直连模式下 iframe 本来就是跨域（与工具页不同源）——逃逸检测
+  // 只对代理模式有意义（代理页必须同源；跨域=逃出代理）。直连跳过。
+  const _top = _webNav.stack[_webNav.idx] || '';
+  if (_webModeFor(_top) === 'direct') return;
   // a520：两个 frame（active + staging）都挂——软过渡期间 staging 逃逸
   // 同样要拉回（拉回触发重新加载，softNav 的轮询就绪后正常切换）
   c.wrap.querySelectorAll('iframe.web-frame').forEach(frame => {
     if (frame._pxGuard) return;
     frame._pxGuard = true;
     frame.addEventListener('load', () => {
+      c.wrap.classList.remove('web-loading');   // a543：直连页 load 即熄灭
       _webSyncFromFrame(c, frame);         // a522：栈同步 + 熄灭指示
       setTimeout(() => {
         if (_webUi.reader || _webUi.sleeping) return;
@@ -540,6 +568,9 @@ function _webSyncUI() {
   if (!c) return;
   const url = _webNav.stack[_webNav.idx] || '';
   c.wrap.querySelector('[data-web="back"]').disabled = _webNav.idx <= 0;
+  // a543：模式按钮显示当前态（proxy 时高亮）
+  const _mb = c.wrap.querySelector('[data-web="mode"]');
+  if (_mb) _mb.textContent = (_webModeFor(_webNav.stack[_webNav.idx] || '') === 'proxy') ? '🛡' : '⚡';
   c.wrap.querySelector('[data-web="fwd"]').disabled = _webNav.idx >= _webNav.stack.length - 1;
   const favs = _webFavs();
   const starred = url && favs.some(f => f.url === url);
@@ -578,6 +609,14 @@ function _webAct(act, wrap) {
     c.wrap.querySelector('[data-web-input]').value = _webNav.stack[_webNav.idx];
     c.tab.querySelector('.label').textContent = _webShortUrl(_webNav.stack[_webNav.idx]).slice(0, 24);
     _webSyncUI(); _afterMove();
+  } else if (act === 'mode' && url) {
+    const cur = _webModeFor(url);
+    const next = cur === 'direct' ? 'proxy' : 'direct';
+    _webModeSet(url, next);
+    showBanner(next === 'proxy'
+      ? '已切代理模式（强防护站点用），重载中…'
+      : '已切直连模式（原生加载），重载中…', 2200);
+    _go(url);
   } else if (act === 'reload' && url) {
     _go(url);
   } else if (act === 'read') {
