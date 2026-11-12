@@ -723,6 +723,11 @@ def _write_offline_manifest():
         })
     pd = os.path.join(A, "pydeps")
     if os.path.isdir(pd):
+        # a525 提醒：pydeps 需含 h2 代理提速链——发布机执行
+        # `pip download hypercorn cryptography` 会带全依赖
+        # （h2/priority/wsproto/h11）。exe 版已由 spec hiddenimports 内置，
+        # 源码运行的同事机靠本离线包安装；缺了 h2 静默回落 http
+        # （网页切换 10s 级，不崩但慢）。
         wheels = sorted(f for f in os.listdir(pd) if f.endswith(".whl"))
         if wheels:
             n, sz = _dirstat(pd)
