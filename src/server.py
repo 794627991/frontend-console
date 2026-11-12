@@ -394,8 +394,13 @@ def _guard_local_origin():
 @app.after_request
 def _no_cache_static(resp):
     """静态资源(web/ 下的 JS/CSS)禁缓存：开发迭代频繁，WebView2 若缓存旧 JS，
-    重启工具仍加载旧代码，改动"看起来不生效"。HTML/JS/CSS 每次都拉最新。"""
-    if resp.mimetype in ("text/html", "application/javascript", "text/css", "text/javascript"):
+    重启工具仍加载旧代码，改动"看起来不生效"。HTML/JS/CSS 每次都拉最新。
+    a531 修：web_proxy 蓝图除外——代理响应的缓存分型（静态 max-age=86400/
+    HTML no-store）被本钩子无差别覆盖成 no-store，切换页面的 chunk 每次
+    全量重拉（用户抓包实锤缓存命中 59/969）。"""
+    if (getattr(request, "blueprint", None) != "web_proxy"
+            and resp.mimetype in ("text/html", "application/javascript",
+                                  "text/css", "text/javascript")):
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
 
