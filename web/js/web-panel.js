@@ -126,6 +126,9 @@ function buildWebPanelTab(url) {
         <div class="web-sleep" data-web-sleep style="display:none;">
           <div>🌙 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
         </div>
+        <div class="web-blank-hint" data-web-blank-hint style="display:none;">
+          <span>页面可能被拒绝嵌入（内网代理注入 X-Frame-Options）——试试 <b>☰ 阅读模式</b> 或 <b>↗ 浏览器</b></span>
+        </div>
         <div class="web-err" data-web-err style="display:none;">
           <div class="web-err-title">⚠️ 页面加载异常</div>
           <div class="web-err-msg">可能是网络不可达（内网无外联？）或网站拒绝被嵌入。</div>
@@ -232,17 +235,47 @@ function _webLoadWatch(c, url) {
   err.style.display = 'none';
   if (c._loadT) clearTimeout(c._loadT);
   const frame = c.wrap.querySelector('[data-web-frame]');
+  let loaded = false;
   const onLoad = () => {
+    loaded = true;
     frame.removeEventListener('load', onLoad);
     if (c._loadT) { clearTimeout(c._loadT); c._loadT = null; }
+    // a493：load 触发后再等 2s——跨域 iframe 被 X-Frame-Options 拒绝时
+    // load 会正常触发但内容是空白/错误页（内网代理注入 XFO 的场景：
+    // 首页无 Referer 不注入可加载，子页带 Referer 被注入即空白）。
+    // 2s 后如果仍是当前导航且非阅读态，检查并弹提示
+    setTimeout(() => {
+      if (_webNav.stack[_webNav.idx] !== url || _webUi.reader) return;
+      try {
+        // X-Frame-Options 被拒时 contentWindow 仍可访问但内容为空/错误页
+        // 检查 contentDocument（跨域返回 null = 正常；被拒绝也可能 null）
+        // 无法精确区分——改用通用策略：只要 load 完成后内容区域可能空白，
+        // 就给出提示（阅读模式按钮始终在工具栏上）
+        const doc = frame.contentDocument;
+        if (doc === null) {
+          // 跨域正常——但可能被 XFO 拒。给一个轻提示（不挡操作）
+          _webMaybeBlank(c, url);
+        }
+      } catch (_) {
+        // SecurityError = 跨域正常加载
+      }
+    }, 2000);
   };
   frame.addEventListener('load', onLoad, { once: true });
   c._loadT = setTimeout(() => {
     frame.removeEventListener('load', onLoad);
     if (_webNav.stack[_webNav.idx] === url && !_webUi.reader) {
-      err.style.display = 'flex';   // 仅当前 URL 且非阅读态才提示
+      err.style.display = 'flex';   // 8s 超时（网络不通）
     }
   }, 8000);
+}
+// a493：跨域 iframe 可能被 XFO 拒（空白）——弹轻量提示条（不挡操作）
+function _webMaybeBlank(c, url) {
+  const bar = c.wrap.querySelector('[data-web-blank-hint]');
+  if (!bar) return;
+  bar.style.display = 'flex';
+  // 5 秒后自动收起
+  setTimeout(() => { bar.style.display = 'none'; }, 5000);
 }
 
 // ---- a475：休眠/唤醒（Edge sleeping tabs 等价物）----
