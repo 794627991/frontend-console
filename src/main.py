@@ -827,6 +827,22 @@ def main():
             except Exception:
                 pass  # 异常时 Handled 可能已置——链接吞掉比开系统浏览器安全
         _EC.on_new_window_request = _on_new_window
+
+        # a489（用户实锤：右键三修仍不生效）：弃 on_loaded 里的 _find_core
+        # 递归搜索（对象树结构在 pywebview 版本间不保证）。改为包装
+        # on_webview_ready——原方法自己就在操作 sender.CoreWebView2.Settings，
+        # 跑完后紧跟一行覆盖 AreDefaultContextMenusEnabled=True，必然生效。
+        # 非 debug 时 pywebview 设 False，我们紧跟改 True；debug 时本来就
+        # 是 True，覆盖为同值无副作用。前端 web-panel.js 捕获阶段把
+        # .web-body 以外的区域 preventDefault，各界面右键行为不变。
+        _orig_ready = _EC.on_webview_ready
+        def _patched_ready(self, sender, args):
+            _orig_ready(self, sender, args)
+            try:
+                sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
+            except Exception:
+                pass
+        _EC.on_webview_ready = _patched_ready
     except Exception:
         pass  # 平台非 edgechromium（非 Windows）无此模块——跳过
 
@@ -1405,45 +1421,9 @@ def main():
             window.focus()
         except Exception:
             pass
-        # a483（用户实锤：网页 tab 里右键刷新等全被屏蔽）：pywebview 把
-        # AreDefaultContextMenusEnabled 绑死在 debug 上（非 debug 全局禁）。
-        # 该设置是 WebView2 全局级、无法按 frame 开——改为「全局开 + 前端
-        # 按区域拦」：网页 tab 的 .web-body 放行原生菜单（含 iframe 内右键，
-        # 由渲染进程直接处理），其余区域由 web-panel.js 捕获阶段
-        # preventDefault 保持屏蔽（各模块自建菜单不受影响，它们本就自带
-        # preventDefault）。仅非 debug 模式需要——debug 下 pywebview 本就全开
-        if not _dbg_web:
-            try:
-                def _find_core(obj, depth=0):
-                    """深度优先找带 CoreWebView2.Settings 的控件节点。
-                    路径实证：window.gui(BrowserView) → .browser(EdgeChrome)
-                    → .webview(WebView2 控件) → .CoreWebView2 → .Settings。
-                    a487（复审）：删掉函数体内的 `import clr`——pywebview
-                    在此之前已加载 pythonnet，重复导入是死代码；非 Windows
-                    平台本来走不进这分支（webview.platforms.edgechromium
-                    在上面 import 时已失败）。"""
-                    if depth > 6 or obj is None:
-                        return None
-                    try:
-                        st = obj.CoreWebView2.Settings
-                        if st is not None:
-                            return st
-                    except Exception:
-                        pass
-                    for name in ("browser", "webview", "native", "root",
-                                 "Browser", "WebView2", "CoreWebView2"):
-                        try:
-                            r = _find_core(getattr(obj, name, None), depth + 1)
-                            if r is not None:
-                                return r
-                        except Exception:
-                            continue
-                    return None
-                _st = _find_core(window.gui) or _find_core(window)
-                if _st is not None:
-                    _st.AreDefaultContextMenusEnabled = True
-            except Exception:
-                pass  # 结构变动（pywebview 升级）不拦启动——右键退回屏蔽态
+        # a483/a489：右键设置已移至启动段的 on_webview_ready 包装
+        #（与 NewWindowRequested patch 同一 try 块，webview.start 之前
+        # 安装）——on_loaded 时机太晚且对象树遍历不可靠。
         # --open-file 启动（接管后双击文件、当时无活实例）：窗口就绪后打开该文件
         if open_file_path:
             try:
