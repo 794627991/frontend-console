@@ -21,9 +21,21 @@ app 级挂钩（register）
 
 演进史（a473→a506）详见各函数 docstring 与 git log。"""
 
+import threading
+
+import requests as _requests
+try:
+    from urllib3.exceptions import InsecureRequestWarning
+    import urllib3 as _u3
+    _u3.disable_warnings(InsecureRequestWarning)
+except Exception:
+    pass
+
 from flask import Blueprint, Response, jsonify, redirect, request
 
 bp = Blueprint("web_proxy", __name__)
+
+_THREAD_LOCAL = threading.local()   # a511：线程局部代理连接池
 
 
 def _web_detect_charset(headers_ct, raw):
@@ -328,6 +340,30 @@ def api_web_proxy_path(_sch, _rest):
     return _proxy_core(_u)
 
 
+def _proxy_session():
+    """a511：线程局部 requests.Session——HTTPS keep-alive 连接复用。
+
+    urllib 每请求全新 DNS+TCP+TLS 握手，重站点（掘金 128 资源）光握手
+    就几十秒（用户实锤整页 1 分钟）。Session 连接池同域只握手一次。
+    每请求清 cookie jar——会话主体是浏览器侧（cookie 由代理手动转发），
+    代理进程保持无状态，避免多 tab 会话串染。"""
+    s = getattr(_THREAD_LOCAL, "s", None)
+    if s is None:
+        s = _requests.Session()
+        s.verify = False
+        _THREAD_LOCAL.s = s
+    s.cookies.clear()
+    return s
+
+
+def _sc_list(r):
+    """a511：requests 响应提取多条 Set-Cookie（urllib3 getlist）。"""
+    try:
+        return r.raw.headers.getlist("Set-Cookie") or []
+    except Exception:
+        return []
+
+
 def _proxy_core(url):
     """代理核心（a506 从 api_web_proxy 提取，query/路径式两路由共用）：
     取页 → 删 XFO → 重写资源 URL 为代理路径 → 注入导航拦截。
@@ -338,16 +374,12 @@ def _proxy_core(url):
     Domain/Secure/SameSite、Path 改 /，浏览器存进 127.0.0.1 域）③302 不
     跟随、Location 代理化后透传（登录 302 的 Set-Cookie 不丢、跳转不逃出
     代理模式）。
+    a511：urllib → 线程局部 requests.Session（keep-alive 连接复用）。
     """
-    import ssl as _ssl
-    import urllib.request as _ur
     from urllib.parse import quote as _quote
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return Response("Bad URL", status=400)
-    _ctx = _ssl.create_default_context()
-    _ctx.check_hostname = False
-    _ctx.verify_mode = _ssl.CERT_NONE
     _hdrs = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -370,60 +402,49 @@ def _proxy_core(url):
         if _ct_req:
             _hdrs["Content-Type"] = _ct_req
         _hdrs["X-Requested-With"] = request.headers.get("X-Requested-With", "")
-    _req = _ur.Request(url, headers=_hdrs, data=_body,
-                       method=request.method if request.method != "HEAD" else "GET")
+    _method = request.method if request.method != "HEAD" else "GET"
 
-    # a505：禁自动跟随重定向——urllib 默认吞掉 302 中间响应（其 Set-Cookie
-    # 直接丢失），且浏览器看不到跳转。改为透传 30x：Location 代理化后交还
-    # 浏览器跟（跳转仍留在代理模式），Set-Cookie 一并透传。
-    class _NoRedir(_ur.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
-            return None   # None → urllib 按 HTTPError(code) 抛出（带响应头）
+    # a505：禁自动跟随重定向——中间响应（其 Set-Cookie）不能丢，且浏览器
+    # 要看到跳转。透传 30x：Location 代理化后交还浏览器跟，Set-Cookie 透传
+    try:
+        _r = _proxy_session().request(
+            _method, url, headers=_hdrs, data=_body,
+            timeout=15, allow_redirects=False)
+        _raw = (_r.content or b"")[:5 * 1024 * 1024]
+        _ct = _r.headers.get("Content-Type") or ""
+        _final = url           # 无跟随重定向，最终地址即请求地址
+    except Exception as e:
+        return Response("Proxy fetch failed: %s" % str(e)[:200], status=502)
 
-    _opener = _ur.build_opener(_NoRedir, _ur.HTTPSHandler(context=_ctx))
-
-    def _set_cookies_into(resp, hdrs_obj):
+    def _set_cookies_into(resp, scs):
         """a505：原始响应 Set-Cookie 清洗后透传（可多条）。"""
-        try:
-            _scs = hdrs_obj.get_all("Set-Cookie") or []
-        except Exception:
-            _scs = []
-        for _sc in _scs:
+        for _sc in scs:
             _clean = _proxy_sanitize_setcookie(_sc)
             if _clean:
                 resp.headers.add("Set-Cookie", _clean)
         return resp
 
-    try:
-        _r = _opener.open(_req, timeout=15)
-        _raw = _r.read(5 * 1024 * 1024)
-        _ct = _r.headers.get("Content-Type") or ""
-        _final = _r.geturl() or url
-    except _ur.HTTPError as _he:
-        _raw = b""
-        try:
-            _raw = _he.read(5 * 1024 * 1024)
-        except Exception:
-            pass
-        _ct = _he.headers.get("Content-Type") or ""
-        # a505：30x 透传——Location 代理化（相对地址基于原始 URL 解析），
-        # Set-Cookie 同步透传（登录 302 的 session 落地在浏览器侧）。
-        # a506：_fn 产路径式（dirname 语义对 publicPath 类运行时正确）
-        if 300 <= _he.code < 400:
-            _loc = _he.headers.get("Location") or ""
-            if _loc:
-                _fn_e = _proxy_url_rewrite(
-                    url, "http://" + request.host + "/api/web/proxy")
-                _resp = Response(b"", status=_he.code)
-                _resp.headers["Location"] = _fn_e(_loc)
-                return _set_cookies_into(_resp, _he.headers)
-        # a504：转发原始错误码和响应体（401/403/404 等——AJAX 需要看到）
+    # a505：30x 透传——Location 代理化（相对地址基于原始 URL 解析），
+    # Set-Cookie 同步透传（登录 302 的 session 落地在浏览器侧）。
+    # a506：_fn 产路径式（dirname 语义对 publicPath 类运行时正确）
+    if 300 <= _r.status_code < 400:
+        _loc = _r.headers.get("Location") or ""
+        if _loc:
+            _fn_e = _proxy_url_rewrite(
+                url, "http://" + request.host + "/api/web/proxy")
+            _resp = Response(b"", status=_r.status_code)
+            _resp.headers["Location"] = _fn_e(_loc)
+            return _set_cookies_into(_resp, _sc_list(_r))
+        # 无 Location 的 30x：无处可代理化，空体透传状态码（a511 修：
+        # 原会落进正常响应分支变 200）
         return _set_cookies_into(
-            Response(_raw, status=_he.code,
+            Response(b"", status=_r.status_code), _sc_list(_r))
+    # a504：转发原始错误码和响应体（401/403/404 等——AJAX 需要看到）
+    if _r.status_code >= 400:
+        return _set_cookies_into(
+            Response(_raw, status=_r.status_code,
                      mimetype=_ct.split(";")[0].strip() or "text/plain"),
-            _he.headers)
-    except Exception as e:
-        return Response("Proxy fetch failed: %s" % str(e)[:200], status=502)
+            _sc_list(_r))
 
     _ct_low = _ct.lower()
 
@@ -436,14 +457,14 @@ def _proxy_core(url):
             r"url\((['\"]?)([^'\")\s]+)\1\)",
             lambda m: "url(%s%s%s)" % (m.group(1), _fn(m.group(2)), m.group(1)),
             _css)
-        return _set_cookies_into(Response(_css, mimetype="text/css"), _r.headers)
+        return _set_cookies_into(Response(_css, mimetype="text/css"), _sc_list(_r))
 
     # 非 HTML/CSS 直接透传（图片/字体等二进制资源）
     if "text/html" not in _ct_low and "application/xhtml" not in _ct_low:
         return _set_cookies_into(
             Response(_raw,
                      mimetype=_ct.split(";")[0].strip() or "application/octet-stream"),
-            _r.headers)
+            _sc_list(_r))
 
     # ---- HTML 处理 ----
     _cs = _web_detect_charset(_ct, _raw)
@@ -532,7 +553,7 @@ def _proxy_core(url):
         _html += _nav
 
     return _set_cookies_into(
-        Response(_html, mimetype="text/html; charset=utf-8"), _r.headers)
+        Response(_html, mimetype="text/html; charset=utf-8"), _sc_list(_r))
 
 
 def _proxy_404_fallback(err):
@@ -624,7 +645,19 @@ def register(app):
         注入 JS/会话 cookie 都随版本与页面变化），可缓存毫无收益；
         WebView2 缓存旧版产物后升级会撞 ERR_CACHE_READ_FAILURE 或执行
         过期注入逻辑（SSO 页实锤）。no-store=不写不读，最彻底。
-        只作用于本蓝图路由——工具自身响应的缓存策略归 _no_cache_static。"""
+        只作用于本蓝图路由——工具自身响应的缓存策略归 _no_cache_static。
+        a511 分型：HTML/API（json 等动态内容）no-store；静态资源
+        （js/css/img/font——URL 普遍带 contenthash，内容不可变）给
+        max-age=1800，二次加载走 WebView2 缓存不重拉（a510 全量 no-store
+        后掘金整页 128 资源每次全拉，用户实锤二次加载也慢）。"""
         if request.blueprint == "web_proxy":
-            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            _mt = (resp.mimetype or "").lower()
+            _static = (_mt in ("text/css", "application/javascript",
+                               "text/javascript", "image/svg+xml")
+                       or _mt.startswith(("image/", "font/"))
+                       or _mt.startswith("application/font"))
+            if _static:
+                resp.headers["Cache-Control"] = "private, max-age=1800"
+            else:
+                resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         return resp

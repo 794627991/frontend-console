@@ -7,50 +7,58 @@
 ②Set-Cookie 不透传（且带 Domain/Secure 属性浏览器要拒收）→ session 丢失；
 ③JS 跳转 location.href='/main' 在代理域 404（location 赋值拦不住）。
 """
-import email.message
 import io
 import os
 import sys
-import urllib.error
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import server as S      # noqa: E402  (app)
 from src import web_proxy as W  # noqa: E402
 
-
-def _msg(hdrs):
-    m = email.message.Message()
-    for k, v in hdrs.items():
-        m[k] = v
-    return m
+from requests.structures import CaseInsensitiveDict
+from urllib3._collections import HTTPHeaderDict
 
 
 class _FakeResp:
-    def __init__(self, raw=b"", hdrs=None, url="http://srv/"):
-        self._raw = raw
-        self.headers = _msg(hdrs or {})
-        self._url = url
+    """requests.Response 替身（a511：代理改用 requests.Session）。"""
 
-    def read(self, n=-1):
-        return self._raw
+    def __init__(self, raw=b"", hdrs=None, status=200):
+        self.content = raw
+        self.status_code = status
+        _h = HTTPHeaderDict()
+        for k, v in (hdrs or {}).items():
+            if isinstance(v, list):
+                for one in v:
+                    _h.add(k, one)
+            else:
+                _h[k] = v
+        self.headers = CaseInsensitiveDict(_h)
 
-    def geturl(self):
-        return self._url
+        class _Raw:
+            pass
+        self.raw = _Raw()
+        self.raw.headers = _h
 
 
-class _FakeOpener:
-    """替身 opener：捕获代理发出的请求；result 是响应或待抛异常。"""
+class _FakeSess:
+    """Session 替身：捕获代理发出的请求；resp 是响应或返回响应的函数。"""
 
-    def __init__(self, result):
-        self.result = result
-        self.last_req = None
+    def __init__(self, resp):
+        self.resp = resp
+        self.last = None
 
-    def open(self, req, timeout=None):
-        self.last_req = req
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
+    def request(self, method, url, headers=None, data=None, **kw):
+        self.last = SimpleNamespace(method=method, url=url,
+                                    headers=headers or {}, data=data)
+        if callable(self.resp):
+            return self.resp()
+        return self.resp
+
+
+def _patch_sess(monkeypatch, sess):
+    monkeypatch.setattr(W, "_proxy_session", lambda: sess)
 
 
 # ---------- 纯函数：Set-Cookie 清洗 ----------
@@ -77,34 +85,29 @@ def test_sanitize_empty():
 # ---------- 请求侧：Cookie 转发 ----------
 
 def test_browser_cookie_forwarded(monkeypatch):
-    op = _FakeOpener(_FakeResp(
-        b"<html><head></head><body>ok</body></html>", {}, "http://srv/"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(b"<html><head></head><body>ok</body></html>", {}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     # werkzeug test client 会拦走 headers 里的 Cookie（也不透传
     # environ_overrides 的 HTTP_COOKIE），set_cookie 才等价于浏览器行为
     c.set_cookie("sessionid", "abc123")
     c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2F")
-    assert "sessionid=abc123" in (op.last_req.headers.get("Cookie") or "")
+    assert "sessionid=abc123" in (op.last.headers.get("Cookie") or "")
 
 
 def test_no_cookie_header_when_browser_sent_none(monkeypatch):
-    op = _FakeOpener(_FakeResp(
-        b"<html><head></head><body>ok</body></html>", {}, "http://srv/"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(b"<html><head></head><body>ok</body></html>", {}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2F")
-    assert "Cookie" not in op.last_req.headers
+    assert "Cookie" not in op.last.headers
 
 
 # ---------- 响应侧：Set-Cookie 透传 ----------
 
 def test_setcookie_passthrough_on_html(monkeypatch):
-    op = _FakeOpener(_FakeResp(
-        b"<html><head></head><body>ok</body></html>",
-        {"Set-Cookie": "sessionid=abc; Domain=srv; Path=/api; Secure"},
-        "http://srv/"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(b"<html><head></head><body>ok</body></html>", {"Set-Cookie": "sessionid=abc; Domain=srv; Path=/api; Secure"}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2F")
     scs = r.headers.getlist("Set-Cookie")
@@ -112,15 +115,12 @@ def test_setcookie_passthrough_on_html(monkeypatch):
 
 
 def test_setcookie_multiple(monkeypatch):
-    op = _FakeOpener(_FakeResp(
-        b"<html><head></head><body>ok</body></html>",
-        {"Set-Cookie": "a=1; Path=/x, b=2"}, "http://srv/"))
-    # email.Message 逗号拆多条：直接放两个头更真实
-    m = _msg({})
-    m["Set-Cookie"] = "a=1; Domain=srv"
-    m["Set-Cookie"] = "b=2; Secure"
-    op.result.headers = m
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(b"<html><head></head><body>ok</body></html>"))
+    # 多条 Set-Cookie：HTTPHeaderDict 保留多值（构造时留空，全部 add）
+    op.resp.raw.headers.add("Set-Cookie", "a=1; Domain=srv")
+    op.resp.raw.headers.add("Set-Cookie", "b=2; Secure")
+    op.resp.headers = CaseInsensitiveDict(op.resp.raw.headers)
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2F")
     assert sorted(r.headers.getlist("Set-Cookie")) == ["a=1; Path=/", "b=2; Path=/"]
@@ -134,15 +134,13 @@ def _http_error(code, location=None, setcookie=None):
         hdrs["Location"] = location
     if setcookie:
         hdrs["Set-Cookie"] = setcookie
-    e = urllib.error.HTTPError(
-        "http://srv/login", code, "msg", _msg(hdrs), io.BytesIO(b""))
-    return e
+    return _FakeResp(b"", hdrs, status=code)
 
 
 def test_302_passthrough_location_proxied(monkeypatch):
-    op = _FakeOpener(_http_error(
+    op = _FakeSess(_http_error(
         302, location="/main", setcookie="sessionid=abc; Domain=srv"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2Flogin")
     assert r.status_code == 302
@@ -154,8 +152,8 @@ def test_302_passthrough_location_proxied(monkeypatch):
 
 
 def test_302_absolute_location(monkeypatch):
-    op = _FakeOpener(_http_error(301, location="http://other/x"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_http_error(301, location="http://other/x"))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2Fa")
     assert r.status_code == 301
@@ -164,20 +162,19 @@ def test_302_absolute_location(monkeypatch):
 
 def test_302_without_location_falls_to_error_path(monkeypatch):
     # 无 Location 的 30x：无跳转可代理化，走错误码透传
-    op = _FakeOpener(_http_error(302))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_http_error(302))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2Flogin")
     assert r.status_code == 302
 
 
 def test_401_body_and_setcookie_passthrough(monkeypatch):
-    e = urllib.error.HTTPError(
-        "http://srv/api/login", 401, "msg",
-        _msg({"Content-Type": "application/json",
-              "Set-Cookie": "reset=1"}), io.BytesIO(b'{"err":"bad"}'))
-    op = _FakeOpener(e)
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(
+        b'{"err":"bad"}',
+        {"Content-Type": "application/json", "Set-Cookie": "reset=1"},
+        status=401))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.post("/api/web/proxy?url=http%3A%2F%2Fsrv%2Fapi%2Flogin",
                data='{"p":"x"}', content_type="application/json")
@@ -187,15 +184,15 @@ def test_401_body_and_setcookie_passthrough(monkeypatch):
 
 
 def test_post_body_and_ct_forwarded(monkeypatch):
-    op = _FakeOpener(_FakeResp(
-        b'{"ok":1}', {"Content-Type": "application/json"}, "http://srv/api/login"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(
+        b'{"ok":1}', {"Content-Type": "application/json"}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.post("/api/web/proxy?url=http%3A%2F%2Fsrv%2Fapi%2Flogin",
                data='{"user":"u","pass":"p"}', content_type="application/json")
     assert r.status_code == 200
-    assert op.last_req.data == b'{"user":"u","pass":"p"}'
-    assert "application/json" in (op.last_req.headers.get("Content-type") or "")
+    assert op.last.data == b'{"user":"u","pass":"p"}'
+    assert "application/json" in (op.last.headers.get("Content-Type") or "")
 
 
 # ---------- 404 兜底（a508 客户端还原页：sessionStorage.__px_orig）----------
@@ -239,10 +236,10 @@ def test_404_without_same_origin_referer_untouched():
 
 def test_404_loop_guard(monkeypatch):
     # 原始站点自身 404 由代理路由透传（路由命中），不进兜底——用假 opener 钉住
-    op = _FakeOpener(urllib.error.HTTPError(
-        "http://10.17.97.73:8765/main", 404, "msg",
-        _msg({"Content-Type": "text/html"}), io.BytesIO(b"<html><head></head><body>404</body></html>")))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(
+        b"<html><head></head><body>404</body></html>",
+        {"Content-Type": "text/html"}, status=404))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2F10.17.97.73%3A8765%2Fmain")
     assert r.status_code == 404 and b"__px_orig" not in r.data
@@ -271,31 +268,27 @@ def test_url_rewrite_path_style():
 
 def test_path_route_serves_and_forwards(monkeypatch):
     """/proxy/https/host/path 路由取页 + cookie 转发 + Set-Cookie 透传。"""
-    op = _FakeOpener(_FakeResp(
-        b"<html><head></head><body>ok</body></html>",
-        {"Set-Cookie": "s=1; Domain=x; Secure"}, "http://srv:8765/a/b"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(b"<html><head></head><body>ok</body></html>", {"Set-Cookie": "s=1; Domain=x; Secure"}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     c.set_cookie("s", "1")
     r = c.get("/api/web/proxy/http/srv:8765/a/b?q=1")
     assert r.status_code == 200
     assert b"ok" in r.data
     # 还原出的原始 URL（含 query）+ cookie 转发
-    assert op.last_req.full_url == "http://srv:8765/a/b?q=1"
-    assert "s=1" in (op.last_req.headers.get("Cookie") or "")
+    assert op.last.url == "http://srv:8765/a/b?q=1"
+    assert "s=1" in (op.last.headers.get("Cookie") or "")
     assert r.headers.getlist("Set-Cookie") == ["s=1; Path=/"]
 
 
 def test_path_route_webpack_chunk_semantics(monkeypatch):
     """核心场景：publicPath=代理 dirname → chunk 相对路径落回代理路由。"""
-    op = _FakeOpener(_FakeResp(
-        b"console.log(1)", {"Content-Type": "application/javascript"},
-        "https://github.githubassets.com/assets/wp-runtime-abc.js"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(b"console.log(1)", {"Content-Type": "application/javascript"}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy/https/github.githubassets.com/assets/wp-runtime-abc.js")
     assert r.status_code == 200
-    assert op.last_req.full_url == \
+    assert op.last.url == \
         "https://github.githubassets.com/assets/wp-runtime-abc.js"
 
 
@@ -323,10 +316,10 @@ def test_importmap_urls_rewritten(monkeypatch):
            '"react-dom/client":"https://cdn.x.com/b.js?ver=1"}'
            ',"scopes":{"/app/":{"x":"https://other.y.com/c.js"}}}'
            '</script>')
-    op = _FakeOpener(_FakeResp(
+    op = _FakeSess(_FakeResp(
         ("<html><head>" + _im + "</head><body>ok</body></html>").encode(),
-        {"Content-Type": "text/html"}, "https://github.com/zai-org/ZCode"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+        {"Content-Type": "text/html"}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy/https/github.com/zai-org/ZCode")
     assert r.status_code == 200
@@ -341,10 +334,8 @@ def test_importmap_urls_rewritten(monkeypatch):
 def test_no_store_on_proxy_responses(monkeypatch):
     """a510：代理响应禁缓存（WebView2 缓存旧代理产物 → 升级后
     ERR_CACHE_READ_FAILURE / 执行过期注入逻辑）。"""
-    op = _FakeOpener(_FakeResp(
-        b"<html><head></head><body>ok</body></html>",
-        {"Content-Type": "text/html"}, "http://srv/"))
-    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    op = _FakeSess(_FakeResp(b"<html><head></head><body>ok</body></html>", {"Content-Type": "text/html"}))
+    _patch_sess(monkeypatch, op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy/https/srv/")
     assert "no-store" in r.headers.get("Cache-Control", "")
