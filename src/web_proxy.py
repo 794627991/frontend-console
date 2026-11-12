@@ -784,9 +784,13 @@ def _proxy_404_fallback(err):
     404 原样返回，fetch 期待原状态码）+ Referer 同源。sessionStorage
     无记录（非代理来源的普通 404）→ 渲染普通 404 文案，无行为差异。
     """
+    # a533：条件放宽——Referer 同源或为空（掘金文章链接 /post/xxx 的
+    # 导航实锤漏接：referer/Accept 组合判定不稳）。安全性：还原页靠
+    # sessionStorage.__px_orig（只在代理页写过），非代理来源读到 null
+    # → 显示 404 文案，行为不变。资源类 404 仍回空体（a515 语义）。
     _ref = request.headers.get("Referer", "")
     if (request.method == "GET"
-            and _ref.startswith("http://" + request.host + "/")):
+            and (_ref == "" or _ref.startswith("http://" + request.host + "/"))):
         _acc = request.headers.get("Accept") or ""
         if "text/html" not in _acc:
             # a515：脚本/样式等资源类 404 返回空体——Flask 默认 404 页是
