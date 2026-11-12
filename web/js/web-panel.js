@@ -146,6 +146,7 @@ function buildWebPanelTab(url) {
 
   const $w = (s) => wrap.querySelector(s);
   const frame = $w('[data-web-frame]');
+  _webEscapeGuard(conn);                   // a516：常驻逃逸检测
   const urlInput = $w('[data-web-input]');
   urlInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
@@ -235,6 +236,7 @@ function _webNavigate(url) {
   if (_webNav.stack.length > 50) _webNav.stack.shift();
   _webNav.idx = _webNav.stack.length - 1;
   _webSessionSave();                       // a475 会话恢复
+  c._escN = 0;                             // a516：新导航重置逃逸计数
   // a475：新导航唤醒休眠态 + 退出阅读态（skipRestore：随后的显式 src 覆盖，
   // 不做旧 URL 恢复——避免 about:blank→旧URL→新URL 三连导航）
   _webWake(c);
@@ -245,6 +247,33 @@ function _webNavigate(url) {
   _webApplyZoom(_webZoomFor(url), _webHostOf(url));   // a475 站点缩放记忆
   _webSyncUI();
   _webLoadWatch(c, url);
+}
+
+// a516：iframe 常驻逃逸检测——登录成功等场景页面 JS 写 location.href=原始
+// 绝对 URL（拦不住）跳出代理域 → 原始域被透明代理 XFO 拒 → 白屏（用户
+// 实锤：URL 栏停在原始域）。a514 的检测挂在 _webLoadWatch 的 once load
+// 里，只盯导航那一次——登录跳转不经过 _webNavigate，逃逸后的 load 无
+// 人监听（白屏根因）。改为 iframe 创建后常驻监听：每次 load 后 2s 读
+// contentWindow.location.href，跨域（SecurityError）= 逃逸 → 拉回栈顶
+// 代理 URL（CAS/session cookie 都在代理域，拉回即登录态闭环）。
+function _webEscapeGuard(c) {
+  const frame = c.wrap.querySelector('[data-web-frame]');
+  if (!frame || frame._pxGuard) return;
+  frame._pxGuard = true;
+  frame.addEventListener('load', () => {
+    setTimeout(() => {
+      if (_webUi.reader || _webUi.sleeping) return;
+      let escaped = false;
+      try { void frame.contentWindow.location.href; }
+      catch (_) { escaped = true; }
+      if (!escaped) return;
+      const top = _webNav.stack[_webNav.idx];
+      if (!top) return;
+      c._escN = (c._escN || 0) + 1;
+      console.warn('[web] iframe 逃逸到代理域外，拉回 #' + c._escN, top);
+      if (c._escN <= 3) frame.src = _webProxyUrl(top);
+    }, 2000);
+  });
 }
 
 // a488：加载失败检测——iframe 导航后 8s 内 load 事件未触发 → 网络不通/
@@ -263,30 +292,11 @@ function _webLoadWatch(c, url) {
     frame.removeEventListener('load', onLoad);
     if (c._loadT) { clearTimeout(c._loadT); c._loadT = null; }
     // a493：load 触发后再等 2s——跨域 iframe 被 X-Frame-Options 拒绝时
-    // load 会正常触发但内容是空白/错误页（内网代理注入 XFO 的场景：
-    // 首页无 Referer 不注入可加载，子页带 Referer 被注入即空白）。
-    // 2s 后如果仍是当前导航且非阅读态，检查逃逸/空白
+    // load 会正常触发但内容是空白/错误页。逃逸检测已由 a516 的常驻
+    // _webEscapeGuard 接管（含不经 _webNavigate 的登录跳转），此处只剩
+    // 跨域空白的轻提示。
     setTimeout(() => {
       if (_webNav.stack[_webNav.idx] !== url || _webUi.reader) return;
-      let escaped = false;
-      try {
-        // 同源（代理域）href 可读；跨域抛 SecurityError = 跳出代理域
-        void frame.contentWindow.location.href;
-      } catch (_) { escaped = true; }
-      if (escaped) {
-        // a514：逃逸拉回——页面 JS 写 location.href=原始绝对 URL（SSO 登录
-        // 成功后跳 service 地址实锤）跳出代理 → 原始域被内网透明代理劫持
-        // 全坏（脚本拿到 HTML：Unexpected token '<'）。拉回栈顶代理 URL：
-        // CAS 的 TGT cookie 在代理域，单点登录自动续票据闭环直达登录后页。
-        // 限 2 次防死循环（页面每次加载都跳出去的场景）。
-        c._escN = (c._escN || 0) + 1;
-        if (c._escN <= 2) {
-          frame.src = _webProxyUrl(_webNav.stack[_webNav.idx]);
-          return;
-        }
-      } else {
-        c._escN = 0;
-      }
       try {
         const doc = frame.contentDocument;
         if (doc === null) {
@@ -294,7 +304,7 @@ function _webLoadWatch(c, url) {
           _webMaybeBlank(c, url);
         }
       } catch (_) {
-        // SecurityError = 跨域正常加载
+        // SecurityError = 跨域（逃逸场景由 EscapeGuard 拉回）
       }
     }, 2000);
   };

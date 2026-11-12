@@ -111,6 +111,20 @@ _PROXY_NAV_JS = r"""<script>
     var _ou = new URL(_orig);
     history.replaceState(null, '', _ou.pathname + _ou.search);
   }catch(_){}
+  // a516：诊断透传——资源加载失败（script/img 404 等，捕获阶段 e.target
+  // 是元素）与 JS 运行错误的完整 URL/消息打到本窗口 console（工具 F12
+  // 可见）。此前只能看到截断的文件名（runtime.xxx.js:1 Unexpected
+  // token '<'），无法定位请求真实打到了哪里。
+  window.addEventListener('error', function(e){
+    try{
+      if (e.target && e.target.src){
+        console.warn('[px-res-fail]', e.target.tagName, String(e.target.src).slice(0, 200));
+      } else {
+        console.warn('[px-js-err]', String(e.message||'').slice(0, 160),
+                     String(e.filename||'').slice(0, 120) + ':' + e.lineno);
+      }
+    }catch(_){}
+  }, true);
   var _pb = location.origin + '/api/web/proxy/';
   function _px(u){
     if (!u || u[0]==='#' || u.indexOf('data:')===0 || u.indexOf('blob:')===0
