@@ -311,6 +311,8 @@ def register(app):
                                     d.get("w", 0), d.get("h", 0)))
         return jsonify({"ok": False, "err": "bad act"})
 
+    app.register_blueprint(bp)
+
 
 def install(form):
     """main._patched_ready 装配入口。"""
