@@ -356,3 +356,15 @@ def test_sanitize_session_cookie_persisted():
     assert "Max-Age=3600" in out3 and "Expires" not in out3
     # 可关闭持久化
     assert "Expires" not in W._proxy_sanitize_setcookie("x=1", persist_days=0)
+
+
+def test_no_nested_proxy_urls():
+    """a529：已代理 URL 不得再包一层——h2 端口分裂后页面(http主端口)与
+    服务端产物(https h2 端口)不同源，重入会套娃（用户实锤 4 层 502）。"""
+    fn = W._proxy_url_rewrite("https://github.com/x",
+                              "https://127.0.0.1:18443/api/web/proxy")
+    already = "https://127.0.0.1:53429/api/web/proxy/https/github.githubassets.com/assets/a.css"
+    assert fn(already) == already          # 任意端口的代理 URL 原样返回
+    # 正常原始 URL 照常代理化
+    assert fn("https://cdn.x.com/a.js") == \
+        "https://127.0.0.1:18443/api/web/proxy/https/cdn.x.com/a.js"

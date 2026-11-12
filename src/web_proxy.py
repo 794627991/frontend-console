@@ -150,14 +150,14 @@ _PROXY_NAV_JS = r"""<script>
         || u.indexOf('javascript:')===0) return null;
     try{
       var a = new URL(u, _orig);
-      // a515：同源 ≠ 已代理——a508 的 pathname 伪装后，页面 JS 以
-      // 伪装 location 拼出的工具域相对/绝对 URL（如 runtime.xxx.js?hash）
-      // 也同源，原判定放行 → 打到 Flask 404（默认 404 页是 HTML）→
-      // 脚本 Unexpected token '<'（SSO 实锤，Fingerprint2 同通道）。
-      // 处理：真代理路径（/api/web/proxy/ 前缀）放行；其余同源 URL 把
-      // path+query 重挂回原始域再代理化。
+      // a529：已代理判定看 pathname 前缀，不看 origin——a525 端口分裂后
+      // 页面在 http 主端口、服务端重写产物在 https h2 端口，按 origin 比
+      // 对必不同源 → 服务端产物被再包一层，反复发生即多层套娃（用户
+      // 实锤 4 层嵌套 502）。任何端口的代理 URL 一律放行。
+      if (a.pathname.indexOf('/api/web/proxy/') === 0) return null;
+      // a515：同源非代理路径（页面 JS 以伪装 location 拼出的工具域
+      // URL）重挂回原始域再代理化
       if (a.origin === location.origin){
-        if (a.pathname.indexOf('/api/web/proxy/') === 0) return null;
         a = new URL(a.pathname + a.search, _orig);
       }
       if (a.origin === location.origin) return null;   // 防御（原始域=工具域）
@@ -419,6 +419,12 @@ def _proxy_url_rewrite(base_url, proxy_base):
     def _to_proxy(u):
         if not u or u.startswith(("javascript:", "data:", "#", "blob:", "mailto:",
                                   "tel:", "about:")):
+            return u
+        # a529：已代理的绝对 URL 直接放行（任意端口）——a525 端口分裂后
+        # 页面 http 主端口 / 产物 https h2 端口并存，重入本函数会套娃
+        # （JS 侧同款修复，用户实锤 4 层嵌套 502）
+        import re as _re0
+        if _re0.match(r"^https?://[^/]+/api/web/proxy/", u or ""):
             return u
         try:
             _abs = urljoin(base_url, u)
