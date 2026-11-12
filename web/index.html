@@ -1,6 +1,21 @@
 ﻿<!doctype html>
 <html lang="zh-CN">
 <head>
+<script>
+/* a508：web 代理 iframe 逃逸回收——被代理页面的 JS 常写 location.replace('/')
+   登录成功后跳首页，在代理 iframe 里解析为 127.0.0.1/ = 工具入口本身
+   （200 非 404，404 兜底不触发），iframe 渲染出错乱的工具页（内网登录
+   实锤「登录不进去」）。检测：在 iframe 里 + sessionStorage 有代理基址
+   （web_proxy 注入 JS 写入，同源 iframe 共享）→ 跳回代理首页闭环
+   （cookie 已在 127.0.0.1 域，直接进登录后界面）。顶层工具页不受影响。 */
+try {
+  if (window.top !== window.self && sessionStorage.getItem('__px_orig')) {
+    var _pxb = new URL(sessionStorage.getItem('__px_orig'));
+    location.replace('/api/web/proxy/' + _pxb.protocol.replace(':', '')
+                     + '/' + _pxb.host + '/');
+  }
+} catch (_) {}
+</script>
 <script>window._HG_VER='v__HG_VER__';window.__HG_WORKER__='__HG_WBASE__';window.__HG_WFAM__='__HG_WFAMFLAG__';window.__HG_DBG__=__HG_DBGF__==='1';console.log('[harness] boot '+window._HG_VER+' [v4]'+(window.__HG_WORKER__?' [worker '+window.__HG_WORKER__+']':''));</script>
 <script>
 /* debug 页刷新清场（用户定调：刷新能力只有 debug 版有，正式版无此担忧）：
