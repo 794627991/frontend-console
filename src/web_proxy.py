@@ -513,7 +513,10 @@ def _proxy_core(url):
         _r = _proxy_session().request(
             _method, url, headers=_hdrs, data=_body,
             timeout=15, allow_redirects=False)
-        _raw = (_r.content or b"")[:5 * 1024 * 1024]
+        # a518：上限 5MB → 20MB——现代 SPA 主 bundle 超 5MB 不罕见
+        # （SWMS app.js 5.2MB 实锤：截断 → Unexpected end of input →
+        # 页面白屏），runtime/vendor 修复后此处成为最后断点
+        _raw = (_r.content or b"")[:20 * 1024 * 1024]
         _ct = _r.headers.get("Content-Type") or ""
         _final = url           # 无跟随重定向，最终地址即请求地址
     except Exception as e:
