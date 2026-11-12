@@ -398,6 +398,15 @@ function _webAct(act, wrap) {
   }
 }
 
+// a484：NewWindowRequested 路由（main.py 类级 patch 经 evaluate_js 调入）。
+// 网页 tab 里点 target=_blank 链接 / window.open → 不再被系统浏览器抢走，
+// 在网页 tab 内导航（工具内打开）。没有网页 tab 时顺手开一个。
+window.__newWindow = function (url) {
+  try {
+    buildWebPanelTab(url);
+  } catch (_) {}
+};
+
 // a483：右键分区放行。pywebview 非 debug 全局禁右键，现改为全局开（main.py
 // on_loaded 置 AreDefaultContextMenusEnabled=True）——本页除网页 tab 外的
 // 全部区域在捕获阶段 preventDefault 恢复屏蔽；.web-body 内放行原生菜单

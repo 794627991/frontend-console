@@ -785,9 +785,46 @@ def main():
     # 优化 WebView2 启动：禁用 file url（我们用 HTTP）省浏览器参数；关默认菜单省 UI 初始化
     webview.settings["ALLOW_FILE_URLS"] = False
     webview.settings["SHOW_DEFAULT_MENUS"] = False
+    # a484（用户实锤：网页 tab 内点链接被系统浏览器抢走）：pywebview 对
+    # NewWindowRequested 的默认处理是 webbrowser.open（系统浏览器）——
+    # 网页 tab 里点 target=_blank 链接全被 Edge 抢走。但它的另一档
+    #（OPEN_EXTERNAL_LINKS_IN_BROWSER=False → load_url）会把**主 WebView2
+    # 整窗导航走**（工具 UI 被替换，a238 老事故形态）——两档都不能用。
+    # 改为 monkey-patch edgechromium 的 on_new_window_request：Handled=True
+    # 不开系统窗口，也不动主窗口导航，而是 evaluate_js 把 URL 交给前端
+    # __newWindow(url) → web-panel 在网页 tab 内导航（工具内打开）。
     # debug 端口照开（CDP/9222 诊断链需要），但不自动弹 DevTools 窗口
     #（a355：要人工看再 F12/右键检查——自动弹在桌面工具形态纯打扰）
     webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = False
+    # a484（用户实锤：网页 tab 内点链接被 Edge 抢走）：pywebview 对
+    # NewWindowRequested 只有两档——webbrowser.open（系统浏览器，现状）或
+    # load_url（主窗被导航走=工具 UI 被替换，a238 事故形态），都不能用。
+    # 在 start 之前替换 edgechromium 的**类方法**（webview_ready 订阅的是
+    # bound method，类方法替换对已完成与未完成的订阅都生效）：Handled=True
+    # 不开系统窗口、不动主窗导航，evaluate_js 把 URL 交给前端
+    # window.__newWindow → web-panel 在网页 tab 内导航（工具内打开）。
+    # URL 经 json 编码防注入；非 http(s)（mailto/下载直链等）按原路放行
+    # 系统处理（Handled 不置位则 WebView2 默认弹系统浏览器，语义正确）。
+    try:
+        from webview.platforms.edgechromium import EdgeChrome as _EC
+        def _on_new_window(self, sender, args):
+            try:
+                _u = str(args.get_Uri() or "")
+                if _u.startswith(("http://", "https://")):
+                    args.set_Handled(True)
+                    _js = "window.__newWindow && window.__newWindow(%s);" % json.dumps(_u)
+                    _w = getattr(self, "pywebview_window", None)
+                    if _w is not None:
+                        _w.evaluate_js(_js)
+                    else:
+                        import webview as _wv
+                        if _wv.windows:
+                            _wv.windows[0].evaluate_js(_js)
+            except Exception:
+                pass  # 异常时不置 Handled → 走系统默认（系统浏览器），可接受降级
+        _EC.on_new_window_request = _on_new_window
+    except Exception:
+        pass  # 平台非 edgechromium（非 Windows）无此模块——跳过
 
     # 等 server 预导入完成（通常 webview 导入完时 server 也差不多好了）
     _server_ready.wait(timeout=10)
