@@ -816,57 +816,60 @@ def main():
                     _f.write("%s [%s] %s\n" % (_nw_t.strftime("%H:%M:%S"), level, msg))
             except Exception:
                 pass
-        def _on_new_window(self, sender, args):
-            # 审计实锤（卡死根因）：本处理器跑在 UI 线程，pywebview 的
-            # evaluate_js 内部 Semaphore.acquire 等 UI 线程回调——事件未
-            # 返回即死锁。改用 ExecuteScriptAsync fire-and-forget：发起即
-            # 返回、不等待结果，前端 __newWindow 自行消化 URL。
-            # a487（复审）：①sender 即 CoreWebView2（NewWindowRequested
-            # 定义在它上面）——直接用，不再绕 self.webview.CoreWebView2；
-            # ②原版 `from System import Func, Object, String` 是死导入且
-            # 若 System 命名空间加载失败会让已 Handled 的链接静默吞掉
-            # （不开窗也不导航）——删掉。
-            try:
-                _u = str(args.get_Uri() or "")
-                _nw_log("INFO", "[NewWindow] uri=%s" % _u[:200])
-                if _u.startswith(("http://", "https://")):
-                    args.set_Handled(True)
-                    _nw_log("INFO", "[NewWindow] Handled=True, dispatching")
-                    sender.ExecuteScriptAsync(
-                        "window.__newWindow && window.__newWindow(%s);"
-                        % json.dumps(_u))
-                    _nw_log("INFO", "[NewWindow] ExecuteScriptAsync dispatched")
-            except Exception as _e:
-                _nw_log("WARN", "[NewWindow] error: %r" % _e)
-        _EC.on_new_window_request = _on_new_window
+
+        # ================================================================
+        # a492（用户实锤：debug 版本链接也走系统浏览器 → monkey-patch
+        # on_new_window_request 实证无效——pythonnet 的事件订阅可能在
+        # import/类定义时已固化 delegate，类属性替换不影响）。
+        #
+        # 新方案：不替换 on_new_window_request，而是改变其运行环境——
+        # ① webview.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER']=False
+        #   → pywebview 原始 handler 走 self.load_url(url) 而非
+        #     webbrowser.open(url)
+        # ② 在 _patched_ready 中包装实例的 load_url → 拦截外部 URL
+        #   路由到前端 __newWindow（ExecuteScriptAsync fire-and-forget）
+        # ================================================================
+        webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
 
         # a489（用户实锤：右键三修仍不生效）：弃 on_loaded 里的 _find_core
-        # 递归搜索（对象树结构在 pywebview 版本间不保证）。改为包装
-        # on_webview_ready——原方法自己就在操作 sender.CoreWebView2.Settings，
-        # 跑完后紧跟一行覆盖 AreDefaultContextMenusEnabled=True，必然生效。
-        # 非 debug 时 pywebview 设 False，我们紧跟改 True；debug 时本来就
-        # 是 True，覆盖为同值无副作用。前端 web-panel.js 捕获阶段把
-        # .web-body 以外的区域 preventDefault，各界面右键行为不变。
+        # 递归搜索。改为包装 on_webview_ready——原方法自己就在操作
+        # sender.CoreWebView2.Settings，跑完后紧跟覆盖必然生效。
         _orig_ready = _EC.on_webview_ready
         def _patched_ready(self, sender, args):
             _orig_ready(self, sender, args)
-            # a490 诊断：追踪所有导航事件（含 iframe 内部导航）——
-            # NavigationStarting / NavigationCompleted 都记到同一个日志文件
+
+            # a492：包装实例级 load_url——pywebview 原始 NewWindowRequested
+            # handler 会调 self.load_url(url)（因 OPEN_EXTERNAL_LINKS_IN_
+            # BROWSER=False），我们在这里拦截外部 URL 路由到前端
+            _orig_load = self.load_url
+            def _safe_load(url, *la, **kw):
+                try:
+                    _u = str(url or "")
+                    _nw_log("INFO", "[load_url] url=%s" % _u[:200])
+                    if _u.startswith(("http://", "https://")) and "127.0.0.1" not in _u:
+                        # 外部 URL → 路由到前端网页 tab（不导航主窗口）
+                        _nw_log("INFO", "[load_url] routing to __newWindow")
+                        sender.CoreWebView2.ExecuteScriptAsync(
+                            "window.__newWindow && window.__newWindow(%s);"
+                            % json.dumps(_u))
+                        return
+                except Exception as _e:
+                    _nw_log("WARN", "[load_url] error: %r" % _e)
+                # 应用页面（127.0.0.1）或异常 → 正常加载
+                return _orig_load(url, *la, **kw)
+            self.load_url = _safe_load
+
+            # a490 诊断：追踪所有导航事件（含 iframe 内部导航）
             try:
                 _cvw = sender.CoreWebView2
                 def _on_nav_start(s2, a2):
-                    _nw_log("NAV", "[NavStarting] uri=%s is_redirect=%s" % (
-                        str(a2.Uri)[:200], getattr(a2, "IsRedirected", "?")))
-                def _on_nav_complete(s2, a2):
-                    _nw_log("NAV", "[NavCompleted] uri=%s success=%s err=%s" % (
-                        str(getattr(a2, "NavigationId", "?")), 
-                        getattr(a2, "IsSuccess", "?"),
-                        str(getattr(a2, "WebErrorStatus", ""))[:80]))
-                _cvw.NavigationStarting += _on_nav_start
-                _cvw.FrameNavigationStarting += _on_nav_start  # iframe 导航
-                _cvw.FrameNavigationCompleted += _on_nav_complete  # iframe 导航完成
+                    _nw_log("NAV", "[NavStarting] uri=%s" % str(a2.Uri)[:200])
+                _cvw.FrameNavigationStarting += _on_nav_start
             except Exception as _e:
                 _nw_log("WARN", "[NavTracker] attach failed: %r" % _e)
+
+            # a489：右键设置——紧跟原方法（它设 AreDefaultContextMenusEnabled
+            # =_state['debug']），我们覆盖为 True（非 debug 下强制开）
             try:
                 sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
             except Exception:
