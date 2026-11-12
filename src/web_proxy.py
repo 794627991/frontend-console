@@ -495,7 +495,7 @@ def api_web_proxy():
     if request.method == "HEAD":
         return Response(b"", status=200)   # a535：hypercorn+Flask 的 HEAD 兼容崩规避
     url = (request.args.get("url") or "").strip()
-    return _proxy_core(url)
+    return _proxy_core(_restore_local_urls(url))
 
 
 @bp.route("/api/web/proxy/<any(http, https):_sch>/<path:_rest>",
@@ -518,7 +518,7 @@ def api_web_proxy_path(_sch, _rest):
     _u = _sch + "://" + _rest
     if request.query_string:
         _u += "?" + request.query_string.decode("latin-1")
-    return _proxy_core(_u)
+    return _proxy_core(_restore_local_urls(_u))
 
 
 def _proxy_session():
@@ -543,6 +543,30 @@ def _sc_list(r):
         return r.raw.headers.getlist("Set-Cookie") or []
     except Exception:
         return []
+
+
+def _restore_local_urls(url):
+    """a541：query 参数里的本机 URL 还原为原始域。
+
+    页面 JS 用伪装后的地址栏（127.0.0.1:port）拼回调/跳转参数——
+    Anubis PoW 挑战的 redir 参数实锤：服务器校验 redir 白名单，
+    127.0.0.1 被拒 → pass-challenge 500 → 挑战循环失败（「Cookie 被
+    禁用」页）。对整个 URL 做替换：本机 origin（编码/未编码两种形态）
+    → 目标域 origin，path/query 保留。幂等：已是原始域不受影响。
+    """
+    import re as _rr
+    from urllib.parse import urlsplit as _us2
+    try:
+        _o = _us2(url)
+        if not _o.netloc:
+            return url
+        _orig_str = "%s://%s" % (_o.scheme, _o.netloc)
+        return _rr.sub(
+            "https?(?::|%3A)(?:%2F%2F|//)127[.]0[.]0[.]1(?::|%3A)[0-9]{2,5}"
+            "(?=%2F|/|&|$)",
+            _orig_str, url)
+    except Exception:
+        return url
 
 
 def _proxy_core(url):
