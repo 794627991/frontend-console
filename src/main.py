@@ -866,6 +866,21 @@ def main():
                 return _orig_load(url, *la, **kw)
             self.load_url = _safe_load
 
+            # a525：放行本地自签证书（https h2 代理端口）——WebView2 的
+            # CertificateError 事件对 127.0.0.1 的自签错误置 Handled 放行
+            # （只放行本机地址，外网站点证书错误仍正常拦截）
+            try:
+                def _on_cert_error(_s, args):
+                    try:
+                        _u = str(args.get_URI() or "")
+                        if _u.startswith("https://127.0.0.1:"):
+                            args.Handled = True
+                    except Exception:
+                        pass
+                sender.CoreWebView2.add_CertificateError(_on_cert_error)
+            except Exception as _e:
+                _nw_log("WARN", "[cert-error] 挂接失败: %r" % _e)
+
             # a490 诊断：追踪所有导航事件（含 iframe 内部导航）
             try:
                 _cvw = sender.CoreWebView2
@@ -1042,6 +1057,62 @@ def main():
         daemon=True
     )
     flask_thread.start()
+
+    # a525：本地 HTTPS(h2) 代理端口——浏览器对 HTTP/1.1 同源 6 连接上限
+    # 是 GitHub 切换 10s+ 的根因（137 资源排队，队尾 19.5s 抓包实锤）；
+    # h2 多路复用单连接无限并发根治。浏览器只在 TLS 上协商 h2 → 本服务
+    # 自签证书在 127.0.0.1 再起一个 https 端口专供代理流量（工具 UI/API
+    # 与 MCP endpoint 仍走原 http 端口零影响；http 页嵌 https iframe 无
+    # mixed-content 问题）。证书错误由 _patched_ready 的 CertificateError
+    # 事件对 127.0.0.1 放行。任何一步失败 → 代理回落 http 端口（现状）。
+    h2_port = port + 1
+    try:
+        import os as _os, datetime as _dt, ipaddress as _ipa
+        from src.app_state import DATA_DIR as _DD
+        _cert = _os.path.join(_DD, "web_h2_cert.pem")
+        _key = _os.path.join(_DD, "web_h2_key.pem")
+        if not (_os.path.isfile(_cert) and _os.path.isfile(_key)):
+            from cryptography import x509 as _x5
+            from cryptography.x509.oid import NameOID as _NO
+            from cryptography.hazmat.primitives import hashes as _hs, serialization as _ser
+            from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+            _k = _rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            _nm = _x5.Name([_x5.NameAttribute(_NO.COMMON_NAME, u"127.0.0.1")])
+            _c = (_x5.CertificateBuilder()
+                  .subject_name(_nm).issuer_name(_nm)
+                  .public_key(_k.public_key())
+                  .serial_number(_x5.random_serial_number())
+                  .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
+                  .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=3650))
+                  .add_extension(_x5.SubjectAlternativeName(
+                      [_x5.IPAddress(_ipa.ip_address(u"127.0.0.1"))]),
+                      critical=False)
+                  .sign(_k, _hs.SHA256()))
+            with open(_key, "wb") as _f:
+                _f.write(_k.private_bytes(_ser.Encoding.PEM,
+                                          _ser.PrivateFormat.TraditionalOpenSSL,
+                                          _ser.NoEncryption()))
+            with open(_cert, "wb") as _f:
+                _f.write(_c.public_bytes(_ser.Encoding.PEM))
+        from hypercorn.config import Config as _HC
+        from hypercorn.asyncio import serve as _hserve
+        import asyncio as _aio
+        _cfg = _HC()
+        _cfg.bind = ["127.0.0.1:%d" % h2_port]
+        _cfg.certfile = _cert
+        _cfg.keyfile = _key
+        threading.Thread(
+            target=lambda: _aio.run(_hserve(
+                app, _cfg,
+                # 子线程不能注册 signal handler——用永不触发的 Event 替换
+                # 默认 shutdown trigger（进程退出靠 daemon 线程随主进程终）
+                shutdown_trigger=lambda: _aio.Event().wait())),
+            daemon=True).start()
+        from src import web_proxy as _wp
+        _wp.H2_PORT.clear()
+        _wp.H2_PORT.append(h2_port)
+    except Exception as _e:
+        print("[a525] h2 端口启用失败（代理回落 http）：%r" % _e, file=sys.stderr)
 
     # 等待 Flask 就绪（50ms 间隔轮询，Flask 通常 ~600ms 起来，首次命中即返回）
     import urllib.request

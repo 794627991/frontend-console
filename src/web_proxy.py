@@ -36,7 +36,21 @@ from flask import Blueprint, Response, jsonify, redirect, request
 bp = Blueprint("web_proxy", __name__)
 
 _THREAD_LOCAL = threading.local()   # a511：线程局部代理连接池
-_CSD_SENT = []                      # a512：进程内一次性清缓存标记
+H2_PORT = []                        # a525：本地 HTTPS(h2) 代理端口（main 启动时填）
+
+
+def _shard_base():
+    """a525：代理流量的基址——本地 HTTPS(h2) 端口。
+
+    浏览器对 HTTP/1.1 同源有 6 连接上限，代理模式全部资源挤一个
+    origin 排队（GitHub 137 资源队尾 19.5s 抓包实锤）。根治 = HTTP/2
+    多路复用（单连接无限并发）：浏览器只在 TLS 上协商 h2，故本服务在
+    127.0.0.1 上再起一个自签 https 端口专供代理流量（工具 UI/API 仍走
+    原 http 端口，MCP/endpoint 零影响；http 页嵌 https iframe 无
+    mixed-content 问题）。未启用时（测试）回落 http request.host。"""
+    if not H2_PORT:
+        return "http://" + request.host + "/api/web/proxy"
+    return "https://127.0.0.1:%d/api/web/proxy" % H2_PORT[0]
 
 
 def _web_detect_charset(headers_ct, raw):
@@ -101,6 +115,7 @@ _PROXY_NAV_JS = r"""<script>
   // （掘金实锤：跳到 juejin.cn/api/web/proxy/... 后白屏「打不开」）。
   // 相对 URL 解析基准改用注入的 _orig（本页原始 URL 常量）。
   var _orig = __PX_ORIG__;
+  var _h2 = __PX_H2__;           // a525：本地 https(h2) 代理 origin（破 6 连接上限）
   // a508：SPA pathname 伪装——代理路径 /api/web/proxy/<sch>/<host>/<path>
   // 会被 Vue/React router 当成路由路径（掘金 router 直接 404「找不到页
   // 面」；GitHub hydration 的路径校验同源）。replaceState 同源合法地把
@@ -127,6 +142,9 @@ _PROXY_NAV_JS = r"""<script>
     }catch(_){}
   }, true);
   var _pb = location.origin + '/api/web/proxy/';
+  function _pxShard(){
+    return _h2 ? ('https://' + _h2) : location.origin;
+  }
   function _px(u){
     if (!u || u[0]==='#' || u.indexOf('data:')===0 || u.indexOf('blob:')===0
         || u.indexOf('javascript:')===0) return null;
@@ -143,8 +161,8 @@ _PROXY_NAV_JS = r"""<script>
         a = new URL(a.pathname + a.search, _orig);
       }
       if (a.origin === location.origin) return null;   // 防御（原始域=工具域）
-      return _pb + a.protocol.replace(':','') + '/' + a.host
-             + a.pathname + a.search;
+      return _pxShard() + '/api/web/proxy/' + a.protocol.replace(':','') + '/'
+             + a.host + a.pathname + a.search;
     }catch(_){ return null; }
   }
   function _rw(el){
@@ -603,7 +621,7 @@ def _proxy_core(url):
         _loc = _r.headers.get("Location") or ""
         if _loc:
             _fn_e = _proxy_url_rewrite(
-                url, "http://" + request.host + "/api/web/proxy")
+                url, _shard_base())
             _resp = Response(b"", status=_r.status_code)
             _resp.headers["Location"] = _fn_e(_loc)
             return _set_cookies_into(_resp, _sc_list(_r))
@@ -623,7 +641,7 @@ def _proxy_core(url):
     # CSS：重写 url(...) 为代理路径（字体/背景图等）
     if "text/css" in _ct_low:
         import re as _re
-        _fn = _proxy_url_rewrite(_final, "http://" + request.host + "/api/web/proxy")
+        _fn = _proxy_url_rewrite(_final, _shard_base())
         _css = _raw.decode("utf-8", "replace")
         _css = _re.sub(
             r"url\((['\"]?)([^'\")\s]+)\1\)",
@@ -647,7 +665,7 @@ def _proxy_core(url):
 
     import re as _re
     from urllib.parse import urljoin as _urljoin
-    _fn = _proxy_url_rewrite(_final, "http://" + request.host + "/api/web/proxy")
+    _fn = _proxy_url_rewrite(_final, _shard_base())
 
     # 重写资源 URL：匹配整个资源标签，在标签内全局替换 src/href
     # 不匹配 <a>（导航拦截 JS 处理）——<a> 不在标签列表中。
@@ -704,9 +722,13 @@ def _proxy_core(url):
         _rw_importmap, _html, flags=_re.I | _re.S)
 
     # a508：导航拦截 JS 参数化——原始 URL 以 JSON 字面量注入为 _orig
-    # （安全转义），作为相对 URL 的解析基准（替代被移除的 <base>）
+    # （安全转义），作为相对 URL 的解析基准（替代被移除的 <base>）。
+    # a525：__PX_H2__ 本地 https(h2) 代理 origin（多路复用破 6 连接上限）
     import json as _json
-    _nav = _PROXY_NAV_JS.replace("__PX_ORIG__", _json.dumps(_final))
+    _nav = (_PROXY_NAV_JS
+            .replace("__PX_ORIG__", _json.dumps(_final))
+            .replace("__PX_H2__", _json.dumps(
+                "127.0.0.1:%d" % H2_PORT[0] if H2_PORT else None)))
 
     # a508：不再注入 <base href="原始URL">——SPA router（Vue/React 的
     # history 模式）按 document.baseURI 拼绝对 URL，base 会把当前代理
@@ -737,14 +759,10 @@ def _proxy_core(url):
 
     _resp = _set_cookies_into(
         Response(_html, mimetype="text/html; charset=utf-8"), _sc_list(_r))
-    # a512：进程首次代理 HTML 响应带一次 Clear-Site-Data:"cache"——
-    # WebView2 可能存有代理演进期（a504-a510 无缓存策略）的旧/坏缓存
-    # 条目（SSO 页实锤 ERR_CACHE_READ_FAILURE → fingerprint2 读缓存失败
-    # → Fingerprint2 is not defined）。只清 cache 不动 cookie/storage
-    #（登录态与逃逸回收的 sessionStorage 无损），进程内只发一次。
-    if not _CSD_SENT:
-        _CSD_SENT.append(1)
-        _resp.headers["Clear-Site-Data"] = '"cache"'
+    # a525：Clear-Site-Data 已移除——它本是清 a504-a510 演进期的坏缓存
+    # 条目（一次性使命已完成），但每次进程重启都发一次导致频繁重启验证
+    # 新版本时静态资源缓存被反复清空（用户抓包实锤：切换 tab 的 chunk
+    # 全部 200 真请求不走缓存，10s+ 的构成之一）。
     return _resp
 
 
