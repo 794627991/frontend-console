@@ -126,6 +126,15 @@ function buildWebPanelTab(url) {
         <div class="web-sleep" data-web-sleep style="display:none;">
           <div>🌙 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
         </div>
+        <div class="web-err" data-web-err style="display:none;">
+          <div class="web-err-title">⚠️ 页面加载异常</div>
+          <div class="web-err-msg">可能是网络不可达（内网无外联？）或网站拒绝被嵌入。</div>
+          <div class="web-err-acts">
+            <button class="btn" data-web-err="read">☰ 用阅读模式打开</button>
+            <button class="btn ghost" data-web-err="sys">↗ 在系统浏览器中打开</button>
+            <button class="btn ghost" data-web-err="dismiss">继续等待</button>
+          </div>
+        </div>
       </div>
     </div>`;
   termArea.appendChild(wrap);
@@ -139,6 +148,19 @@ function buildWebPanelTab(url) {
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
   });
   wrap.querySelectorAll('[data-web]').forEach(b => b.onclick = () => _webAct(b.dataset.web, wrap));
+  // a488：加载失败提示层按钮
+  const errLayer = wrap.querySelector('[data-web-err]');
+  if (errLayer) {
+    errLayer.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-web-err]');
+      if (!b || b === errLayer) return;
+      const act = b.dataset.webErr;
+      errLayer.style.display = 'none';
+      if (act === 'read') _webAct('read');
+      else if (act === 'sys') _webAct('sys');
+      // dismiss：继续等待（层收起，iframe 继续加载）
+    });
+  }
   // a475 站点缩放记忆（审计修·降级如实）：DOM 事件不冒泡出 iframe——网页
   // 视图下 iframe 全覆盖容器，此监听只在**阅读态**（reader div 在上层）可达。
   // 网页视图缩放需 CDP（Emulation.setPageScaleFactor），待 CDP 普开后接入；
@@ -197,6 +219,30 @@ function _webNavigate(url) {
   c.tab.querySelector('.label').textContent = _webShortUrl(url).slice(0, 24);
   _webApplyZoom(_webZoomFor(url), _webHostOf(url));   // a475 站点缩放记忆
   _webSyncUI();
+  _webLoadWatch(c, url);
+}
+
+// a488：加载失败检测——iframe 导航后 8s 内 load 事件未触发 → 网络不通/
+// DNS 失败，出友好提示层（阅读模式 / 系统浏览器 / 继续等待）。X-Frame-
+// Options 拒嵌时 load 会正常触发（显示空白/错误页），此检测不覆盖——
+// 工具栏的「☰ 阅读」和「↗ 浏览器」按钮始终可用作兜底。
+function _webLoadWatch(c, url) {
+  const err = c.wrap.querySelector('[data-web-err]');
+  if (!err) return;
+  err.style.display = 'none';
+  if (c._loadT) clearTimeout(c._loadT);
+  const frame = c.wrap.querySelector('[data-web-frame]');
+  const onLoad = () => {
+    frame.removeEventListener('load', onLoad);
+    if (c._loadT) { clearTimeout(c._loadT); c._loadT = null; }
+  };
+  frame.addEventListener('load', onLoad, { once: true });
+  c._loadT = setTimeout(() => {
+    frame.removeEventListener('load', onLoad);
+    if (_webNav.stack[_webNav.idx] === url && !_webUi.reader) {
+      err.style.display = 'flex';   // 仅当前 URL 且非阅读态才提示
+    }
+  }, 8000);
 }
 
 // ---- a475：休眠/唤醒（Edge sleeping tabs 等价物）----

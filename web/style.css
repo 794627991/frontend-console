@@ -5829,3 +5829,11 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   justify-content: center; background: var(--bg); z-index: 2;
   font-size: 13px; color: var(--muted); text-align: center; line-height: 2; }
 .web-sleep-sub { font-size: 11px; color: var(--muted); }
+
+/* a488：网页加载失败提示层 */
+.web-err { position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px;
+  background: var(--bg); z-index: 3; text-align: center; }
+.web-err-title { font-size: 14px; font-weight: 600; color: var(--neon-orange, #d29922); }
+.web-err-msg { font-size: 12px; color: var(--muted); line-height: 1.6; }
+.web-err-acts { display: flex; gap: 10px; margin-top: 6px; }
