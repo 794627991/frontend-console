@@ -198,57 +198,54 @@ def test_post_body_and_ct_forwarded(monkeypatch):
     assert "application/json" in (op.last_req.headers.get("Content-type") or "")
 
 
-# ---------- 404 兜底：location.href='/main' 类 JS 跳转 ----------
+# ---------- 404 兜底（a508 客户端还原页：sessionStorage.__px_orig）----------
 
-_REF = ("http://127.0.0.1:49302/api/web/proxy?url="
-        "http%3A%2F%2F10.17.97.73%3A8765%2Flogin")
+_REF = "http://localhost/api/web/proxy/https/10.17.97.73:8765/login"
 
-def test_404_fallback_redirects_to_proxy():
+def test_404_fallback_returns_recovery_page():
+    """a508：兜底改为 404+还原页（JS 读 sessionStorage 拼回代理路径）——
+    replaceState 伪装后 Referer 不含代理前缀，服务端无从还原。"""
     c = S.app.test_client()
     r = c.get("/main", headers={"Referer": _REF,
                                 "Accept": "text/html,application/xhtml+xml"})
-    assert r.status_code == 302
-    assert "/api/web/proxy/http/10.17.97.73:8765/main" in r.headers["Location"]
+    assert r.status_code == 404                       # 语义仍是 404
+    assert b"__px_orig" in r.data                     # 还原脚本在
+    assert b"Redirecting" in r.data
 
 
-def test_404_fallback_keeps_query():
-    c = S.app.test_client()
-    r = c.get("/main?tab=1&x=2", headers={"Referer": _REF,
-                                          "Accept": "text/html"})
-    assert "/api/web/proxy/http/10.17.97.73:8765/main?tab=1&x=2" \
-        in r.headers["Location"]
-
-
-def test_404_ajax_not_redirected():
+def test_404_ajax_untouched():
     c = S.app.test_client()
     r = c.get("/api/whatever", headers={"Referer": _REF,
                                         "Accept": "application/json"})
     assert r.status_code == 404          # fetch 期待原状态码，不动
+    assert b"__px_orig" not in r.data    # 无还原脚本
     # POST 不兜（只兜 GET 导航）；POST 未知路径命中静态 path 路由的
-    # method 限制 → 405，同样不是 302 即达标
+    # method 限制 → 405
     r2 = c.post("/main", headers={"Referer": _REF,
                                   "Accept": "text/html"})
-    assert r2.status_code != 302
+    assert r2.status_code == 405
 
 
-def test_404_without_proxy_referer_untouched():
+def test_404_without_same_origin_referer_untouched():
     c = S.app.test_client()
-    assert c.get("/nope").status_code == 404
-    assert c.get("/nope", headers={
+    r = c.get("/nope")
+    assert r.status_code == 404 and b"__px_orig" not in r.data
+    # 外域 referer 不同源，不兜
+    r2 = c.get("/nope", headers={
         "Referer": "http://10.17.97.73:8765/login",
-        "Accept": "text/html"}).status_code == 404
+        "Accept": "text/html"})
+    assert r2.status_code == 404 and b"__px_orig" not in r2.data
 
 
 def test_404_loop_guard(monkeypatch):
-    # 重定向目标必是 /api/web/proxy（有路由），不该再进 404；即使原始站点
-    # 自身 404，代理透传状态码（路由命中）不进兜底——用假 opener 钉住
+    # 原始站点自身 404 由代理路由透传（路由命中），不进兜底——用假 opener 钉住
     op = _FakeOpener(urllib.error.HTTPError(
         "http://10.17.97.73:8765/main", 404, "msg",
         _msg({"Content-Type": "text/html"}), io.BytesIO(b"<html><head></head><body>404</body></html>")))
     monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2F10.17.97.73%3A8765%2Fmain")
-    assert r.status_code == 404          # 透传，不是 302
+    assert r.status_code == 404 and b"__px_orig" not in r.data
 
 
 # ---------- a506：路径式代理 ----------
@@ -302,19 +299,13 @@ def test_path_route_webpack_chunk_semantics(monkeypatch):
         "https://github.githubassets.com/assets/wp-runtime-abc.js"
 
 
-def test_404_fallback_path_style_referer(monkeypatch):
-    """路径式 referer 的 404 兜底（a506 主形态）。"""
+def test_404_fallback_any_same_origin_referer(monkeypatch):
+    """a508：兜底条件放宽为同源 referer（replaceState 伪装后 referer 只剩
+    origin，代理前缀在 pathname 里已不可见）——还原基址交给页面 JS。"""
     c = S.app.test_client()
-    ref = ("http://127.0.0.1:49302/api/web/proxy/"
-           "https/github.com/zai-org/ZCode")
-    r = c.get("/apps", headers={"Referer": ref, "Accept": "text/html"})
-    assert r.status_code == 302
-    assert r.headers["Location"].endswith(
-        "/api/web/proxy/https/github.com/apps")
-    # 相对路径基于 referer 的原始路径解析
-    r2 = c.get("/blob/main/x.js", headers={"Referer": ref, "Accept": "text/html"})
-    assert "/api/web/proxy/https/github.com/blob/main/x.js" \
-        in r2.headers["Location"]
+    r = c.get("/apps", headers={"Referer": "http://localhost/",
+                                "Accept": "text/html"})
+    assert r.status_code == 404 and b"__px_orig" in r.data
 
 
 def test_path_route_bad_url():

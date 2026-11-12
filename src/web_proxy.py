@@ -82,12 +82,28 @@ _PROXY_NAV_JS = """<script>
   // a506：路径式代理前缀——webpack 取 currentScript.src 的 dirname 做
   // publicPath，query 式会折叠成 /api/web/ 导致动态 chunk 404；路径式
   // 的 dirname 还原出 CDN 基址，相对 chunk 自动落回代理路由。
+  // a508：不再注入 <base href="原始URL">——SPA router（Vue/React）按
+  // baseURI 拼绝对 URL，会把当前代理路径拼到原始域上整页跳出代理
+  // （掘金实锤：跳到 juejin.cn/api/web/proxy/... 后白屏「打不开」）。
+  // 相对 URL 解析基准改用注入的 _orig（本页原始 URL 常量）。
+  var _orig = __PX_ORIG__;
+  // a508：SPA pathname 伪装——代理路径 /api/web/proxy/<sch>/<host>/<path>
+  // 会被 Vue/React router 当成路由路径（掘金 router 直接 404「找不到页
+  // 面」；GitHub hydration 的路径校验同源）。replaceState 同源合法地把
+  // 地址栏 pathname 还原成原始路径，router/相对解析回到原生语义。
+  // 代价：404 兜底不能再从 Referer 还原基址（pathname 已不含代理前缀）
+  // → 原始 URL 存 sessionStorage，兜底页客户端还原。
+  try{
+    sessionStorage.setItem('__px_orig', _orig);
+    var _ou = new URL(_orig);
+    history.replaceState(null, '', _ou.pathname + _ou.search);
+  }catch(_){}
   var _pb = location.origin + '/api/web/proxy/';
   function _px(u){
     if (!u || u[0]==='#' || u.indexOf('data:')===0 || u.indexOf('blob:')===0
         || u.indexOf('javascript:')===0) return null;
     try{
-      var a = new URL(u, document.baseURI);
+      var a = new URL(u, _orig);
       if (a.origin === location.origin) return null;   // 已是代理（路径式/query 式）
       return _pb + a.protocol.replace(':','') + '/' + a.host
              + a.pathname + a.search;
@@ -123,23 +139,33 @@ _PROXY_NAV_JS = """<script>
         }
         return _sa(name, value);
       };
-      // 直接赋值 el.src = '...' 也拦（属性 setter）
-      var _def = {src:1, href:1, dataSrc:1};
-      for (var k in _def){
-        try{
-          var _prop = k==='dataSrc'?'data-src':k;
-          var _val = el[_prop];
-          if (_val!==undefined){
-            Object.defineProperty(el, _prop, {
-              get: function(){ return _val; },
+      // 直接赋值 el.src = '...' 也拦（属性 setter）——a508 修两处：
+      // ① 旧版 set 只把重写值存进闭包变量、不写 content attribute →
+      //    IDL 赋值（el.href=x）根本没进 DOM → 浏览器认为 href 空：
+      //    「<link rel=preload> invalid href」+ script 不加载。掘金
+      //    loader 全走 IDL 赋值 → chunk 链断（script 仅 7 个）→ 页面
+      //    停在 SSR 骨架「一直打不开」（GitHub 走 setAttribute 侥幸活）
+      // ② 旧版 for-in 闭包共享 _val/_prop，多属性互相串值
+      // 正确做法：转发原生原型 get/set（写 content attribute、绝对 URL
+      // 语义都由浏览器保证），只拦截 value 重写
+      var _props = ['src', 'href', 'dataSrc'];
+      for (var pi = 0; pi < _props.length; pi++){
+        (function(prop){
+          try{
+            var _name = prop==='dataSrc' ? 'data-src' : prop;
+            var _d = Object.getOwnPropertyDescriptor(
+              Object.getPrototypeOf(el), _name) || {};
+            if (!_d.get || !_d.set) return;   // data-src 无原生 IDL，走 setAttribute hook 足够
+            Object.defineProperty(el, _name, {
+              get: function(){ return _d.get.call(el); },
               set: function(v){
                 var p = _px(String(v||''));
-                _val = p || v;
+                _d.set.call(el, p || v);
               },
               configurable: true
             });
-          }
-        }catch(_){}
+          }catch(_){}
+        })(_props[pi]);
       }
     }
     return el;
@@ -195,7 +221,7 @@ _PROXY_NAV_JS = """<script>
     if (!href || href[0]==='#' || href.indexOf('javascript:')===0) return;
     e.preventDefault(); e.stopPropagation();
     var abs = href;
-    try { abs = new URL(href, document.baseURI).href; } catch(_){}
+    try { abs = new URL(href, _orig).href; } catch(_){}
     window.parent.postMessage({__webProxyNav: abs}, '*');
   }, true);
   document.addEventListener('submit', function(e){
@@ -204,7 +230,7 @@ _PROXY_NAV_JS = """<script>
     var action = f.getAttribute('action') || location.href;
     e.preventDefault(); e.stopPropagation();
     var abs = action;
-    try { abs = new URL(action, document.baseURI).href; } catch(_){}
+    try { abs = new URL(action, _orig).href; } catch(_){}
     window.parent.postMessage({__webProxyNav: abs}, '*');
   }, true);
 })();
@@ -477,26 +503,33 @@ def _proxy_core(url):
         r"(<script[^>]*type=[\"']importmap[^>]*>)(.*?)</script>",
         _rw_importmap, _html, flags=_re.I | _re.S)
 
-    # 删已有 <base>，注入指向原始 URL 的 base（CSS 内残余相对路径兜底）。
-    # a505：referrer 从 no-referrer 放宽为 same-origin——404 兜底路由靠同源
-    # Referer（?url= 原始地址）还原站点；跨域请求本就全走代理、由服务端
-    # 自设 Referer，浏览器侧不发跨域 Referer 的旧约束不受影响。
-    _html = _re.sub(r"<base\b[^>]*>", "", _html, count=1, flags=_re.I)
-    _base = ('<base href="%s">'
-             '<meta name="referrer" content="same-origin">'
-             % _final.replace('"', "&quot;"))
-    if "<head" in _html.lower():
-        _html = _re.sub(r"(<head[^>]*>)", r"\1" + _base, _html, count=1, flags=_re.I)
-    else:
-        _html = _base + _html
+    # a508：导航拦截 JS 参数化——原始 URL 以 JSON 字面量注入为 _orig
+    # （安全转义），作为相对 URL 的解析基准（替代被移除的 <base>）
+    import json as _json
+    _nav = _PROXY_NAV_JS.replace("__PX_ORIG__", _json.dumps(_final))
 
-    # 注入导航拦截 JS
-    if "</head>" in _html.lower():
-        _html = _re.sub(r"</head>", _PROXY_NAV_JS + "</head>", _html, count=1, flags=_re.I)
-    elif "</body>" in _html.lower():
-        _html = _re.sub(r"</body>", _PROXY_NAV_JS + "</body>", _html, count=1, flags=_re.I)
+    # a508：不再注入 <base href="原始URL">——SPA router（Vue/React 的
+    # history 模式）按 document.baseURI 拼绝对 URL，base 会把当前代理
+    # 路径拼到原始域上（掘金实锤：router 整页跳 juejin.cn/api/web/
+    # proxy/... 跳出代理白屏）。原始站的 <base> 同样删（防它反向把代理
+    # 域相对路径带偏）。CSS 相对路径已在服务端重写为绝对代理 URL，base
+    # 的兜底价值仅剩内联 style url()，两害取轻。
+    # a505：referrer same-origin——404 兜底路由靠同源 Referer 还原站点。
+    _html = _re.sub(r"<base\b[^>]*>", "", _html, flags=_re.I)
+    _meta_ref = '<meta name="referrer" content="same-origin">'
+    if "<head" in _html.lower():
+        _html = _re.sub(r"(<head[^>]*>)", r"\1" + _meta_ref,
+                        _html, count=1, flags=_re.I)
     else:
-        _html += _PROXY_NAV_JS
+        _html = _meta_ref + _html
+
+    # 注入导航拦截 JS（a508：参数化注入原始 URL 做相对解析基准 _orig）
+    if "</head>" in _html.lower():
+        _html = _re.sub(r"</head>", _nav + "</head>", _html, count=1, flags=_re.I)
+    elif "</body>" in _html.lower():
+        _html = _re.sub(r"</body>", _nav + "</body>", _html, count=1, flags=_re.I)
+    else:
+        _html += _nav
 
     return _set_cookies_into(
         Response(_html, mimetype="text/html; charset=utf-8"), _r.headers)
@@ -507,41 +540,29 @@ def _proxy_404_fallback(err):
     这类站内相对跳转（location 赋值浏览器安全限制拦不住），在代理 iframe
     里解析为 127.0.0.1/main → Flask 404 → 用户看到「跳转失败」。
 
-    兜底链：Referer 是本机代理页（a506 路径式 /proxy/<sch>/<host>/...，
-    兼容 a502 query 式 ?url=）+ GET + Accept 含 text/html（AJAX 404 不
-    动，fetch 期待原状态码）→ 把请求 path+query 拼回原始站点 → 302 回
-    代理。重定向目标是代理路由（有路由），不会循环；原始站点也 404 时
-    由代理透传状态码、不进本 handler。
+    a508：服务端 302 兜底改为客户端还原页——SPA pathname 伪装
+    （replaceState）后 Referer 不再含代理前缀，服务端无从还原基址；
+    原始 URL 已由注入 JS 存入 sessionStorage.__px_orig，兜底页用 JS
+    读取后拼回代理路径跳转。条件：GET + Accept 含 text/html（AJAX 的
+    404 原样返回，fetch 期待原状态码）+ Referer 同源。sessionStorage
+    无记录（非代理来源的普通 404）→ 渲染普通 404 文案，无行为差异。
     """
-    import re as _re
-    from urllib.parse import urljoin as _uj, unquote as _unq, quote as _q
     _ref = request.headers.get("Referer", "")
     if (request.method == "GET"
-            and "/api/web/proxy" in _ref
+            and _ref.startswith("http://" + request.host + "/")
             and "text/html" in (request.headers.get("Accept") or "")):
-        _base = ""
-        _m = _re.search(r"/api/web/proxy/(https?)/([^/?#]+)([^?#]*)", _ref)
-        if _m:                                    # a506 路径式
-            _base = _m.group(1) + "://" + _m.group(2) + _m.group(3)
-        else:
-            _m = _re.search(r"[?&]url=([^&]+)", _ref)
-            if _m:                                # a502 query 式兼容
-                _base = _unq(_m.group(1))
-        if _base:
-            try:
-                _target = _uj(_base, request.full_path.rstrip("?"))
-                if _target.startswith(("http://", "https://")):
-                    # query 与 path 分离拼接——整串 quote 会把 ? 编进 path 段
-                    _qp = ""
-                    if "?" in _target:
-                        _target, _qp = _target.split("?", 1)
-                        _qp = "?" + _qp
-                    _sch2, _rest2 = _target.split("://", 1)
-                    return redirect(
-                        "/api/web/proxy/" + _sch2 + "/"
-                        + _q(_rest2, safe="/%:") + _qp, code=302)
-            except Exception:
-                pass
+        _page = (
+            "<!doctype html><meta charset='utf-8'><title>404</title>"
+            "<body style='font:14px/1.6 sans-serif;padding:40px;"
+            "color:#666'>Redirecting..."
+            "<script>(function(){var o=null;"
+            "try{o=sessionStorage.getItem('__px_orig');}catch(e){}"
+            "if(o){try{var b=new URL(o);"
+            "location.replace('/api/web/proxy/'+b.protocol.replace(':','')"
+            "+'/'+b.host+location.pathname+location.search);return;}"
+            "catch(e){}}"
+            "document.body.innerText='404 Not Found';})();</script>")
+        return Response(_page, status=404, mimetype="text/html")
     return err
 
 
