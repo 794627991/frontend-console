@@ -363,7 +363,12 @@
   /* ===== 顶栏 ===== */
   .topbar {
     position: relative; z-index: 10;
-    display: flex; align-items: center; gap: 14px;
+    /* a480（审计 A/B 确凿修正）：grid 三列 1fr auto 1fr 几何真居中——
+       双 spacer 方案因左右段宽差恒右偏 ~73px，<1460px 两侧 spacer 塌缩、
+       focus 单侧左伸还压 logo。三列方案：地址栏恒在窗口几何中心，focus
+       展宽由两个 1fr 侧列对称吸收，任何窗宽左右段纹丝不动 */
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: center; gap: 14px;
     padding: 0 18px; height: 52px;
     background: linear-gradient(180deg, var(--bg-panel), var(--bg));
     border-bottom: 1px solid var(--border);
@@ -736,6 +741,9 @@
 
   .topbar .divider { width: 1px; height: 24px; background: var(--border); }
   .topbar .conn-area { display: flex; align-items: center; gap: 8px; }
+  /* a480：grid 第三列——右段按钮组靠右堆叠 */
+  .topbar .topbar-right { display: flex; align-items: center; gap: 10px;
+    justify-content: flex-end; }
   .topbar select, .topbar input {
     background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 10px; font-size: 12px; font-family: var(--font-ui);
