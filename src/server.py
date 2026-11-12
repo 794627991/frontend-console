@@ -1912,6 +1912,30 @@ _PROXY_NAV_JS = """<script>
     childList:true, subtree:true,
     attributes:true, attributeFilter:['src','href','data-src']
   });
+  // a507：拦截 fetch / XMLHttpRequest——AJAX 请求也走代理（登录/API 等）
+  var _origFetch = window.fetch ? window.fetch.bind(window) : null;
+  if (_origFetch){
+    window.fetch = function(input, init){
+      try{
+        var u = typeof input==='string' ? input : (input&&input.url) || '';
+        var p = _px(u);
+        if (p){
+          if (typeof input==='string') input = p;
+          else input = new Request(p, input);
+        }
+      }catch(_){}
+      return _origFetch(input, init);
+    };
+  }
+  var _origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(method, url){
+    try{
+      var p = _px(String(url||''));
+      if (p) url = p;
+    }catch(_){}
+    arguments[1] = url;
+    return _origOpen.apply(this, arguments);
+  };
   // 链接导航拦截
   document.addEventListener('click', function(e){
     var a = e.target.closest ? e.target.closest('a[href]') : null;
@@ -1958,14 +1982,13 @@ def _proxy_url_rewrite(base_url, proxy_base):
     return _to_proxy
 
 
-@app.route("/api/web/proxy")
+@app.route("/api/web/proxy",
+           methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 def api_web_proxy():
     """Web 代理：取页 → 删 XFO → 重写资源 URL 为代理路径 → 注入导航拦截。
 
-    a503：所有子资源（img/js/css/font）也走代理——浏览器直连 CDN 会被
-    Origin/Referer 检查拒绝（403），服务器端取不带 Origin 头。
-    HTML 中 src/href 重写为代理路径；CSS 内 url() 也重写。
-    <base> 保留指向原始 URL（CSS 内未重写完的相对路径兜底）。
+    a503：所有子资源（img/js/css/font）也走代理。
+    a507：支持 POST/PUT/DELETE 等——AJAX（登录/API）也走代理。
     """
     import ssl as _ssl
     import urllib.request as _ur
@@ -1976,19 +1999,39 @@ def api_web_proxy():
     _ctx = _ssl.create_default_context()
     _ctx.check_hostname = False
     _ctx.verify_mode = _ssl.CERT_NONE
-    _req = _ur.Request(url, headers={
+    _hdrs = {
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/124.0 Safari/537.36"),
         "Accept": "*/*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Referer": url,   # 某些 CDN 需要 Referer 是同域才放行
-    })
+        "Referer": url,
+    }
+    # a507：转发 Content-Type 和请求体（POST/PUT/PATCH）
+    _body = None
+    if request.method in ("POST", "PUT", "PATCH"):
+        _body = request.get_data()
+        _ct_req = request.headers.get("Content-Type")
+        if _ct_req:
+            _hdrs["Content-Type"] = _ct_req
+        _hdrs["X-Requested-With"] = request.headers.get("X-Requested-With", "")
+    _req = _ur.Request(url, headers=_hdrs, data=_body,
+                       method=request.method if request.method != "HEAD" else "GET")
     try:
         _r = _ur.urlopen(_req, timeout=15, context=_ctx)
         _raw = _r.read(5 * 1024 * 1024)
         _ct = _r.headers.get("Content-Type") or ""
         _final = _r.geturl() or url
+    except _ur.HTTPError as _he:
+        # a507：转发原始错误码和响应体（401/403/404 等——AJAX 需要看到）
+        _raw = b""
+        try:
+            _raw = _he.read(5 * 1024 * 1024)
+        except Exception:
+            pass
+        _ct = _he.headers.get("Content-Type") or ""
+        return Response(_raw, status=_he.code,
+                       mimetype=_ct.split(";")[0].strip() or "text/plain")
     except Exception as e:
         return Response("Proxy fetch failed: %s" % str(e)[:200], status=502)
 
