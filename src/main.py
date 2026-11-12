@@ -850,6 +850,23 @@ def main():
         _orig_ready = _EC.on_webview_ready
         def _patched_ready(self, sender, args):
             _orig_ready(self, sender, args)
+            # a490 诊断：追踪所有导航事件（含 iframe 内部导航）——
+            # NavigationStarting / NavigationCompleted 都记到同一个日志文件
+            try:
+                _cvw = sender.CoreWebView2
+                def _on_nav_start(s2, a2):
+                    _nw_log("NAV", "[NavStarting] uri=%s is_redirect=%s" % (
+                        str(a2.Uri)[:200], getattr(a2, "IsRedirected", "?")))
+                def _on_nav_complete(s2, a2):
+                    _nw_log("NAV", "[NavCompleted] uri=%s success=%s err=%s" % (
+                        str(getattr(a2, "NavigationId", "?")), 
+                        getattr(a2, "IsSuccess", "?"),
+                        str(getattr(a2, "WebErrorStatus", ""))[:80]))
+                _cvw.NavigationStarting += _on_nav_start
+                _cvw.FrameNavigationStarting += _on_nav_start  # iframe 导航
+                _cvw.FrameNavigationCompleted += _on_nav_complete  # iframe 导航完成
+            except Exception as _e:
+                _nw_log("WARN", "[NavTracker] attach failed: %r" % _e)
             try:
                 sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
             except Exception:
