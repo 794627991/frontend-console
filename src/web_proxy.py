@@ -92,6 +92,7 @@ def _web_html_to_text(html_src):
 
 _PROXY_NAV_JS = r"""<script>
 (function(){
+  window.__pxNav = 1;   // a521：子 iframe 注入去重标记
   // a506：路径式代理前缀——webpack 取 currentScript.src 的 dirname 做
   // publicPath，query 式会折叠成 /api/web/ 导致动态 chunk 404；路径式
   // 的 dirname 还原出 CDN 基址，相对 chunk 自动落回代理路由。
@@ -338,6 +339,36 @@ _PROXY_NAV_JS = r"""<script>
     }catch(_){}
     return _origSubmit.call(this);
   };
+  // a521：同源子 iframe 注入——微前端子应用（qiankun 等的 about:blank/
+  // srcdoc iframe 沙箱）内的 XHR/fetch 在独立 window 里跑，不经本页的
+  // 拦截，相对路径打到工具域 404（SWMS icoding/review/list 等实锤）。
+  // 同源空白 iframe 可写：load 后把本脚本的源码注入进去，递归覆盖多层。
+  var _NAV_SRC = (document.currentScript && document.currentScript.textContent) || '';
+  function _injectSub(f){
+    try{
+      if (!f.contentWindow || f.contentWindow.__pxNav) return;
+      var d = f.contentDocument;
+      if (!d || !d.head) return;
+      f.contentWindow.__pxNav = 1;
+      var s = d.createElement('script');
+      s.textContent = _NAV_SRC;
+      d.head.prepend(s);
+    }catch(_){}
+  }
+  document.querySelectorAll('iframe').forEach(function(f){
+    f.addEventListener('load', function(){ _injectSub(f); }, { once: true });
+  });
+  _mo2 = new MutationObserver(function(muts){
+    for (var i=0;i<muts.length;i++){
+      muts[i].addedNodes.forEach(function(n){
+        if (n.nodeType===1 && n.tagName==='IFRAME'){
+          n.addEventListener('load', function(){ _injectSub(n); }, { once: true });
+          setTimeout(function(){ _injectSub(n); }, 300);
+        }
+      });
+    }
+  });
+  _mo2.observe(document.documentElement||document, { childList:true, subtree:true });
 })();
 </script>"""
 
@@ -521,12 +552,21 @@ def _proxy_core(url):
         _hdrs["X-Requested-With"] = request.headers.get("X-Requested-With", "")
     _method = request.method if request.method != "HEAD" else "GET"
 
-    # a505：禁自动跟随重定向——中间响应（其 Set-Cookie）不能丢，且浏览器
-    # 要看到跳转。透传 30x：Location 代理化后交还浏览器跟，Set-Cookie 透传
-    try:
-        _r = _proxy_session().request(
-            _method, url, headers=_hdrs, data=_body,
+    def _fetch(u):
+        return _proxy_session().request(
+            _method, u, headers=_hdrs, data=_body,
             timeout=15, allow_redirects=False)
+
+    # a505：禁自动跟随重定向——中间响应（其 Set-Cookie）不能丢，且浏览器
+    # 要看到跳转。透传 30x：Location 代理化后交还浏览器跟，Set-Cookie 透传。
+    # a521：连接失败两级重试——①http 失败升级 https 重试（页面硬编码
+    # http:// 的资源在内网 80 不通：swms-tool/*.svg 实锤 502）；②https
+    # 失败同 URL 重试一次（内网透明代理链路偶发抖动：code-api 502 实锤）
+    try:
+        try:
+            _r = _fetch(url)
+        except Exception:
+            _r = _fetch("https://" + url[7:] if url.startswith("http://") else url)
         # a518：上限 5MB → 50MB——现代 SPA 主 bundle 超 5MB 不罕见
         # （SWMS app.js 5.2MB 实锤：截断 → Unexpected end of input →
         # 页面白屏）。50MB 覆盖极端 vendor 全量包，内存垫得住（内网单
