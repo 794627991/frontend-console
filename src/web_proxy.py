@@ -164,10 +164,14 @@ _PROXY_NAV_JS = r"""<script>
   // 通道只有 MutationObserver 异步兜底，回调执行前浏览器已开始下载原始
   // URL → 内网透明代理返回注入页（HTML）→ 脚本执行 Unexpected token
   // '<'（SSO 工作台实锤）。赋值阶段在字符串上直接替换，窗口归零。
+  // a517：属性值支持无引号形态（构建产物常见 <script src=https://x>）；
+  // 补 insertAdjacentHTML / outerHTML 两个漏网注入通道。
   function _rwHtml(h){
     return String(h).replace(
-      /(<(?:script|img|link|source|iframe|video|audio|embed)[^>]*?\s(?:src|href|data-src|poster)\s*=\s*)(["'])((?:(?!\2)[\s\S])*)\2/gi,
-      function(m, pre, q, u){
+      /(<(?:script|img|link|source|iframe|video|audio|embed)[^>]*?\s(?:src|href|data-src|poster)\s*=\s*)(["'][\s\S]*?\2|[^>\s"']+)/gi,
+      function(m, pre, u){
+        var q = '';
+        if (u[0] === '"' || u[0] === "'"){ q = u[0]; u = u.slice(1, -1); }
         var p = _px(u);
         return p ? pre + q + p + q : m;
       });
@@ -178,6 +182,22 @@ _PROXY_NAV_JS = r"""<script>
       Object.defineProperty(Element.prototype, 'innerHTML', {
         get: function(){ return _ipd.get.call(this); },
         set: function(v){ _ipd.set.call(this, _rwHtml(v)); },
+        configurable: true
+      });
+    }
+  }catch(_){}
+  try{
+    var _oIAH = Element.prototype.insertAdjacentHTML;
+    Element.prototype.insertAdjacentHTML = function(pos, h){
+      return _oIAH.call(this, pos, _rwHtml(h));
+    };
+  }catch(_){}
+  try{
+    var _opd = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML') || {};
+    if (_opd.get && _opd.set){
+      Object.defineProperty(Element.prototype, 'outerHTML', {
+        get: function(){ return _opd.get.call(this); },
+        set: function(v){ _opd.set.call(this, _rwHtml(v)); },
         configurable: true
       });
     }
@@ -561,13 +581,20 @@ def _proxy_core(url):
     _fn = _proxy_url_rewrite(_final, "http://" + request.host + "/api/web/proxy")
 
     # 重写资源 URL：匹配整个资源标签，在标签内全局替换 src/href
-    # 不匹配 <a>（导航拦截 JS 处理）——<a> 不在标签列表中
+    # 不匹配 <a>（导航拦截 JS 处理）——<a> 不在标签列表中。
+    # a517：属性值支持无引号形态——Vue CLI 等构建产物常见
+    # <script src=https://host/x.js?hash>（不带引号，HTML5 合法），
+    # 原正则漏配 → 脚本直连原始域 → 未认证拿到登录页 HTML →
+    # Unexpected token '<'（SWMS 实锤 runtime/vendor/app 三件套）
     def _rw_tag(m):
         _tag = m.group(1)          # 标签名（保持原大小写）
         _attrs = m.group(2) or ''  # 标签内所有属性
         _attrs = _re.sub(
-            r"(src|href|data-src)=['\"]([^'\"]+)['\"]",
-            lambda mm: '%s="%s"' % (mm.group(1), _fn(mm.group(2))),
+            r"""(src|href|data-src)=(["'][^"']*["']|[^>\s]+)""",
+            lambda mm: '%s="%s"' % (
+                mm.group(1),
+                _fn(mm.group(2)[1:-1] if mm.group(2)[:1] in "\"'"
+                   else mm.group(2))),
             _attrs, flags=_re.I)
         return "<%s%s" % (_tag, _attrs)
     _html = _re.sub(
