@@ -276,6 +276,12 @@ window.__webTabTitle = function (tid, title) {
   if (c && title) c.tab.querySelector('.label').textContent = title.slice(0, 24);
 };
 // 控件内 window.open / target=_blank → 本面板内导航
+// 控件导航开始/完成 → 加载指示（刷新转圈+地址栏呼吸，a553 找回）
+window.__webTabLoad = function (tid, on) {
+  const c = connections[WEB_PORTID];
+  if (!c) return;
+  c.wrap.classList.toggle('web-loading', !!on);
+};
 window.__webTabNew = function (url) {
   if (url) _webNavigate(url);
 };
@@ -284,11 +290,12 @@ window.__webTabNew = function (url) {
 // 隐藏：WebView2 控件是 WinForms 原生子窗口，窗口层级永远在主 UI 的
 // DOM 之上，任何 z-index 都压不过（用户实锤：新建连接 UI 被网页盖住）
 (function () {
-  const anyModalOpen = () => !!document.querySelector('.modal.show');
+  const anyOverlayOpen = () =>
+    !!document.querySelector('.modal.show, .ctx-menu:not([style*="display: none"]), #webFavMenu');
   const sync = () => {
     const c = connections[WEB_PORTID];
     if (!c || !c._tabId) return;
-    if (anyModalOpen()) _webCtlVisible(false);
+    if (anyOverlayOpen()) _webCtlVisible(false);
     else if (c.wrap.style.display !== 'none' && !_webUi.reader && !_webUi.sleeping)
       _webCtlVisible(true);
   };

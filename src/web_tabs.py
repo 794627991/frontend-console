@@ -191,6 +191,17 @@ class WebTabs:
                 pass
         cvw.SourceChanged += _on_src
 
+        # a553：导航开始/完成 → 前端加载指示（刷新转圈+地址栏呼吸）
+        def _on_nav_start(s, a):
+            _push("window.__webTabLoad && window.__webTabLoad(%s, true)"
+                  % json.dumps(tab_id))
+        cvw.NavigationStarting += _on_nav_start
+
+        def _on_nav_done(s, a):
+            _push("window.__webTabLoad && window.__webTabLoad(%s, false)"
+                  % json.dumps(tab_id))
+        cvw.NavigationCompleted += _on_nav_done
+
         def _on_hist(s, a):
             _push("window.__webTabHist && window.__webTabHist(%s, %s, %s)" % (
                 json.dumps(tab_id),
