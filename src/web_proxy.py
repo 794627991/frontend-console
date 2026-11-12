@@ -117,7 +117,17 @@ _PROXY_NAV_JS = r"""<script>
         || u.indexOf('javascript:')===0) return null;
     try{
       var a = new URL(u, _orig);
-      if (a.origin === location.origin) return null;   // 已是代理（路径式/query 式）
+      // a515：同源 ≠ 已代理——a508 的 pathname 伪装后，页面 JS 以
+      // 伪装 location 拼出的工具域相对/绝对 URL（如 runtime.xxx.js?hash）
+      // 也同源，原判定放行 → 打到 Flask 404（默认 404 页是 HTML）→
+      // 脚本 Unexpected token '<'（SSO 实锤，Fingerprint2 同通道）。
+      // 处理：真代理路径（/api/web/proxy/ 前缀）放行；其余同源 URL 把
+      // path+query 重挂回原始域再代理化。
+      if (a.origin === location.origin){
+        if (a.pathname.indexOf('/api/web/proxy/') === 0) return null;
+        a = new URL(a.pathname + a.search, _orig);
+      }
+      if (a.origin === location.origin) return null;   // 防御（原始域=工具域）
       return _pb + a.protocol.replace(':','') + '/' + a.host
              + a.pathname + a.search;
     }catch(_){ return null; }
@@ -642,8 +652,14 @@ def _proxy_404_fallback(err):
     """
     _ref = request.headers.get("Referer", "")
     if (request.method == "GET"
-            and _ref.startswith("http://" + request.host + "/")
-            and "text/html" in (request.headers.get("Accept") or "")):
+            and _ref.startswith("http://" + request.host + "/")):
+        _acc = request.headers.get("Accept") or ""
+        if "text/html" not in _acc:
+            # a515：脚本/样式等资源类 404 返回空体——Flask 默认 404 页是
+            # HTML，漏网 <script> 拿到会报 Unexpected token '<' 掩盖真实
+            # 状态（SSO runtime/vendor/app 实锤）
+            return Response(b"", status=404,
+                            mimetype="text/plain")
         _page = (
             "<!doctype html><meta charset='utf-8'><title>404</title>"
             "<body style='font:14px/1.6 sans-serif;padding:40px;"
