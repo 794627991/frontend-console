@@ -896,7 +896,7 @@ def main():
                             args.Handled = True
                     except Exception:
                         pass
-                sender.CoreWebView2.add_CertificateError(_on_cert_error)
+                sender.CoreWebView2.CertificateError += _on_cert_error   # a538：pythonnet 事件用 +=（add_X 不存在，AttributeError 实锤）
             except Exception as _e:
                 _nw_log("WARN", "[cert-error] 挂接失败: %r" % _e)
 
@@ -912,6 +912,7 @@ def main():
             try:
                 from Microsoft.Web.WebView2.Core import (
                     CoreWebView2WebResourceContext as _RCtx)
+                _cvw = sender.CoreWebView2   # a538 修：a536 删 NavStarting 时误删本定义
                 _cvw.AddWebResourceRequestedFilter("*", _RCtx.All)
                 def _strip_xfo(s2, a2):
                     # a500（关键认知修正）：WebResourceRequested 在请求发出

@@ -576,6 +576,20 @@ def _proxy_core(url):
     #（下方单独转发）、浏览器缓存控制。
     _SKIP_IN = {"host", "connection", "content-length", "accept-encoding",
                 "origin", "referer", "cookie", "cache-control", "pragma"}
+    # a538：Referer 还原——浏览器发的同源 Referer（127.0.0.1:port/path）
+    # 取其 path+query 拼回目标域（a508 伪装后 referer 路径=原始路径），
+    # 服务器看到的 Referer 与原生一致（字节埋点/部分 API 校验来源，
+    # 自指 Referer 被拒 400 实锤）。异源/无 Referer 保持自指兜底。
+    try:
+        from urllib.parse import urlsplit as _us
+        _bref = request.headers.get("Referer") or ""
+        if _bref and _us(_bref).netloc == request.host:
+            _o = _us(url)
+            _qs = ("?" + _us(_bref).query) if _us(_bref).query else ""
+            _hdrs["Referer"] = "%s://%s%s%s" % (
+                _o.scheme, _o.netloc, _us(_bref).path, _qs)
+    except Exception:
+        pass
     for _k, _v in request.headers:
         if _k.lower() not in _SKIP_IN:
             _hdrs[_k] = _v
@@ -620,6 +634,18 @@ def _proxy_core(url):
     except Exception as e:
         return Response("Proxy fetch failed: %s" % str(e)[:200], status=502)
 
+    def _extra_headers_into(resp):
+        """a538：透传 x- 开头的自定义响应头——掘金从 x-ware-csrf-token
+        响应头读 CSRF token（写操作需要），代理不透传则 token=null、
+        评论/点赞类写功能降级。Set-Cookie 已单列，此处跳过。"""
+        try:
+            for _k, _v in _r.headers.items():
+                if _k.lower().startswith("x-"):
+                    resp.headers[_k] = _v
+        except Exception:
+            pass
+        return resp
+
     def _set_cookies_into(resp, scs):
         """a505：原始响应 Set-Cookie 清洗后透传（可多条）。"""
         for _sc in scs:
@@ -638,17 +664,17 @@ def _proxy_core(url):
                 url, _shard_base())
             _resp = Response(b"", status=_r.status_code)
             _resp.headers["Location"] = _fn_e(_loc)
-            return _set_cookies_into(_resp, _sc_list(_r))
+            return _extra_headers_into(_set_cookies_into(_resp, _sc_list(_r)))
         # 无 Location 的 30x：无处可代理化，空体透传状态码（a511 修：
         # 原会落进正常响应分支变 200）
         return _set_cookies_into(
             Response(b"", status=_r.status_code), _sc_list(_r))
     # a504：转发原始错误码和响应体（401/403/404 等——AJAX 需要看到）
     if _r.status_code >= 400:
-        return _set_cookies_into(
+        return _extra_headers_into(_set_cookies_into(
             Response(_raw, status=_r.status_code,
                      mimetype=_ct.split(";")[0].strip() or "text/plain"),
-            _sc_list(_r))
+            _sc_list(_r)))
 
     _ct_low = _ct.lower()
 
@@ -661,14 +687,14 @@ def _proxy_core(url):
             r"url\((['\"]?)([^'\")\s]+)\1\)",
             lambda m: "url(%s%s%s)" % (m.group(1), _fn(m.group(2)), m.group(1)),
             _css)
-        return _set_cookies_into(Response(_css, mimetype="text/css"), _sc_list(_r))
+        return _extra_headers_into(_set_cookies_into(Response(_css, mimetype="text/css"), _sc_list(_r)))
 
     # 非 HTML/CSS 直接透传（图片/字体等二进制资源）
     if "text/html" not in _ct_low and "application/xhtml" not in _ct_low:
-        return _set_cookies_into(
+        return _extra_headers_into(_set_cookies_into(
             Response(_raw,
                      mimetype=_ct.split(";")[0].strip() or "application/octet-stream"),
-            _sc_list(_r))
+            _sc_list(_r)))
 
     # ---- HTML 处理 ----
     _cs = _web_detect_charset(_ct, _raw)
@@ -771,8 +797,8 @@ def _proxy_core(url):
     else:
         _html += _nav
 
-    _resp = _set_cookies_into(
-        Response(_html, mimetype="text/html; charset=utf-8"), _sc_list(_r))
+    _resp = _extra_headers_into(_set_cookies_into(
+        Response(_html, mimetype="text/html; charset=utf-8"), _sc_list(_r)))
     # a525：Clear-Site-Data 已移除——它本是清 a504-a510 演进期的坏缓存
     # 条目（一次性使命已完成），但每次进程重启都发一次导致频繁重启验证
     # 新版本时静态资源缓存被反复清空（用户抓包实锤：切换 tab 的 chunk
