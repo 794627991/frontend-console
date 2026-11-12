@@ -812,17 +812,20 @@ def main():
             # evaluate_js 内部 Semaphore.acquire 等 UI 线程回调——事件未
             # 返回即死锁。改用 ExecuteScriptAsync fire-and-forget：发起即
             # 返回、不等待结果，前端 __newWindow 自行消化 URL。
+            # a487（复审）：①sender 即 CoreWebView2（NewWindowRequested
+            # 定义在它上面）——直接用，不再绕 self.webview.CoreWebView2；
+            # ②原版 `from System import Func, Object, String` 是死导入且
+            # 若 System 命名空间加载失败会让已 Handled 的链接静默吞掉
+            # （不开窗也不导航）——删掉。
             try:
                 _u = str(args.get_Uri() or "")
                 if _u.startswith(("http://", "https://")):
                     args.set_Handled(True)
-                    _js = "window.__newWindow && window.__newWindow(%s);" % json.dumps(_u)
-                    _wv = getattr(self, "webview", None)   # WebView2 控件
-                    if _wv is not None and _wv.CoreWebView2 is not None:
-                        from System import Func, Object, String
-                        _wv.CoreWebView2.ExecuteScriptAsync(_js)
+                    sender.ExecuteScriptAsync(
+                        "window.__newWindow && window.__newWindow(%s);"
+                        % json.dumps(_u))
             except Exception:
-                pass  # 异常时不置 Handled → 走系统默认（系统浏览器），可接受降级
+                pass  # 异常时 Handled 可能已置——链接吞掉比开系统浏览器安全
         _EC.on_new_window_request = _on_new_window
     except Exception:
         pass  # 平台非 edgechromium（非 Windows）无此模块——跳过
@@ -1412,10 +1415,13 @@ def main():
         if not _dbg_web:
             try:
                 def _find_core(obj, depth=0):
-                    """深度优先找带 CoreWebView2.Settings 的控件节点
-                    （pywebview 内部结构无公开路径——window.gui.browser
-                    实测不存在；对象树防御性遍历）。"""
-                    import clr
+                    """深度优先找带 CoreWebView2.Settings 的控件节点。
+                    路径实证：window.gui(BrowserView) → .browser(EdgeChrome)
+                    → .webview(WebView2 控件) → .CoreWebView2 → .Settings。
+                    a487（复审）：删掉函数体内的 `import clr`——pywebview
+                    在此之前已加载 pythonnet，重复导入是死代码；非 Windows
+                    平台本来走不进这分支（webview.platforms.edgechromium
+                    在上面 import 时已失败）。"""
                     if depth > 6 or obj is None:
                         return None
                     try:
