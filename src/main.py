@@ -807,8 +807,15 @@ def main():
     # 系统处理（Handled 不置位则 WebView2 默认弹系统浏览器，语义正确）。
     try:
         from webview.platforms.edgechromium import EdgeChrome as _EC
-        import logging as _nw_log
-        _nw_logger = _nw_log.getLogger("webview.new_window")
+        # pythonw 无 stderr，logging 默认写不进任何地方——直接写文件
+        import time as _nw_t
+        _NW_LOG = os.path.join(_st.DATA_DIR, "new_window_dbg.log")
+        def _nw_log(level, msg):
+            try:
+                with open(_NW_LOG, "a", encoding="utf-8") as _f:
+                    _f.write("%s [%s] %s\n" % (_nw_t.strftime("%H:%M:%S"), level, msg))
+            except Exception:
+                pass
         def _on_new_window(self, sender, args):
             # 审计实锤（卡死根因）：本处理器跑在 UI 线程，pywebview 的
             # evaluate_js 内部 Semaphore.acquire 等 UI 线程回调——事件未
@@ -821,16 +828,16 @@ def main():
             # （不开窗也不导航）——删掉。
             try:
                 _u = str(args.get_Uri() or "")
-                _nw_logger.info("[NewWindowRequested] uri=%s", _u[:200])
+                _nw_log("INFO", "[NewWindow] uri=%s" % _u[:200])
                 if _u.startswith(("http://", "https://")):
                     args.set_Handled(True)
-                    _nw_logger.info("[NewWindowRequested] Handled=True, dispatching script")
+                    _nw_log("INFO", "[NewWindow] Handled=True, dispatching")
                     sender.ExecuteScriptAsync(
                         "window.__newWindow && window.__newWindow(%s);"
                         % json.dumps(_u))
-                    _nw_logger.info("[NewWindowRequested] ExecuteScriptAsync dispatched")
+                    _nw_log("INFO", "[NewWindow] ExecuteScriptAsync dispatched")
             except Exception as _e:
-                _nw_logger.warning("[NewWindowRequested] error: %r", _e)
+                _nw_log("WARN", "[NewWindow] error: %r" % _e)
         _EC.on_new_window_request = _on_new_window
 
         # a489（用户实锤：右键三修仍不生效）：弃 on_loaded 里的 _find_core
