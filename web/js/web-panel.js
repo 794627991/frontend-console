@@ -22,6 +22,7 @@
 const WEB_PORTID = 'web:panel';            // 兼容标记（外部模块引用判断 kind）
 let _webSeq = 0;                           // 面板序号（portId 与控件 tab id 同源）
 let _webActivePid = null;                  // 当前激活的网页 tab portId
+let _webCtlSeq = 0;                        // a556：show 命令序号（乱序丢弃，见 _webCtlVisible）
 const _WEB_SLEEP_MIN = 10;                 // a475：切走 N 分钟后休眠（分钟）
 
 function _mkNav() { return { stack: [], idx: -1 }; }
@@ -32,8 +33,10 @@ let _webSavedNav = null;                   // a554：恢复用（首开时消费
 try {
   const _saved = JSON.parse(localStorage.getItem('web-session') || 'null');
   if (_saved && Array.isArray(_saved.stack)) {
+    // a556：过滤脏 about:blank（修复前的休眠会把它写进栈）
     _webSavedNav = {
-      stack: _saved.stack.filter(x => typeof x === 'string').slice(0, 50),
+      stack: _saved.stack.filter(x => typeof x === 'string'
+        && x !== 'about:blank').slice(0, 50),
       idx: -1 };
     _webSavedNav.idx = _webSavedNav.stack.length
       ? Math.min(Math.max(0, _saved.idx | 0), _webSavedNav.stack.length - 1) : -1;
@@ -79,6 +82,13 @@ function _webNormUrl(s) {
   if (!s) return '';
   if (/^https?:\/\//i.test(s)) return s;
   return 'http://' + s;    // 内网多为 http 裸主机名——缺省补 http
+}
+// a556：栈顶取值（跳过脏 about:blank——修复前旧会话可能已把休眠产生的
+// about:blank 存进 web-session，唤醒/恢复不能落在它上面）
+function _webNavTop(c) {
+  while (c._nav.idx >= 0 && c._nav.stack[c._nav.idx] === 'about:blank')
+    c._nav.idx--;
+  return c._nav.idx >= 0 ? c._nav.stack[c._nav.idx] : '';
 }
 
 function buildWebPanelTab(url, opts) {
@@ -269,7 +279,10 @@ function _webCtlSetup(conn) {
 function _webCtlVisible(on) {
   const c = _webCur();
   if (!c || !c._tabId) return;
-  _webCtl(c, { act: 'show', on: !!on });
+  // a556：带序号——show:true/false 是两个独立 fetch，浏览器多连接下到达
+  // Python 的顺序无保证；乱序时后发的隐藏被先发的显示覆盖 → 控件压在
+  // 其他 tab 上（用户实锤「网页没进抽屉」）。Python 侧按 seq 丢弃迟到旧令
+  _webCtl(c, { act: 'show', on: !!on, sq: ++_webCtlSeq });
   if (on && c._ctlPush) setTimeout(c._ctlPush, 30);   // 显示后重对齐
 }
 
@@ -286,6 +299,11 @@ window.__webTabUrl = function (tid, url) {
   // 串进无关 tab 改它的地址栏/导航栈；tid 查无即丢弃
   const c = _webByTabId(tid);
   if (!c) return;
+  // a556（用户实锤：后台 tab 一段时间变 about:blank 且唤醒不恢复）：
+  // 休眠/阅读模式会把控件导航到 about:blank——该事件若入栈，about:blank
+  // 成为栈顶（还会存进 web-session），唤醒时「恢复」的就是 about:blank。
+  // 原生 about:blank 只可能来自内部释放，一律忽略
+  if (!url || url === 'about:blank') return;
   // a555 审计修：仅前台 tab 可置激活——后台 tab 的延迟 SourceChanged
   // （重定向收尾/慢加载/SPA pushState）会偷走激活态，后续工具栏操作
   // 全打到错误 tab
@@ -407,6 +425,13 @@ function _webNavigate(url) {
     const isWeb = !!(c && c.meta && c.meta.kind === 'web');
     if (isWeb) {
       _webActivePid = pid;
+      // a556（用户实锤：切回休眠 tab 干等 1s 巡检）：立即唤醒+恢复上次
+      // URL，不等 1s 兜底巡检；「正在唤醒…」只在导航完成前一瞬可见
+      if (c._ui && c._ui.sleeping) {
+        _webWake(c);
+        const u = _webNavTop(c);              // a556：跳过脏 about:blank
+        if (u) _webNavigate(u);
+      }
       // 目标 tab 控件显示 + 布局对齐；其余网页 tab 控件隐藏
       _webCtlVisible(true);
       if (c._ctlPush) setTimeout(c._ctlPush, 30);
@@ -444,7 +469,11 @@ function _webSleep(c) {
   const ov = c.wrap.querySelector('[data-web-sleep]');
   if (ov) ov.style.display = 'flex';
   _webCtl(c, { act: 'nav', url: 'about:blank' });   // 释放页面
-  _webCtlVisible(false);
+  // a556（用户实锤：休眠把正在看的页面藏掉）：原走 _webCtlVisible(false)
+  // ——它藏的是 _webCur()（活动 tab）且是 hide-all，多开时别的 tab 后台
+  // 休眠会把用户正看的页面藏掉。精确隐藏自己（Python 侧 show(false)
+  // 语义 = 只藏目标）
+  _webCtl(c, { act: 'show', on: false, sq: ++_webCtlSeq });
 }
 function _webWake(c) {
   if (!c._ui.sleeping) return;
@@ -453,15 +482,16 @@ function _webWake(c) {
   const ov = c.wrap.querySelector('[data-web-sleep]');
   if (ov) ov.style.display = 'none';
 }
-// 切回网页 tab 自动唤醒：恢复上次 URL
+// 切回网页 tab 自动唤醒：恢复上次 URL（a556：switchTab 包装器已内联
+// 立即唤醒，这里作兜底巡检——display 变化不经 switchTab 的路径）
 setInterval(() => {
   // a554 多开：任意隐藏中的休眠网页 tab 回前台即唤醒
   for (const pid in connections) {
     const c = connections[pid];
     if (!c || !c.meta || c.meta.kind !== 'web' || !c._ui) continue;
-    if (c._ui.sleeping && c.wrap.style.display !== 'none') {
+      if (c._ui.sleeping && c.wrap.style.display !== 'none') {
       _webWake(c);
-      const url = c._nav.stack[c._nav.idx];
+      const url = _webNavTop(c);               // a556：跳过脏 about:blank
       if (url) _webNavigate(url);
     }
   }
@@ -644,8 +674,8 @@ document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const u = _webNormUrl(bar.value);
     if (!u) { buildWebPanelTab(); bar.blur(); return; }   // 空=开网页 tab（有会话则恢复）
-    if (e.ctrlKey) buildWebPanelTab(u, { newTab: true }); // a555 审计修：Ctrl+回车=新 tab（与面板地址栏一致）
-    else buildWebPanelTab(u);                             // 已有=聚焦当前 tab 导航
+    // a556（用户令）：顶栏输入网址回车即开新网页 tab——浏览器地址栏语义
+    buildWebPanelTab(u, { newTab: true });
     bar.blur();
   });
   const fav = document.getElementById('tabFavBtn');

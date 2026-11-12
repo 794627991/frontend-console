@@ -45,6 +45,7 @@ class WebTabs:
         self._rect = (0, 0, 800, 600)        # 最近一次布局（物理像素）
         self._layout_seen = False            # a555：首份 rect 到达前不显控件
         self._want = None                    # a555：(tab_id, visible) 最近显隐意图
+        self._want_seq = 0                   # a556：show 命令序号（乱序丢弃）
         self._pending = set()                # a555：create 在途的 tab（双发去重）
         self._pend_nav = {}                  # a555：在途 tab 的后发导航（末次胜）
         self._env_failed = False             # a555：env 永久失败 → 快速失败
@@ -332,22 +333,38 @@ class WebTabs:
         """按最近显隐意图应用（UI 线程内跑）。
 
         a555 审计修：list 快照——dispose 在 Flask 线程同步 pop _ctl，迭代
-        活视图遇并发变更抛 RuntimeError 中断循环（切 tab 半途而废）。"""
+        活视图遇并发变更抛 RuntimeError 中断循环（切 tab 半途而废）。
+        a556 语义变更：visible=True 排他显示（其余全藏）；visible=False
+        **只藏目标**——原先 hide-all 会让后台 tab 休眠时把用户正看的
+        活动 tab 一起藏掉（用户实锤）。"""
         if not self._want:
             return
         tab_id, visible = self._want
-        for tid, c in list(self._ctl.items()):
-            c.Visible = (tid == tab_id) and visible
-            if c.Visible:
-                c.BringToFront()
+        if visible:
+            for tid, c in list(self._ctl.items()):
+                c.Visible = (tid == tab_id)
+                if c.Visible:
+                    c.BringToFront()
+        else:
+            c = self._ctl.get(tab_id)
+            if c:
+                c.Visible = False
 
-    def show(self, tab_id, visible):
-        """切 tab：显示目标控件，其余隐藏（同一 rect 叠放）。
+    def show(self, tab_id, visible, sq=0):
+        """切 tab：显示目标控件（排他），或只藏目标。
 
         a555 审计修：首份 layout 到达前不显控件——默认 rect (0,0,800,600)
         是占位值，WebView2 原生窗口又在 DOM 之上，layout/show 两个独立
         fetch 无顺序保证，乱序时控件会闪一帧盖住工具 UI 左上角。意图记入
-        _want，由到达的 layout._apply 补显。"""
+        _want，由到达的 layout._apply 补显。
+        a556：sq 序号（前端 _webCtlSeq 单调递增）——show 是独立 fetch，
+        浏览器多连接下到达顺序无保证；乱序迟到的旧意图直接丢弃，否则
+        「切走时隐藏」被「休眠前显示」后到覆盖 → 控件压在其他 tab 上
+        （用户实锤「网页没进抽屉」）。"""
+        if sq:
+            if sq <= self._want_seq:
+                return {"ok": True}       # 乱序迟到的旧令
+            self._want_seq = sq
         self._want = (tab_id, bool(visible))
         if visible and tab_id not in self._ctl and tab_id in self._pending:
             # a555：create 在途（show 先于 _build 被处理）——此刻应用会把
@@ -442,7 +459,9 @@ def register(app):
         if act == "reload":
             return jsonify(t.reload(tid))
         if act == "show":
-            return jsonify(t.show(tid, bool(d.get("on", True))))
+            # a556：sq 序号透传（前端乱序保护）
+            return jsonify(t.show(tid, bool(d.get("on", True)),
+                                  int(d.get("sq") or 0)))
         if act == "dispose":
             return jsonify(t.dispose(tid))
         if act == "layout":

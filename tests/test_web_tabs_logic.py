@@ -275,6 +275,32 @@ def test_show_snapshot_vs_dispose_race(stub_clr):
     assert t._ctl['t0'].Visible is True          # 意图已正确落地
 
 
+def test_show_hide_one_semantics(stub_clr):
+    """a556：show(false) 只藏目标——后台 tab 休眠不得藏掉活动 tab。"""
+    t = _mk('sync')
+    t.layout(0, 0, 800, 600)
+    t.create('a', 'https://a/')
+    t.create('b', 'https://b/')
+    assert t.show('a', True) == {'ok': True}      # 排他显示
+    assert t._ctl['a'].Visible is True and t._ctl['b'].Visible is False
+    t.show('b', False)                            # b 休眠：只藏 b
+    assert t._ctl['a'].Visible is True            # 活动的不受影响
+    assert t._ctl['b'].Visible is False
+
+
+def test_show_seq_drops_stale(stub_clr):
+    """a556：乱序迟到的旧 show 意图按 seq 丢弃（fetch 到达顺序无保证）。"""
+    t = _mk('sync')
+    t.layout(0, 0, 800, 600)
+    t.create('a', 'https://a/')
+    t.show('a', True, sq=5)
+    assert t._ctl['a'].Visible is True
+    t.show('a', False, sq=3)                      # 迟到的旧隐藏令 → 丢弃
+    assert t._ctl['a'].Visible is True
+    t.show('a', False, sq=6)                      # 新令 → 生效
+    assert t._ctl['a'].Visible is False
+
+
 def test_disposed_event_no_crash(stub_clr):
     """dispose 后在途 HistoryChanged（属性已死）不再裸穿 CLR 事件分发。"""
     t = _mk('sync')
