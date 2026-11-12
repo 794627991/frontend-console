@@ -771,8 +771,15 @@ def _proxy_core(url):
     # a508：导航拦截 JS 参数化——原始 URL 以 JSON 字面量注入为 _orig
     # （安全转义），作为相对 URL 的解析基准（替代被移除的 <base>）。
     # a525：__PX_H2__ 本地 https(h2) 代理 origin（多路复用破 6 连接上限）
+    # a541：XHR 的 HTML 响应跳过注入——jQuery $().load() 拉的 HTML 片段
+    # （博客园侧栏 blog-stats，text/html 数据端点实锤）被 innerHTML 进
+    # 页面后，注入脚本随之执行：写 __px_orig=片段URL + replaceState →
+    # 污染栈同步基址 → push 数据端点 → 返回键死循环。片段不是页面，
+    # 注入全套（replaceState/sessionStorage/全局 hook）有害无益；资源
+    # URL 重写保留。jQuery/axios 的 XHR 均带 X-Requested-With。
     import json as _json
-    _nav = (_PROXY_NAV_JS
+    _is_xhr = (request.headers.get("X-Requested-With") or "").lower() == "xmlhttprequest"
+    _nav = "" if _is_xhr else (_PROXY_NAV_JS
             .replace("__PX_ORIG__", _json.dumps(_final))
             .replace("__PX_H2__", _json.dumps(
                 "127.0.0.1:%d" % H2_PORT[0] if H2_PORT else None)))
