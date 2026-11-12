@@ -877,7 +877,8 @@ def register(app):
         只作用于本蓝图路由——工具自身响应的缓存策略归 _no_cache_static。
         a511 分型：HTML/API（json 等动态内容）no-store；静态资源
         （js/css/img/font——URL 普遍带 contenthash，内容不可变）给
-        max-age=1800，二次加载走 WebView2 缓存不重拉（a510 全量 no-store
+        max-age=86400（a531 提升时长——URL 带 contenthash 不可变），
+                # 二次加载走 WebView2 缓存不重拉（a510 全量 no-store
         后掘金整页 128 资源每次全拉，用户实锤二次加载也慢）。"""
         if request.blueprint == "web_proxy":
             _mt = (resp.mimetype or "").lower()
@@ -886,7 +887,7 @@ def register(app):
                        or _mt.startswith(("image/", "font/"))
                        or _mt.startswith("application/font"))
             if _static:
-                resp.headers["Cache-Control"] = "private, max-age=1800"
+                resp.headers["Cache-Control"] = "private, max-age=86400"
             else:
                 resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         return resp

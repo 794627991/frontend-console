@@ -1121,11 +1121,22 @@ def main():
 
         def _h2_serve():
             try:
-                _aio.run(_hserve(
-                    app, _cfg,
-                    # 子线程不能注册 signal handler——用永不触发的 Event 替换
-                    # 默认 shutdown trigger（进程退出靠 daemon 线程随主进程终）
-                    shutdown_trigger=lambda: _aio.Event().wait()))
+                from concurrent.futures import ThreadPoolExecutor as _TPE
+
+                async def _h2_main():
+                    # a531：hypercorn 的 WSGI 模式经 loop.run_in_executor(None)
+                    # 跑 Flask——asyncio 默认线程池仅 min(32, CPU+4)，380 个
+                    # h2 并发进来在此排队（抓包实锤中位 1.1s 的主要构成）。
+                    # 换 96 线程大池（Flask threaded 语义下每请求一线程，
+                    # 上游 requests 是 IO 型，线程数给足不亏）
+                    _aio.get_running_loop().set_default_executor(
+                        _TPE(max_workers=96))
+                    await _hserve(
+                        app, _cfg,
+                        # 子线程不能注册 signal handler——用永不触发的 Event
+                        # 替换默认 shutdown trigger
+                        shutdown_trigger=lambda: _aio.Event().wait())
+                _aio.run(_h2_main())
             except Exception:
                 _tb.print_exc()
                 print("[a530] hypercorn h2 线程退出（代理将保持 http）",
