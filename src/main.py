@@ -1063,9 +1063,15 @@ def main():
     # h2 多路复用单连接无限并发根治。浏览器只在 TLS 上协商 h2 → 本服务
     # 自签证书在 127.0.0.1 再起一个 https 端口专供代理流量（工具 UI/API
     # 与 MCP endpoint 仍走原 http 端口零影响；http 页嵌 https iframe 无
-    # mixed-content 问题）。证书错误由 _patched_ready 的 CertificateError
-    # 事件对 127.0.0.1 放行。任何一步失败 → 代理回落 http 端口（现状）。
-    h2_port = port + 1
+    # mixed-content 问题）。任何一步失败 → 代理回落 http 端口。
+    # a530 三处硬化（用户抓包实锤 h2 请求数 0/968 静默回落）：
+    # ① 端口用 free_port 探测（port+1 硬猜可能被占）
+    # ② certutil 导入转后台线程（Windows 证书确认框阻塞最长 10s，
+    #    且不应卡启动）
+    # ③ serve 线程异常捕获写 traceback 到 stderr——线程内异常默认只打
+    #    一行语义难辨的堆栈；且新增 /api/web/h2 状态端点+前端 boot 打印
+    import traceback as _tb
+    h2_port = free_port()
     try:
         import os as _os, datetime as _dt, ipaddress as _ipa
         from src.app_state import DATA_DIR as _DD
@@ -1100,11 +1106,11 @@ def main():
         # 的证书错误不可事件放行（用户实锤 ERR_CERT_AUTHORITY_INVALID
         # 全灭），必须让证书真正受信。已导入时 certutil 秒过无害。
         import subprocess as _sp
-        try:
-            _sp.run(["certutil", "-addstore", "-user", "Root", _cert],
-                    capture_output=True, timeout=10)
-        except Exception:
-            pass
+        threading.Thread(
+            target=lambda: _sp.run(
+                ["certutil", "-addstore", "-user", "Root", _cert],
+                capture_output=True, timeout=30),
+            daemon=True).start()
         from hypercorn.config import Config as _HC
         from hypercorn.asyncio import serve as _hserve
         import asyncio as _aio
@@ -1112,18 +1118,27 @@ def main():
         _cfg.bind = ["127.0.0.1:%d" % h2_port]
         _cfg.certfile = _cert
         _cfg.keyfile = _key
-        threading.Thread(
-            target=lambda: _aio.run(_hserve(
-                app, _cfg,
-                # 子线程不能注册 signal handler——用永不触发的 Event 替换
-                # 默认 shutdown trigger（进程退出靠 daemon 线程随主进程终）
-                shutdown_trigger=lambda: _aio.Event().wait())),
-            daemon=True).start()
+
+        def _h2_serve():
+            try:
+                _aio.run(_hserve(
+                    app, _cfg,
+                    # 子线程不能注册 signal handler——用永不触发的 Event 替换
+                    # 默认 shutdown trigger（进程退出靠 daemon 线程随主进程终）
+                    shutdown_trigger=lambda: _aio.Event().wait()))
+            except Exception:
+                _tb.print_exc()
+                print("[a530] hypercorn h2 线程退出（代理将保持 http）",
+                      file=sys.stderr)
+        threading.Thread(target=_h2_serve, daemon=True).start()
         from src import web_proxy as _wp
         _wp.H2_PORT.clear()
         _wp.H2_PORT.append(h2_port)
+        print("[a530] h2 代理端口已启用: https://127.0.0.1:%d" % h2_port,
+              file=sys.stderr)
     except Exception as _e:
-        print("[a525] h2 端口启用失败（代理回落 http）：%r" % _e, file=sys.stderr)
+        _tb.print_exc()
+        print("[a530] h2 端口启用失败（代理回落 http）：%r" % _e, file=sys.stderr)
 
     # 等待 Flask 就绪（50ms 间隔轮询，Flask 通常 ~600ms 起来，首次命中即返回）
     import urllib.request

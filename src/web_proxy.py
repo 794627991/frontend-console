@@ -809,6 +809,13 @@ def _proxy_404_fallback(err):
     return err
 
 
+@bp.route("/api/web/h2")
+def api_web_h2():
+    """a530：h2 代理端口状态（诊断可见性——用户抓包实锤 h2 请求数 0
+    静默回落，此前无处可查）。"""
+    return jsonify({"ok": True, "h2_port": H2_PORT[0] if H2_PORT else None})
+
+
 @bp.route("/api/web/fetch_text", methods=["POST"])
 def api_web_fetch_text():
     """a473：网页 tab「发给 Claude」——服务端取页转纯文本。
