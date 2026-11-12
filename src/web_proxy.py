@@ -802,7 +802,13 @@ def _proxy_404_fallback(err):
             "<!doctype html><meta charset='utf-8'><title>404</title>"
             "<body style='font:14px/1.6 sans-serif;padding:40px;"
             "color:#666'>Redirecting..."
-            "<script>(function(){var o=null;"
+            # a534：顶层保护——还原页只在 web iframe 内跳转。a533 放宽
+            # Referer 后，工具自身某 404（Accept html）也会拿到本页，若在
+            # 顶层执行 location.replace 会把整个工具 UI 替换成网页（用户
+            # 实锤「前端只剩 web」）。顶层一律显示 404 不劫持。
+            "<script>(function(){"
+            "if(window.top===window.self){document.body.innerText='404 Not Found';return;}"
+            "var o=null;"
             "try{o=sessionStorage.getItem('__px_orig');}catch(e){}"
             "if(o){try{var b=new URL(o);"
             "location.replace('/api/web/proxy/'+b.protocol.replace(':','')"
