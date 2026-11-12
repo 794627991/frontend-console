@@ -345,9 +345,26 @@ function _webEscapeGuard(c) {
 function _webSyncFromFrame(c, frame) {
   c.wrap.classList.remove('web-loading');
   if (frame !== _wf(c)) return;            // staging 的 load 由 softNav 轮询接管
+  // a540：同页判定——页面写入的 __px_orig（代理 _final 规范化形态）与
+  // 点击时入栈的 URL 常有细微差异（尾斜杠/302 规范化），原「全等比对」
+  // 判不同就 push → 返回后页面又写又 push → 栈顶永远钉死在当前页，
+  // 返回键死循环（博客园实锤：文章被反复载 6 次）。同页（host+去尾斜杠
+  // pathname 相同）只更新栈顶形态、不增长栈；跨页才 push。
+  const _samePage = (a, b) => {
+    try {
+      const x = new URL(a), y = new URL(b);
+      return x.host === y.host
+        && x.pathname.replace(/\/+$/, '') === y.pathname.replace(/\/+$/, '');
+    } catch (_) { return a === b; }
+  };
   try {
     const u = sessionStorage.getItem('__px_orig');
-    if (!u || u === _webNav.stack[_webNav.idx]) return;
+    if (!u) return;
+    const top = _webNav.stack[_webNav.idx];
+    if (_samePage(u, top)) {
+      if (u !== top) { _webNav.stack[_webNav.idx] = u; _webSessionSave(); }
+      return;
+    }
     _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
     _webNav.stack.push(u);
     _webNav.idx = _webNav.stack.length - 1;
