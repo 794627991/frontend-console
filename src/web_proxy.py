@@ -588,6 +588,13 @@ def _proxy_core(url):
             _qs = ("?" + _us(_bref).query) if _us(_bref).query else ""
             _hdrs["Referer"] = "%s://%s%s%s" % (
                 _o.scheme, _o.netloc, _us(_bref).path, _qs)
+            # a539：Origin 还原——原生跨子域请求（页面→api.juejin.cn）带
+            # Origin: https://juejin.cn（发起页 origin），服务器据此回
+            # x-ware-csrf-token（我们转发的 Origin 是 127.0.0.1 被判异源，
+            # token=null 写操作降级实锤）。还原为发起页原始 origin。
+            _bor = request.headers.get("Origin") or ""
+            if _bor and _us(_bor).netloc == request.host:
+                _hdrs["Origin"] = "%s://%s" % (_o.scheme, _o.netloc)
     except Exception:
         pass
     for _k, _v in request.headers:

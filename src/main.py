@@ -885,61 +885,20 @@ def main():
                 return _orig_load(url, *la, **kw)
             self.load_url = _safe_load
 
-            # a525：放行本地自签证书（https h2 代理端口）——WebView2 的
-            # CertificateError 事件对 127.0.0.1 的自签错误置 Handled 放行
-            # （只放行本机地址，外网站点证书错误仍正常拦截）
-            try:
-                def _on_cert_error(_s, args):
-                    try:
-                        _u = str(args.get_URI() or "")
-                        if _u.startswith("https://127.0.0.1:"):
-                            args.Handled = True
-                    except Exception:
-                        pass
-                sender.CoreWebView2.CertificateError += _on_cert_error   # a538：pythonnet 事件用 +=（add_X 不存在，AttributeError 实锤）
-            except Exception as _e:
-                _nw_log("WARN", "[cert-error] 挂接失败: %r" % _e)
+            # a525→a539：CertificateError 事件挂接删除——pywebview 持有的
+            # CoreWebView2 包装无此事件（add_X 与 += 双双 AttributeError
+            # 实锤）；且证书已导入用户受信根（a526），放行兜底完全冗余。
 
             # a490 诊断已退役（a536）：NavStarting 追踪是 a484-a496 调试期
             # 产物，功能稳定后纯开销——整块移除
 
-            # a495（用户令「必须与浏览器同级体验」）：响应层剥 X-Frame-Options
-            # ——浏览器顶层导航不受 XFO 影响，但 iframe 天然受约束；内网代理
-            # 注入 XFO: sameorigin 后 iframe 直接空白。用 WebView2 的
-            # WebResourceRequested 拦截 document 级响应（仅页面导航，不拦
-            # JS/CSS/图片），在响应头中删掉 X-Frame-Options / CSP frame-
-            # ancestors，iframe 恢复与浏览器同级的浏览能力。
-            try:
-                from Microsoft.Web.WebView2.Core import (
-                    CoreWebView2WebResourceContext as _RCtx)
-                _cvw = sender.CoreWebView2   # a538 修：a536 删 NavStarting 时误删本定义
-                _cvw.AddWebResourceRequestedFilter("*", _RCtx.All)
-                def _strip_xfo(s2, a2):
-                    # a500（关键认知修正）：WebResourceRequested 在请求发出
-                    # **前**触发，a2.Response 为 null（网络响应还没到）——
-                    # 不可能在此修改响应头。a495–a499 的方向全部错误。
-                    #
-                    # 正确方案：修改**请求头**——删掉 Referer。内网代理根据
-                    # Referer 有条件注入 X-Frame-Options（无 Referer 不注入），
-                    # 在请求发出前剥掉 Referer → 代理收不到 → 不注入 →
-                    # iframe 正常加载。a494 的 referrerpolicy="no-referrer"
-                    # 只影响 iframe src 赋值，不影响 iframe 内部链接导航——
-                    # 后者的 Referer 由渲染引擎在请求头层注入，需在此剥离。
-                    try:
-                        _req = a2.Request
-                        if _req is None:
-                            return
-                        _hdrs = _req.Headers
-                        if _hdrs is None:
-                            return
-                        _ref = _hdrs.GetHeader("Referer")
-                        if _ref:
-                            _hdrs.RemoveHeader("Referer")
-                    except Exception as _e:
-                        _nw_log("WARN", "[Referer-strip] err: %r" % _e)
-                _cvw.WebResourceRequested += _strip_xfo
-            except Exception as _e:
-                _nw_log("WARN", "[XFO-strip] attach failed: %r" % _e)
+            # a539：WebResourceRequested Referer-strip 拦截器退役——
+            # a500 已证此事件在请求发出前触发（改不了响应），实际动作只剩
+            # 剥请求头 Referer；而 a502 同源代理架构下 Referer 由代理进程
+            # 自设，浏览器侧剥不剥无关紧要。它现在每个请求都抛 COMException
+            # （「找不到元素/没有注册类」海量刷屏，用户日志实锤）= 纯开销
+            # + 日志污染。v4.0.0 串口卡顿的第一现场正是这类全 URL 拦截
+            # （_unhook_webview_intercept 的教训）——撤防。
 
             # a489：右键设置——紧跟原方法（它设 AreDefaultContextMenusEnabled
             # =_state['debug']），我们覆盖为 True（非 debug 下强制开）
