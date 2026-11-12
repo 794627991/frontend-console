@@ -1856,8 +1856,44 @@ _PROXY_NAV_JS = """<script>
       }
     }
   }
-  // a505：MutationObserver 拦截 JS 动态创建的资源（lazyload 图片、
-  // 动态 script 等）——静态 HTML 已在后端重写，这里补运行时添加的
+  // a506：拦截 createElement——MutationObserver 是异步的（microtask），
+  // 浏览器在回调执行前就已经开始下载 src。在 createElement 时就 hook
+  // setAttribute，src/href 被设置的第一时间就重写为代理路径。
+  var _tags = {IMG:1,SCRIPT:1,LINK:1,SOURCE:1,IFRAME:1,VIDEO:1,AUDIO:1,EMBED:1};
+  var _origCE = document.createElement.bind(document);
+  document.createElement = function(tag){
+    var el = _origCE(tag);
+    if (_tags[(tag||'').toUpperCase()]){
+      var _sa = el.setAttribute.bind(el);
+      el.setAttribute = function(name, value){
+        if ((name==='src'||name==='href'||name==='data-src'||name==='poster') && value){
+          var p = _px(String(value));
+          if (p) value = p;
+        }
+        return _sa(name, value);
+      };
+      // 直接赋值 el.src = '...' 也拦（属性 setter）
+      var _def = {src:1, href:1, dataSrc:1};
+      for (var k in _def){
+        try{
+          var _prop = k==='dataSrc'?'data-src':k;
+          var _val = el[_prop];
+          if (_val!==undefined){
+            Object.defineProperty(el, _prop, {
+              get: function(){ return _val; },
+              set: function(v){
+                var p = _px(String(v||''));
+                _val = p || v;
+              },
+              configurable: true
+            });
+          }
+        }catch(_){}
+      }
+    }
+    return el;
+  };
+  // MutationObserver 兜底（处理 innerHTML 批量插入等非 createElement 路径）
   var _mo = new MutationObserver(function(muts){
     for (var i=0;i<muts.length;i++){
       var m = muts[i];
@@ -1872,7 +1908,10 @@ _PROXY_NAV_JS = """<script>
       }
     }
   });
-  _mo.observe(document.documentElement||document, {childList:true, subtree:true});
+  _mo.observe(document.documentElement||document, {
+    childList:true, subtree:true,
+    attributes:true, attributeFilter:['src','href','data-src']
+  });
   // 链接导航拦截
   document.addEventListener('click', function(e){
     var a = e.target.closest ? e.target.closest('a[href]') : null;
