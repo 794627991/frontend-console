@@ -544,6 +544,7 @@ def _watchdog_loop():
                 if _window is not None:
                     from src.app_state import RES_DIR
                     ico = os.path.join(RES_DIR, "ico", "app.ico")
+                    global _tray          # a535：函数内赋值无 global → UnboundLocalError
                     _tray = _NativeTray(
                         ico, "前端控制台",
                         _make_menu_provider(_window, _on_quit),

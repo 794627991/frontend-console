@@ -849,6 +849,13 @@ def main():
             # handler 会调 self.load_url(url)（因 OPEN_EXTERNAL_LINKS_IN_
             # BROWSER=False），我们在这里拦截外部 URL 路由到前端
             _orig_load = self.load_url
+            # a535：工具自身路径前缀——本机 URL 但路径不在其中 = 代理页的
+            # 相对路径新窗口（target=_blank 的链接基于伪装 origin 解析成
+            # http://127.0.0.1:PORT/post/xxx，用户实锤顶层加载 404 顶掉
+            # 整个工具 UI）。这类 URL 转「读 sessionStorage 拼代理路径」
+            # 路由到网页 tab，绝不能导航主窗口
+            _TOOL_PATHS = ("/api/", "/web/", "/vendor/", "/ico/", "/sm/",
+                           "/favicon", "/.well-known/")
             def _safe_load(url, *la, **kw):
                 try:
                     _u = str(url or "")
@@ -860,6 +867,21 @@ def main():
                             "window.__newWindow && window.__newWindow(%s);"
                             % json.dumps(_u))
                         return
+                    if _u.startswith("http://127.0.0.1:"):
+                        # 本机 URL：区分工具自身路径 vs 代理页相对路径
+                        import urllib.parse as _up
+                        _p = _up.urlsplit(_u).path or "/"
+                        if _p != "/" and not _p.startswith(_TOOL_PATHS):
+                            _nw_log("INFO",
+                                    "[load_url] proxy-rel path → web tab: %s" % _p[:80])
+                            sender.CoreWebView2.ExecuteScriptAsync(
+                                "(function(){try{var o=sessionStorage."
+                                "getItem('__px_orig');if(!o)return;var b=new URL(o);"
+                                "window.__newWindow && window.__newWindow("
+                                "'/api/web/proxy/'+b.protocol.replace(':','')"
+                                "+'/'+b.host+%s);}catch(e){}})()"
+                                % json.dumps(_p))
+                            return
                 except Exception as _e:
                     _nw_log("WARN", "[load_url] error: %r" % _e)
                 # 应用页面（127.0.0.1）或异常 → 正常加载

@@ -488,6 +488,8 @@ def api_web_proxy():
     publicPath 等相对解析天然正确）；本路由保留做兼容（旧收藏/导航栈/
     _webProxyUrl 兜底）。
     """
+    if request.method == "HEAD":
+        return Response(b"", status=200)   # a535：hypercorn+Flask 的 HEAD 兼容崩规避
     url = (request.args.get("url") or "").strip()
     return _proxy_core(url)
 
@@ -507,6 +509,8 @@ def api_web_proxy_path(_sch, _rest):
     path 段由 Flask 解码——转发前由调用方拼回原始 URL；query 原样透传
     （代理自身无参数，query 全属于原始请求）。
     """
+    if request.method == "HEAD":
+        return Response(b"", status=200)   # a535：同上
     _u = _sch + "://" + _rest
     if request.query_string:
         _u += "?" + request.query_string.decode("latin-1")
