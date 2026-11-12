@@ -398,6 +398,18 @@ function _webAct(act, wrap) {
   }
 }
 
+// a483：右键分区放行。pywebview 非 debug 全局禁右键，现改为全局开（main.py
+// on_loaded 置 AreDefaultContextMenusEnabled=True）——本页除网页 tab 外的
+// 全部区域在捕获阶段 preventDefault 恢复屏蔽；.web-body 内放行原生菜单
+// （刷新/后退/复制/查看源码/检查等；跨域 iframe 内右键由渲染进程直接出
+// 原生菜单，事件不达父页，天然放行）。各模块自建右键菜单（文件树/tab/
+// 终端等）本就自带 preventDefault + stopPropagation，不受影响。
+document.addEventListener('contextmenu', (e) => {
+  const inWeb = e.target && e.target.closest
+    && e.target.closest('.web-body, .web-reader');
+  if (!inWeb) e.preventDefault();
+}, true);
+
 // 顶部地址栏 + tab 栏收藏星标（index.html 静态节点，此处绑定）
 (function () {
   const bar = document.getElementById('topUrlBar');

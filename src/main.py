@@ -1364,6 +1364,19 @@ def main():
             window.focus()
         except Exception:
             pass
+        # a483（用户实锤：网页 tab 里右键刷新等全被屏蔽）：pywebview 把
+        # AreDefaultContextMenusEnabled 绑死在 debug 上（非 debug 全局禁）。
+        # 该设置是 WebView2 全局级、无法按 frame 开——改为「全局开 + 前端
+        # 按区域拦」：网页 tab 的 .web-body 放行原生菜单（含 iframe 内右键，
+        # 由渲染进程直接处理），其余区域由 web-panel.js 捕获阶段
+        # preventDefault 保持屏蔽（各模块自建菜单不受影响，它们本就自带
+        # preventDefault）。仅非 debug 模式需要——debug 下 pywebview 本就全开
+        if not _dbg_web:
+            try:
+                _cv2 = window.gui.browser.CoreWebView2
+                _cv2.Settings.AreDefaultContextMenusEnabled = True
+            except Exception:
+                pass  # 属性缺失（pywebview 升级变动）不拦启动
         # --open-file 启动（接管后双击文件、当时无活实例）：窗口就绪后打开该文件
         if open_file_path:
             try:
