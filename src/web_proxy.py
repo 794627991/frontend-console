@@ -36,6 +36,7 @@ from flask import Blueprint, Response, jsonify, redirect, request
 bp = Blueprint("web_proxy", __name__)
 
 _THREAD_LOCAL = threading.local()   # a511：线程局部代理连接池
+_CSD_SENT = []                      # a512：进程内一次性清缓存标记
 
 
 def _web_detect_charset(headers_ct, raw):
@@ -236,15 +237,37 @@ _PROXY_NAV_JS = """<script>
     try { abs = new URL(href, _orig).href; } catch(_){}
     window.parent.postMessage({__webProxyNav: abs}, '*');
   }, true);
+  // a512：表单提交统一「action 代理化 + 原生提交」。原方案 preventDefault
+  // 后 postMessage 转 GET 导航——表单数据（密码）全丢，登录类表单必坏。
+  // 原生提交把 POST 体交给浏览器带上，代理转发（a504 已支持）。
   document.addEventListener('submit', function(e){
     var f = e.target;
     if (!f || f.tagName !== 'FORM') return;
-    var action = f.getAttribute('action') || location.href;
-    e.preventDefault(); e.stopPropagation();
-    var abs = action;
-    try { abs = new URL(action, _orig).href; } catch(_){}
-    window.parent.postMessage({__webProxyNav: abs}, '*');
+    try{
+      var act = f.getAttribute('action') || '';
+      if (act && act.indexOf('/api/web/proxy/') !== 0){
+        var abs = new URL(act, _orig).href;
+        var px = _px(abs);
+        if (px) f.setAttribute('action', px);
+      }
+    }catch(_){}
   }, true);
+  // a512：编程式 form.submit() 不触发 submit 事件（HTML 规范）——SSO
+  // 登录（casLogin RSA 加密后原生提交）绕过上面的拦截 → POST 打到
+  // 127.0.0.1/login → 405（用户实锤）。hook 原型方法：同样代理化 action
+  // 后走原生提交。
+  var _origSubmit = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = function(){
+    try{
+      var act = this.getAttribute('action') || '';
+      if (act && act.indexOf('/api/web/proxy/') !== 0){
+        var abs = new URL(act, _orig).href;
+        var px = _px(abs);
+        if (px) this.setAttribute('action', px);
+      }
+    }catch(_){}
+    return _origSubmit.call(this);
+  };
 })();
 </script>"""
 
@@ -552,8 +575,17 @@ def _proxy_core(url):
     else:
         _html += _nav
 
-    return _set_cookies_into(
+    _resp = _set_cookies_into(
         Response(_html, mimetype="text/html; charset=utf-8"), _sc_list(_r))
+    # a512：进程首次代理 HTML 响应带一次 Clear-Site-Data:"cache"——
+    # WebView2 可能存有代理演进期（a504-a510 无缓存策略）的旧/坏缓存
+    # 条目（SSO 页实锤 ERR_CACHE_READ_FAILURE → fingerprint2 读缓存失败
+    # → Fingerprint2 is not defined）。只清 cache 不动 cookie/storage
+    #（登录态与逃逸回收的 sessionStorage 无损），进程内只发一次。
+    if not _CSD_SENT:
+        _CSD_SENT.append(1)
+        _resp.headers["Clear-Site-Data"] = '"cache"'
+    return _resp
 
 
 def _proxy_404_fallback(err):
