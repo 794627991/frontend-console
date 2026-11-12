@@ -15,7 +15,8 @@ import urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src import server as S  # noqa: E402
+from src import server as S      # noqa: E402  (app)
+from src import web_proxy as W  # noqa: E402
 
 
 def _msg(hdrs):
@@ -57,20 +58,20 @@ class _FakeOpener:
 def test_sanitize_strips_domain_secure_samesite_path():
     sc = ("sessionid=abc123; Domain=10.17.97.73; Path=/api; Secure; "
           "HttpOnly; SameSite=None")
-    assert S._proxy_sanitize_setcookie(sc) == "sessionid=abc123; HttpOnly; Path=/"
+    assert W._proxy_sanitize_setcookie(sc) == "sessionid=abc123; HttpOnly; Path=/"
 
 
 def test_sanitize_keeps_attrs_and_appends_path():
-    assert S._proxy_sanitize_setcookie("token=x") == "token=x; Path=/"
-    assert S._proxy_sanitize_setcookie(
+    assert W._proxy_sanitize_setcookie("token=x") == "token=x; Path=/"
+    assert W._proxy_sanitize_setcookie(
         "a=1; Expires=Wed, 21 Oct 2099 07:28:00 GMT") == \
         "a=1; Expires=Wed, 21 Oct 2099 07:28:00 GMT; Path=/"
 
 
 def test_sanitize_empty():
-    assert S._proxy_sanitize_setcookie("") == ""
-    assert S._proxy_sanitize_setcookie(None) == ""
-    assert S._proxy_sanitize_setcookie("Domain=x.com; Secure") == ""
+    assert W._proxy_sanitize_setcookie("") == ""
+    assert W._proxy_sanitize_setcookie(None) == ""
+    assert W._proxy_sanitize_setcookie("Domain=x.com; Secure") == ""
 
 
 # ---------- 请求侧：Cookie 转发 ----------
@@ -254,7 +255,7 @@ def test_404_loop_guard(monkeypatch):
 
 def test_url_rewrite_path_style():
     """重写函数产路径式（publicPath 的 dirname 语义正确）。"""
-    fn = S._proxy_url_rewrite("https://github.com/zai-org/ZCode",
+    fn = W._proxy_url_rewrite("https://github.com/zai-org/ZCode",
                               "http://127.0.0.1:49302/api/web/proxy")
     assert fn("https://github.githubassets.com/assets/app.js") == \
         "http://127.0.0.1:49302/api/web/proxy/https/github.githubassets.com/assets/app.js"
