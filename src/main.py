@@ -785,130 +785,43 @@ def main():
     # 优化 WebView2 启动：禁用 file url（我们用 HTTP）省浏览器参数；关默认菜单省 UI 初始化
     webview.settings["ALLOW_FILE_URLS"] = False
     webview.settings["SHOW_DEFAULT_MENUS"] = False
-    # a484（用户实锤：网页 tab 内点链接被系统浏览器抢走）：pywebview 对
-    # NewWindowRequested 的默认处理是 webbrowser.open（系统浏览器）——
-    # 网页 tab 里点 target=_blank 链接全被 Edge 抢走。但它的另一档
-    #（OPEN_EXTERNAL_LINKS_IN_BROWSER=False → load_url）会把**主 WebView2
-    # 整窗导航走**（工具 UI 被替换，a238 老事故形态）——两档都不能用。
-    # 改为 monkey-patch edgechromium 的 on_new_window_request：Handled=True
-    # 不开系统窗口，也不动主窗口导航，而是 evaluate_js 把 URL 交给前端
-    # __newWindow(url) → web-panel 在网页 tab 内导航（工具内打开）。
-    # debug 端口照开（CDP/9222 诊断链需要），但不自动弹 DevTools 窗口
-    #（a355：要人工看再 F12/右键检查——自动弹在桌面工具形态纯打扰）
+    # 自动弹 DevTools 在桌面工具形态纯打扰（a355 起）——要人工看再 F12
     webview.settings["OPEN_DEVTOOLS_IN_DEBUG"] = False
-    # a484（用户实锤：网页 tab 内点链接被 Edge 抢走）：pywebview 对
-    # NewWindowRequested 只有两档——webbrowser.open（系统浏览器，现状）或
-    # load_url（主窗被导航走=工具 UI 被替换，a238 事故形态），都不能用。
-    # 在 start 之前替换 edgechromium 的**类方法**（webview_ready 订阅的是
-    # bound method，类方法替换对已完成与未完成的订阅都生效）：Handled=True
-    # 不开系统窗口、不动主窗导航，evaluate_js 把 URL 交给前端
-    # window.__newWindow → web-panel 在网页 tab 内导航（工具内打开）。
-    # URL 经 json 编码防注入；非 http(s)（mailto/下载直链等）按原路放行
-    # 系统处理（Handled 不置位则 WebView2 默认弹系统浏览器，语义正确）。
-    # a496 修复（根因）：_st 未导入 → NameError → 整个 try 块从未执行
-    def _dbg_dir():
-        try:
-            from src.app_state import DATA_DIR
-            return DATA_DIR
-        except Exception:
-            return os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+    # a544 网页 tab 终局形态：网页 tab 是独立的 WebView2 浏览器控件
+    #（src/web_tabs.py），主 UI 的 NewWindowRequested 只剩一种来源——
+    # 工具 UI 自身的外链（Claude 回复里的 URL 等）→ 前端 __newWindow
+    # 在网页 tab 内打开（ca9df59/a484 起的语义，简写保留）。
+    webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     try:
         from webview.platforms.edgechromium import EdgeChrome as _EC
-        # a536：a484-a496 调试期的新窗口文件日志退役（用户实锤 3MB 无限
-        # 增长；路由功能 a535 已稳定收尾）。WARN 级保留到 stderr（有控制台
-        # 可查），INFO 级全删；patch 失败仍写文件（罕见路径不增长）。
-        import sys as _nw_sys
-        def _nw_log(level, msg):
-            try:
-                if level == "WARN":
-                    print("[new-window] %s" % msg, file=_nw_sys.stderr)
-            except Exception:
-                pass
 
-        # ================================================================
-        # a492（用户实锤：debug 版本链接也走系统浏览器 → monkey-patch
-        # on_new_window_request 实证无效——pythonnet 的事件订阅可能在
-        # import/类定义时已固化 delegate，类属性替换不影响）。
-        #
-        # 新方案：不替换 on_new_window_request，而是改变其运行环境——
-        # ① webview.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER']=False
-        #   → pywebview 原始 handler 走 self.load_url(url) 而非
-        #     webbrowser.open(url)
-        # ② 在 _patched_ready 中包装实例的 load_url → 拦截外部 URL
-        #   路由到前端 __newWindow（ExecuteScriptAsync fire-and-forget）
-        # ================================================================
-        webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
-
-        # a489（用户实锤：右键三修仍不生效）：弃 on_loaded 里的 _find_core
-        # 递归搜索。改为包装 on_webview_ready——原方法自己就在操作
-        # sender.CoreWebView2.Settings，跑完后紧跟覆盖必然生效。
         _orig_ready = _EC.on_webview_ready
         def _patched_ready(self, sender, args):
             _orig_ready(self, sender, args)
-
-            # a492：包装实例级 load_url——pywebview 原始 NewWindowRequested
-            # handler 会调 self.load_url(url)（因 OPEN_EXTERNAL_LINKS_IN_
-            # BROWSER=False），我们在这里拦截外部 URL 路由到前端
+            # 外链路由：pywebview 在 OPEN_EXTERNAL=False 档会走
+            # self.load_url(url)，包装拦截外部 URL → 前端 __newWindow
+            #（ExecuteScriptAsync fire-and-forget——绝不能 evaluate_js
+            # 等 UI 线程回调，a484 死锁实锤）
             _orig_load = self.load_url
-            # a535：工具自身路径前缀——本机 URL 但路径不在其中 = 代理页的
-            # 相对路径新窗口（target=_blank 的链接基于伪装 origin 解析成
-            # http://127.0.0.1:PORT/post/xxx，用户实锤顶层加载 404 顶掉
-            # 整个工具 UI）。这类 URL 转「读 sessionStorage 拼代理路径」
-            # 路由到网页 tab，绝不能导航主窗口
-            _TOOL_PATHS = ("/api/", "/web/", "/vendor/", "/ico/", "/sm/",
-                           "/favicon", "/.well-known/")
             def _safe_load(url, *la, **kw):
                 try:
                     _u = str(url or "")
-                    if _u.startswith(("http://", "https://")) and "127.0.0.1" not in _u:
-                        # 外部 URL → 路由到前端网页 tab（不导航主窗口）
+                    if _u.startswith(("http://", "https://"))                             and "127.0.0.1" not in _u:
                         sender.CoreWebView2.ExecuteScriptAsync(
                             "window.__newWindow && window.__newWindow(%s);"
                             % json.dumps(_u))
                         return
-                    if _u.startswith("http://127.0.0.1:"):
-                        # 本机 URL：区分工具自身路径 vs 代理页相对路径
-                        import urllib.parse as _up
-                        _p = _up.urlsplit(_u).path or "/"
-                        if _p != "/" and not _p.startswith(_TOOL_PATHS):
-                            sender.CoreWebView2.ExecuteScriptAsync(
-                                "(function(){try{var o=sessionStorage."
-                                "getItem('__px_orig');if(!o)return;var b=new URL(o);"
-                                "window.__newWindow && window.__newWindow("
-                                "'/api/web/proxy/'+b.protocol.replace(':','')"
-                                "+'/'+b.host+%s);}catch(e){}})()"
-                                % json.dumps(_p))
-                            return
-                except Exception as _e:
-                    _nw_log("WARN", "[load_url] error: %r" % _e)
-                # 应用页面（127.0.0.1）或异常 → 正常加载
+                except Exception:
+                    pass
                 return _orig_load(url, *la, **kw)
             self.load_url = _safe_load
-
-            # a525→a539：CertificateError 事件挂接删除——pywebview 持有的
-            # CoreWebView2 包装无此事件（add_X 与 += 双双 AttributeError
-            # 实锤）；且证书已导入用户受信根（a526），放行兜底完全冗余。
-
-            # a490 诊断已退役（a536）：NavStarting 追踪是 a484-a496 调试期
-            # 产物，功能稳定后纯开销——整块移除
-
-            # a539：WebResourceRequested Referer-strip 拦截器退役——
-            # a500 已证此事件在请求发出前触发（改不了响应），实际动作只剩
-            # 剥请求头 Referer；而 a502 同源代理架构下 Referer 由代理进程
-            # 自设，浏览器侧剥不剥无关紧要。它现在每个请求都抛 COMException
-            # （「找不到元素/没有注册类」海量刷屏，用户日志实锤）= 纯开销
-            # + 日志污染。v4.0.0 串口卡顿的第一现场正是这类全 URL 拦截
-            # （_unhook_webview_intercept 的教训）——撤防。
-
-            # a489：右键设置——紧跟原方法（它设 AreDefaultContextMenusEnabled
-            # =_state['debug']），我们覆盖为 True（非 debug 下强制开）
+            # 右键菜单强制开（a483 用户令；原方法按 debug 开关设）
             try:
                 sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
             except Exception:
                 pass
-
-            # a544：网页 tab 终局——WebView2 多控件管理器装配（拿 Form，
-            # 每个 tab 一个完整浏览器控件实例）。失败不阻塞主 UI。
+            # a544：网页 tab 控件管理器装配。失败不阻塞主 UI（网页 tab
+            # 打不开但工具其余功能完好），错误进 stderr 可查
             try:
                 from src import web_tabs as _wt
                 _wt.install(self.form)
@@ -916,24 +829,10 @@ def main():
                 print("[a544] WebTabs install failed: %r" % _e,
                       file=sys.stderr)
         _EC.on_webview_ready = _patched_ready
-        # a536：清 a484-a496 调试期遗留的日志文件（曾无限增长到 3MB）
-        try:
-            _old_dbg = os.path.join(_dbg_dir(), "new_window_dbg.log")
-            if os.path.isfile(_old_dbg):
-                os.remove(_old_dbg)
-        except Exception:
-            pass
     except Exception as _patch_err:
-        # a496 诊断：原版静默吞掉——patch 可能根本没装上，日志文件不存在
-        # 就说明这条路径走了。写失败原因到同一文件。
-        try:
-            import traceback as _tb
-            with open(os.path.join(_dbg_dir(), "new_window_dbg.log"), "a",
-                      encoding="utf-8") as _f:
-                _f.write("[boot] monkey-patch FAILED: %r\n%s\n"
-                         % (_patch_err, _tb.format_exc()))
-        except Exception:
-            pass
+        import traceback as _tb
+        print("[webview-patch] FAILED: %r" % _patch_err, file=sys.stderr)
+        _tb.print_exc()
 
     # 等 server 预导入完成（通常 webview 导入完时 server 也差不多好了）
     _server_ready.wait(timeout=10)
