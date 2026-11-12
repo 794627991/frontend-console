@@ -113,10 +113,10 @@ function buildWebPanelTab(url) {
         <button class="btn ghost icon-btn" data-web="fwd" title="前进">▶</button>
         <button class="btn ghost icon-btn" data-web="reload" title="重载">⟳</button>
         <input class="web-url" data-web-input spellcheck="false" autocomplete="off"
-               placeholder="输入内网地址回车打开（Jenkins / svn web / itsm / wiki…）">
+               placeholder="输入网址，回车打开">
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">★</button>
         <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">☰ 阅读</button>
-        <button class="btn ghost" data-web="claude" title="服务端取本页正文（无登录态页面）填入 Claude 输入框——带登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
+        <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框——需登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
         <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">↗ 浏览器</button>
       </div>
       <div class="web-body" data-web-body>

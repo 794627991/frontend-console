@@ -131,7 +131,7 @@ function _stBoostCard(pane) {
         const r = await fetch('/api/theme', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ boost: { level: cur, power_plan: chk.checked } }) });
-        // a391（内网实锤：应用失败 SyntaxError '<!doctype'）：响应不是 JSON
+        // a391（实锤：应用失败 SyntaxError '<!doctype'）：响应不是 JSON
         // 时先报 HTTP 状态——旧版 exe 接口缺失（404/405）或内网安全软件/
         // 代理拦截（200+HTML），天书 SyntaxError 换成可定位的提示
         const ct = (r.headers.get('content-type') || '');
@@ -593,7 +593,7 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-row" style="margin-top:6px;">
           <button class="btn ghost" id="tkCdpToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
         </div>
-        <div class="dd-sub">开启后 Claude 会话可用 devtools_* 工具直接操作内嵌浏览器（读页面/点按钮/填表单/截图/看网络请求）——内网换组件、报错分析都能让 AI 代办。端口仅绑本机（127.0.0.1:9222）。改动需<b>重启工具</b>生效；调试模式（run_debug.bat）本就自带。</div>
+        <div class="dd-sub">开启后 Claude 会话可用 devtools_* 工具直接操作内嵌浏览器（读页面/点按钮/填表单/截图/看网络请求）——换组件、报错分析都能让 AI 代办。端口仅绑本机（127.0.0.1:9222）。改动需<b>重启工具</b>生效；调试模式（run_debug.bat）本就自带。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
