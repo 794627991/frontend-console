@@ -868,6 +868,56 @@ def main():
             except Exception as _e:
                 _nw_log("WARN", "[NavTracker] attach failed: %r" % _e)
 
+            # a495（用户令「必须与浏览器同级体验」）：响应层剥 X-Frame-Options
+            # ——浏览器顶层导航不受 XFO 影响，但 iframe 天然受约束；内网代理
+            # 注入 XFO: sameorigin 后 iframe 直接空白。用 WebView2 的
+            # WebResourceRequested 拦截 document 级响应（仅页面导航，不拦
+            # JS/CSS/图片），在响应头中删掉 X-Frame-Options / CSP frame-
+            # ancestors，iframe 恢复与浏览器同级的浏览能力。
+            try:
+                from Microsoft.Web.WebView2.Core import (
+                    CoreWebView2WebResourceContext as _RCtx)
+                _cvw.AddWebResourceRequestedFilter("*", _RCtx.Document)
+                def _strip_xfo(s2, a2):
+                    try:
+                        _resp = a2.Response
+                        if _resp is None:
+                            return
+                        _hdrs = _resp.Headers
+                        _changed = False
+                        # X-Frame-Options: DENY / SAMEORIGIN → 删
+                        try:
+                            _xfo = _hdrs.GetHeader("X-Frame-Options")
+                            if _xfo:
+                                _hdrs.RemoveHeader("X-Frame-Options")
+                                _changed = True
+                                _nw_log("INFO",
+                                    "[XFO-strip] removed X-Frame-Options: %s for %s"
+                                    % (_xfo[:40], str(a2.Request.Uri)[:100]))
+                        except Exception:
+                            pass
+                        # CSP frame-ancestors → 删整条 CSP（保守：只删 frame-
+                        # ancestors 指令的话需要解析 CSP，直接删最简且安全
+                        # ——CSP 其余指令对外部页面本来就不适用于我们场景）
+                        try:
+                            _csp = _hdrs.GetHeader("Content-Security-Policy")
+                            if _csp and "frame-ancestors" in _csp:
+                                _hdrs.RemoveHeader("Content-Security-Policy")
+                                _changed = True
+                                _nw_log("INFO",
+                                    "[XFO-strip] removed CSP frame-ancestors for %s"
+                                    % str(a2.Request.Uri)[:100])
+                        except Exception:
+                            pass
+                        if _changed:
+                            a2.Response = _resp   # 写回修改后的响应
+                    except Exception as _e:
+                        _nw_log("WARN", "[XFO-strip] error: %r" % _e)
+                _cvw.WebResourceRequested += _strip_xfo
+                _nw_log("INFO", "[XFO-strip] filter registered (Document only)")
+            except Exception as _e:
+                _nw_log("WARN", "[XFO-strip] attach failed: %r" % _e)
+
             # a489：右键设置——紧跟原方法（它设 AreDefaultContextMenusEnabled
             # =_state['debug']），我们覆盖为 True（非 debug 下强制开）
             try:
