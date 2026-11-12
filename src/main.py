@@ -884,35 +884,30 @@ def main():
             try:
                 from Microsoft.Web.WebView2.Core import (
                     CoreWebView2WebResourceContext as _RCtx)
-                # a498 诊断：先试 All 确认 filter 是否触发，再收窄到 Document
                 _cvw.AddWebResourceRequestedFilter("*", _RCtx.All)
                 def _strip_xfo(s2, a2):
+                    # a499 修复：CoreWebView2WebResourceRequest 没有 Context
+                    # 属性（a498 实锤 150+ 次 AttributeError）——不做 context
+                    # 过滤，对所有响应尝试删 XFO。X-Frame-Options 只出现在
+                    # document 响应中，JS/CSS 响应 GetHeader 自然返回 None
+                    # 跳过，零额外开销
                     try:
-                        _uri = str(a2.Request.Uri)
-                        # 只处理 document 级（页面导航），跳过 JS/CSS/图片
-                        _ctx = a2.Request.Context
-                        if _ctx is not None and str(_ctx) != "Document":
-                            return
                         _resp = a2.Response
                         if _resp is None:
-                            _nw_log("INFO", "[XFO] resp=None for %s" % _uri[:80])
                             return
                         _hdrs = _resp.Headers
                         if _hdrs is None:
-                            _nw_log("INFO", "[XFO] hdrs=None for %s" % _uri[:80])
                             return
                         _changed = False
                         # X-Frame-Options: DENY / SAMEORIGIN → 删
                         try:
                             _xfo = _hdrs.GetHeader("X-Frame-Options")
-                            _nw_log("INFO",
-                                "[XFO] uri=%s xfo=%r" % (_uri[:80], _xfo))
                             if _xfo:
                                 _hdrs.RemoveHeader("X-Frame-Options")
                                 _changed = True
                                 _nw_log("INFO",
                                     "[XFO-strip] removed X-Frame-Options: %s for %s"
-                                    % (_xfo[:40], _uri[:100]))
+                                    % (_xfo[:40], str(a2.Request.Uri)[:100]))
                         except Exception as _e:
                             _nw_log("WARN", "[XFO] GetHeader err: %r" % _e)
                         # CSP frame-ancestors → 删整条 CSP（保守：只删 frame-
