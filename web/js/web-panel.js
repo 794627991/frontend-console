@@ -280,6 +280,25 @@ window.__webTabNew = function (url) {
   if (url) _webNavigate(url);
 };
 
+// a550：modal 联动——新建连接等弹窗（.modal.show）打开时网页控件必须
+// 隐藏：WebView2 控件是 WinForms 原生子窗口，窗口层级永远在主 UI 的
+// DOM 之上，任何 z-index 都压不过（用户实锤：新建连接 UI 被网页盖住）
+(function () {
+  const anyModalOpen = () => !!document.querySelector('.modal.show');
+  const sync = () => {
+    const c = connections[WEB_PORTID];
+    if (!c || !c._tabId) return;
+    if (anyModalOpen()) _webCtlVisible(false);
+    else if (c.wrap.style.display !== 'none' && !_webUi.reader && !_webUi.sleeping)
+      _webCtlVisible(true);
+  };
+  const mo = new MutationObserver(sync);
+  mo.observe(document.body, {
+    subtree: true, attributes: true,
+    attributeFilter: ['class']
+  });
+})();
+
 // 导航（终局：控件 Navigate，无代理无软过渡）
 function _webNavigate(url) {
   const c = _webCur();
