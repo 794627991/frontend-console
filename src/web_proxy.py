@@ -297,17 +297,37 @@ _PROXY_NAV_JS = r"""<script>
     arguments[1] = url;
     return _origOpen.apply(this, arguments);
   };
-  // 链接导航拦截
+  // 链接导航拦截。a522 关键演进：**同站链接放行**——只把 href 改写为
+  // 代理 URL、不 preventDefault。页面自身的 SPA 路由（GitHub pjax /
+  // vue-router 等）若接管 click 则零导航零重载（Edge 同款 2s 体验）；
+  // 纯多页站点则退化为 iframe 内导航（仍是代理 URL，EscapeGuard 的
+  // load 监听同步导航栈）。此前一律劫持成父页整页导航——GitHub 切
+  // tab 从 Edge 的 2s（前端路由）劣化成 10s+（重拉全部 JS+hydration）。
+  // 跨站链接仍走父页导航（软过渡）。target=_blank 不碰（新窗口链路）。
   document.addEventListener('click', function(e){
     var a = e.target.closest ? e.target.closest('a[href]') : null;
     if (!a) return;
+    if (a.target === '_blank') return;
     var href = a.getAttribute('href')||'';
     if (!href || href[0]==='#' || href.indexOf('javascript:')===0) return;
-    e.preventDefault(); e.stopPropagation();
     var abs = href;
     try { abs = new URL(href, _orig).href; } catch(_){}
+    var px = _px(abs);
+    if (!px) return;                      // 已是代理/不可代理，放行原生
+    try {
+      if (new URL(abs).host === new URL(_orig).host) {
+        a.setAttribute('href', px);       // 同站：改写后放行（SPA 路由接管）
+        return;
+      }
+    } catch(_){}
+    e.preventDefault(); e.stopPropagation();
     window.parent.postMessage({__webProxyNav: abs}, '*');
   }, true);
+  // a522：iframe 内导航开始时通知父页点亮加载指示（beforeunload 对
+  // 任何整页导航触发；SPA 路由不导航、本来就快无需指示）
+  window.addEventListener('beforeunload', function(){
+    try { parent.postMessage({__pxLoading: true}, '*'); } catch(_){}
+  });
   // a512：表单提交统一「action 代理化 + 原生提交」。原方案 preventDefault
   // 后 postMessage 转 GET 导航——表单数据（密码）全丢，登录类表单必坏。
   // 原生提交把 POST 体交给浏览器带上，代理转发（a504 已支持）。

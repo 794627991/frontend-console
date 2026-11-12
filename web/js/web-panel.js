@@ -225,7 +225,19 @@ window.addEventListener('message', (e) => {
   if (e.data && e.data.__webProxyNav) {
     _webNavigate(e.data.__webProxyNav);
   }
+  // a522：iframe 内导航开始（注入 JS 的 beforeunload 通知）→ 点亮加载指示
+  if (e.data && e.data.__pxLoading) {
+    _webLoading(true);
+  }
 });
+
+// a522：加载指示——URL 栏转圈。softNav 开始 / iframe 内导航开始点亮；
+// commit / iframe load 熄灭。用户实锤：10s 切换无任何反馈像「点了没反应」
+function _webLoading(on) {
+  const c = _webCur();
+  if (!c) return;
+  c.wrap.classList.toggle('web-loading', !!on);
+}
 
 // a520：双 iframe 软过渡（Edge 式无缝导航）——点击后当前页保持显示，
 // 隐藏的 staging frame 预载新页，就绪瞬间切换。取代"立即替换 src"的
@@ -243,6 +255,7 @@ function _other(c) {       // 隐藏的 staging frame
 function _softNav(c, url) {
   const next = _other(c);
   c._pend = { url, frame: next, t0: Date.now() };
+  c.wrap.classList.add('web-loading');     // a522：加载指示
   next.src = _webProxyUrl(url);
   const poll = () => {
     const p = c._pend;
@@ -261,6 +274,7 @@ function _commit(c) {
   const p = c._pend;
   if (!p) return;
   c._pend = null;
+  c.wrap.classList.remove('web-loading');  // a522：熄灭加载指示
   c._cur = (p.frame === c.wrap.querySelector('[data-web-frame2]')) ? 'f2' : 'f1';
   const old = _other(c);
   p.frame.style.display = '';
@@ -305,6 +319,7 @@ function _webEscapeGuard(c) {
     if (frame._pxGuard) return;
     frame._pxGuard = true;
     frame.addEventListener('load', () => {
+      _webSyncFromFrame(c, frame);         // a522：栈同步 + 熄灭指示
       setTimeout(() => {
         if (_webUi.reader || _webUi.sleeping) return;
         let escaped = false;
@@ -319,6 +334,26 @@ function _webEscapeGuard(c) {
       }, 2000);
     });
   });
+}
+
+// a522：iframe 内自主导航（同站链接放行 / 表单提交 / 302 跟随）后的
+// 收尾——读当前页写入的 __px_orig（同源 sessionStorage 共享）同步导航
+// 栈与 URL 栏（只更 UI 不重载），并熄灭加载指示。
+function _webSyncFromFrame(c, frame) {
+  c.wrap.classList.remove('web-loading');
+  if (frame !== _wf(c)) return;            // staging 的 load 由 softNav 轮询接管
+  try {
+    const u = sessionStorage.getItem('__px_orig');
+    if (!u || u === _webNav.stack[_webNav.idx]) return;
+    _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
+    _webNav.stack.push(u);
+    _webNav.idx = _webNav.stack.length - 1;
+    _webSessionSave();
+    const inp = c.wrap.querySelector('[data-web-input]');
+    if (inp) inp.value = u;
+    const lbl = c.tab && c.tab.querySelector('.label');
+    if (lbl) lbl.textContent = _webShortUrl(u).slice(0, 24);
+  } catch (_) {}
 }
 
 // a488：加载失败检测——iframe 导航后 8s 内 load 事件未触发 → 网络不通/

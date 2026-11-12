@@ -5793,6 +5793,16 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   font-family: var(--font-mono); color: var(--fg); background: var(--bg-input);
   border: 1px solid var(--border); border-radius: 6px; outline: none; }
 .web-url:focus { border-color: var(--accent); }
+/* a522：加载指示——导航期间刷新按钮转圈（浏览器同款语义）+ URL 栏
+   边框呼吸 + tab 标签高亮（用户实锤：10s 切换无反馈像「点了没反应」） */
+.web-loading [data-web="reload"] { animation: web-spin .8s linear infinite;
+  display: inline-block; color: var(--accent); }
+@keyframes web-spin { to { transform: rotate(360deg); } }
+.web-loading .web-url { border-color: var(--accent);
+  animation: web-pulse 1.2s ease-in-out infinite; }
+@keyframes web-pulse { 50% { border-color: var(--border); } }
+.web-pane .label { transition: color .2s; }
+.web-loading .label { color: var(--accent); }
 .web-body { flex: 1; min-height: 0; position: relative; background: #fff; }
 .web-frame { position: absolute; inset: 0; width: 100%; height: 100%;
   border: none; background: #fff; }
