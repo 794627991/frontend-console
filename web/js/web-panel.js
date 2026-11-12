@@ -16,37 +16,49 @@
 // 站点缩放（阅读态）。iframe 时代的代理/软过渡/逃逸检测全部退役
 //（用户令「没用全删」）。
 // ============================================================
-const WEB_PORTID = 'web:panel';
-const _webNav = { stack: [], idx: -1 };    // 只记本面板发起的导航
-const _webUi = { sleeping: false, reader: false, zoom: 1 };   // a475：面板态
+// a554 多开：每个网页 tab 独立 portId（web:1 web:2 …）+ 独立导航栈/面板态
+// （挂 conn._nav/_ui）。WEB_PORTID 保留作兼容标记；_webCur() 返回当前
+// 激活的网页 tab；__newWindow/收藏 → 新 tab（浏览器语义）。
+const WEB_PORTID = 'web:panel';            // 兼容标记（外部模块引用判断 kind）
+let _webSeq = 0;                           // 面板序号（portId 与控件 tab id 同源）
+let _webActivePid = null;                  // 当前激活的网页 tab portId
 const _WEB_SLEEP_MIN = 10;                 // a475：切走 N 分钟后休眠（分钟）
 
+function _mkNav() { return { stack: [], idx: -1 }; }
+function _mkUi() { return { sleeping: false, reader: false, zoom: 1, rseq: 0 }; }
+
 // a475 会话恢复：启动时读上次栈（重开网页 tab 无显式 URL 时回到上次页）
+let _webSavedNav = null;                   // a554：恢复用（首开时消费）
 try {
   const _saved = JSON.parse(localStorage.getItem('web-session') || 'null');
   if (_saved && Array.isArray(_saved.stack)) {
-    // 审计修（C.a）：只收字符串元素——本地篡改塞对象会让 frame.src 强转
-    // 失败、导航异常
-    _webNav.stack = _saved.stack.filter(x => typeof x === 'string').slice(0, 50);
-    _webNav.idx = _webNav.stack.length
-      ? Math.min(Math.max(0, _saved.idx | 0), _webNav.stack.length - 1) : -1;
+    _webSavedNav = {
+      stack: _saved.stack.filter(x => typeof x === 'string').slice(0, 50),
+      idx: -1 };
+    _webSavedNav.idx = _webSavedNav.stack.length
+      ? Math.min(Math.max(0, _saved.idx | 0), _webSavedNav.stack.length - 1) : -1;
   }
 } catch (_) {}
 function _webSessionSave() {
+  const c = _webCur();
+  const nav = c && c._nav;
   try { localStorage.setItem('web-session', JSON.stringify(
-    { stack: _webNav.stack, idx: _webNav.idx })); } catch (_) {}
+    nav || { stack: [], idx: -1 })); } catch (_) {}
 }
 // a475 睡眠巡检：网页 tab 不在前台累计计时（60s 一查，开销可忽略），
 // 到时置空 iframe（进程回收由 Chromium 完成）；前台/休眠态即停
 setInterval(() => {
-  const c = connections[WEB_PORTID];
-  // reader 态 iframe 已置 about:blank（无燃烧）——无需休眠
-  if (!c || _webUi.sleeping || _webUi.reader) return;
-  if (c.wrap.style.display === 'none' && document.visibilityState === 'visible') {
-    c._hidSec = (c._hidSec || 0) + 60;
-    if (c._hidSec >= _WEB_SLEEP_MIN * 60) _webSleep(c);
-  } else {
-    c._hidSec = 0;
+  // a554 多开：每个隐藏的网页 tab 独立计时休眠
+  for (const pid in connections) {
+    const c = connections[pid];
+    if (!c || !c.meta || c.meta.kind !== 'web' || !c._ui) continue;
+    if (c._ui.sleeping || c._ui.reader) continue;
+    if (c.wrap.style.display === 'none' && document.visibilityState === 'visible') {
+      c._hidSec = (c._hidSec || 0) + 60;
+      if (c._hidSec >= _WEB_SLEEP_MIN * 60) _webSleep(c);
+    } else {
+      c._hidSec = 0;
+    }
   }
 }, 60000);
 
@@ -69,22 +81,21 @@ function _webNormUrl(s) {
   return 'http://' + s;    // 内网多为 http 裸主机名——缺省补 http
 }
 
-function buildWebPanelTab(url) {
+function buildWebPanelTab(url, opts) {
+  const newTab = !!(opts && opts.newTab);
+  // 无 newTab 且已有网页 tab：聚焦 + 当前 tab 导航（顶栏输入语义）
   let pid = null;
   for (const p in connections) {
     const c = connections[p];
     if (c && c.meta && c.meta.kind === 'web') { pid = p; break; }
   }
-  if (pid) {
+  if (pid && !newTab) {
     switchTab(pid);
     if (url) _webNavigate(url);
     return connections[pid];
   }
-  const portId = WEB_PORTID;
-  // 审计修（会话恢复死代码）：原「新建即清」无条件清栈——模块加载时恢复的
-  // 上次会话栈被清掉，恢复分支永不可达。改为：显式 URL 才清栈（全新浏览），
-  // 无 URL 首开保留恢复栈（底部 else-if 走恢复导航）
-  if (url) { _webNav.stack = []; _webNav.idx = -1; _webSessionSave(); }
+  const portId = 'web:' + (++_webSeq);   // a554 多开：每 tab 独立 portId
+  const ctlId = 'web-' + _webSeq;        // 控件 tab id（同源）
   const tab = document.createElement('div');
   tab.className = 'tab';
   tab.dataset.portId = portId;
@@ -138,14 +149,22 @@ function buildWebPanelTab(url) {
       </div>
     </div>`;
   termArea.appendChild(wrap);
-  const conn = { portId, meta: { kind: 'web', label: '网页' }, tab, wrap };
+  const conn = { portId, meta: { kind: 'web', label: '网页' }, tab, wrap,
+                  _nav: _mkNav(), _ui: _mkUi(), _tabId: ctlId };
   connections[portId] = conn;
 
   const $w = (s) => wrap.querySelector(s);
   _webCtlSetup(conn);                      // a544：控件创建 + 布局跟随
   const urlInput = $w('[data-web-input]');
   urlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); _webNavigate(_webNormUrl(urlInput.value)); }
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      const u = _webNormUrl(urlInput.value);
+      if (!u) return;
+      // a554 多开：回车=当前 tab 导航；Ctrl+回车=开新网页 tab
+      if (e.ctrlKey) buildWebPanelTab(u, { newTab: true });
+      else _webNavigate(u);
+    }
   });
   wrap.querySelectorAll('[data-web]').forEach(b => b.onclick = () => _webAct(b.dataset.web, wrap));
   // a488：加载失败提示层按钮
@@ -170,8 +189,8 @@ function buildWebPanelTab(url) {
   body.addEventListener('wheel', (e) => {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    const c2 = connections[WEB_PORTID];
-    const url = _webNav.stack[_webNav.idx] || '';
+    const c2 = _webCur();
+    const url = (c2 && c2._nav.stack[c2._nav.idx]) || '';
     const host = (() => { try { return new URL(url).host; } catch (_) { return ''; } })();
     let z = (c2 && c2._zoom) || 1;
     z = Math.min(2, Math.max(0.5, z * (e.deltaY < 0 ? 1.1 : 0.9)));
@@ -180,7 +199,8 @@ function buildWebPanelTab(url) {
   wrap.addEventListener('keydown', (e) => {
     if (e.ctrlKey && (e.key === '0' || e.key === 'Num0')) {
       e.preventDefault();
-      const url = _webNav.stack[_webNav.idx] || '';
+      const cz = _webCur();
+      const url = (cz && cz._nav.stack[cz._nav.idx]) || '';
       const host = (() => { try { return new URL(url).host; } catch (_) { return ''; } })();
       _webApplyZoom(1, host);
     }
@@ -188,24 +208,33 @@ function buildWebPanelTab(url) {
 
   switchTab(portId);
   refreshSidebar();
-  if (url) _webNavigate(url);
-  else if (_webNav.idx >= 0 && _webNav.stack[_webNav.idx]) {
-    // a475 会话恢复：无显式 URL 的首开回到上次离开的页面（栈已在模块
-    // 加载时从 localStorage 恢复）
-    _webNavigate(_webNav.stack[_webNav.idx]);
+  if (url) {
+    _webNavigate(url);
+  } else if (_webSavedNav && _webSavedNav.idx >= 0
+             && _webSavedNav.stack[_webSavedNav.idx]) {
+    // a475 会话恢复（a554 改为一次性消费）：无显式 URL 的首开回到上次页
+    conn._nav = _webSavedNav;
+    _webSavedNav = null;
+    _webNavigate(conn._nav.stack[conn._nav.idx]);
   }
   return conn;
 }
 
 function _webCur() {
-  return connections[WEB_PORTID];
+  // a554 多开：当前激活的网页 tab（无激活时回落第一个网页 tab）
+  const a = connections[_webActivePid];
+  if (a && a.meta && a.meta.kind === 'web') return a;
+  for (const p in connections) {
+    const c = connections[p];
+    if (c && c.meta && c.meta.kind === 'web') return c;
+  }
+  return null;
 }
 // ============ a544：WebView2 控件命令层（终局形态） ============
-let _webTabSeq = 0;                        // 控件实例号（本会话唯一）
-
-// 控件 REST 调用（src/web_tabs.py 的 /api/web/tabs）
-function _webCtl(d) {
-  d.tab = 'web-' + (_webTabSeq || 1);
+// 控件 REST 调用（src/web_tabs.py 的 /api/web/tabs）——a554：带 conn
+// （每个网页 tab 独立控件 id，挂 conn._tabId）
+function _webCtl(conn, d) {
+  d.tab = (conn && conn._tabId) || 'web-1';
   return fetch('/api/web/tabs', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(d)
@@ -215,8 +244,6 @@ function _webCtl(d) {
 // 面板创建：控件 create + 布局跟随（ResizeObserver 持续上报 rect，
 // 物理像素 = DIP × devicePixelRatio——WinForms Bounds 是物理像素）
 function _webCtlSetup(conn) {
-  _webTabSeq = _webTabSeq || 1;
-  conn._tabId = 'web-' + _webTabSeq;
   const body = conn.wrap.querySelector('[data-web-body]');
   const host = conn.wrap.querySelector('.web-host');
   const push = () => {
@@ -224,8 +251,8 @@ function _webCtlSetup(conn) {
     const r = host.getBoundingClientRect();
     const sx = window.devicePixelRatio || 1;
     const sy = sx;   // WinForms 同一 DPI
-    _webCtl({ act: 'layout', x: r.left * sx, y: r.top * sy,
-              w: r.width * sx, h: r.height * sy });
+    _webCtl(conn, { act: 'layout', x: r.left * sx, y: r.top * sy,
+                    w: r.width * sx, h: r.height * sy });
   };
   conn._ctlResize = new ResizeObserver(push);
   conn._ctlResize.observe(host);
@@ -238,32 +265,40 @@ function _webCtlSetup(conn) {
 function _webCtlVisible(on) {
   const c = _webCur();
   if (!c || !c._tabId) return;
-  _webCtl({ act: 'show', on: !!on });
+  _webCtl(c, { act: 'show', on: !!on });
   if (on && c._ctlPush) setTimeout(c._ctlPush, 30);   // 显示后重对齐
 }
 
 // Python 控件事件回推（ExecuteScriptAsync 调入）
+function _webByTabId(tid) {
+  for (const p in connections) {
+    const c = connections[p];
+    if (c && c._tabId === tid) return c;
+  }
+  return null;
+}
 window.__webTabUrl = function (tid, url) {
-  const c = _webCur();
+  const c = _webByTabId(tid) || _webCur();
   if (!c) return;
+  _webActivePid = c.portId;                // 事件来自的 tab 即用户在看的
   c._ctlUrl = url;                          // 真实 URL（含页内跳转）
   const inp = c.wrap.querySelector('[data-web-input]');
   if (inp && document.activeElement !== inp) inp.value = url;
   // 栈：同 host 的页内跳转替换栈顶，跨站 push（会话恢复语义保留）
-  const top = _webNav.stack[_webNav.idx];
+  const top = c._nav.stack[c._nav.idx];
   if (top) {
     try {
       const a = new URL(url), b = new URL(top);
-      if (a.host === b.host) _webNav.stack[_webNav.idx] = url;
-      else { _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
-             _webNav.stack.push(url); _webNav.idx = _webNav.stack.length - 1; }
+      if (a.host === b.host) c._nav.stack[c._nav.idx] = url;
+      else { c._nav.stack = c._nav.stack.slice(0, c._nav.idx + 1);
+             c._nav.stack.push(url); c._nav.idx = c._nav.stack.length - 1; }
     } catch (_) {}
     _webSessionSave();
   }
   c.tab.querySelector('.label').textContent = _webShortUrl(url).slice(0, 24);
 };
 window.__webTabHist = function (tid, back, fwd) {
-  const c = _webCur();
+  const c = _webByTabId(tid);
   if (!c) return;
   c._canBack = back === true; c._canFwd = fwd === true;
   const bb = c.wrap.querySelector('[data-web="back"]');
@@ -272,18 +307,19 @@ window.__webTabHist = function (tid, back, fwd) {
   if (ff) ff.disabled = !fwd;
 };
 window.__webTabTitle = function (tid, title) {
-  const c = _webCur();
+  const c = _webByTabId(tid);
   if (c && title) c.tab.querySelector('.label').textContent = title.slice(0, 24);
 };
 // 控件内 window.open / target=_blank → 本面板内导航
 // 控件导航开始/完成 → 加载指示（刷新转圈+地址栏呼吸，a553 找回）
 window.__webTabLoad = function (tid, on) {
-  const c = connections[WEB_PORTID];
+  const c = _webByTabId(tid);
   if (!c) return;
   c.wrap.classList.toggle('web-loading', !!on);
 };
 window.__webTabNew = function (url) {
-  if (url) _webNavigate(url);
+  // a554 多开：控件内新窗口请求 → 开新网页 tab（浏览器语义）
+  if (url) buildWebPanelTab(url, { newTab: true });
 };
 
 // a550：modal 联动——新建连接等弹窗（.modal.show）打开时网页控件必须
@@ -296,7 +332,7 @@ window.__webTabNew = function (url) {
     const c = connections[WEB_PORTID];
     if (!c || !c._tabId) return;
     if (anyOverlayOpen()) _webCtlVisible(false);
-    else if (c.wrap.style.display !== 'none' && !_webUi.reader && !_webUi.sleeping)
+    else if (c.wrap.style.display !== 'none' && !c._ui.reader && !c._ui.sleeping)
       _webCtlVisible(true);
   };
   const mo = new MutationObserver(sync);
@@ -310,18 +346,16 @@ window.__webTabNew = function (url) {
 function _webNavigate(url) {
   const c = _webCur();
   if (!c || !url) return;
-  if (!c._tabId) {                          // 首次（面板刚建）
-    _webTabSeq = _webTabSeq || 1;
-    c._tabId = 'web-' + _webTabSeq;
-  }
-  _webNav.stack = _webNav.stack.slice(0, _webNav.idx + 1);
-  _webNav.stack.push(url);
-  if (_webNav.stack.length > 50) _webNav.stack.shift();
-  _webNav.idx = _webNav.stack.length - 1;
+
+  c._nav.stack = c._nav.stack.slice(0, c._nav.idx + 1);
+  c._nav.stack.push(url);
+  if (c._nav.stack.length > 50) c._nav.stack.shift();
+  c._nav.idx = c._nav.stack.length - 1;
+  _webActivePid = c.portId;                // a554：导航即激活
   _webSessionSave();
   _webWake(c);
-  if (_webUi.reader) _webReaderToggle(false, true);
-  _webCtl({ act: 'create', url });          // 幂等：已有则等价 navigate
+  if (c._ui.reader) _webReaderToggle(false, true);
+  _webCtl(c, { act: 'create', url });      // 幂等：已有则等价 navigate
   _webCtlVisible(true);
   const inp = c.wrap.querySelector('[data-web-input]');
   if (inp) inp.value = url;
@@ -335,36 +369,59 @@ function _webNavigate(url) {
   const orig = window.switchTab;
   if (typeof orig !== 'function') return;
   window.switchTab = function (pid) {
-    const prevWeb = _webCur();
-    const wasWeb = prevWeb && prevWeb.wrap.style.display !== 'none';
+    const prev = _webCur();
     orig(pid);
-    const nowWeb = pid === WEB_PORTID;
-    if (nowWeb !== wasWeb) _webCtlVisible(nowWeb);
+    const c = connections[pid];
+    const isWeb = !!(c && c.meta && c.meta.kind === 'web');
+    if (isWeb) {
+      _webActivePid = pid;
+      // 目标 tab 控件显示 + 布局对齐；其余网页 tab 控件隐藏
+      _webCtlVisible(true);
+      if (c._ctlPush) setTimeout(c._ctlPush, 30);
+    } else if (prev && prev._tabId) {
+      _webCtlVisible(false);
+    }
   };
+  // 关 tab 联动：关闭网页 tab → dispose 控件
+  const origClose = window.closeEditorTab;
+  if (typeof origClose === 'function') {
+    window.closeEditorTab = function (pid) {
+      const c = connections[pid];
+      if (c && c.meta && c.meta.kind === 'web' && c._tabId) {
+        try { _webCtl(c, { act: 'dispose' }); } catch (_) {}
+        if (_webActivePid === pid) _webActivePid = null;
+      }
+      return origClose(pid);
+    };
+  }
 })();
 
 // ---- a475 休眠（a544 适配控件）----
 function _webSleep(c) {
-  _webUi.sleeping = true;
+  c._ui.sleeping = true;
   const ov = c.wrap.querySelector('[data-web-sleep]');
   if (ov) ov.style.display = 'flex';
-  _webCtl({ act: 'nav', url: 'about:blank' });   // 释放页面
+  _webCtl(c, { act: 'nav', url: 'about:blank' });   // 释放页面
   _webCtlVisible(false);
 }
 function _webWake(c) {
-  if (!_webUi.sleeping) return;
-  _webUi.sleeping = false;
+  if (!c._ui.sleeping) return;
+  c._ui.sleeping = false;
   c._hidSec = 0;
   const ov = c.wrap.querySelector('[data-web-sleep]');
   if (ov) ov.style.display = 'none';
 }
 // 切回网页 tab 自动唤醒：恢复上次 URL
 setInterval(() => {
-  const c = connections[WEB_PORTID];
-  if (c && _webUi.sleeping && c.wrap.style.display !== 'none') {
-    const url = _webNav.stack[_webNav.idx];
-    _webWake(c);
-    if (url) _webNavigate(url);
+  // a554 多开：任意隐藏中的休眠网页 tab 回前台即唤醒
+  for (const pid in connections) {
+    const c = connections[pid];
+    if (!c || !c.meta || c.meta.kind !== 'web' || !c._ui) continue;
+    if (c._ui.sleeping && c.wrap.style.display !== 'none') {
+      _webWake(c);
+      const url = c._nav.stack[c._nav.idx];
+      if (url) _webNavigate(url);
+    }
   }
 }, 1000);
 
@@ -375,15 +432,15 @@ function _webReaderToggle(on, skipRestore) {
   const rd = c.wrap.querySelector('[data-web-reader]');
   const host = c.wrap.querySelector('.web-host');
   const btn = c.wrap.querySelector('[data-web="read"]');
-  const url = _webNav.stack[_webNav.idx] || '';
+  const url = (c._nav && c._nav.stack[c._nav.idx]) || '';
   if (on && !url) return;
-  _webUi.reader = on;
+  c._ui.reader = on;
   if (!on) {
     rd.style.display = 'none';
     host.style.display = '';
     if (btn) btn.textContent = '☰ 阅读';
     _webCtlVisible(true);
-    if (!skipRestore && url) _webCtl({ act: 'nav', url });
+    if (!skipRestore && url) _webCtl(c, { act: 'nav', url });
     return;
   }
   rd.innerHTML = '<div class="web-reader-load">正在取正文…</div>';
@@ -391,13 +448,13 @@ function _webReaderToggle(on, skipRestore) {
   host.style.display = 'none';
   // 阅读态：控件隐藏 + about:blank 释放页面 JS
   _webCtlVisible(false);
-  _webCtl({ act: 'nav', url: 'about:blank' });
+  _webCtl(c, { act: 'nav', url: 'about:blank' });
   // 序号守卫（审计 O1）：连点 back/fwd 旧响应晚归不覆盖新正文
-  const mySeq = (_webUi.rseq = (_webUi.rseq || 0) + 1);
+  const mySeq = (c._ui.rseq = (c._ui.rseq || 0) + 1);
   fetch('/api/web/fetch_text', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }) })
     .then(r => r.json()).then(j => {
-      if (!_webUi.reader || mySeq !== _webUi.rseq) return;
+      if (!c._ui.reader || mySeq !== c._ui.rseq) return;
       if (!j || !j.ok) {
         rd.innerHTML = '<div class="web-reader-err">取正文失败：'
           + esc(((j && j.err) || '未知')) + '——用 ↗ 浏览器打开</div>';
@@ -408,7 +465,7 @@ function _webReaderToggle(on, skipRestore) {
         + '<span class="web-reader-url">' + esc(url) + '</span></div>'
         + '<div class="web-reader-body">' + esc(j.text).replace(/\n/g, '<br>') + '</div>';
     }).catch(e => {
-      if (_webUi.reader && mySeq === _webUi.rseq)
+      if (c._ui.reader && mySeq === c._ui.rseq)
         rd.innerHTML = '<div class="web-reader-err">取正文失败：' + esc(String(e)) + '</div>';
     });
 }
@@ -434,7 +491,7 @@ function _webApplyZoom(z, host) {
 function _webSyncUI() {
   const c = _webCur();
   if (!c) return;
-  const url = _webNav.stack[_webNav.idx] || '';
+  const url = (c._nav && c._nav.stack[c._nav.idx]) || '';
   // a544：按钮态由控件事件回推（__webTabHist）维护——这里只管收藏星
   const favs = _webFavs();
   const starred = url && favs.some(f => f.url === url);
@@ -445,15 +502,15 @@ function _webSyncUI() {
 function _webAct(act, wrap) {
   const c = _webCur();
   if (!c) return;
-  const url = _webNav.stack[_webNav.idx] || '';
-  if (act === 'back') { _webCtl({ act: 'back' }); return; }
-  if (act === 'fwd') { _webCtl({ act: 'fwd' }); return; }
+  const url = (c._nav && c._nav.stack[c._nav.idx]) || '';
+  if (act === 'back') { _webCtl(c, { act: 'back' }); return; }
+  if (act === 'fwd') { _webCtl(c, { act: 'fwd' }); return; }
   if (act === 'reload') {
-    if (_webUi.reader) _webReaderToggle(true);   // 阅读态重载=重取正文
-    else _webCtl({ act: 'reload' });
+    if (c._ui.reader) _webReaderToggle(true);    // 阅读态重载=重取正文
+    else _webCtl(c, { act: 'reload' });
     return;
   }
-  if (act === 'read') { _webReaderToggle(!_webUi.reader); return; }
+  if (act === 'read') { _webReaderToggle(!c._ui.reader); return; }
   if (act === 'sys' && url) {
     fetch('/api/open_url', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }) }).catch(() => {});
@@ -520,7 +577,7 @@ function _webAct(act, wrap) {
 // 在网页 tab 内导航（工具内打开）。没有网页 tab 时顺手开一个。
 window.__newWindow = function (url) {
   try {
-    buildWebPanelTab(url);
+    buildWebPanelTab(url, { newTab: true });   // a554：外链开新 tab
   } catch (_) {}
 };
 
@@ -544,7 +601,7 @@ document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const u = _webNormUrl(bar.value);
     if (!u) { buildWebPanelTab(); bar.blur(); return; }   // 空=开网页 tab（有会话则恢复）
-    buildWebPanelTab(u);
+    buildWebPanelTab(u);                                  // 已有=聚焦导航；Ctrl=新 tab
     bar.blur();
   });
   const fav = document.getElementById('tabFavBtn');
@@ -555,13 +612,14 @@ function _webFavMenu(anchor) {
   const old = document.getElementById('webFavMenu');
   if (old) { old.remove(); return; }
   const favs = _webFavs();
-  const cur = (_webNav.stack[_webNav.idx] || '');
+  const cur = (_webCur() && _webCur()._nav.stack[_webCur()._nav.idx]) || '';
   const list = document.createElement('div');
   list.id = 'webFavMenu';
   list.className = 'web-fav-menu';
   let html = '<div class="web-fav-title">收藏夹</div>';
-  if (_webNav.idx >= 0 && _webNav.stack[_webNav.idx]) {
-    html += `<div class="web-fav-cur" data-fav-resume>⟲ 恢复上次网页（${esc(_webShortUrl(_webNav.stack[_webNav.idx]))}）</div>`;
+  const _wc = _webCur();
+  if (_wc && _wc._nav.idx >= 0 && _wc._nav.stack[_wc._nav.idx]) {
+    html += `<div class="web-fav-cur" data-fav-resume>⟲ 恢复上次网页（${esc(_webShortUrl(_wc._nav.stack[_wc._nav.idx]))}）</div>`;
   }
   if (cur && connections[WEB_PORTID]) {
     const starred = favs.some(f => f.url === cur);
@@ -616,7 +674,7 @@ function _webFavMenu(anchor) {
     const item = e.target.closest('[data-fav-i]');
     if (item) {
       const f = _webFavs()[+item.dataset.favI];
-      if (f) buildWebPanelTab(f.url);
+      if (f) buildWebPanelTab(f.url, { newTab: true });
       list.remove();
     }
   });
