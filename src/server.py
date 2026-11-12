@@ -1832,14 +1832,18 @@ def _web_html_to_text(html_src):
 
 _PROXY_NAV_JS = """<script>
 (function(){
-  var _pb = location.origin + '/api/web/proxy?url=';
+  // a506：路径式代理前缀——webpack 取 currentScript.src 的 dirname 做
+  // publicPath，query 式会折叠成 /api/web/ 导致动态 chunk 404；路径式
+  // 的 dirname 还原出 CDN 基址，相对 chunk 自动落回代理路由。
+  var _pb = location.origin + '/api/web/proxy/';
   function _px(u){
     if (!u || u[0]==='#' || u.indexOf('data:')===0 || u.indexOf('blob:')===0
-        || u.indexOf('javascript:')===0 || u.indexOf(_pb)===0) return null;
+        || u.indexOf('javascript:')===0) return null;
     try{
-      var a = new URL(u, document.baseURI).href;
-      if (a.indexOf(location.origin)===0) return null;   // 已是代理
-      return _pb + encodeURIComponent(a);
+      var a = new URL(u, document.baseURI);
+      if (a.origin === location.origin) return null;   // 已是代理（路径式/query 式）
+      return _pb + a.protocol.replace(':','') + '/' + a.host
+             + a.pathname + a.search;
     }catch(_){ return null; }
   }
   function _rw(el){
@@ -1961,13 +1965,19 @@ _PROXY_NAV_JS = """<script>
 
 
 def _proxy_url_rewrite(base_url, proxy_base):
-    """生成 URL 重写函数：把资源 URL 转为**绝对**代理 URL。
+    """生成 URL 重写函数：把资源 URL 转为**绝对路径式**代理 URL。
 
-    a504 修复：不能用相对路径 /api/web/proxy?url=...——<base href="原始URL">
-    会把相对路径解析到原始域名（cnblogs.com/api/web/proxy → 404）。
-    必须用绝对路径 http://127.0.0.1:port/api/web/proxy?url=...
+    a504：不能用相对路径——<base href="原始URL"> 会把相对代理路径解析到
+    原始域名，必须绝对路径。
+    a506：query 式（?url=<编码>）升级为路径式 /proxy/<scheme>/<host>/<path>
+    ——webpack 等运行时取 currentScript.src 的 dirname 做 publicPath，
+    query 式折叠成 /api/web/ 导致动态 chunk 全 404（GitHub 实锤 40 个），
+    路径式的 dirname 还原出 CDN 基址，相对 chunk 自动落回代理路由。
+    query 串原样附加（代理自身无参数）；fragment 丢弃（锚点不发请求）。
     """
+    import re as _re
     from urllib.parse import urljoin, quote
+
     def _to_proxy(u):
         if not u or u.startswith(("javascript:", "data:", "#", "blob:", "mailto:",
                                   "tel:", "about:")):
@@ -1976,9 +1986,12 @@ def _proxy_url_rewrite(base_url, proxy_base):
             _abs = urljoin(base_url, u)
         except Exception:
             return u
-        if not _abs.startswith(("http://", "https://")):
+        _m = _re.match(r"(https?)://([^/?#]+)([^?#]*)(\?[^#]*)?(#.*)?$", _abs)
+        if not _m:
             return u
-        return proxy_base + quote(_abs, safe="")
+        _sch, _host, _path, _q = _m.group(1), _m.group(2), _m.group(3), _m.group(4)
+        return (proxy_base.rstrip("/") + "/" + _sch + "/" + _host
+                + quote(_path or "/", safe="/%:") + (_q or ""))
     return _to_proxy
 
 
@@ -2011,7 +2024,40 @@ def _proxy_sanitize_setcookie(sc):
 @app.route("/api/web/proxy",
            methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 def api_web_proxy():
-    """Web 代理：取页 → 删 XFO → 重写资源 URL 为代理路径 → 注入导航拦截。
+    """query 式代理（a502 原始形态）：/api/web/proxy?url=<编码原始URL>。
+
+    a506 起主形态是路径式（/api/web/proxy/https/host/path——webpack
+    publicPath 等相对解析天然正确）；本路由保留做兼容（旧收藏/导航栈/
+    _webProxyUrl 兜底）。
+    """
+    url = (request.args.get("url") or "").strip()
+    return _proxy_core(url)
+
+
+@app.route("/api/web/proxy/<any(http, https):_sch>/<path:_rest>",
+           methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+def api_web_proxy_path(_sch, _rest):
+    """a506 路径式代理：/api/web/proxy/<scheme>/<host>/<path>。
+
+    为什么放弃 query 式做主形态：webpack runtime 从 currentScript.src 取
+    dirname 当 publicPath，query 式代理 URL 的 dirname 折叠成 /api/web/
+    → 动态 chunk 拼出 origin+/api/web/xxx.js → Flask 404（GitHub 40 个
+    chunk 全灭、commit 列骨架）。路径式下 script src 是
+    /api/web/proxy/https/cdn.host/assets/app.js，dirname 还原出 CDN 基址
+    → chunk 相对路径拼出 /api/web/proxy/https/cdn.host/assets/xxx.js →
+    命中本路由，闭环。CSS 相对字体/importmap/未来的 SW 同理天然正确。
+    path 段由 Flask 解码——转发前由调用方拼回原始 URL；query 原样透传
+    （代理自身无参数，query 全属于原始请求）。
+    """
+    _u = _sch + "://" + _rest
+    if request.query_string:
+        _u += "?" + request.query_string.decode("latin-1")
+    return _proxy_core(_u)
+
+
+def _proxy_core(url):
+    """代理核心（a506 从 api_web_proxy 提取，query/路径式两路由共用）：
+    取页 → 删 XFO → 重写资源 URL 为代理路径 → 注入导航拦截。
 
     a502：所有子资源（img/js/css/font）也走代理。
     a504：支持 POST/PUT/DELETE 等——AJAX（登录/API）也走代理。
@@ -2023,7 +2069,7 @@ def api_web_proxy():
     import ssl as _ssl
     import urllib.request as _ur
     from urllib.parse import quote as _quote
-    url = (request.args.get("url") or "").strip()
+    url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return Response("Bad URL", status=400)
     _ctx = _ssl.create_default_context()
@@ -2088,19 +2134,15 @@ def api_web_proxy():
             pass
         _ct = _he.headers.get("Content-Type") or ""
         # a505：30x 透传——Location 代理化（相对地址基于原始 URL 解析），
-        # Set-Cookie 同步透传（登录 302 的 session 落地在浏览器侧）
+        # Set-Cookie 同步透传（登录 302 的 session 落地在浏览器侧）。
+        # a506：_fn 产路径式（dirname 语义对 publicPath 类运行时正确）
         if 300 <= _he.code < 400:
             _loc = _he.headers.get("Location") or ""
             if _loc:
-                from urllib.parse import urljoin as _uj, quote as _q
-                try:
-                    _abs_loc = _uj(url, _loc)
-                except Exception:
-                    _abs_loc = _loc
+                _fn_e = _proxy_url_rewrite(
+                    url, "http://" + request.host + "/api/web/proxy")
                 _resp = Response(b"", status=_he.code)
-                _resp.headers["Location"] = (
-                    "http://" + request.host + "/api/web/proxy?url="
-                    + _q(_abs_loc, safe=""))
+                _resp.headers["Location"] = _fn_e(_loc)
                 return _set_cookies_into(_resp, _he.headers)
         # a504：转发原始错误码和响应体（401/403/404 等——AJAX 需要看到）
         return _set_cookies_into(
@@ -2115,8 +2157,7 @@ def api_web_proxy():
     # CSS：重写 url(...) 为代理路径（字体/背景图等）
     if "text/css" in _ct_low:
         import re as _re
-        _proxy_base = "http://" + request.host + "/api/web/proxy?url="
-        _fn = _proxy_url_rewrite(_final, _proxy_base)
+        _fn = _proxy_url_rewrite(_final, "http://" + request.host + "/api/web/proxy")
         _css = _raw.decode("utf-8", "replace")
         _css = _re.sub(
             r"url\((['\"]?)([^'\")\s]+)\1\)",
@@ -2140,8 +2181,7 @@ def api_web_proxy():
 
     import re as _re
     from urllib.parse import urljoin as _urljoin
-    _proxy_base = 'http://' + request.host + '/api/web/proxy?url='
-    _fn = _proxy_url_rewrite(_final, _proxy_base)
+    _fn = _proxy_url_rewrite(_final, "http://" + request.host + "/api/web/proxy")
 
     # 重写资源 URL：匹配整个资源标签，在标签内全局替换 src/href
     # 不匹配 <a>（导航拦截 JS 处理）——<a> 不在标签列表中
@@ -2175,6 +2215,21 @@ def api_web_proxy():
         r"(srcset)=['\"]([^'\"]+)['\"]",
         _rw_srcset, _html, flags=_re.I)
 
+    # a506：重写 importmap JSON 里的 URL——裸模块名（import "react"）经
+    # 浏览器模块加载器按 importmap 解析，不走任何 src/href 属性或 fetch
+    # 拦截；不重写则直接打原始 CDN → 内网阻断 → module graph 断裂、
+    # hydration 永不接管（GitHub 实锤：文件列表 commit 列永久骨架）
+    def _rw_importmap(m):
+        # 字符类：排除 双引号/单引号/空白/反斜杠/逗号（JSON 值边界）。
+        # 反斜杠歧义坑（a506 实锤）：多重转义写错会把裸 s 变字面 s、
+        # URL 从 githubassets 的 s 处截断——单引号 raw 下 " 免转义最稳
+        _body = _re.sub(r'https?://[^"\'\s\\,]+',
+                        lambda mm: _fn(mm.group(0)), m.group(2))
+        return m.group(1) + _body + "</script>"
+    _html = _re.sub(
+        r"(<script[^>]*type=[\"']importmap[^>]*>)(.*?)</script>",
+        _rw_importmap, _html, flags=_re.I | _re.S)
+
     # 删已有 <base>，注入指向原始 URL 的 base（CSS 内残余相对路径兜底）。
     # a505：referrer 从 no-referrer 放宽为 same-origin——404 兜底路由靠同源
     # Referer（?url= 原始地址）还原站点；跨域请求本就全走代理、由服务端
@@ -2206,24 +2261,39 @@ def _proxy_404_fallback(err):
     这类站内相对跳转（location 赋值浏览器安全限制拦不住），在代理 iframe
     里解析为 127.0.0.1/main → Flask 404 → 用户看到「跳转失败」。
 
-    兜底链：Referer 是本机代理页（?url= 带原始地址）+ GET + Accept 含
-    text/html（AJAX 404 不动，fetch 期待原状态码）→ 把请求 path+query
-    拼回原始站点 → 302 回代理。重定向目标是 /api/web/proxy（有路由），
-    不会循环；原始站点也 404 时由代理透传状态码、不进本 handler。
+    兜底链：Referer 是本机代理页（a506 路径式 /proxy/<sch>/<host>/...，
+    兼容 a502 query 式 ?url=）+ GET + Accept 含 text/html（AJAX 404 不
+    动，fetch 期待原状态码）→ 把请求 path+query 拼回原始站点 → 302 回
+    代理。重定向目标是代理路由（有路由），不会循环；原始站点也 404 时
+    由代理透传状态码、不进本 handler。
     """
+    import re as _re
+    from urllib.parse import urljoin as _uj, unquote as _unq, quote as _q
     _ref = request.headers.get("Referer", "")
-    if (request.method == "GET" and "/api/web/proxy?url=" in _ref
+    if (request.method == "GET"
+            and "/api/web/proxy" in _ref
             and "text/html" in (request.headers.get("Accept") or "")):
-        import re as _re
-        from urllib.parse import urljoin as _uj, unquote as _unq, quote as _q
-        _m = _re.search(r"[?&]url=([^&]+)", _ref)
-        if _m:
-            try:
+        _base = ""
+        _m = _re.search(r"/api/web/proxy/(https?)/([^/?#]+)([^?#]*)", _ref)
+        if _m:                                    # a506 路径式
+            _base = _m.group(1) + "://" + _m.group(2) + _m.group(3)
+        else:
+            _m = _re.search(r"[?&]url=([^&]+)", _ref)
+            if _m:                                # a502 query 式兼容
                 _base = _unq(_m.group(1))
+        if _base:
+            try:
                 _target = _uj(_base, request.full_path.rstrip("?"))
                 if _target.startswith(("http://", "https://")):
+                    # query 与 path 分离拼接——整串 quote 会把 ? 编进 path 段
+                    _qp = ""
+                    if "?" in _target:
+                        _target, _qp = _target.split("?", 1)
+                        _qp = "?" + _qp
+                    _sch2, _rest2 = _target.split("://", 1)
                     return redirect(
-                        "/api/web/proxy?url=" + _q(_target, safe=""), code=302)
+                        "/api/web/proxy/" + _sch2 + "/"
+                        + _q(_rest2, safe="/%:") + _qp, code=302)
             except Exception:
                 pass
     return err

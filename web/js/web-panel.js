@@ -207,9 +207,16 @@ function _webCur() {
 // 后端取页后注入 <base>（资源从原始服务器加载）+ 导航拦截 JS（链接
 // 点击经 postMessage 回到父页面 → 再走代理导航）。所有 frame.src 赋值
 // 统一经 _webProxyUrl 包装。
+// a506：query 式升级为路径式 /proxy/<scheme>/<host>/<path>——webpack
+// 取 currentScript.src 的 dirname 做 publicPath，query 式折叠成
+// /api/web/ 导致动态 chunk 全 404；路径式 dirname 还原 CDN 基址。
 function _webProxyUrl(url) {
   if (!url || url === 'about:blank') return url;
-  return '/api/web/proxy?url=' + encodeURIComponent(url);
+  try {
+    const a = new URL(url);
+    return '/api/web/proxy/' + a.protocol.replace(':', '') + '/' + a.host
+           + a.pathname + a.search;
+  } catch (_) { return '/api/web/proxy?url=' + encodeURIComponent(url); }
 }
 // 代理页面的链接点击 → postMessage → 父页面代理导航
 window.addEventListener('message', (e) => {
@@ -277,10 +284,23 @@ function _webLoadWatch(c, url) {
     }, 2000);
   };
   frame.addEventListener('load', onLoad, { once: true });
-  c._loadT = setTimeout(() => {
+  // a506：超时分级——代理模式下重站点（GitHub 百余资源串行取）主文档
+  // load 常超 25s，直接弹「页面加载异常」是误报（用户实锤：点继续等待
+  // 能进）。25s 到点先读同源 iframe 的 readyState（代理页同源可读）：
+  // 仍在 loading → 静默延长到 60s；interactive/complete 或读不到 → 弹。
+  const _fire = () => {
     frame.removeEventListener('load', onLoad);
     if (_webNav.stack[_webNav.idx] === url && !_webUi.reader) {
-      err.style.display = 'flex';   // 25s 超时（代理模式下资源串行获取较慢）
+      err.style.display = 'flex';
+    }
+  };
+  c._loadT = setTimeout(() => {
+    let st = '';
+    try { st = frame.contentDocument && frame.contentDocument.readyState; } catch (_) {}
+    if (st === 'loading' && _webNav.stack[_webNav.idx] === url) {
+      c._loadT = setTimeout(_fire, 35000);   // 共 60s
+    } else {
+      _fire();
     }
   }, 25000);
 }

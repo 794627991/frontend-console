@@ -145,10 +145,9 @@ def test_302_passthrough_location_proxied(monkeypatch):
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2Flogin")
     assert r.status_code == 302
-    # 绝对代理 URL（相对 Location 会被部分客户端按 <base> 解析，绝对最稳）
-    assert "/api/web/proxy?url=" in r.headers["Location"]
+    # a506：绝对路径式代理 URL（dirname 语义对 publicPath 类运行时正确）
+    assert "/api/web/proxy/http/srv/main" in r.headers["Location"]
     assert r.headers["Location"].startswith("http://")
-    assert "http%3A%2F%2Fsrv%2Fmain" in r.headers["Location"]
     # 302 中间响应的 Set-Cookie 不丢（urllib 自动跟随时会吞掉）
     assert r.headers.getlist("Set-Cookie") == ["sessionid=abc; Path=/"]
 
@@ -159,7 +158,7 @@ def test_302_absolute_location(monkeypatch):
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2Fsrv%2Fa")
     assert r.status_code == 301
-    assert "http%3A%2F%2Fother%2Fx" in r.headers["Location"]
+    assert "/api/web/proxy/http/other/x" in r.headers["Location"]
 
 
 def test_302_without_location_falls_to_error_path(monkeypatch):
@@ -208,14 +207,14 @@ def test_404_fallback_redirects_to_proxy():
     r = c.get("/main", headers={"Referer": _REF,
                                 "Accept": "text/html,application/xhtml+xml"})
     assert r.status_code == 302
-    assert "http%3A%2F%2F10.17.97.73%3A8765%2Fmain" in r.headers["Location"]
+    assert "/api/web/proxy/http/10.17.97.73:8765/main" in r.headers["Location"]
 
 
 def test_404_fallback_keeps_query():
     c = S.app.test_client()
     r = c.get("/main?tab=1&x=2", headers={"Referer": _REF,
                                           "Accept": "text/html"})
-    assert "http%3A%2F%2F10.17.97.73%3A8765%2Fmain%3Ftab%3D1%26x%3D2" \
+    assert "/api/web/proxy/http/10.17.97.73:8765/main?tab=1&x=2" \
         in r.headers["Location"]
 
 
@@ -241,7 +240,7 @@ def test_404_without_proxy_referer_untouched():
 
 def test_404_loop_guard(monkeypatch):
     # 重定向目标必是 /api/web/proxy（有路由），不该再进 404；即使原始站点
-    # 自身 404，代理透传状态码（路由命中）不触发兜底——用假 opener 钉住
+    # 自身 404，代理透传状态码（路由命中）不进兜底——用假 opener 钉住
     op = _FakeOpener(urllib.error.HTTPError(
         "http://10.17.97.73:8765/main", 404, "msg",
         _msg({"Content-Type": "text/html"}), io.BytesIO(b"<html><head></head><body>404</body></html>")))
@@ -249,3 +248,99 @@ def test_404_loop_guard(monkeypatch):
     c = S.app.test_client()
     r = c.get("/api/web/proxy?url=http%3A%2F%2F10.17.97.73%3A8765%2Fmain")
     assert r.status_code == 404          # 透传，不是 302
+
+
+# ---------- a506：路径式代理 ----------
+
+def test_url_rewrite_path_style():
+    """重写函数产路径式（publicPath 的 dirname 语义正确）。"""
+    fn = S._proxy_url_rewrite("https://github.com/zai-org/ZCode",
+                              "http://127.0.0.1:49302/api/web/proxy")
+    assert fn("https://github.githubassets.com/assets/app.js") == \
+        "http://127.0.0.1:49302/api/web/proxy/https/github.githubassets.com/assets/app.js"
+    # 相对路径基于页面 URL 解析
+    assert fn("/assets/core-1.js") == \
+        "http://127.0.0.1:49302/api/web/proxy/https/github.com/assets/core-1.js"
+    # query 附加、fragment 丢弃（相对路径按 urljoin 目录语义：base 末段
+    # ZCode 无尾斜杠视作文件名，a.js 替换它）
+    assert fn("a.js?v=3#x") == \
+        "http://127.0.0.1:49302/api/web/proxy/https/github.com/zai-org/a.js?v=3"
+    # 非 http(s) / 空值原样返回
+    assert fn("javascript:0") == "javascript:0"
+    assert fn("#top") == "#top"
+    assert fn("data:image/gif;base64,x") == "data:image/gif;base64,x"
+
+
+def test_path_route_serves_and_forwards(monkeypatch):
+    """/proxy/https/host/path 路由取页 + cookie 转发 + Set-Cookie 透传。"""
+    op = _FakeOpener(_FakeResp(
+        b"<html><head></head><body>ok</body></html>",
+        {"Set-Cookie": "s=1; Domain=x; Secure"}, "http://srv:8765/a/b"))
+    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    c = S.app.test_client()
+    c.set_cookie("s", "1")
+    r = c.get("/api/web/proxy/http/srv:8765/a/b?q=1")
+    assert r.status_code == 200
+    assert b"ok" in r.data
+    # 还原出的原始 URL（含 query）+ cookie 转发
+    assert op.last_req.full_url == "http://srv:8765/a/b?q=1"
+    assert "s=1" in (op.last_req.headers.get("Cookie") or "")
+    assert r.headers.getlist("Set-Cookie") == ["s=1; Path=/"]
+
+
+def test_path_route_webpack_chunk_semantics(monkeypatch):
+    """核心场景：publicPath=代理 dirname → chunk 相对路径落回代理路由。"""
+    op = _FakeOpener(_FakeResp(
+        b"console.log(1)", {"Content-Type": "application/javascript"},
+        "https://github.githubassets.com/assets/wp-runtime-abc.js"))
+    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    c = S.app.test_client()
+    r = c.get("/api/web/proxy/https/github.githubassets.com/assets/wp-runtime-abc.js")
+    assert r.status_code == 200
+    assert op.last_req.full_url == \
+        "https://github.githubassets.com/assets/wp-runtime-abc.js"
+
+
+def test_404_fallback_path_style_referer(monkeypatch):
+    """路径式 referer 的 404 兜底（a506 主形态）。"""
+    c = S.app.test_client()
+    ref = ("http://127.0.0.1:49302/api/web/proxy/"
+           "https/github.com/zai-org/ZCode")
+    r = c.get("/apps", headers={"Referer": ref, "Accept": "text/html"})
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith(
+        "/api/web/proxy/https/github.com/apps")
+    # 相对路径基于 referer 的原始路径解析
+    r2 = c.get("/blob/main/x.js", headers={"Referer": ref, "Accept": "text/html"})
+    assert "/api/web/proxy/https/github.com/blob/main/x.js" \
+        in r2.headers["Location"]
+
+
+def test_path_route_bad_url():
+    c = S.app.test_client()
+    # scheme 由 <any(http,https)> 约束，非法值走 404（兜底无 referer 不拦）
+    assert c.get("/api/web/proxy/ftp/srv/x").status_code == 404
+
+
+def test_importmap_urls_rewritten(monkeypatch):
+    """a506：importmap JSON 里的 URL 必须代理化——裸模块名 import 走浏览器
+    模块加载器（无属性/无 fetch hook），不重写则内网直接断 module graph
+    （GitHub hydration 永不接管、commit 列永久骨架的根因）。"""
+    _im = ('<script type="importmap">'
+           '{"imports":{"react":"https://cdn.x.com/a.js",'
+           '"react-dom/client":"https://cdn.x.com/b.js?ver=1"}'
+           ',"scopes":{"/app/":{"x":"https://other.y.com/c.js"}}}'
+           '</script>')
+    op = _FakeOpener(_FakeResp(
+        ("<html><head>" + _im + "</head><body>ok</body></html>").encode(),
+        {"Content-Type": "text/html"}, "https://github.com/zai-org/ZCode"))
+    monkeypatch.setattr("urllib.request.build_opener", lambda *a, **k: op)
+    c = S.app.test_client()
+    r = c.get("/api/web/proxy/https/github.com/zai-org/ZCode")
+    assert r.status_code == 200
+    _h = r.data.decode()
+    # _fn 产绝对代理 URL（request.host 在 test client 下是 localhost）
+    assert '"http://localhost/api/web/proxy/https/cdn.x.com/a.js"' in _h
+    assert "http://localhost/api/web/proxy/https/cdn.x.com/b.js?ver=1" in _h
+    assert "http://localhost/api/web/proxy/https/other.y.com/c.js" in _h
+    assert '"https://cdn.x.com/a.js"' not in _h       # 原始 URL 不残留
