@@ -43,7 +43,11 @@ class WebTabs:
         self._ctl = {}                       # tab_id(str) → WebView2 控件
         self._env = None                     # 共享 CoreWebView2Environment
         self._rect = (0, 0, 800, 600)        # 最近一次布局（物理像素）
-        self._next_new_target = [None]       # NewWindowRequested → 待开 URL
+        self._layout_seen = False            # a555：首份 rect 到达前不显控件
+        self._want = None                    # a555：(tab_id, visible) 最近显隐意图
+        self._pending = set()                # a555：create 在途的 tab（双发去重）
+        self._pend_nav = {}                  # a555：在途 tab 的后发导航（末次胜）
+        self._env_failed = False             # a555：env 永久失败 → 快速失败
         self._ensure_env()
 
     # ---------- 环境（一次） ----------
@@ -54,7 +58,19 @@ class WebTabs:
         try:
             import os
             import clr
-            base = r"C:\Users\gaoyi13\AppData\Local\Programs\Python\Python314\Lib\site-packages\webview\lib"
+            # a555 审计修：原硬编码开发机 site-packages 绝对路径——打包后
+            # 无效。改从 pywebview 自身定位（它已加载过 WebView2 程序集，
+            # 其 lib 目录即程序集所在；找不到则退回 webview 包内 lib）
+            base = None
+            try:
+                from webview.util import interop_dll_path
+                base = os.path.dirname(interop_dll_path(
+                    "Microsoft.Web.WebView2.Core.dll"))
+            except Exception:
+                pass
+            if not base:
+                import webview
+                base = os.path.join(os.path.dirname(webview.__file__), "lib")
             if base not in sys_path():
                 sys_path_append(base)
             os.environ["Path"] = os.environ.get("Path", "") + ";" + base
@@ -71,9 +87,11 @@ class WebTabs:
                     self._env = t.Result
                     _log("INFO", "environment ready: %s" % udf)
                 except Exception as e:
+                    self._env_failed = True   # a555：别让后续 create 白等 5s
                     _log("ERROR", "env create: %r" % e)
             task.ContinueWith(System.Action[System.Threading.Tasks.Task](_done))
         except Exception as e:
+            self._env_failed = True
             _log("ERROR", "_ensure_env: %r" % e)
 
     # ---------- UI 线程工具 ----------
@@ -91,6 +109,9 @@ class WebTabs:
         """开 tab：创建控件 → 初始化 → 导航。初始化是异步链（env →
         EnsureCoreWebView2Async → CoreWebView2 就绪 → Navigate），全程
         ContinueWith 不阻塞 UI 线程。"""
+        if self._env_failed:
+            # a555：env 已判死——快速失败，别进下面的重试白等 5s
+            return {"ok": False, "err": "WebView2 环境初始化失败"}
         if not self._env:
             # env 竞态（启动初期）：100ms 重试 ×50
             import time
@@ -103,6 +124,13 @@ class WebTabs:
         if tab_id in self._ctl:
             self.navigate(tab_id, url)
             return {"ok": True}
+        if tab_id in self._pending:
+            # a555 审计修：双击回车连发两个 create——原先两者都过 in _ctl
+            # 检查（_build 未跑、dict 未写）→ 建两个控件，先者成永不 Dispose
+            # 的孤儿。去重 + 记下后发导航（控件就绪后末次胜出）
+            self._pend_nav[tab_id] = url
+            return {"ok": True}
+        self._pending.add(tab_id)
 
         def _build():
             try:
@@ -118,6 +146,8 @@ class WebTabs:
                 self._wire(tab_id, ctl, url)
             except Exception as e:
                 _log("ERROR", "create: %r" % e)
+            finally:
+                self._pending.discard(tab_id)
         self._ui(_build)
         return {"ok": True}
 
@@ -149,6 +179,10 @@ class WebTabs:
                         _log("WARN", "autofill: %r" % e)
                     self._wire_events(tab_id, ctl, cvw)
                     cvw.Navigate(url or "about:blank")
+                    # a555：create 在途期间后发的导航（末次胜出）
+                    u2 = self._pend_nav.pop(tab_id, None)
+                    if u2 and u2 != url:
+                        cvw.Navigate(u2)
                 except Exception as e:
                     _log("ERROR", "init: %r" % e)
             self._ui(_on_ui)
@@ -172,15 +206,17 @@ class WebTabs:
     def _wire_events(self, tab_id, ctl, cvw):
         """地址栏推送 + 历史/新窗口。经主 UI ExecuteScriptAsync
         fire-and-forget（a550：推到工具文档而非网页文档）。"""
-        import System
 
         def _push(js):
+            """a555：返回成败——NewWindowRequested 推送失败时需降级。"""
             try:
                 m = self._main_cvw
                 if m:
                     m.ExecuteScriptAsync(js)
+                    return True
             except Exception:
                 pass
+            return False
 
         def _on_src(s, a):
             try:
@@ -203,19 +239,31 @@ class WebTabs:
         cvw.NavigationCompleted += _on_nav_done
 
         def _on_hist(s, a):
-            _push("window.__webTabHist && window.__webTabHist(%s, %s, %s)" % (
-                json.dumps(tab_id),
-                "true" if cvw.CanGoBack else "false",
-                "true" if cvw.CanGoForward else "false"))
+            # a555 审计修：原先 CanGoBack/CanGoForward 在 _push 实参处求值、
+            # 整体无 try——dispose 后在途事件抛 ObjectDisposedException 直穿
+            # CLR 事件分发 → WinForms ThreadException。六个处理器唯一裸奔者
+            try:
+                _push("window.__webTabHist && window.__webTabHist(%s, %s, %s)" % (
+                    json.dumps(tab_id),
+                    "true" if cvw.CanGoBack else "false",
+                    "true" if cvw.CanGoForward else "false"))
+            except Exception:
+                pass
         cvw.HistoryChanged += _on_hist
 
         def _on_new_window(s, a):
             try:
                 u = str(a.Uri or "")
                 a.set_Handled(True)
-                if u:
-                    _push("window.__webTabNew && window.__webTabNew(%s)"
-                          % json.dumps(u))
+                if u and not _push(
+                        "window.__webTabNew && window.__webTabNew(%s)"
+                        % json.dumps(u)):
+                    # a555 审计修：主 UI 推送失败（关停期/未装配）时降级本
+                    # tab 打开——原先静默吞掉，用户点 _blank 毫无反应
+                    try:
+                        cvw.Navigate(u)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         cvw.NewWindowRequested += _on_new_window
@@ -280,14 +328,38 @@ class WebTabs:
             self._ui(_do)
         return {"ok": True}
 
+    def _apply_visibility(self):
+        """按最近显隐意图应用（UI 线程内跑）。
+
+        a555 审计修：list 快照——dispose 在 Flask 线程同步 pop _ctl，迭代
+        活视图遇并发变更抛 RuntimeError 中断循环（切 tab 半途而废）。"""
+        if not self._want:
+            return
+        tab_id, visible = self._want
+        for tid, c in list(self._ctl.items()):
+            c.Visible = (tid == tab_id) and visible
+            if c.Visible:
+                c.BringToFront()
+
     def show(self, tab_id, visible):
-        """切 tab：显示目标控件，其余隐藏（同一 rect 叠放）。"""
+        """切 tab：显示目标控件，其余隐藏（同一 rect 叠放）。
+
+        a555 审计修：首份 layout 到达前不显控件——默认 rect (0,0,800,600)
+        是占位值，WebView2 原生窗口又在 DOM 之上，layout/show 两个独立
+        fetch 无顺序保证，乱序时控件会闪一帧盖住工具 UI 左上角。意图记入
+        _want，由到达的 layout._apply 补显。"""
+        self._want = (tab_id, bool(visible))
+        if visible and tab_id not in self._ctl and tab_id in self._pending:
+            # a555：create 在途（show 先于 _build 被处理）——此刻应用会把
+            # 其他已显示 tab 藏掉又无新控件可显。意图已记 _want，控件建好
+            # 后由 layout._apply 补显
+            return {"ok": True}
+
         def _apply():
+            if not self._layout_seen:
+                return          # 等 layout 到达后补显
             try:
-                for tid, c in self._ctl.items():
-                    c.Visible = (tid == tab_id) and visible
-                    if c.Visible:
-                        c.BringToFront()
+                self._apply_visibility()
             except Exception as e:
                 _log("WARN", "show: %r" % e)
         self._ui(_apply)
@@ -316,13 +388,17 @@ class WebTabs:
     def layout(self, x, y, w, h):
         """rect 物理像素（前端 DIP × devicePixelRatio）。"""
         self._rect = (int(x), int(y), int(max(w, 50)), int(max(h, 50)))
+        self._layout_seen = True
 
         def _apply():
             try:
                 import System.Drawing
                 r = System.Drawing.Rectangle(*self._rect)
-                for c in self._ctl.values():
+                # a555：list 快照防 dispose 竞态（同 _apply_visibility）
+                for c in list(self._ctl.values()):
                     c.Bounds = r
+                # a555：补显被首显哨兵推迟/在途 create 错过的 show 意图
+                self._apply_visibility()
             except Exception as e:
                 _log("WARN", "layout: %r" % e)
         self._ui(_apply)

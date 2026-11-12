@@ -84,11 +84,10 @@ function _webNormUrl(s) {
 function buildWebPanelTab(url, opts) {
   const newTab = !!(opts && opts.newTab);
   // 无 newTab 且已有网页 tab：聚焦 + 当前 tab 导航（顶栏输入语义）
-  let pid = null;
-  for (const p in connections) {
-    const c = connections[p];
-    if (c && c.meta && c.meta.kind === 'web') { pid = p; break; }
-  }
+  // a555 审计修：原取「第一个创建的」web tab——用户停在 web:2 时顶栏回车
+  // 会被拽到 web:1。浏览器语义=当前激活 tab（无激活回落第一个）
+  const cur = _webCur();
+  let pid = cur ? cur.portId : null;
   if (pid && !newTab) {
     switchTab(pid);
     if (url) _webNavigate(url);
@@ -192,7 +191,7 @@ function buildWebPanelTab(url, opts) {
     const c2 = _webCur();
     const url = (c2 && c2._nav.stack[c2._nav.idx]) || '';
     const host = (() => { try { return new URL(url).host; } catch (_) { return ''; } })();
-    let z = (c2 && c2._zoom) || 1;
+    let z = (c2 && c2._ui && c2._ui.zoom) || 1;   // a555：原读 c2._zoom 字段错位
     z = Math.min(2, Math.max(0.5, z * (e.deltaY < 0 ? 1.1 : 0.9)));
     _webApplyZoom(z, host);
   }, { passive: false });
@@ -215,7 +214,10 @@ function buildWebPanelTab(url, opts) {
     // a475 会话恢复（a554 改为一次性消费）：无显式 URL 的首开回到上次页
     conn._nav = _webSavedNav;
     _webSavedNav = null;
-    _webNavigate(conn._nav.stack[conn._nav.idx]);
+    // a555 审计修：_webNavigate 会再 push 栈顶（[A,B]→[A,B,B]，恢复后
+    // 首次后退成空转）——idx 先退一位，push 后恰好回到原栈顶
+    conn._nav.idx -= 1;
+    _webNavigate(conn._nav.stack[conn._nav.stack.length - 1]);
   }
   return conn;
 }
@@ -234,7 +236,9 @@ function _webCur() {
 // 控件 REST 调用（src/web_tabs.py 的 /api/web/tabs）——a554：带 conn
 // （每个网页 tab 独立控件 id，挂 conn._tabId）
 function _webCtl(conn, d) {
-  d.tab = (conn && conn._tabId) || 'web-1';
+  // a555 审计修：conn 空时原兜底 'web-1' 会操纵 1 号控件（打错 tab）
+  if (!conn || !conn._tabId) return Promise.resolve({ ok: false });
+  d.tab = conn._tabId;
   return fetch('/api/web/tabs', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(d)
@@ -278,9 +282,14 @@ function _webByTabId(tid) {
   return null;
 }
 window.__webTabUrl = function (tid, url) {
-  const c = _webByTabId(tid) || _webCur();
+  // a555 审计修：去掉 || _webCur() 兜底——已 dispose 控件的迟到事件会
+  // 串进无关 tab 改它的地址栏/导航栈；tid 查无即丢弃
+  const c = _webByTabId(tid);
   if (!c) return;
-  _webActivePid = c.portId;                // 事件来自的 tab 即用户在看的
+  // a555 审计修：仅前台 tab 可置激活——后台 tab 的延迟 SourceChanged
+  // （重定向收尾/慢加载/SPA pushState）会偷走激活态，后续工具栏操作
+  // 全打到错误 tab
+  if (c.wrap.style.display !== 'none') _webActivePid = c.portId;
   c._ctlUrl = url;                          // 真实 URL（含页内跳转）
   const inp = c.wrap.querySelector('[data-web-input]');
   if (inp && document.activeElement !== inp) inp.value = url;
@@ -291,7 +300,9 @@ window.__webTabUrl = function (tid, url) {
       const a = new URL(url), b = new URL(top);
       if (a.host === b.host) c._nav.stack[c._nav.idx] = url;
       else { c._nav.stack = c._nav.stack.slice(0, c._nav.idx + 1);
-             c._nav.stack.push(url); c._nav.idx = c._nav.stack.length - 1; }
+             c._nav.stack.push(url); c._nav.idx = c._nav.stack.length - 1;
+             // a555 审计修：页内跨站 push 无上限（_webNavigate 有 50 帽）
+             if (c._nav.stack.length > 50) { c._nav.stack.shift(); c._nav.idx--; } }
     } catch (_) {}
     _webSessionSave();
   }
@@ -326,20 +337,39 @@ window.__webTabNew = function (url) {
 // 隐藏：WebView2 控件是 WinForms 原生子窗口，窗口层级永远在主 UI 的
 // DOM 之上，任何 z-index 都压不过（用户实锤：新建连接 UI 被网页盖住）
 (function () {
+  // a555 审计修（浏览器实测实锤）：①可见性判定改实测——#ctxMenu 常驻
+  // DOM、inline style 为空靠 CSS 默认 display:none 隐藏，原
+  // .ctx-menu:not([style*="display: none"]) 从页面加载起就永久误匹配
+  // → sync 一跑就把网页控件全藏；②右键/收藏菜单经 style.display 开关
+  // （class 观察器看不见），补 pointerdown/click/contextmenu 捕获联动
+  //（开菜单的 contextmenu 在显示前、关菜单的 click 在隐藏前——延迟一
+  // 拍查实测可见性）；③a554 去单例后 connections[WEB_PORTID] 恒 null，
+  // 原判定整体失效，改 _webCur()
+  const shown = (el) => !!(el && (el.offsetWidth || el.offsetHeight));
   const anyOverlayOpen = () =>
-    !!document.querySelector('.modal.show, .ctx-menu:not([style*="display: none"]), #webFavMenu');
+    [...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu')]
+      .some(shown);
+  let pend = false;
   const sync = () => {
-    const c = connections[WEB_PORTID];
+    pend = false;
+    const c = _webCur();
     if (!c || !c._tabId) return;
     if (anyOverlayOpen()) _webCtlVisible(false);
     else if (c.wrap.style.display !== 'none' && !c._ui.reader && !c._ui.sleeping)
       _webCtlVisible(true);
   };
-  const mo = new MutationObserver(sync);
+  const queue = () => {
+    if (pend) return;
+    pend = true;
+    setTimeout(sync, 0);
+  };
+  const mo = new MutationObserver(queue);
   mo.observe(document.body, {
     subtree: true, attributes: true,
     attributeFilter: ['class']
   });
+  ['pointerdown', 'click', 'contextmenu'].forEach(ev =>
+    document.addEventListener(ev, queue, true));
 })();
 
 // 导航（终局：控件 Navigate，无代理无软过渡）
@@ -368,9 +398,11 @@ function _webNavigate(url) {
 (function () {
   const orig = window.switchTab;
   if (typeof orig !== 'function') return;
-  window.switchTab = function (pid) {
+  window.switchTab = function (pid, auto) {
+    // a555 审计修：透传 auto 参——丢了会被 _tabTouch 记成用户访问
+    // （MRU 污染，a452/a455 防过的回归）
     const prev = _webCur();
-    orig(pid);
+    orig(pid, auto);
     const c = connections[pid];
     const isWeb = !!(c && c.meta && c.meta.kind === 'web');
     if (isWeb) {
@@ -379,7 +411,13 @@ function _webNavigate(url) {
       _webCtlVisible(true);
       if (c._ctlPush) setTimeout(c._ctlPush, 30);
     } else if (prev && prev._tabId) {
-      _webCtlVisible(false);
+      // a555 审计修：关活动网页 tab 时 closeEditorTab 内部会自动回切
+      // （switchTab 重入）——若回切目标是另一个网页 tab，这里不得再隐藏
+      // （原先照藏 → 回切后的网页 tab 控件消失，用户看到空面板）
+      const a = (typeof activePortId !== 'undefined')
+        ? connections[activePortId] : null;
+      const activeWeb = !!(a && a.meta && a.meta.kind === 'web');
+      if (!activeWeb) _webCtlVisible(false);
     }
   };
   // 关 tab 联动：关闭网页 tab → dispose 控件
@@ -389,6 +427,10 @@ function _webNavigate(url) {
       const c = connections[pid];
       if (c && c.meta && c.meta.kind === 'web' && c._tabId) {
         try { _webCtl(c, { act: 'dispose' }); } catch (_) {}
+        // a555 审计修：解绑布局跟随——原先每关一个网页 tab 泄漏一份
+        // window 级 resize 闭包（强持 conn/wrap，还对已 dispose 控件发 layout）
+        try { if (c._ctlResize) c._ctlResize.disconnect(); } catch (_) {}
+        try { if (c._ctlPush) window.removeEventListener('resize', c._ctlPush); } catch (_) {}
         if (_webActivePid === pid) _webActivePid = null;
       }
       return origClose(pid);
@@ -479,9 +521,10 @@ function _webZoomFor(url) {
   try { return parseFloat(localStorage.getItem('web-zoom:' + h)) || 1; } catch (_) { return 1; }
 }
 function _webApplyZoom(z, host) {
-  const c = connections[WEB_PORTID];
+  // a555 审计修：原 connections[WEB_PORTID] 恒 null——缩放全链路死代码
+  const c = _webCur();
   if (!c) return;
-  c._zoom = z;
+  c._ui.zoom = z;
   const hostEl = c.wrap.querySelector('.web-host');
   const rd = c.wrap.querySelector('[data-web-reader]');
   if (hostEl) hostEl.style.zoom = z;
@@ -601,7 +644,8 @@ document.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const u = _webNormUrl(bar.value);
     if (!u) { buildWebPanelTab(); bar.blur(); return; }   // 空=开网页 tab（有会话则恢复）
-    buildWebPanelTab(u);                                  // 已有=聚焦导航；Ctrl=新 tab
+    if (e.ctrlKey) buildWebPanelTab(u, { newTab: true }); // a555 审计修：Ctrl+回车=新 tab（与面板地址栏一致）
+    else buildWebPanelTab(u);                             // 已有=聚焦当前 tab 导航
     bar.blur();
   });
   const fav = document.getElementById('tabFavBtn');
@@ -621,7 +665,7 @@ function _webFavMenu(anchor) {
   if (_wc && _wc._nav.idx >= 0 && _wc._nav.stack[_wc._nav.idx]) {
     html += `<div class="web-fav-cur" data-fav-resume>⟲ 恢复上次网页（${esc(_webShortUrl(_wc._nav.stack[_wc._nav.idx]))}）</div>`;
   }
-  if (cur && connections[WEB_PORTID]) {
+  if (cur && _webCur()) {   // a555 审计修：原 connections[WEB_PORTID] 恒 null，入口永不渲染
     const starred = favs.some(f => f.url === cur);
     html += `<div class="web-fav-cur" data-fav-act="${starred ? 'unstar' : 'star'}">`
       + (starred ? '★ 取消收藏当前网页' : '☆ 收藏当前网页') + '</div>';
