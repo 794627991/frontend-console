@@ -106,7 +106,8 @@ class WebTabs:
         def _build():
             try:
                 import Microsoft.Web.WebView2.WinForms as WF
-                import System.Windows.Forms as F
+                import System
+                import System.Drawing
                 ctl = WF.WebView2()
                 ctl.Visible = False           # 布局就绪前不显示
                 x, y, w, h = self._rect
