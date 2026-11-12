@@ -265,14 +265,29 @@ function _webLoadWatch(c, url) {
     // a493：load 触发后再等 2s——跨域 iframe 被 X-Frame-Options 拒绝时
     // load 会正常触发但内容是空白/错误页（内网代理注入 XFO 的场景：
     // 首页无 Referer 不注入可加载，子页带 Referer 被注入即空白）。
-    // 2s 后如果仍是当前导航且非阅读态，检查并弹提示
+    // 2s 后如果仍是当前导航且非阅读态，检查逃逸/空白
     setTimeout(() => {
       if (_webNav.stack[_webNav.idx] !== url || _webUi.reader) return;
+      let escaped = false;
       try {
-        // X-Frame-Options 被拒时 contentWindow 仍可访问但内容为空/错误页
-        // 检查 contentDocument（跨域返回 null = 正常；被拒绝也可能 null）
-        // 无法精确区分——改用通用策略：只要 load 完成后内容区域可能空白，
-        // 就给出提示（阅读模式按钮始终在工具栏上）
+        // 同源（代理域）href 可读；跨域抛 SecurityError = 跳出代理域
+        void frame.contentWindow.location.href;
+      } catch (_) { escaped = true; }
+      if (escaped) {
+        // a514：逃逸拉回——页面 JS 写 location.href=原始绝对 URL（SSO 登录
+        // 成功后跳 service 地址实锤）跳出代理 → 原始域被内网透明代理劫持
+        // 全坏（脚本拿到 HTML：Unexpected token '<'）。拉回栈顶代理 URL：
+        // CAS 的 TGT cookie 在代理域，单点登录自动续票据闭环直达登录后页。
+        // 限 2 次防死循环（页面每次加载都跳出去的场景）。
+        c._escN = (c._escN || 0) + 1;
+        if (c._escN <= 2) {
+          frame.src = _webProxyUrl(_webNav.stack[_webNav.idx]);
+          return;
+        }
+      } else {
+        c._escN = 0;
+      }
+      try {
         const doc = frame.contentDocument;
         if (doc === null) {
           // 跨域正常——但可能被 XFO 拒。给一个轻提示（不挡操作）
