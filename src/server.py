@@ -1823,6 +1823,219 @@ def _web_html_to_text(html_src):
     return title, body
 
 
+# ---- a502：Web 代理（用户令「网页里的链接必须在工具内正常打开显示」）----
+# 根因：内网代理对带 Referer 的响应注入 X-Frame-Options: sameorigin，
+# iframe 子页导航被拒（a495–a501 七版在 WebView2 层的修改全部不可行）。
+# 方案：iframe src 改为 /api/web/proxy?url=<encoded>——同源无 XFO 限制。
+# 静态资源（img/js/css）通过注入 <base> 从原始服务器加载（XFO 不影响
+# 子资源）；<a> 点击由注入的 JS 拦截 → postMessage → 父页面代理导航。
+
+_PROXY_NAV_JS = """<script>
+(function(){
+  var _pb = location.origin + '/api/web/proxy?url=';
+  function _px(u){
+    if (!u || u[0]==='#' || u.indexOf('data:')===0 || u.indexOf('blob:')===0
+        || u.indexOf('javascript:')===0 || u.indexOf(_pb)===0) return null;
+    try{
+      var a = new URL(u, document.baseURI).href;
+      if (a.indexOf(location.origin)===0) return null;   // 已是代理
+      return _pb + encodeURIComponent(a);
+    }catch(_){ return null; }
+  }
+  function _rw(el){
+    if (!el || !el.tagName) return;
+    var tag = el.tagName.toUpperCase();
+    if (tag!=='IMG' && tag!=='SCRIPT' && tag!=='LINK' && tag!=='SOURCE'
+        && tag!=='IFRAME' && tag!=='VIDEO' && tag!=='AUDIO' && tag!=='EMBED') return;
+    var attrs = ['src','href','data-src','poster'];
+    for (var i=0;i<attrs.length;i++){
+      var v = el.getAttribute(attrs[i]);
+      if (v){
+        var p = _px(v);
+        if (p) el.setAttribute(attrs[i], p);
+      }
+    }
+  }
+  // a505：MutationObserver 拦截 JS 动态创建的资源（lazyload 图片、
+  // 动态 script 等）——静态 HTML 已在后端重写，这里补运行时添加的
+  var _mo = new MutationObserver(function(muts){
+    for (var i=0;i<muts.length;i++){
+      var m = muts[i];
+      for (var j=0;j<m.addedNodes.length;j++){
+        var n = m.addedNodes[j];
+        if (n.nodeType!==1) continue;
+        _rw(n);
+        if (n.querySelectorAll){
+          n.querySelectorAll('img,script,link,source,iframe,video,audio,embed')
+            .forEach(_rw);
+        }
+      }
+    }
+  });
+  _mo.observe(document.documentElement||document, {childList:true, subtree:true});
+  // 链接导航拦截
+  document.addEventListener('click', function(e){
+    var a = e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    var href = a.getAttribute('href')||'';
+    if (!href || href[0]==='#' || href.indexOf('javascript:')===0) return;
+    e.preventDefault(); e.stopPropagation();
+    var abs = href;
+    try { abs = new URL(href, document.baseURI).href; } catch(_){}
+    window.parent.postMessage({__webProxyNav: abs}, '*');
+  }, true);
+  document.addEventListener('submit', function(e){
+    var f = e.target;
+    if (!f || f.tagName !== 'FORM') return;
+    var action = f.getAttribute('action') || location.href;
+    e.preventDefault(); e.stopPropagation();
+    var abs = action;
+    try { abs = new URL(action, document.baseURI).href; } catch(_){}
+    window.parent.postMessage({__webProxyNav: abs}, '*');
+  }, true);
+})();
+</script>"""
+
+
+def _proxy_url_rewrite(base_url, proxy_base):
+    """生成 URL 重写函数：把资源 URL 转为**绝对**代理 URL。
+
+    a504 修复：不能用相对路径 /api/web/proxy?url=...——<base href="原始URL">
+    会把相对路径解析到原始域名（cnblogs.com/api/web/proxy → 404）。
+    必须用绝对路径 http://127.0.0.1:port/api/web/proxy?url=...
+    """
+    from urllib.parse import urljoin, quote
+    def _to_proxy(u):
+        if not u or u.startswith(("javascript:", "data:", "#", "blob:", "mailto:",
+                                  "tel:", "about:")):
+            return u
+        try:
+            _abs = urljoin(base_url, u)
+        except Exception:
+            return u
+        if not _abs.startswith(("http://", "https://")):
+            return u
+        return proxy_base + quote(_abs, safe="")
+    return _to_proxy
+
+
+@app.route("/api/web/proxy")
+def api_web_proxy():
+    """Web 代理：取页 → 删 XFO → 重写资源 URL 为代理路径 → 注入导航拦截。
+
+    a503：所有子资源（img/js/css/font）也走代理——浏览器直连 CDN 会被
+    Origin/Referer 检查拒绝（403），服务器端取不带 Origin 头。
+    HTML 中 src/href 重写为代理路径；CSS 内 url() 也重写。
+    <base> 保留指向原始 URL（CSS 内未重写完的相对路径兜底）。
+    """
+    import ssl as _ssl
+    import urllib.request as _ur
+    from urllib.parse import quote as _quote
+    url = (request.args.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return Response("Bad URL", status=400)
+    _ctx = _ssl.create_default_context()
+    _ctx.check_hostname = False
+    _ctx.verify_mode = _ssl.CERT_NONE
+    _req = _ur.Request(url, headers={
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/124.0 Safari/537.36"),
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Referer": url,   # 某些 CDN 需要 Referer 是同域才放行
+    })
+    try:
+        _r = _ur.urlopen(_req, timeout=15, context=_ctx)
+        _raw = _r.read(5 * 1024 * 1024)
+        _ct = _r.headers.get("Content-Type") or ""
+        _final = _r.geturl() or url
+    except Exception as e:
+        return Response("Proxy fetch failed: %s" % str(e)[:200], status=502)
+
+    _ct_low = _ct.lower()
+
+    # CSS：重写 url(...) 为代理路径（字体/背景图等）
+    if "text/css" in _ct_low:
+        import re as _re
+        _proxy_base = "http://" + request.host + "/api/web/proxy?url="
+        _fn = _proxy_url_rewrite(_final, _proxy_base)
+        _css = _raw.decode("utf-8", "replace")
+        _css = _re.sub(
+            r"url\((['\"]?)([^'\")\s]+)\1\)",
+            lambda m: "url(%s%s%s)" % (m.group(1), _fn(m.group(2)), m.group(1)),
+            _css)
+        return Response(_css, mimetype="text/css")
+
+    # 非 HTML/CSS 直接透传（图片/字体等二进制资源）
+    if "text/html" not in _ct_low and "application/xhtml" not in _ct_low:
+        return Response(_raw, mimetype=_ct.split(";")[0].strip() or "application/octet-stream")
+
+    # ---- HTML 处理 ----
+    _cs = _web_detect_charset(_ct, _raw)
+    try:
+        _html = _raw.decode(_cs, "replace")
+    except LookupError:
+        _html = _raw.decode("utf-8", "replace")
+
+    import re as _re
+    from urllib.parse import urljoin as _urljoin
+    _proxy_base = 'http://' + request.host + '/api/web/proxy?url='
+    _fn = _proxy_url_rewrite(_final, _proxy_base)
+
+    # 重写资源 URL：匹配整个资源标签，在标签内全局替换 src/href
+    # 不匹配 <a>（导航拦截 JS 处理）——<a> 不在标签列表中
+    def _rw_tag(m):
+        _tag = m.group(1)          # 标签名（保持原大小写）
+        _attrs = m.group(2) or ''  # 标签内所有属性
+        _attrs = _re.sub(
+            r"(src|href|data-src)=['\"]([^'\"]+)['\"]",
+            lambda mm: '%s="%s"' % (mm.group(1), _fn(mm.group(2))),
+            _attrs, flags=_re.I)
+        return "<%s%s" % (_tag, _attrs)
+    _html = _re.sub(
+        r"<(img|script|link|source|video|audio|iframe|embed|track|object)"
+        r"(\s[^>]*)?(/?>)",
+        lambda m: _rw_tag(m) + (m.group(3) or ""),
+        _html, flags=_re.I)
+
+    # 重写 srcset（响应式图片）
+    def _rw_srcset(m):
+        _urls = m.group(2).split(",")
+        _out = []
+        for _part in _urls:
+            _part = _part.strip()
+            if " " in _part:
+                _u, _d = _part.rsplit(" ", 1)
+                _out.append(_fn(_u) + " " + _d)
+            else:
+                _out.append(_fn(_part))
+        return "%s=\"%s\"" % (m.group(1), ", ".join(_out))
+    _html = _re.sub(
+        r"(srcset)=['\"]([^'\"]+)['\"]",
+        _rw_srcset, _html, flags=_re.I)
+
+    # 删已有 <base>，注入指向原始 URL 的 base（CSS 内残余相对路径兜底）
+    _html = _re.sub(r"<base\b[^>]*>", "", _html, count=1, flags=_re.I)
+    _base = ('<base href="%s">'
+             '<meta name="referrer" content="no-referrer">'
+             % _final.replace('"', "&quot;"))
+    if "<head" in _html.lower():
+        _html = _re.sub(r"(<head[^>]*>)", r"\1" + _base, _html, count=1, flags=_re.I)
+    else:
+        _html = _base + _html
+
+    # 注入导航拦截 JS
+    if "</head>" in _html.lower():
+        _html = _re.sub(r"</head>", _PROXY_NAV_JS + "</head>", _html, count=1, flags=_re.I)
+    elif "</body>" in _html.lower():
+        _html = _re.sub(r"</body>", _PROXY_NAV_JS + "</body>", _html, count=1, flags=_re.I)
+    else:
+        _html += _PROXY_NAV_JS
+
+    return Response(_html, mimetype="text/html; charset=utf-8")
+
+
 @app.route("/api/web/fetch_text", methods=["POST"])
 def api_web_fetch_text():
     """a473：网页 tab「发给 Claude」——服务端取页转纯文本。

@@ -203,6 +203,21 @@ function buildWebPanelTab(url) {
 function _webCur() {
   return connections[WEB_PORTID];
 }
+// a502：Web 代理——iframe src 走 /api/web/proxy（同源无 XFO 限制）。
+// 后端取页后注入 <base>（资源从原始服务器加载）+ 导航拦截 JS（链接
+// 点击经 postMessage 回到父页面 → 再走代理导航）。所有 frame.src 赋值
+// 统一经 _webProxyUrl 包装。
+function _webProxyUrl(url) {
+  if (!url || url === 'about:blank') return url;
+  return '/api/web/proxy?url=' + encodeURIComponent(url);
+}
+// 代理页面的链接点击 → postMessage → 父页面代理导航
+window.addEventListener('message', (e) => {
+  if (e.data && e.data.__webProxyNav) {
+    _webNavigate(e.data.__webProxyNav);
+  }
+});
+
 function _webNavigate(url) {
   const c = _webCur();
   if (!c || !url) return;
@@ -217,7 +232,7 @@ function _webNavigate(url) {
   // 不做旧 URL 恢复——避免 about:blank→旧URL→新URL 三连导航）
   _webWake(c);
   if (_webUi.reader) _webReaderToggle(false, true);
-  frame.src = url;
+  frame.src = _webProxyUrl(url);
   inp.value = url;
   c.tab.querySelector('.label').textContent = _webShortUrl(url).slice(0, 24);
   _webApplyZoom(_webZoomFor(url), _webHostOf(url));   // a475 站点缩放记忆
@@ -265,9 +280,9 @@ function _webLoadWatch(c, url) {
   c._loadT = setTimeout(() => {
     frame.removeEventListener('load', onLoad);
     if (_webNav.stack[_webNav.idx] === url && !_webUi.reader) {
-      err.style.display = 'flex';   // 8s 超时（网络不通）
+      err.style.display = 'flex';   // 25s 超时（代理模式下资源串行获取较慢）
     }
-  }, 8000);
+  }, 25000);
 }
 // a493：跨域 iframe 可能被 XFO 拒（空白）——弹轻量提示条（不挡操作）
 function _webMaybeBlank(c, url) {
@@ -300,7 +315,7 @@ setInterval(() => {
   if (c && _webUi.sleeping && c.wrap.style.display !== 'none') {
     _webWake(c);
     const url = _webNav.stack[_webNav.idx];
-    if (url) c.wrap.querySelector('[data-web-frame]').src = url;
+    if (url) c.wrap.querySelector('[data-web-frame]').src = _webProxyUrl(url);
   }
 }, 1000);
 
@@ -323,7 +338,7 @@ function _webReaderToggle(on, skipRestore) {
     // 审计修（省内存声明落空）：进阅读时 iframe 已置 about:blank 释放渲染
     // 进程；切回网页视图必须重载原 URL（与睡眠唤醒同权衡）。skipRestore=
     // 调用方（_webNavigate）随即将赋新 src，不在此重复导航
-    if (!skipRestore && url) frame.src = url;
+    if (!skipRestore && url) frame.src = _webProxyUrl(url);
     return;
   }
   rd.innerHTML = '<div class="web-reader-load">正在取正文…</div>';
@@ -400,7 +415,7 @@ function _webAct(act, wrap) {
   // 停在旧 URL 上误导。改为：阅读态导航/重载=按新 idx 重新取正文
   const _go = (u) => {
     if (_webUi.reader) _webReaderToggle(true);   // 重发 fetch_text（frame 已 blank，幂等）
-    else frame.src = u;
+    else frame.src = _webProxyUrl(u);
   };
   if (act === 'back' && _webNav.idx > 0) {
     _webNav.idx--;
