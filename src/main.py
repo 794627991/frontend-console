@@ -886,49 +886,32 @@ def main():
                     CoreWebView2WebResourceContext as _RCtx)
                 _cvw.AddWebResourceRequestedFilter("*", _RCtx.All)
                 def _strip_xfo(s2, a2):
-                    # a499 修复：CoreWebView2WebResourceRequest 没有 Context
-                    # 属性（a498 实锤 150+ 次 AttributeError）——不做 context
-                    # 过滤，对所有响应尝试删 XFO。X-Frame-Options 只出现在
-                    # document 响应中，JS/CSS 响应 GetHeader 自然返回 None
-                    # 跳过，零额外开销
+                    # a500（关键认知修正）：WebResourceRequested 在请求发出
+                    # **前**触发，a2.Response 为 null（网络响应还没到）——
+                    # 不可能在此修改响应头。a495–a499 的方向全部错误。
+                    #
+                    # 正确方案：修改**请求头**——删掉 Referer。内网代理根据
+                    # Referer 有条件注入 X-Frame-Options（无 Referer 不注入），
+                    # 在请求发出前剥掉 Referer → 代理收不到 → 不注入 →
+                    # iframe 正常加载。a494 的 referrerpolicy="no-referrer"
+                    # 只影响 iframe src 赋值，不影响 iframe 内部链接导航——
+                    # 后者的 Referer 由渲染引擎在请求头层注入，需在此剥离。
                     try:
-                        _resp = a2.Response
-                        if _resp is None:
+                        _req = a2.Request
+                        if _req is None:
                             return
-                        _hdrs = _resp.Headers
+                        _hdrs = _req.Headers
                         if _hdrs is None:
                             return
-                        _changed = False
-                        # X-Frame-Options: DENY / SAMEORIGIN → 删
-                        try:
-                            _xfo = _hdrs.GetHeader("X-Frame-Options")
-                            if _xfo:
-                                _hdrs.RemoveHeader("X-Frame-Options")
-                                _changed = True
-                                _nw_log("INFO",
-                                    "[XFO-strip] removed X-Frame-Options: %s for %s"
-                                    % (_xfo[:40], str(a2.Request.Uri)[:100]))
-                        except Exception as _e:
-                            _nw_log("WARN", "[XFO] GetHeader err: %r" % _e)
-                        # CSP frame-ancestors → 删整条 CSP（保守：只删 frame-
-                        # ancestors 指令的话需要解析 CSP，直接删最简且安全
-                        # ——CSP 其余指令对外部页面本来就不适用于我们场景）
-                        try:
-                            _csp = _hdrs.GetHeader("Content-Security-Policy")
-                            if _csp and "frame-ancestors" in _csp:
-                                _hdrs.RemoveHeader("Content-Security-Policy")
-                                _changed = True
-                                _nw_log("INFO",
-                                    "[XFO-strip] removed CSP frame-ancestors for %s"
-                                    % str(a2.Request.Uri)[:100])
-                        except Exception:
-                            pass
-                        if _changed:
-                            a2.Response = _resp   # 写回修改后的响应
+                        _ref = _hdrs.GetHeader("Referer")
+                        if _ref:
+                            _hdrs.RemoveHeader("Referer")
+                            _nw_log("INFO", "[Referer-strip] %s -> %s"
+                                % (str(_ref)[:60], str(_req.Uri)[:80]))
                     except Exception as _e:
-                        _nw_log("WARN", "[XFO-strip] error: %r" % _e)
+                        _nw_log("WARN", "[Referer-strip] err: %r" % _e)
                 _cvw.WebResourceRequested += _strip_xfo
-                _nw_log("INFO", "[XFO-strip] filter registered (Document only)")
+                _nw_log("INFO", "[Referer-strip] filter registered (All)")
             except Exception as _e:
                 _nw_log("WARN", "[XFO-strip] attach failed: %r" % _e)
 
