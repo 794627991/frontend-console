@@ -805,11 +805,18 @@ def main():
     # window.__newWindow → web-panel 在网页 tab 内导航（工具内打开）。
     # URL 经 json 编码防注入；非 http(s)（mailto/下载直链等）按原路放行
     # 系统处理（Handled 不置位则 WebView2 默认弹系统浏览器，语义正确）。
+    # a496 修复（根因）：_st 未导入 → NameError → 整个 try 块从未执行
+    def _dbg_dir():
+        try:
+            from src.app_state import DATA_DIR
+            return DATA_DIR
+        except Exception:
+            return os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
     try:
         from webview.platforms.edgechromium import EdgeChrome as _EC
         # pythonw 无 stderr，logging 默认写不进任何地方——直接写文件
         import time as _nw_t
-        _NW_LOG = os.path.join(_st.DATA_DIR, "new_window_dbg.log")
+        _NW_LOG = os.path.join(_dbg_dir(), "new_window_dbg.log")
         def _nw_log(level, msg):
             try:
                 with open(_NW_LOG, "a", encoding="utf-8") as _f:
@@ -927,7 +934,7 @@ def main():
         _EC.on_webview_ready = _patched_ready
         # 诊断：确认 patch 段执行完毕
         try:
-            with open(os.path.join(_st.DATA_DIR, "new_window_dbg.log"), "a",
+            with open(os.path.join(_dbg_dir(), "new_window_dbg.log"), "a",
                       encoding="utf-8") as _f:
                 _f.write("[boot] monkey-patch block completed OK\n")
         except Exception:
@@ -937,7 +944,7 @@ def main():
         # 就说明这条路径走了。写失败原因到同一文件。
         try:
             import traceback as _tb
-            with open(os.path.join(_st.DATA_DIR, "new_window_dbg.log"), "a",
+            with open(os.path.join(_dbg_dir(), "new_window_dbg.log"), "a",
                       encoding="utf-8") as _f:
                 _f.write("[boot] monkey-patch FAILED: %r\n%s\n"
                          % (_patch_err, _tb.format_exc()))
