@@ -363,6 +363,7 @@
   /* ===== 顶栏 ===== */
   .topbar {
     position: relative; z-index: 10;
+    overflow: hidden;   /* a481：grid 意外换行时不再下探压 banner（单行契约） */
     /* a480（审计 A/B 确凿修正）：grid 三列 1fr auto 1fr 几何真居中——
        双 spacer 方案因左右段宽差恒右偏 ~73px，<1460px 两侧 spacer 塌缩、
        focus 单侧左伸还压 logo。三列方案：地址栏恒在窗口几何中心，focus
@@ -745,7 +746,7 @@
      grid 列模板 1fr auto 1fr 下每列只容一个直接子元素——
      多个子元素会溢出到隐式第二行，正是换行事故根因） */
   .topbar .topbar-left { display: flex; align-items: center; gap: 14px; }
-  .topbar .topbar-right { display: flex; align-items: center; gap: 10px;
+  .topbar .topbar-right { display: flex; align-items: center; gap: 14px;
     justify-content: flex-end; }
   .topbar select, .topbar input {
     background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
@@ -5767,12 +5768,14 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .recent-item.pinned { border-left: 2px solid var(--accent, #4cc2ff); }
 
 /* ===== a473：网页 tab（路线 A）——工具栏地址栏 / 收藏星标 / 网页面板 ===== */
-.top-url-bar { width: 300px; min-width: 140px; flex: 0 1 300px; padding: 5px 12px;
+.top-url-bar { width: 300px; min-width: 140px; padding: 5px 12px;
   font-size: 12px; font-family: var(--font-mono); color: var(--fg);
   background: var(--bg-input); border: 1px solid var(--border); border-radius: 14px;
-  outline: none; transition: border-color .15s, width .15s, flex-basis .15s; }
+  /* a481：grid item 不是 flex item——flex/flex-basis 是死代码（D 轮实测
+     focus 展宽死亡根因）；展宽走 width（transition 列表本就有 width .15s） */
+  outline: none; transition: border-color .15s, width .15s; }
 .top-url-bar:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.top-url-bar:focus { border-color: var(--accent); flex-basis: 380px; max-width: max(320px, 40vw); }
+.top-url-bar:focus { border-color: var(--accent); width: 380px; max-width: max(320px, 40vw); }
 #tabFavBtn { color: var(--muted); }
 #tabFavBtn:hover { color: var(--accent); }
 .web-pane { flex: 1; min-height: 0; display: flex; flex-direction: column;
