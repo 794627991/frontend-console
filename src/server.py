@@ -71,6 +71,16 @@ DEBUG_WEB = os.environ.get("HARNESS_DEBUG_WEB") == "1"
 # /api/harness、/api/hiklink 的 307 兜底重定向都在请求时读它。
 CLAUDE_OFFLOAD = os.environ.get("CLAUDE_INLINE") != "1"
 WORKER_BASE = ""
+# a558（SSO 锁号实锤）：真应用实例判定——main.py 入口（含打包 exe，frozen）
+# 或 worker 进程（worker_app 以 __main__ 运行时自设）。测试/临时实例
+#（python -c 起 server、pytest、python -m src.server）不带此标记 →
+# 不自启 HikLink 机器人、不自动登录 Lanz：每个临时实例原先都会带来一次
+# SSO 登录 + 与常驻实例互踢（11-12 日志实锤：230 次实例自启、479 次 WS
+# 认证、43+ 次 Lanz 真实登录 → SSO 风控锁号）
+if (os.path.basename(sys.argv[0] or "") == "main.py"
+        or getattr(sys, "frozen", False)
+        or os.environ.get("FC_APP_BOOT") == "1"):
+    os.environ["FC_APP_BOOT"] = "1"
 _SRC_WEB = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                          os.pardir, "web"))
 if DEBUG_WEB:
@@ -168,6 +178,16 @@ else:
     from src import hiklink_bot as _hiklink_bot
     from src.harness.routes import harness_bp
     app.register_blueprint(harness_bp)
+
+# R3 审计 B6（D6，用户拍板）：/api/* 的 404/405 全局 JSON 化——错误方法/
+# 未知 API 路径原先返回 Werkzeug HTML（AI 与脚本消费方解析困难），与全局
+# JSON 错误口径不一致。非 /api/ 路径维持默认 HTML。必须在首请求前注册。
+@app.errorhandler(404)
+@app.errorhandler(405)
+def _api_not_found(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "err": "%s %s" % (e.code, e.name)}), e.code
+    return e
 
 # ---- 单实例唤醒通道 ----
 # 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
@@ -322,7 +342,9 @@ def start_background():
     # 着复活（同事机实锤：登录成功机器人注册出来，重启工具后「未运行」且
     # 平台侧永远离线）。有凭据就后台拉起，幂等且失败只记日志不弹窗。
     # （进程隔离时 bot 在 worker——自恢复随迁 worker_app.main，本进程不起）
-    if not CLAUDE_OFFLOAD:
+    # a558：再加 FC_APP_BOOT 门——测试/临时实例导入 server（CLAUDE_INLINE=1
+    # 场景常见）不得拉起 bot，与常驻实例互踢（SSO 锁号防线）
+    if not CLAUDE_OFFLOAD and os.environ.get("FC_APP_BOOT") == "1":
         def _bot_restore():
             time.sleep(8)   # 让端口/网络就绪，避开启动高峰
             try:

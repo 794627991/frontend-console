@@ -1193,8 +1193,15 @@ _controller = None
 
 def _autostart():
     """模块导入即按手填凭证直连（有凭据才启；失败静默不影响主工具）。
-    SSO 自动注册已退役——不再用账号密码兜底启动。"""
+    SSO 自动注册已退役——不再用账号密码兜底启动。
+
+    a558（SSO 锁号实锤）：仅真应用实例（FC_APP_BOOT，main.py / worker
+    进程入口设置）自启。测试/临时实例（python -c 起 server、pytest 导入）
+    不自启——每个临时实例的 bot 都会与常驻实例互踢（KICK_OUT × WS 认证
+    风暴，11-12 日志 479 次/天）。"""
     global _controller
+    if os.environ.get("FC_APP_BOOT") != "1":
+        return
     try:
         _controller = HikLinkBotController()
         if not is_manual_mode():

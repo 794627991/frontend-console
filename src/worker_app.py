@@ -38,6 +38,13 @@ import sys
 import threading
 import time
 
+# a558：worker 以进程入口运行（python -m src.worker_app）时标记合法 bot
+# 宿主/代理承载；被测试导入（build_app，见 test_route_smoke）时不标记——
+# 测试实例不得自启 bot/自动登录（SSO 锁号防线）。冻结形态走 main.py
+# --claude-worker，其顶部已先设 FC_APP_BOOT
+if __name__ == "__main__":
+    os.environ.setdefault("FC_APP_BOOT", "1")
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)

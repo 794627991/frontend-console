@@ -2150,15 +2150,20 @@ def proxy_module_init():
     # v2.26：启动自愈已移除（用户定）——自愈只发生在「启动 claude 会话前」
     # （HarnessSession.start → ensure_direct_if_proxy_down），且以代理实际
     # ping 不通为前提；工具启动不代劳，避免误判用户刻意的 base_url 状态。
-    # 额度 worker（有凭据自动登录；无凭据建了等 POST 唤醒）
-    _ensure_quota_worker()
-    # headroom /stats 缓存线程（代理运行时 5s 拉，status 只读缓存）
-    _ensure_bili_stats_thread()
+    # a558（SSO 锁号实锤）：额度 worker 自动登录与代理自启只发生在真应用
+    # 实例（FC_APP_BOOT）。测试/临时实例（python -c 起 server、pytest
+    # 导入）原先每次都自动登 Lanz——11-12 一天 43+ 次真实 SSO 登录触发
+    # 风控锁号。无凭据唤醒路径不受影响（首次 POST /credentials 才建）
+    if os.environ.get("FC_APP_BOOT") == "1":
+        # 额度 worker（有凭据自动登录；无凭据建了等 POST 唤醒）
+        _ensure_quota_worker()
+        # headroom /stats 缓存线程（代理运行时 5s 拉，status 只读缓存）
+        _ensure_bili_stats_thread()
     # a251（用户需求：开启后保存开启状态）：上次代理在跑（记忆 autostart）
     # → 后台自动拉起（延迟避开启动高峰；失败只记日志，不阻塞不弹窗）。
     # 压缩模式按记忆文件自动带上（瞬时失败不再抹记忆，见 start/apply 的
     # 失败回退——记忆的是用户偏好，实际拉不起来时运行态回退 off+留证）
-    if load_proxy_autostart():
+    if os.environ.get("FC_APP_BOOT") == "1" and load_proxy_autostart():
         def _auto_restore():
             time.sleep(6)
             try:
