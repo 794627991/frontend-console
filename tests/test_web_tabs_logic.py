@@ -342,13 +342,13 @@ def test_new_window_fallback_navigates(stub_clr):
 
 
 def test_anti_autosignin_injected(stub_clr):
-    """a557：防自动签到脚本随控件初始化注入；autofill 默认关。"""
+    """a557/a560：防自动签到脚本随控件初始化注入；autofill 恢复开。"""
     t = _mk('sync')
     t.create('t1', 'https://a/')
     ctl = t._ctl['t1']
     assert len(ctl.cvw.injected) == 1
     assert "input[type=password]" in ctl.cvw.injected[0]
-    assert ctl.cvw.Profile.PasswordAutofillEnabled is False
+    assert ctl.cvw.Profile.PasswordAutofillEnabled is True
     assert ctl.cvw.Profile.GeneralAutofillEnabled is True
 
 

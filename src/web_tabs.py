@@ -23,13 +23,12 @@ _HIDE_ALL = "__all__"    # R6 审计 W32：全隐哨兵（切回阅读态 tab）
                          # 恒为 web[:<epoch>]:<n> 形态（D1 未合时无 epoch 段），
                          # 永不与该哨兵碰撞
 
-# a557（用户实锤：SSO 账号频繁登录被锁）：密码自动填充默认关。
-# a552 开启后，保存的 SSO 凭据在会话过期时会被 Chromium「自动签到」直接
-# 提交——每个网页 tab 的每次新开/刷新/休眠唤醒都变成一次登录尝试；且
-# web tab 的浏览器会话与 proxy 面板的 Python 会话（lanz_quota）是同账号
-# 的两个独立会话，互踢后浏览器侧即时自动重登 → a446 同款 ping-pong 风暴
-# 锁号。要恢复 a552 的自动填充改 True（配合 _ANTI_AUTOSIGNIN_JS，自担风险）。
-WEB_TAB_PASSWORD_AUTOFILL = False
+# a552 密码自动填充（用户强需求）。a557 曾因 SSO 锁号疑云默认关；a558 已
+# 实证锁号真凶是临时测试实例的自动登录/互踢（与浏览器自动填充无关），
+# a560 恢复开。配套 _ANTI_AUTOSIGNIN_JS 兜底：密码表单 submit 无近 3s
+# 用户手势即拦截——Chromium「自动签到」若走 submit 事件则被拦；若内核
+# 绕过事件直提则不设防（已知边界，实测未见由它引发的登录计数）。
+WEB_TAB_PASSWORD_AUTOFILL = True
 
 # a557：防自动签到脚本——密码表单 submit 若无近 3s 用户手势（pointerdown/
 # keydown）则拦截。浏览器 auto sign-in 无手势必被拦；用户真实点击/回车
@@ -113,10 +112,8 @@ class WebTabs:
             # R4 审计 D2（W4）：显式 options——①独立 CDP 端口 9223（AI 经
             # devtools_cdp 多端口发现触达网页 tab，9222 归主 UI）——**仅
             # debug 或 web_cdp 配置开启时附带**（a473 原门控：默认关）；
-            # ②自带主进程同款性能四旗——显式 AdditionalBrowserArguments
-            # 使本环境不再继承 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 环境
-            # 变量（W1 纵深：网页 tab 进程参数完全确定化）。9223 被占时
-            # 浏览器进程无 CDP 但功能不受损（与 9222 先占同款降级）。
+            # ②自带主进程同款性能四旗。9223 被占时浏览器进程无 CDP 但
+            # 功能不受损（与 9222 先占同款降级）。
             opts = C.CoreWebView2EnvironmentOptions()
             args = ("--disable-backgrounding-occluded-windows "
                     "--disable-renderer-backgrounding "
@@ -125,7 +122,19 @@ class WebTabs:
             if self._cdp:
                 args += " --remote-debugging-port=9223"
             opts.AdditionalBrowserArguments = args
-            task = C.CoreWebView2Environment.CreateAsync(None, udf, opts)
+            # R9 审计 W37：主进程在 debug/web_cdp 模式导出的
+            # WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 必含 9222——文档任一
+            # 语义（覆盖 options / 追加后同名开关 last-wins）都会压掉
+            # 9223。临时摘除该环境变量 → CreateAsync（loader 在此读 env）
+            # → 还原。主 UI 环境早已建完，还原无副作用；网页 tab 进程
+            # 参数就此完全确定化（W1 纵深成立）。
+            _env_key = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+            _saved_env = os.environ.pop(_env_key, None)
+            try:
+                task = C.CoreWebView2Environment.CreateAsync(None, udf, opts)
+            finally:
+                if _saved_env is not None:
+                    os.environ[_env_key] = _saved_env
             import System
 
             def _done(t):
@@ -520,19 +529,26 @@ class WebTabs:
 
     def dispose_all(self, epoch=None):
         """R4 审计 D1（W3/W24）：UI 页面卸载回收——按纪元回收 _ctl 与
-        _pending（在途 create 走 W5 取消路径），并归零会话水位。epoch
-        不匹配的控件（其他 UI 会话/其他纪元）不动；epoch=None=全部回收
-        （兼容无纪元的旧调用）。"""
+        _pending（在途 create 走 W5 取消路径）。epoch 不匹配的控件（其他
+        UI 会话/其他纪元）不动；epoch=None=全部回收（panic 语义，兼容
+        无纪元的旧调用）。R9 审计 W40：仅当本纪元确有回收（或 panic）
+        才归零会话水位——零命中（迟到的他人纪元 beacon 漏网时）不得把
+        现存 UI 的 seq/显隐意图打掉。"""
+        n = 0
         for tid in list(self._ctl.keys()):
             if epoch is None or self._epochs.get(tid) == epoch:
                 self.dispose(tid)
+                n += 1
         for tid in [t for t in list(self._pending)
                     if epoch is None or self._epochs.get(t) == epoch]:
             self._cancel.add(tid)
             self._pending.discard(tid)
             self._pend_nav.pop(tid, None)
             self._epochs.pop(tid, None)
-        self.reset_session()
+            n += 1
+        if n or epoch is None:
+            self.reset_session()
+        return {"ok": True, "recycled": n}
 
     def reset_session(self):
         """R4 审计 D1（W3）：页面会话重置——seq 水位/显隐意图/在途导航
