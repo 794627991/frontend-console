@@ -109,7 +109,9 @@ _PW_FORM_HELPER_JS = (
     'var btn=anc.querySelector("button, input[type=submit]");'
     'if(btn){btn.addEventListener("click",function(){'
     'setTimeout(function(){var q=pw();check(q?q.value:"");},400);});break;}'
-    "anc=anc.parentElement;}}"
+    "anc=anc.parentElement;}"
+    'document.addEventListener("click",function(){'
+    "setTimeout(function(){var q=pw();if(q)check(q.value);},500);});}"
     "function check(val){"
     "if(!val)return;"
     'api({act:"pw_get"}).then(function(j){'
