@@ -342,12 +342,16 @@ def test_new_window_fallback_navigates(stub_clr):
 
 
 def test_anti_autosignin_injected(stub_clr):
-    """a557/a560：防自动签到脚本随控件初始化注入；autofill 恢复开。"""
+    """a557/a560：防自动签到脚本随控件初始化注入；autofill 恢复开。
+    R9.9：第二个注入 = 无 form 登录的原生保存/填充打通脚本（合成 form
+    + requestSubmit 喂密码管理器）——共 2 个，顺序固定。"""
     t = _mk('sync')
     t.create('t1', 'https://a/')
     ctl = t._ctl['t1']
-    assert len(ctl.cvw.injected) == 1
+    assert len(ctl.cvw.injected) == 2
     assert "input[type=password]" in ctl.cvw.injected[0]
+    assert 'requestSubmit' in ctl.cvw.injected[1]
+    assert 'fcWrapped' in ctl.cvw.injected[1]
     assert ctl.cvw.Profile.PasswordAutofillEnabled is True
     assert ctl.cvw.Profile.GeneralAutofillEnabled is True
 

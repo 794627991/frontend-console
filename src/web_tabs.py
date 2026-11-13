@@ -46,6 +46,47 @@ _ANTI_AUTOSIGNIN_JS = (
 # a557：SSO 页面命中日志——控制台直接可见「谁在频繁打 SSO」（诊断锁号）
 _SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 
+# R9.9：打通原生密码填充——发布中心等「无 form 的 fetch 登录」命中
+# Chromium 保存启发式盲区（保存条永不出现，用户实锤）。本脚本注入每个
+# 控件的所有文档：①给无 form 的密码框动态包一层 display:contents 的
+# 隐形 form（不改布局）；②挂接疑似登录按钮，点击时对 form
+# requestSubmit() 派发提交事件——Blink 的 FormSubmitObserver 由此看到
+# 「一次登录提交」→ 原生「保存密码」条弹出；保存后下次聚焦密码框 =
+# 原生填充弹窗（与 Edge 同款体验）。form 级捕获监听永久 preventDefault
+# ——只喂密码管理器，页面绝不跳转。自带真 form 的站点（SSO 等）不碰
+# （原生自管）；防自动签到守卫（_ANTI_AUTOSIGNIN_JS）照常生效。
+_PW_FORM_HELPER_JS = (
+    '(function(){'
+    'function wrap(pw){'
+    "if(pw.dataset.fcWrapped)return;pw.dataset.fcWrapped='1';"
+    "if(pw.form&&pw.form.tagName==='FORM')return;"
+    "var f=document.createElement('form');f.style.display='contents';"
+    "f.setAttribute('data-fc-pw','1');"
+    'pw.parentNode.insertBefore(f,pw);f.appendChild(pw);'
+    "f.addEventListener('submit',function(e){e.preventDefault();},true);"
+    'return f;}'
+    'function arm(pw){'
+    "if(pw.dataset.fcArmed)return;pw.dataset.fcArmed='1';"
+    'var f=wrap(pw);if(!f)return;'
+    'var btn=null,anc=pw.parentElement;'
+    'while(anc&&anc!==document.body){'
+    "btn=anc.querySelector('button, input[type=submit]');if(btn)break;"
+    'anc=anc.parentElement;}'
+    "if(!btn)btn=document.querySelector('button');"
+    "if(!btn||btn.dataset.fcArmed)return;btn.dataset.fcArmed='1';"
+    "btn.addEventListener('click',function(){"
+    'if(!pw.value)return;'
+    'try{if(f.requestSubmit){f.requestSubmit();}'
+    "else{f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));}}"
+    "catch(_){try{f.dispatchEvent(new Event('submit',"
+    '{bubbles:true,cancelable:true}));}catch(__){}}});}'
+    'function scan(){'
+    "document.querySelectorAll('input[type=password]').forEach(arm);}"
+    'new MutationObserver(scan).observe('
+    'document.documentElement,{childList:true,subtree:true});'
+    'scan();})();'
+    )
+
 
 def get_tabs():
     return _tabs
@@ -56,122 +97,6 @@ def _log(level, msg):
         print("[web-tabs][%s] %s" % (level, msg))
     except Exception:
         pass
-
-
-# ---------- 密码助手（R-命名统一批次，用户令） ----------
-# 背景：发布中心等「无 form 的 fetch 登录」命中 Chromium 保存启发式盲区，
-# 保存条永不出现（用户实锤）。本助手=显式点击驱动：点「保存」才存、
-# 点「填入」才填——零自动行为，a557 锁号风险（自动签到）不回归。
-# 存储：DATA_DIR/web_passwords.json，密码经 Windows DPAPI（当前用户域）
-# 加密落盘——保护级别与 Chromium 自身密码库同级；明文只在两个 loopback
-# 环节出现：保存时的 POST（origin 守卫内）与填入时的页面注入。
-def _pw_file():
-    try:
-        from src.app_state import DATA_DIR
-        import os
-        return os.path.join(DATA_DIR, "web_passwords.json")
-    except Exception:
-        import os
-        return os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                            "web_passwords.json")
-
-
-def _dpapi_protect(plain):
-    import ctypes, base64
-    from ctypes import wintypes
-
-    class BLOB(ctypes.Structure):
-        _fields_ = [("cbData", wintypes.DWORD),
-                    ("pbData", ctypes.POINTER(ctypes.c_char))]
-
-    def _blob(b):
-        return BLOB(len(b), ctypes.cast(ctypes.create_string_buffer(b),
-                                        ctypes.POINTER(ctypes.c_char)))
-    cin, cout = _blob(plain), BLOB()
-    if not ctypes.windll.crypt32.CryptProtectData(
-            ctypes.byref(cin), None, None, None, None,
-            1, ctypes.byref(cout)):   # 1 = CRYPTPROTECT_UI_FORBIDDEN
-        raise OSError("CryptProtectData failed")
-    out = ctypes.string_at(cout.pbData, cout.cbData)
-    ctypes.windll.kernel32.LocalFree(cout.pbData)
-    return base64.b64encode(out).decode("ascii")
-
-
-def _dpapi_unprotect(b64):
-    import ctypes, base64
-    from ctypes import wintypes
-
-    class BLOB(ctypes.Structure):
-        _fields_ = [("cbData", wintypes.DWORD),
-                    ("pbData", ctypes.POINTER(ctypes.c_char))]
-
-    raw = base64.b64decode(b64)
-
-    def _blob(b):
-        return BLOB(len(b), ctypes.cast(ctypes.create_string_buffer(b),
-                                        ctypes.POINTER(ctypes.c_char)))
-    cin, cout = _blob(raw), BLOB()
-    if not ctypes.windll.crypt32.CryptUnprotectData(
-            ctypes.byref(cin), None, None, None, None,
-            1, ctypes.byref(cout)):
-        raise OSError("CryptUnprotectData failed")
-    out = ctypes.string_at(cout.pbData, cout.cbData)
-    ctypes.windll.kernel32.LocalFree(cout.pbData)
-    return out
-
-
-def _pw_load():
-    import json, os
-    try:
-        with open(_pw_file(), encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
-
-
-def _pw_store(d):
-    import json, os
-    p = _pw_file()
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False)
-    os.replace(tmp, p)
-
-
-def _pw_origin_clean(origin):
-    try:
-        from urllib.parse import urlsplit
-        o = str(origin or "").strip()
-        sp = urlsplit(o if "://" in o else "http://" + o)
-        if sp.scheme not in ("http", "https") or not sp.hostname:
-            return ""
-        _default = (sp.scheme == "http" and sp.port == 80) or \
-                   (sp.scheme == "https" and sp.port == 443)
-        return sp.scheme + "://" + sp.hostname + (
-            "" if _default else ":" + str(sp.port))
-    except Exception:
-        return ""   # 畸形 origin（如 javascript:alert(1) 被补全后端口非数字）
-
-
-def _pw_fill_script(user, pwd):
-    """页面注入脚本（在网页 tab 自己的 CoreWebView2 里执行）：填用户名/
-    密码并派发 input/change（React 受控输入用原型 setter 兜底）。"""
-    import json
-    u, p = json.dumps(user or ""), json.dumps(pwd or "")
-    return ("(function(u,p){function sv(el,v){if(!el)return;"
-            "try{var d=Object.getOwnPropertyDescriptor(el.__proto__,'value');"
-            "if(d&&d.set){d.set.call(el,v);}else{el.value=v;}}catch(_){el.value=v;}"
-            "try{el.dispatchEvent(new Event('input',{bubbles:true}));"
-            "el.dispatchEvent(new Event('change',{bubbles:true}));}catch(_){}}"
-            "var pw=document.querySelector('input[type=password]');"
-            "if(!pw){return;}"
-            "sv(pw,p);"
-            "if(u){var vs=[].filter.call(document.querySelectorAll('input'),"
-            "function(el){var t=(el.type||'text').toLowerCase();"
-            "return (t==='text'||t==='email'||t==='tel')&&el.offsetParent;});"
-            "if(vs.length){sv(vs[0],u);}}})(" + u + "," + p + ");")
 
 
 class WebTabs:
@@ -387,6 +312,9 @@ class WebTabs:
                     try:
                         cvw.AddScriptToExecuteOnDocumentCreatedAsync(
                             _ANTI_AUTOSIGNIN_JS)
+                    # R9.9：原生密码保存/填充打通脚本（无 form 登录站点）
+                        cvw.AddScriptToExecuteOnDocumentCreatedAsync(
+                            _PW_FORM_HELPER_JS)
                     except Exception as e:
                         _log("WARN", "anti-autosignin: %r" % e)
                     # R4 审计 D2：网页 tab 的 DevTools（右键「检查」/F12）与
@@ -902,81 +830,7 @@ def register(app):
         if act == "suspend":
             # R-外泄根治·静止帧：抓帧→隐藏→回推（前端 reconcile 调用）
             return jsonify(t.suspend(tid))
-        if act == "pw_get":
-            # 密码助手：查某 origin 是否有存档（只回用户名，密码不回前端
-            # ——填入走 pw_fill 后端注入，明文不进 UI 文档）
-            o = _pw_origin_clean(str(d.get("origin") or ""))
-            rec = _pw_load().get(o)
-            if not rec:
-                return jsonify({"ok": True, "has": False})
-            return jsonify({"ok": True, "has": True,
-                            "user": str(rec.get("u") or "")})
-        if act == "pw_save":
-            o = _pw_origin_clean(str(d.get("origin") or ""))
-            if not o:
-                return jsonify({"ok": False, "err": "bad origin"}), 400
-            user = str(d.get("user") or "").strip()[:128]
-            pwd = str(d.get("password") or "")[:512]
-            if not pwd:
-                return jsonify({"ok": False, "err": "密码不能为空"}), 400
-            store = _pw_load()
-            if len(store) >= 64 and o not in store:
-                return jsonify({"ok": False, "err": "存档站点数已达上限 64"}), 400
-            store[o] = {"u": user, "p": _dpapi_protect(pwd.encode("utf-8"))}
-            _pw_store(store)
-            return jsonify({"ok": True})
-        if act == "pw_del":
-            o = _pw_origin_clean(str(d.get("origin") or ""))
-            store = _pw_load()
-            if o in store:
-                del store[o]
-                _pw_store(store)
-            return jsonify({"ok": True})
-        if act == "pw_fill":
-            # 后端解密 → 在网页 tab 自己的 CoreWebView2 里注入填充脚本
-            # （明文不回传 UI 文档；UI 线程起手，a549 铁律）
-            o = _pw_origin_clean(str(d.get("origin") or ""))
-            rec = _pw_load().get(o)
-            if not rec:
-                return jsonify({"ok": False, "err": "not-saved"})
-            try:
-                pwd = _dpapi_unprotect(str(rec.get("p") or "")).decode("utf-8")
-            except Exception as e:
-                return jsonify({"ok": False,
-                                "err": "解密失败（DPAPI 域不匹配）：%r" % e})
-            ctl = t._ctl.get(tid)
-            if not ctl:
-                return jsonify({"ok": False, "err": "no tab"})
 
-            def _fill():
-                try:
-                    ctl.CoreWebView2.ExecuteScriptAsync(
-                        _pw_fill_script(str(rec.get("u") or ""), pwd))
-                except Exception as e:
-                    _log("WARN", "pw fill: %r" % e)
-            t._ui(_fill)
-            return jsonify({"ok": True})
-        if act == "show":
-            # a556：sq 序号透传（前端乱序保护）。R1 审计 W7：on/all 布尔
-            # 穿透修正。R6 审计 W32：all=true=全隐（_want 记哨兵）。
-            _on = d.get("on", True)
-            _all = d.get("all", False)
-            return jsonify(t.show(
-                tid,
-                _on if isinstance(_on, bool)
-                else str(_on).strip().lower() in ("true", "1", "yes", "on"),
-                _num("sq"),
-                _all if isinstance(_all, bool)
-                else str(_all).strip().lower() in ("true", "1", "yes", "on")))
-        if act == "dispose":
-            return jsonify(t.dispose(tid))
-        if act == "dispose_all":
-            # R4 审计 D1（W3）：页面卸载（pagehide beacon）按纪元回收——
-            # 只动本纪元控件，刷新后重建的新纪元 tab 不被迟到的 beacon 误杀
-            return jsonify(t.dispose_all(str(d.get("epoch") or "") or None))
-        if act == "layout":
-            return jsonify(t.layout(_num("x"), _num("y"),
-                                    _num("w"), _num("h")))
         return jsonify({"ok": False, "err": "bad act"})
 
     app.register_blueprint(bp)

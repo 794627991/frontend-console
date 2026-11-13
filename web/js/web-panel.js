@@ -273,7 +273,6 @@ function buildWebPanelTab(url, opts) {
         <input class="web-url" data-web-input spellcheck="false" autocomplete="off"
                placeholder="输入网址，回车打开">
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">${ICO16.star}</button>
-        <button class="btn ghost icon-btn" data-web="pw" title="密码助手：填入 / 保存本站密码">${ICO16.key}</button>
         <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">${ICO16.book} 阅读</button>
         <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框——需登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
         <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">${ICO16.openExt} 浏览器</button>
@@ -679,7 +678,7 @@ window.__webTabNew = function (url) {
   //    web 控件区域相交的元素 = 浮层压在控件上 → 藏控件（DOM 永远盖不过
   //    HWND）。#notifyStack 豁免（常驻通知栈，藏控件会随每条提示闪跳）。
   const anyOverlayOpen = () => {
-    if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu, #webPwMenu')]
+    if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu')]
         .some(shown)) return true;
     const c = _webCur();
     if (!c || !c.wrap) return false;
@@ -995,10 +994,6 @@ function _webAct(act, wrap) {
     _webSyncUI(c);
     return;
   }
-  if (act === 'pw' && c) {
-    _webPwMenu(c);
-    return;
-  }
   if (act === 'claude' && url) {
     const btn = c.wrap.querySelector('[data-web="claude"]');
     btn.disabled = true;
@@ -1238,92 +1233,3 @@ function _webFavSaveNote(list, anchor, idx, val) {
   _webFavMenu(anchor);
 }
 
-// ---- R-命名统一·密码助手（用户令）：无 form 的 fetch 登录命中 Chromium
-// 保存启发式盲区（保存条永不出现，用户实锤）→ 自建显式点击驱动：存/填/
-// 删全部手动，零自动行为（a557 锁号风险不回归）。密码 DPAPI 加密落盘
-// （后端 web_tabs._dpapi_*），填入由后端在网页控件内注入（明文不进 UI 文档）。
-function _webPwMenu(c) {
-  const old = document.getElementById('webPwMenu');
-  if (old) { old.remove(); return; }
-  const origin = (() => {
-    const u = (c._ctlUrl || (c._nav && c._nav.stack && c._nav.stack[c._nav.idx]) || '');
-    try { const x = new URL(u); return x.origin; } catch (_) { return ''; }
-  })();
-  if (!origin || !/^https?:/.test(origin)) {
-    showBanner('当前 tab 无可达站点地址', 2500, true);
-    return;
-  }
-  const anchor = c.wrap.querySelector('[data-web="pw"]');
-  const menu = document.createElement('div');
-  menu.id = 'webPwMenu';
-  menu.className = 'web-fav-menu';
-  menu.innerHTML = '<div class="web-fav-title">密码助手 · ' + esc(origin) + '</div>'
-    + '<div class="web-fav-item" data-pw-fill>' + ICO16.key + ' 填入已存密码</div>'
-    + '<div class="web-fav-item" data-pw-save>' + ICO16.save + ' 保存 / 覆盖本站密码</div>'
-    + '<div class="web-fav-item" data-pw-del style="color:var(--neon-red,#e5484d)">'
-    + ICO16.trash + ' 删除已存密码</div>';
-  document.body.appendChild(menu);
-  const r = anchor.getBoundingClientRect();
-  menu.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
-  const topUp = r.top - menu.offsetHeight - 6;
-  menu.style.top = (topUp >= 8 ? topUp : Math.min(r.bottom + 6,
-    Math.max(8, window.innerHeight - menu.offsetHeight - 8))) + 'px';
-  const close = (ev) => {
-    if (!menu.contains(ev.target) && ev.target !== anchor) {
-      menu.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 0);
-  const act = (body) => fetch('/api/web/tabs', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(Object.assign({ tab: c._tabId, origin }, body))
-  }).then(x => x.json()).catch(() => ({ ok: false }));
-  menu.addEventListener('click', (e) => {
-    const fill = e.target.closest('[data-pw-fill]');
-    if (fill) {
-      e.stopPropagation();
-      act({ act: 'pw_fill' }).then(j => {
-        if (j && j.ok) { showBanner('已填入（检查后提交）', 2000); menu.remove(); }
-        else showBanner('本站没有存档密码——先用「保存」', 3000, true);
-      });
-      return;
-    }
-    const svBtn = e.target.closest('[data-pw-save]');
-    if (svBtn) {
-      e.stopPropagation();
-      act({ act: 'pw_get' }).then(j => {
-        menu.innerHTML = '<div class="web-fav-title">保存 · ' + esc(origin) + '</div>'
-          + '<div style="padding:4px 12px 8px;display:flex;flex-direction:column;gap:6px;">'
-          + '<input class="web-fav-note-inp" id="pwUser" maxlength="128" placeholder="用户名（可空）" value="' + esc((j && j.user) || '') + '" style="width:100%">'
-          + '<input class="web-fav-note-inp" id="pwPass" maxlength="512" type="password" placeholder="密码" style="width:100%">'
-          + '<button class="btn primary" id="pwSaveGo" style="width:100%">保存</button></div>';
-        const uIn = menu.querySelector('#pwUser'), pIn = menu.querySelector('#pwPass');
-        const go = () => {
-          const pw = pIn.value;
-          if (!pw) { showBanner('密码不能为空', 2500, true); return; }
-          act({ act: 'pw_save', user: uIn.value, password: pw }).then(jj => {
-            showBanner(jj && jj.ok ? '已保存（DPAPI 加密落盘）' : '保存失败：' + ((jj && jj.err) || '未知'), 3000, (jj && !jj.ok));
-            if (jj && jj.ok) menu.remove();
-          });
-        };
-        menu.querySelector('#pwSaveGo').onclick = (ev) => { ev.stopPropagation(); go(); };
-        [uIn, pIn].forEach(el => el.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); go(); }
-          ev.stopPropagation();
-        }));
-        pIn.focus();
-      });
-      return;
-    }
-    const delBtn = e.target.closest('[data-pw-del]');
-    if (delBtn) {
-      e.stopPropagation();
-      act({ act: 'pw_del' }).then(() => {
-        showBanner('已删除本站存档', 2000);
-        menu.remove();
-      });
-      return;
-    }
-  });
-}
