@@ -27,15 +27,12 @@
   }).catch(() => {});
 
   let dragging = false, startX = 0, startW = 0;
-  // a524：拖动期间禁用 iframe 指针事件——iframe 会捕获 mousemove（父
-  // 文档收不到），鼠标一移进网页区域（web tab 常驻后主区就是 iframe）
-  // 拖动即断（用户实锤「打开网页后左栏拖动有问题」）。拖完恢复。
-  const iframes = () => document.querySelectorAll('iframe');
+  // R1 审计 W11：a524 的 iframe 指针禁用已删（a544 后页面无 iframe，
+  // iframes() 恒空集；WebView2 为原生 HWND 不受 pointerEvents 影响）
   bar.addEventListener('mousedown', e => {
     dragging = true; startX = e.clientX; startW = sb.offsetWidth;
     bar.classList.add('dragging');
     document.body.style.userSelect = 'none';
-    iframes().forEach(f => f.style.pointerEvents = 'none');
     e.preventDefault();
   });
   document.addEventListener('mousemove', e => {
@@ -47,7 +44,6 @@
     dragging = false;
     bar.classList.remove('dragging');
     document.body.style.userSelect = '';
-    iframes().forEach(f => f.style.pointerEvents = '');
     try {
       fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sidebar_w: sb.offsetWidth }) });

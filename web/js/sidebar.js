@@ -114,9 +114,13 @@ function closeConnection(portId) {
   // D-3（P3）附带防御：直调 closeConnection 绕过编辑器完整 dispose 链
   // （hex/diff/bindiff 无专属关闭函数——四类统一转发，sidebar.js:198/:233 实证）
   // （编辑器 _edCloseNow 的完整 dispose）=5 倍泄漏（3.1MB/次 vs 0.58MB）
-  if (/^(edit|hex|diff|bindiff):/.test(portId) &&
+  // R3 审计 W22（P1）：web 必须同样转发——web-panel 的 closeEditorTab
+  // 包装负责 dispose REST + resize/layout 监听清理 + _webActivePid 清理；
+  // 落本函数通用清理 = 控件永不 Dispose + 幽灵监听发 layout(0,0,0,0)
+  // 把全部存活网页控件缩成 50×50（侧栏 ✕ 与抽屉批量关闭两条路径可达）
+  if (/^(edit|hex|diff|bindiff|web):/.test(portId) &&
       typeof closeEditorTab === 'function') {
-    closeEditorTab(portId); return;   // 产品路径四类统一走 closeEditorTab
+    closeEditorTab(portId); return;   // 产品路径统一走 closeEditorTab
                                       // （sidebar.js:198/:233 实证）
   }
   fetch('/api/disconnect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({port_id: portId})});

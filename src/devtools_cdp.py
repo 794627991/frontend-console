@@ -23,6 +23,9 @@ import urllib.request
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 _DEBUG_PORT = 9222          # run_debug.bat 固定端口（main.py 硬编码）
+_WEBTAB_PORT = 9223         # R4 审计 D2（W4）：网页 tab 独立 CDP 端口（web_tabs._ensure_env）
+# （R9 审计 W39：find_cdps 死代码已删——零调用方；9223 探活并入设置卡
+#   web_cdp_live 为 D2-b 后续项，落地时再引入多端口探活。）
 
 _ws = None                  # 懒导入缓存（websocket 模块）
 
@@ -82,6 +85,24 @@ def find_cdp(timeout=1.0):
     except Exception:
         pass
     raise CdpUnavailable()
+
+
+def find_webtab_target(timeout=3.0):
+    """R4 审计 D2（W4）：在网页 tab CDP 端口（9223）找第一个非空页面
+    target（网页 tab 加载的是外部 URL，无工具 origin 可匹配）。
+    返回 (port, target)；零命中抛 TargetNotFound。"""
+    last = None
+    try:
+        targets = [t for t in list_targets(_WEBTAB_PORT, timeout)
+                   if t.get("type") == "page" and t.get("url")
+                   and str(t.get("url")) != "about:blank"]
+    except Exception as e:
+        last = e
+        targets = []
+    if not targets:
+        raise TargetNotFound(
+            "9223 无可达网页 tab target%s" % ("（%r）" % last if last else ""))
+    return _WEBTAB_PORT, targets[0]
 
 
 def list_targets(cdp_port, timeout=3.0):
@@ -240,7 +261,14 @@ def evaluate(js_expression, timeout=10.0, max_len=4000):
     except Exception:
         pass
     origin = "http://127.0.0.1:%s" % info.get("port", "")
-    with CdpSession(port, find_page_target(port, origin)["id"]) as cs:
+    # R9 审计 W38：origin 匹配不到（网页 tab 等）→ 回落 9223 首个网页
+    # tab target——evaluate 族工具由此触达网页 tab（与 probe 同款链）
+    try:
+        tid = find_page_target(port, origin)["id"]
+    except TargetNotFound:
+        port, t2, _o = find_webtab_target()
+        tid = t2["id"]
+    with CdpSession(port, tid) as cs:
         try:
             res = cs.send("Runtime.evaluate", {
                 "expression": js_expression,
@@ -268,7 +296,9 @@ def evaluate(js_expression, timeout=10.0, max_len=4000):
 
 
 def page_target_origin_probe():
-    """mcp_server 前置：返回 (cdp_port, target_id, origin) 或抛对应异常。"""
+    """mcp_server 前置：返回 (cdp_port, target_id, origin) 或抛对应异常。
+    R4 审计 D2（W4）：origin 匹配不到（网页 tab 等）时回落 9223 的
+    非 about:blank 页面 target——AI 由此触达网页 tab 内容。"""
     port = find_cdp()
     info = {}
     try:
@@ -277,5 +307,8 @@ def page_target_origin_probe():
     except Exception:
         pass
     origin = "http://127.0.0.1:%s" % info.get("port", "")
-    t = find_page_target(port, origin)
-    return port, t["id"], origin
+    try:
+        t = find_page_target(port, origin)
+        return port, t["id"], origin
+    except TargetNotFound:
+        return find_webtab_target() + ("",)

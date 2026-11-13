@@ -59,7 +59,9 @@ let activePortId = null;
   // a452（审计 P1）：claude **不在**此列——后端 server.py 允许 `claude:{n}`
   // 自增多开（连开多个会话是常态）。把它当单例兜底会让 _isFlat 短路，
   // 多个 claude tab 永不进抽屉，tab 栏被平铺占满压成图标态。
-  const _SINGLE_KINDS = new Set(['harness', 'bitcalc', 'proxy', 'vcs', 'web']);
+  // R1 审计 W9：a554 起网页 tab 支持多开（buildWebPanelTab newTab），
+  // 'web' 留在此集合会让多开的网页 tab 永不进抽屉（claude 同款事故）。
+  const _SINGLE_KINDS = new Set(['harness', 'bitcalc', 'proxy', 'vcs']);
   // 按当前打开的 tab 统计各 kind 数量（判定「是否独苗」）
   function _kindCount() {
     const cnt = {};
@@ -236,6 +238,12 @@ let activePortId = null;
         }
         if (kind === 'harness') {
           if (typeof _harnessClose === 'function') _harnessClose(pid);
+          return;
+        }
+        if (kind === 'web') {
+          // R3 审计 W22：必须走 closeEditorTab 包装（dispose REST + 监听
+          // 清理），落 closeConnection 通用清理即 W22 全套后果
+          if (typeof closeEditorTab === 'function') closeEditorTab(pid);
           return;
         }
         const isEd = kind === 'editor' || kind === 'hex' || kind === 'diff' ||

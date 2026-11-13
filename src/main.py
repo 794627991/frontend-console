@@ -803,13 +803,30 @@ def main():
             #（ExecuteScriptAsync fire-and-forget——绝不能 evaluate_js
             # 等 UI 线程回调，a484 死锁实锤）
             _orig_load = self.load_url
+
+            def _is_loopback(u):
+                # R1 审计 W2（A2）：原「"127.0.0.1" not in _u」子串判定可被
+                # http://127.0.0.1.evil.com 绕过（子串命中→误判本机→主 UI
+                # 导航到外部页）。改按 urlsplit().hostname 精确判定。
+                try:
+                    from urllib.parse import urlsplit
+                    return (urlsplit(u).hostname or "").lower() in (
+                        "127.0.0.1", "localhost", "::1")
+                except Exception:
+                    return False
+
             def _safe_load(url, *la, **kw):
                 try:
                     _u = str(url or "")
-                    if _u.startswith(("http://", "https://"))                             and "127.0.0.1" not in _u:
+                    if _u.startswith(("http://", "https://")) and not _is_loopback(_u):
                         sender.CoreWebView2.ExecuteScriptAsync(
                             "window.__newWindow && window.__newWindow(%s);"
                             % json.dumps(_u))
+                        return
+                    # R2 审计 W19（N2）：非 http(s)（file:/data:/about: 等）
+                    # 原先直落 _orig_load → 主 UI 内 file: 链接把工具窗口
+                    # 整页导航到本地文件。一律吞掉，仅放行 http(s) 回环目标。
+                    if not (_u.startswith("http://") or _u.startswith("https://")):
                         return
                 except Exception:
                     pass
@@ -818,6 +835,15 @@ def main():
             # 右键菜单强制开（a483 用户令；原方法按 debug 开关设）
             try:
                 sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
+            except Exception:
+                pass
+            # R4 审计 D1（用户定调）：正常模式禁浏览器级快捷键——F5/Ctrl+R
+            # 不再整刷工具 UI（前端另有按键路由：激活网页 tab 时改刷网页）。
+            # debug 模式保留（整 UI 刷新=调试能力）。网页 tab 是独立控件+
+            # 独立环境，不受此设置影响（其 F5=刷网页 tab）。
+            try:
+                sender.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = (
+                    bool(_wv_debug))
             except Exception:
                 pass
             # a544：网页 tab 控件管理器装配。失败不阻塞主 UI（网页 tab
@@ -1560,13 +1586,12 @@ def main():
     _wv_args = ["--disable-backgrounding-occluded-windows",
                 "--disable-renderer-backgrounding",
                 "--disable-background-timer-throttling",
-                "--disable-features=CalculateNativeWinOcclusion",
-                # a501（用户需求「网页里的链接能在工具内点开并显示」）：
-                # 内网代理注入 X-Frame-Options 导致 iframe 子页导航被拒。
-                # a495–a500 五版请求/响应层方案全部无效（pythonnet COM
-                # 对外部 HTTPS 的 Headers 不可访问）——唯一可靠路径是
-                # 渲染引擎层禁用同源检查。桌面工具 WebView2 沙箱内可控。
-                "--disable-web-security"]
+                "--disable-features=CalculateNativeWinOcclusion"]
+    # R1 审计 W1（P0）：a501 的 --disable-web-security 已随 a544 iframe
+    # 时代退役。该开关经 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 同样注入
+    # 网页 tab 独立浏览器进程 → 任意外站可跨源调用本机 GET API
+    # （/api/read_text 任意文件读、/api/history 终端历史）。主 UI 与
+    # 网页 tab 均无跨源需求，移除。
     if _wv_debug or _web_cdp_cfg:
         _wv_args.append("--remote-debugging-port=9222")
     _prev = os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
