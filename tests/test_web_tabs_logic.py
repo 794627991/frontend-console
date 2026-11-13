@@ -365,3 +365,35 @@ def test_env_failed_fast_return(stub_clr):
     r = t.create('x', 'https://a/')
     assert r['ok'] is False
     assert time.time() - t0 < 0.5
+
+
+def test_route_chain_complete(stub_clr):
+    """R9.12 路由存在性钉测：a567 的死代码清理曾把 show/dispose/dispose_all/
+    layout 连同 pw 路由一起误删（整链只剩 suspend），create 返回 bad act →
+    控件永不创建 → 网页全黑 + 右键落在主文档（整工具刷新）。本钉测保证
+    10 个 act 全部可达且不返回 bad act；未知 act 必须报 bad act（防
+    「整链被删只剩兜底」的回归再犯——兜底行在，业务链不在也能红灯）。"""
+    import flask
+    from src import web_tabs as wt
+    t = _mk('sync')
+    old_tabs = wt._tabs
+    wt._tabs = t
+    try:
+        app = flask.Flask(__name__)
+        wt.register(app)
+        client = app.test_client()
+        acts = ["create", "nav", "back", "fwd", "reload", "suspend", "show",
+                "dispose", "dispose_all", "layout"]
+        for act in acts:
+            body = {"act": act, "tab": "t1", "url": "https://a/",
+                    "on": True, "sq": 1, "all": False,
+                    "x": 0, "y": 0, "w": 100, "h": 100, "epoch": ""}
+            r = client.post("/api/web/tabs", json=body)
+            j = r.get_json()
+            assert r.status_code == 200, (act, r.status_code, j)
+            assert j.get("err") != "bad act", (act, j)
+        # 反向钉：未知 act 必须报 bad act（兜底行必须在）
+        r = client.post("/api/web/tabs", json={"act": "__nope__", "tab": "t1"})
+        assert r.status_code == 200 and r.get_json().get("err") == "bad act"
+    finally:
+        wt._tabs = old_tabs

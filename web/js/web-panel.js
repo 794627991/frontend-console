@@ -674,28 +674,46 @@ window.__webTabNew = function (url) {
   // R-外泄根治·浮层检测结构化（家族第 11 修教训：类名名单永远补不全——
   // 本例「新建文件」下拉 .nf-menu 不在名单 → 控件不藏 → HWND 啃掉菜单下半截）：
   // ① 类名快速路径（modal/ctx/fav/nf-menu）；
-  // ② 结构兜底：任意 body 直属、fixed/absolute、z≥100、有尺寸、与当前
-  //    web 控件区域相交的元素 = 浮层压在控件上 → 藏控件（DOM 永远盖不过
-  //    HWND）。#notifyStack 豁免（常驻通知栈，藏控件会随每条提示闪跳）。
+  // R9.13 临时禁用结构兜底扫描（家族第 14/15 例实锤：矩形相交判定在
+  // 真实环境产生幻影 → 控件被永久隐藏 = 全黑冻结，且无浮层也持续）。
+  // 只保留类名快速路径。代价：未在名单里的自定义浮层会啃控件边缘
+  // （cosmetic），换取「绝不无端冻结」。待定位到具体误判源后重建。
   const anyOverlayOpen = () => {
     if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu')]
         .some(shown)) return true;
-    const c = _webCur();
-    if (!c || !c.wrap) return false;
-    const r = c.wrap.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) return false;
-    for (const el of document.body.children) {
-      if (el.id === 'notifyStack' || el.contains(c.wrap)) continue;
-      const s = getComputedStyle(el);
-      if (s.position !== 'fixed' && s.position !== 'absolute') continue;
-      if (el.offsetWidth < 4 || el.offsetHeight < 4) continue;
-      const z = parseInt(s.zIndex, 10);
-      if (!(z >= 100)) continue;
-      const b = el.getBoundingClientRect();
-      if (b.left < r.right && b.right > r.left &&
-          b.top < r.bottom && b.bottom > r.top) return true;
-    }
     return false;
+  };
+  // R9.13 诊断：冻结现场在【工具主界面】console 跑 __fcDiag()，一次给出
+  // 推演的全部输入（激活/在屏/阅读/休眠/浮层判定/各 tab 镜像/候选浮层）
+  window.__fcDiag = function () {
+    try {
+      const a = connections[activePortId];
+      const webTabs = Object.values(connections).filter(
+        c => c && c.meta && c.meta.kind === 'web').map(c => ({
+          pid: c.portId,
+          wrapShown: c.wrap && c.wrap.style.display !== 'none',
+          ctlShown: c._ctlShown,
+          reader: !!(c._ui && c._ui.reader),
+          sleeping: !!(c._ui && c._ui.sleeping),
+          label: (c.meta.label || '').slice(0, 24)
+        }));
+      return JSON.stringify({
+        active: activePortId,
+        activeKind: a && a.meta ? a.meta.kind : null,
+        activeWeb: !!(a && a.meta && a.meta.kind === 'web'),
+        wrapShown: !!(a && a.wrap && a.wrap.style.display !== 'none'),
+        reader: !!(a && a._ui && a._ui.reader),
+        sleeping: !!(a && a._ui && a._ui.sleeping),
+        overlay: !!(window.__webOverlayOpen && window.__webOverlayOpen()),
+        pwMO: !!window.__fcPwMO,
+        webTabs: webTabs,
+        cands: [...document.querySelectorAll('.modal,.ctx-menu,#webFavMenu,.nf-menu')]
+          .map(e => ({ c: (e.className || e.id || '').slice(0, 40),
+                       w: e.offsetWidth, h: e.offsetHeight,
+                       vis: getComputedStyle(e).visibility }))
+          .filter(x => x.w > 0 || x.h > 0)
+      });
+    } catch (e) { return 'diag-error: ' + e.message; }
   };
   window.__webOverlayOpen = anyOverlayOpen;   // R-外泄根治：推演函数读取
   let pend = false;
@@ -1134,7 +1152,11 @@ function _webFavMenu(anchor) {
   list.style.top = (topUp >= 8 ? topUp : Math.min(r.bottom + 6,
     Math.max(8, window.innerHeight - list.offsetHeight - 8))) + 'px';
   const close = (ev) => {
-    if (!list.contains(ev.target) && ev.target !== anchor) {
+    // R9.12：★ 按钮内嵌 SVG 后点击 target 是 svg/path 而非按钮本身，
+    // ev.target !== anchor 误判「点在外面」→ 先移除再被 onclick 当作
+    // 重新打开 → 菜单永远收不回（用户实锤）。与 editor.js nf-menu 同款
+    // contains 判定：点在锚点元素内 = 不是外点
+    if (!list.contains(ev.target) && !(anchor && anchor.contains(ev.target))) {
       list.remove();
       document.removeEventListener('click', close, true);
     }

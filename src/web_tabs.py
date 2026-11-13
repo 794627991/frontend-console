@@ -56,35 +56,47 @@ _SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 # ——只喂密码管理器，页面绝不跳转。自带真 form 的站点（SSO 等）不碰
 # （原生自管）；防自动签到守卫（_ANTI_AUTOSIGNIN_JS）照常生效。
 _PW_FORM_HELPER_JS = (
-    '(function(){'
-    'function wrap(pw){'
+    "window.__fcPwHelperV='R9.9';"
+    "(function(){"
+    'console.debug("[fc-pw] injected @",location.href);'
+    "function wrap(pw){"
     "if(pw.dataset.fcWrapped)return;pw.dataset.fcWrapped='1';"
     "if(pw.form&&pw.form.tagName==='FORM')return;"
-    "var f=document.createElement('form');f.style.display='contents';"
-    "f.setAttribute('data-fc-pw','1');"
-    'pw.parentNode.insertBefore(f,pw);f.appendChild(pw);'
-    "f.addEventListener('submit',function(e){e.preventDefault();},true);"
-    'return f;}'
-    'function arm(pw){'
+    'var f=document.createElement("form");f.style.display="contents";'
+    'f.setAttribute("data-fc-pw","1");'
+    "pw.parentNode.insertBefore(f,pw);f.appendChild(pw);"
+    'f.addEventListener("submit",function(e){e.preventDefault();},true);'
+    "return f;}"
+    "function arm(pw){"
     "if(pw.dataset.fcArmed)return;pw.dataset.fcArmed='1';"
-    'var f=wrap(pw);if(!f)return;'
-    'var btn=null,anc=pw.parentElement;'
-    'while(anc&&anc!==document.body){'
-    "btn=anc.querySelector('button, input[type=submit]');if(btn)break;"
-    'anc=anc.parentElement;}'
-    "if(!btn)btn=document.querySelector('button');"
-    "if(!btn||btn.dataset.fcArmed)return;btn.dataset.fcArmed='1';"
-    "btn.addEventListener('click',function(){"
-    'if(!pw.value)return;'
-    'try{if(f.requestSubmit){f.requestSubmit();}'
-    "else{f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));}}"
-    "catch(_){try{f.dispatchEvent(new Event('submit',"
-    '{bubbles:true,cancelable:true}));}catch(__){}}});}'
-    'function scan(){'
-    "document.querySelectorAll('input[type=password]').forEach(arm);}"
-    'new MutationObserver(scan).observe('
-    'document.documentElement,{childList:true,subtree:true});'
-    'scan();})();'
+    "var f=wrap(pw);if(!f)return;"
+    "var btn=null,anc=pw.parentElement;"
+    "while(anc&&anc!==document.body){"
+    'btn=anc.querySelector("button, input[type=submit]");if(btn)break;'
+    "anc=anc.parentElement;}"
+    'if(!btn||btn.dataset.fcArmed)return;btn.dataset.fcArmed="1";'
+    'btn.addEventListener("click",function(){'
+    "if(!pw.value)return;"
+    "try{if(f.requestSubmit){f.requestSubmit();}"
+    'else{f.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));}}'
+    'catch(_){try{f.dispatchEvent(new Event("submit",'
+    "{bubbles:true,cancelable:true}));}catch(__){}}});}"
+    "function scan(){"
+    "var n=document.querySelectorAll('input[type=password]').length;"
+    "document.querySelectorAll('input[type=password]').forEach("
+    "function(p){try{arm(p);}catch(e){"
+    'console.warn("[fc-pw] arm skip:",e);}});'
+    "if(n)console.debug('[fc-pw] scan:',n,'pw(s)');"
+    '}'
+    "window.__fcPwMO=new MutationObserver(scan);"
+    "window.__fcPwMO.observe(document,{childList:true,subtree:true});"
+    'document.addEventListener("DOMContentLoaded",function(){'
+    'console.debug("[fc-pw] DOMC");scan();});'
+    'window.addEventListener("load",function(){setTimeout(scan,0);});'
+    'console.debug("[fc-pw] MO attached");'
+    "scan();"
+    'console.debug("[fc-pw] initial scan done");'
+    "})();"
     )
 
 
@@ -650,7 +662,6 @@ class WebTabs:
             c = self._ctl.get(tab_id)
             if c:
                 c.Visible = False
-
     def show(self, tab_id, visible, sq=0, hide_all=False):
         """切 tab：显示目标控件（排他），或只藏目标。hide_all=True=全隐
         （R6 审计 W32：_want 记哨兵，防陈旧排他意图经 layout 弹出他 tab）。
@@ -830,6 +841,27 @@ def register(app):
         if act == "suspend":
             # R-外泄根治·静止帧：抓帧→隐藏→回推（前端 reconcile 调用）
             return jsonify(t.suspend(tid))
+        if act == "show":
+            # a556：sq 序号透传（前端乱序保护）。R1 审计 W7：on/all 布尔
+            # 穿透修正。R6 审计 W32：all=true=全隐（_want 记哨兵）。
+            _on = d.get("on", True)
+            _all = d.get("all", False)
+            return jsonify(t.show(
+                tid,
+                _on if isinstance(_on, bool)
+                else str(_on).strip().lower() in ("true", "1", "yes", "on"),
+                _num("sq"),
+                _all if isinstance(_all, bool)
+                else str(_all).strip().lower() in ("true", "1", "yes", "on")))
+        if act == "dispose":
+            return jsonify(t.dispose(tid))
+        if act == "dispose_all":
+            # R4 审计 D1（W3）：页面卸载（pagehide beacon）按纪元回收——
+            # 只动本纪元控件，刷新后重建的新纪元 tab 不被迟到的 beacon 误杀
+            return jsonify(t.dispose_all(str(d.get("epoch") or "") or None))
+        if act == "layout":
+            return jsonify(t.layout(_num("x"), _num("y"),
+                                    _num("w"), _num("h")))
 
         return jsonify({"ok": False, "err": "bad act"})
 
