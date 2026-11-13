@@ -5460,26 +5460,15 @@ html[data-nogpu] .hg-vcs-frow { contain-intrinsic-size: auto 32px; }
      1ms 一次让清理合同照常履行、入场动画瞬切、infinite 循环（思考脉动/进度
      条纹/spinner）定格末帧不再逐帧重绘（delay 保留不影响——延迟期零开销）；
    ③ backdrop-filter 全关——状态胶囊/docx 大纲/断连遮罩三处底层不透明度
-     ≥82%，无 blur 视觉损失可忽略。 */
+     ≥82%，无 blur 视觉损失可忽略。
+   a570（用户定调「退化成只禁毛玻璃」）：性能模式住在外观页，本位就是管
+     外观开销——a451 的全禁动画/过渡系无端升级（误伤 AI 执行动画等状态
+     反馈，a569 曾打豁免补丁），本版整体收回：只留 ③ 毛玻璃。动画/过渡
+     的性能诉求归 data-nogpu（无GPU档，降帧不禁用）。 */
 html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
-  transition: none !important;
-  animation-duration: .001s !important;
-  animation-iteration-count: 1 !important;
   backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
-
-/* a569（用户令）：性能模式豁免——harness AI 执行动画。状态反馈类：
-   AI 未输出正文的三点跳动占位 / 思考次数脉动 / 只读 busy——全禁定格
-   会让用户误判「卡死/没在跑」。豁免声明在通配之后，同为 !important 下
-   特异性 (0,2,1) > (0,1,1) 取胜；开销仅 3-4 个 4px 点的 opacity/
-   transform 逐帧，可忽略 */
-html[data-perf] .hg-ph-dots i {
-  animation-duration: 1.2s !important;
-  animation-iteration-count: infinite !important; }
-html[data-perf] .hg-think-anim,
-html[data-perf] .hg-ro-busy {
-  animation-duration: 1.4s !important;
-  animation-iteration-count: infinite !important; }
 
 /* ===== a279 批1：MD 预览主题色独立配置（用户定调：不跟随全局，可随时改） =====
    四档：auto（跟随全局暗亮）/ dark / light / paper（护眼=旧版恒亮纸色）

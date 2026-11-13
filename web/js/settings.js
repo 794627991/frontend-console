@@ -314,11 +314,11 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-sub">整个界面等比缩放（80%–130%）。也可用 Ctrl+= / Ctrl+- 调终端字号，Ctrl+0 全部恢复默认。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
-      <div class="dd-label">性能模式（全禁大锤）</div>
+      <div class="dd-label">外观性能模式（关毛玻璃）</div>
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">全局禁用过渡/循环动画与毛玻璃——比终端设置里的「无GPU加速」更激进，极端卡顿时用；两档同开时本档优先。</div>
+      <div class="dd-sub">关闭毛玻璃（backdrop 模糊，软件光栅最贵的外观开销）。动画/过渡不在此档管——需要动画降帧请用终端设置里的「无GPU加速」（两档可同开，毛玻璃双保险）。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">Tab 模式</div>
@@ -821,12 +821,13 @@ function _stNoGpuCard(pane) {
   if (!btn || typeof toggleNoGpuMode !== 'function') return;
   const sync = () => {
     const on = document.documentElement.hasAttribute('data-nogpu');
-    // 两档同开时实际生效的是外观页性能模式的全禁（CSS 源序覆盖）——如实标注
-    const perfOn = document.documentElement.hasAttribute('data-perf');
+    // a570：外观性能模式已收窄为「只关毛玻璃」，不再覆盖本档动画行为
+    const syncNote = document.documentElement.hasAttribute('data-perf')
+      ? '毛玻璃另由外观页性能模式关闭' : '无毛玻璃';
     btn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
       + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
       + '<small style="color:var(--muted);font-weight:400;">　' + (on
-        ? (perfOn ? '当前外观页性能模式全禁生效中' : '动画降帧中（补间 100ms · 循环 16 帧/周期 · 无毛玻璃）')
+        ? ('动画降帧中（补间 100ms · 循环 16 帧/周期 · ' + syncNote + '）')
         : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
   };
   btn.onclick = () => { toggleNoGpuMode(); sync(); };

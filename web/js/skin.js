@@ -103,10 +103,10 @@ function applyStyle(id, persist) {
   applyStyle(style, false);
 })();
 
-// a278 性能模式开关；a451 全局化：挂 data-perf 即全风格生效（style.css
-// a451 块全局掐 transition/循环动画/backdrop-filter；a278 仅极光皮肤的
-// 光斑/blur 规则保留作叠加）。虚机软件渲染卡顿大户实锤（devtools 追踪
-// GPUTask 1331ms）。持久化搭 /api/theme 顺车（perf_mode 键）。
+// a278 性能模式开关；a570（用户定调）收窄为本位：只关毛玻璃
+// （backdrop-filter——软件光栅最贵的外观开销）。a451 曾升级成全禁
+// 动画/过渡（误伤 AI 执行动画等状态反馈），已整体收回；动画降帧归
+// data-nogpu（无GPU档）。持久化搭 /api/theme 顺车（perf_mode 键）。
 function togglePerfMode(on) {
   const el = document.documentElement;
   if (on === undefined) on = !el.hasAttribute('data-perf');
