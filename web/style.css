@@ -5468,6 +5468,19 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   backdrop-filter: none !important;
 }
 
+/* a569（用户令）：性能模式豁免——harness AI 执行动画。状态反馈类：
+   AI 未输出正文的三点跳动占位 / 思考次数脉动 / 只读 busy——全禁定格
+   会让用户误判「卡死/没在跑」。豁免声明在通配之后，同为 !important 下
+   特异性 (0,2,1) > (0,1,1) 取胜；开销仅 3-4 个 4px 点的 opacity/
+   transform 逐帧，可忽略 */
+html[data-perf] .hg-ph-dots i {
+  animation-duration: 1.2s !important;
+  animation-iteration-count: infinite !important; }
+html[data-perf] .hg-think-anim,
+html[data-perf] .hg-ro-busy {
+  animation-duration: 1.4s !important;
+  animation-iteration-count: infinite !important; }
+
 /* ===== a279 批1：MD 预览主题色独立配置（用户定调：不跟随全局，可随时改） =====
    四档：auto（跟随全局暗亮）/ dark / light / paper（护眼=旧版恒亮纸色）
    实现方式：.ed-md-preview 挂主题类，覆盖 --note-* 变量 */
