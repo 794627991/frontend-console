@@ -1352,6 +1352,28 @@ def api_logs():
     else:                     files.sort(key=lambda x: x["mtime"], reverse=True)  # time_desc 默认
     return jsonify({"logs": files, "dir": LOG_DIR})
 
+def _web_favs_clean(items):
+    """网页收藏清洗（R-命名统一批次）：url/title 字符串白名单 + 截断
+    （url≤2048 / title≤200）+ 上限 100，与前端 _webFavsSave 同口径。"""
+    out = []
+    if not isinstance(items, list):
+        return out
+    for it in items[:200]:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("url") or "").strip()
+        if not url or len(url) > 2048:
+            continue
+        entry = {"url": url,
+                 "title": str(it.get("title") or "").strip()[:200],
+                 "ts": int(it.get("ts") or 0)}
+        note = str(it.get("note") or "").strip()[:100]
+        if note:
+            entry["note"] = note   # R-命名统一·备注（用户令）——否则往返即丢
+        out.append(entry)
+    return out[:100]
+
+
 def _calc_hist_clean(items):
     """计算器历史清洗：只要 {expr,res} 均为字符串的条目，字符串截断 200 字符，上限 50。"""
     out = []
@@ -1416,6 +1438,13 @@ def api_theme():
                         "sidebar_w": int(cfg.get("sidebar_w") or 0),
                         "data_dir_prompted": bool(cfg.get("data_dir_prompted")),
                         "calc_history": _calc_hist_clean(cfg.get("calc_history", [])),
+                        # R-命名统一：网页收藏服务端持久化——localStorage 按
+                        # origin（含随机端口）隔离，跨启动必丢；走 config.json
+                        "web_favs": _web_favs_clean(cfg.get("web_favs", [])),
+                        # a563：TFTP 面板高度同款根因同款修——localStorage
+                        # 跨启动（端口必变）必丢 = 面板恒回 CSS 50%
+                        #（用户实锤"修了很多次未真正修复"的根源）
+                        "tftp_pane_h": max(0, min(4000, int(cfg.get("tftp_pane_h") or 0))),
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
                         "tray_prompt_shown": bool(cfg.get("tray_prompt_shown", False)),
                         "claude_ui_mode": cfg.get("claude_ui_mode", "harness"),
@@ -1495,6 +1524,17 @@ def api_theme():
     if "calc_history" in data and isinstance(data["calc_history"], list):
         # 计算器历史持久化：[{expr, res}]，字符串白名单 + 上限 50（防 config 膨胀）
         _save_config({**_load_config(), "calc_history": _calc_hist_clean(data["calc_history"])})
+    if "web_favs" in data and isinstance(data["web_favs"], list):
+        # 网页收藏持久化：清洗口径同上（url 白名单 + 100 条上限，防 config 膨胀）
+        _save_config({**_load_config(), "web_favs": _web_favs_clean(data["web_favs"])})
+    if "tftp_pane_h" in data:
+        # a563：TFTP 面板高度持久化（int + 60..4000 钳制，防 config 膨胀）
+        try:
+            _h = int(data["tftp_pane_h"])
+        except (TypeError, ValueError):
+            _h = 0
+        _save_config({**_load_config(),
+                      "tftp_pane_h": max(0, min(4000, _h))})
     # 关闭到托盘（close_to_tray：设置页开关）+ 首次提示已展示标记（tray_prompt_shown）
     _tk = {}
     if "close_to_tray" in data:

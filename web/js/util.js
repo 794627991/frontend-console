@@ -762,9 +762,13 @@ let activePortId = null;
       if (!groupList || groupList.contains(e.target)) return;
       // a452（审计 P1）：点同一胶囊的 ✕ 时别先收下拉再吃掉事件
       if (e.target.closest && e.target.closest('.tab-drawer-x')) return;
-      // a452（第二轮审计 P1）：同 ⋮ 列表——胶囊本体点击必须放行，否则分组
-      // 下拉开着时第一次点别的胶囊只收起下拉、不切 tab。
-      if (e.target.closest && e.target.closest('.tab-drawer')) { _groupCloseList(); return; }
+      // a563（用户实锤「点击展开，再点击不能收起」）：胶囊本体点击放行
+      // **且不预关**——原先这里先 _groupCloseList() 再放行，胶囊自己的
+      // onclick → buildGroupList 看到列表已空立即重开，同组切换收起分支
+      // （buildGroupList 开头的 toggle）永远轮不到执行，表现=关了又瞬间
+      // 开（所有抽屉同病）。现在完全交给 buildGroupList：同组=切换收起，
+      // 异组=关旧开新（一次点击直达，无需先收再点）。
+      if (e.target.closest && e.target.closest('.tab-drawer')) return;
       _groupCloseList();
       const m = document.getElementById('ctxMenu');
       if (m && m.style.display === 'block' && m.contains(e.target)) return;

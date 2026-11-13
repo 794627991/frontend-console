@@ -113,9 +113,43 @@ function _webFavs() {
     return ok;
   } catch (_) { try { _webFavsSave([]); } catch (_e) {} return []; }
 }
+let _webFavsSrvReady = false;   // 启动种子完成前不上传（防本地空态覆盖服务端）
 function _webFavsSave(v) {
-  try { localStorage.setItem('web-favs', JSON.stringify(v.slice(0, 100))); } catch (_) {}
+  const arr = v.slice(0, 100);
+  try { localStorage.setItem('web-favs', JSON.stringify(arr)); } catch (_) {}
+  // R-命名统一·跨启动持久化：localStorage 按 origin（含随机端口）隔离，
+  // 每次重启端口必变 = 收藏必丢（用户实锤）。服务端 config.json 通道
+  // （与 sidebar_w / calc_history 同款兼职）。owner 门 + 去抖防连发。
+  if (_webFavsSrvReady && !(window.__webUiIsOwner && !window.__webUiIsOwner())) {
+    clearTimeout(_webFavsSave._t);
+    _webFavsSave._t = setTimeout(() => {
+      try {
+        fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ web_favs: _webFavs().slice(0, 100) }) }).catch(() => {});
+      } catch (_) {}
+    }, 400);
+  }
 }
+// 启动种子：新 origin 的 localStorage 必空 → 从服务端回填；本地已有
+// （种子完成前用户抢先收藏）→ 本地优先 + 差异回写。完成后才允许上传。
+(function () {
+  fetch('/api/theme').then(r => r.json()).then(j => {
+    const srv = Array.isArray(j.web_favs) ? j.web_favs.filter(
+      x => x && typeof x.url === 'string') : [];
+    let cur = [];
+    try { cur = JSON.parse(localStorage.getItem('web-favs') || '[]'); } catch (_) {}
+    if (!Array.isArray(cur)) cur = [];
+    const merged = (cur.length ? cur : srv).slice(0, 100);
+    try { localStorage.setItem('web-favs', JSON.stringify(merged)); } catch (_) {}
+    if (JSON.stringify(merged) !== JSON.stringify(srv)) {
+      try {
+        fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ web_favs: merged }) }).catch(() => {});
+      } catch (_) {}
+    }
+    _webFavsSrvReady = true;
+  }).catch(() => { _webFavsSrvReady = true; });
+})();
 function _webShortUrl(u) {
   try {
     const x = new URL(u);
@@ -165,7 +199,7 @@ function buildWebPanelTab(url, opts) {
   tab.className = 'tab';
   tab.dataset.portId = portId;
   tab.innerHTML = `<span class="led"></span><span class="tab-ico">${ICO16.link}</span>` +
-    `<span class="label">网页</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
+    `<span class="label">网页</span><span class="baud"></span><span class="close" title="关闭">${ICO16.x}</span>`;
   tab.onclick = (e) => {
     if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; }
     switchTab(portId);
@@ -187,24 +221,25 @@ function buildWebPanelTab(url, opts) {
         <button class="btn ghost icon-btn" data-web="reload" title="重载">⟳</button>
         <input class="web-url" data-web-input spellcheck="false" autocomplete="off"
                placeholder="输入网址，回车打开">
-        <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">★</button>
-        <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">☰ 阅读</button>
+        <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">${ICO16.star}</button>
+        <button class="btn ghost icon-btn" data-web="pw" title="密码助手：填入 / 保存本站密码">${ICO16.key}</button>
+        <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">${ICO16.book} 阅读</button>
         <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框——需登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
-        <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">↗ 浏览器</button>
+        <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">${ICO16.openExt} 浏览器</button>
       </div>
       <div class="web-body" data-web-body>
         <!-- a544：WebView2 控件宿主区（控件由 Python 叠放其上，像素对齐） -->
         <div class="web-frame web-host"></div>
         <div class="web-reader" data-web-reader style="display:none;"></div>
         <div class="web-sleep" data-web-sleep style="display:none;">
-          <div>🌙 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
+          <div>${ICO16.hourglass} 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
         </div>
         <div class="web-err" data-web-err style="display:none;">
           <div class="web-err-title">⚠️ 页面加载异常</div>
           <div class="web-err-msg">可能是网络不可达（内网无外联？）或网站拒绝被嵌入。</div>
           <div class="web-err-acts">
-            <button class="btn" data-web-err="read">☰ 用阅读模式打开</button>
-            <button class="btn ghost" data-web-err="sys">↗ 在系统浏览器中打开</button>
+            <button class="btn" data-web-err="read">${ICO16.book} 用阅读模式打开</button>
+            <button class="btn ghost" data-web-err="sys">${ICO16.openExt} 在系统浏览器中打开</button>
             <button class="btn ghost" data-web-err="dismiss">继续等待</button>
           </div>
         </div>
@@ -375,9 +410,40 @@ function _webReconcileVis() {
       && !(window.__webOverlayOpen && window.__webOverlayOpen());
     if (want) { target = c; break; }   // 屏上至多一个 wrap，命中即唯一
   }
+  // R9.6·反冻结自愈：若顶层激活 tab 就是网页、且它在屏/非阅读/非休眠/
+  // 无浮层——按不变式它必须可见。推演循环却没选中它 = 某个连结项被陈旧
+  // 状态（残留 flex/中间态）污染 → 信任屏幕真值强改为它，并告警留痕。
   if (!target) {
-    // 无应可见控件 → 全隐（一条 hide_all；本地镜像已全隐则免发）
-    if (Object.values(connections).some(
+    const aw = (typeof activePortId !== 'undefined') ? connections[activePortId] : null;
+    const awOK = aw && aw.meta && aw.meta.kind === 'web' && aw.wrap
+      && aw.wrap.style.display !== 'none' && !aw._ui.reader && !aw._ui.sleeping
+      && !(window.__webOverlayOpen && window.__webOverlayOpen());
+    if (awOK) {
+      console.warn('[web-tabs] reconcile anomaly: 激活网页 tab 应可见却未命中（已自愈）');
+      target = aw;
+    }
+  }
+  if (!target) {
+    // 无应可见控件：正被看到的那个走「静止帧」（suspend=抓帧→隐藏→回推，
+    // 用户接受静止不接受白屏）；其余零散可见（不应存在）走全隐兜底
+    const shown = Object.values(connections).filter(
+      c => c && c.meta && c.meta.kind === 'web' && c._ctlShown === true);
+    if (shown.length === 1) {
+      const sc = shown[0];
+      _webCtl(sc, { act: 'suspend' });
+      sc._ctlShown = false;
+      // R-外泄根治·自报：900ms 内帧没到 = 抓帧管线断——横幅直说，
+      // 不让用户猜暗色是「定格」还是「兜底」
+      sc._shotAt = 0;
+      setTimeout(() => {
+        if (sc._ctlShown === false && !sc._shotAt &&
+            connections[sc.portId] === sc && !sc._ui.reader && !sc._ui.sleeping) {
+          showBanner('静止帧未生成（已暗色兜底）——控制台应有 [web-tabs] suspend 诊断行', 4000, true);
+        }
+      }, 900);
+      return;
+    }
+    if (shown.length > 1 || Object.values(connections).some(
         c => c && c.meta && c.meta.kind === 'web' && c._ctlShown !== false)) {
       _webCtlVisible(false, true);
       for (const pid in connections) {
@@ -390,9 +456,18 @@ function _webReconcileVis() {
   for (const pid in connections) {
     const c = connections[pid];
     if (!c || !c.meta || c.meta.kind !== 'web' || !c._tabId || c === target) continue;
-    if (c._ctlShown !== false) _webCtlVisible(false, false, c);   // 只发变化
+    if (c._ctlShown === true) {
+      _webCtl(c, { act: 'suspend' });   // 静止帧：抓帧→隐藏→回推
+      c._ctlShown = false;
+    } else if (c._ctlShown !== false) {
+      _webCtlVisible(false, false, c);   // 只发变化
+    }
   }
-  if (target._ctlShown !== true) _webCtlVisible(true, false, target);
+  if (target._ctlShown !== true) {
+    // 静止帧不清除：活页面（HWND）就位后背景图被盖住无碍；保留它意味着
+    // 下次隐藏的瞬间旧帧立即可见（迟到帧也比暗底强），新帧到达即覆盖
+    _webCtlVisible(true, false, target);
+  }
 }
 // 兜底钩子：任何代码路径（含本文件未知的抽屉/悬浮/第三方）只要翻动
 // web wrap 的 display，0 推演延迟内必被捕获——「不可能漏路径」的保证。
@@ -415,6 +490,14 @@ function _webReconcileVis() {
   arm();
   setInterval(arm, 3000);   // 新建 web tab 补挂（create 后此处自然覆盖）
 })();
+// R9.6·反冻结兜底：任何一次推演算错/漏触发（概率态）最多存活 2 秒——
+// 周期重推演；镜像一致时零网络请求，成本可忽略
+setInterval(function () {
+  try {
+    if (Object.values(connections).some(
+        c => c && c.meta && c.meta.kind === 'web')) _webReconcileVis();
+  } catch (_) {}
+}, 2000);
 
 // Python 控件事件回推（ExecuteScriptAsync 调入）
 function _webByTabId(tid) {
@@ -510,6 +593,22 @@ window.__webTabLoad = function (tid, on) {
   if (!c) return;
   c.wrap.classList.toggle('web-loading', !!on);
 };
+// R-外泄根治·静止帧：控件隐藏前后端抓的当前画面 → 占位背景（页面看
+// 起来被「冻结」而非变白；重新显示时由 reconcile 清除露出活页面）
+window.__webTabShot = function (tid, dataUrl) {
+  const c = _webByTabId(tid);
+  if (!c || !c.wrap) return;
+  c._shotAt = Date.now();   // 自报依据：帧已到达
+  const host = c.wrap.querySelector('.web-host');
+  if (host) {
+    // 无条件上帧：活页面（HWND）可见时背景被盖住无碍；迟到帧保留到下次
+    // 隐藏瞬间立即生效（比暗底强）。滤镜=「已暂停」的视觉语义（用户令）
+    host.style.backgroundImage = 'url("' + dataUrl + '")';
+    host.style.backgroundSize = '100% 100%';
+    host.style.backgroundRepeat = 'no-repeat';
+    host.style.filter = 'brightness(0.8) saturate(0.85)';
+  }
+};
 window.__webTabNew = function (url) {
   // a554 多开：控件内新窗口请求 → 开新网页 tab（浏览器语义）
   if (url) buildWebPanelTab(url, { newTab: true });
@@ -535,7 +634,7 @@ window.__webTabNew = function (url) {
   //    web 控件区域相交的元素 = 浮层压在控件上 → 藏控件（DOM 永远盖不过
   //    HWND）。#notifyStack 豁免（常驻通知栈，藏控件会随每条提示闪跳）。
   const anyOverlayOpen = () => {
-    if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu')]
+    if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu, #webPwMenu')]
         .some(shown)) return true;
     const c = _webCur();
     if (!c || !c.wrap) return false;
@@ -641,6 +740,9 @@ function _webNavigate(url, c) {
       // R-外泄根治：可见性全部收敛到推演（W31/W32 的阅读态守卫、a551
       // 浮层联动、B22 定向语义全部由 _webReconcileVis 统一推导）
       _webReconcileVis();
+      // R9.6·第二拍：suspend 回推帧/后端隐藏完成在 ~100-300ms 后——
+      // 二次推演吸收该窗口内的任何中间态
+      setTimeout(_webReconcileVis, 200);
       if (c._ctlPush) setTimeout(c._ctlPush, 30);
     } else if (prev && prev._tabId) {
       // a555 审计修：关活动网页 tab 时 closeEditorTab 内部会自动回切
@@ -729,7 +831,7 @@ function _webReaderToggle(on, skipRestore, c) {
   if (!on) {
     rd.style.display = 'none';
     host.style.display = '';
-    if (btn) btn.textContent = '☰ 阅读';
+    if (btn) btn.innerHTML = ICO16.book + ' 阅读';
     _webReconcileVis();   // R-外泄根治：阅读退出=状态变化 → 推演
     if (!skipRestore && url) {
       // R4 审计 W29（D8）：恢复走原生 GoBack（不加历史条目）；无
@@ -758,7 +860,7 @@ function _webReaderToggle(on, skipRestore, c) {
       if (!c._ui.reader || mySeq !== c._ui.rseq) return;
       if (!j || !j.ok) {
         rd.innerHTML = '<div class="web-reader-err">取正文失败：'
-          + esc(((j && j.err) || '未知')) + '——用 ↗ 浏览器打开</div>';
+          + esc(((j && j.err) || '未知')) + '——用「浏览器」按钮打开</div>';
         return;
       }
       rd.innerHTML = '<div class="web-reader-head">' + esc(j.title || _webShortUrl(url))
@@ -803,7 +905,7 @@ function _webSyncUI(c) {
 }
 function _webAct(act, wrap) {
   // R2 审计 B7：按钮属于哪个 wrap 就操作哪个 tab——原取 _webCur()，
-  // 对非激活 tab 点 ★/☰/发给Claude/后退/前进/刷新 全落在激活 tab 上。
+  // 对非激活 tab 点 收藏/阅读/发给Claude/后退/前进/刷新 全落在激活 tab 上。
   const c = connections[(wrap && wrap.dataset.portId) || ''] || _webCur();
   if (!c) return;
   const url = (c._nav && c._nav.stack[c._nav.idx]) || '';
@@ -846,6 +948,10 @@ function _webAct(act, wrap) {
       return;
     }
     _webSyncUI(c);
+    return;
+  }
+  if (act === 'pw' && c) {
+    _webPwMenu(c);
     return;
   }
   if (act === 'claude' && url) {
@@ -964,18 +1070,21 @@ function _webFavMenu(anchor) {
   let html = '<div class="web-fav-title">收藏夹</div>';
   const _wc = _webCur();
   if (_wc && _wc._nav.idx >= 0 && _wc._nav.stack[_wc._nav.idx]) {
-    html += `<div class="web-fav-cur" data-fav-resume>⟲ 恢复上次网页（${esc(_webShortUrl(_wc._nav.stack[_wc._nav.idx]))}）</div>`;
+    html += `<div class="web-fav-cur" data-fav-resume>${ICO16.restore} 恢复上次网页（${esc(_webShortUrl(_wc._nav.stack[_wc._nav.idx]))}）</div>`;
   }
   if (cur && _webCur()) {   // a555 审计修：原 connections[WEB_PORTID] 恒 null，入口永不渲染
     const starred = favs.some(f => f.url === cur);
     html += `<div class="web-fav-cur" data-fav-act="${starred ? 'unstar' : 'star'}">`
-      + (starred ? '★ 取消收藏当前网页' : '☆ 收藏当前网页') + '</div>';
+      + (starred
+        ? ICO16.star + ' 取消收藏当前网页'
+        : '<span style="opacity:0.45">' + ICO16.star + '</span> 收藏当前网页') + '</div>';
   }
   html += favs.map((f, i) =>
-    `<div class="web-fav-item" data-fav-i="${i}" title="${esc(f.url)}">`
-    + `<span class="web-fav-name">${esc(f.title || _webShortUrl(f.url))}</span>`
-    + `<span class="web-fav-x" data-fav-del="${i}" title="删除">✕</span></div>`).join('');
-  if (!favs.length) html += '<div class="web-fav-empty">还没有收藏——网页 tab 里点 ★ 或地址栏打开后收藏</div>';
+    `<div class="web-fav-item" data-fav-i="${i}" title="${esc(f.url + (f.note ? ' · 备注：' + f.note : ''))}">`
+    + `<span class="web-fav-name">${esc(f.note || f.title || _webShortUrl(f.url))}</span>`
+    + `<span class="web-fav-x" data-fav-edit="${i}" title="编辑备注">${ICO16.pencil}</span>`
+    + `<span class="web-fav-x" data-fav-del="${i}" title="删除">${ICO16.x}</span></div>`).join('');
+  if (!favs.length) html += '<div class="web-fav-empty">还没有收藏——网页 tab 里点收藏按钮，或地址栏打开后收藏</div>';
   list.innerHTML = html;
   document.body.appendChild(list);
   const r = anchor.getBoundingClientRect();
@@ -1021,11 +1130,155 @@ function _webFavMenu(anchor) {
       list.remove();
       return;
     }
+    // R-命名统一·备注编辑：铅笔按钮进入行内编辑（输入框+对勾），对勾/Enter 保存
+    const okBtn = e.target.closest('[data-fav-note-ok]');
+    if (okBtn) {
+      e.stopPropagation();
+      const row = okBtn.closest('[data-fav-i]');
+      const inp = row && row.querySelector('.web-fav-note-inp');
+      if (inp) _webFavSaveNote(list, anchor, +row.dataset.favI, inp.value);
+      return;
+    }
+    const edBtn = e.target.closest('[data-fav-edit]');
+    if (edBtn) {
+      e.stopPropagation();
+      _webFavEnterEdit(list, anchor, +edBtn.dataset.favEdit);
+      return;
+    }
     const item = e.target.closest('[data-fav-i]');
     if (item) {
+      if (item.dataset.favEditing) return;   // 编辑态：行内点击不触发打开
       const f = _webFavs()[+item.dataset.favI];
       if (f) buildWebPanelTab(f.url, { newTab: true });
       list.remove();
+    }
+  });
+}
+
+// R-命名统一·备注编辑：行内编辑态（移除 data-fav-i 的打开语义由
+// favEditing 标记拦截；Enter/✓ 保存、Esc 取消）
+function _webFavEnterEdit(list, anchor, idx) {
+  const row = list.querySelector(`[data-fav-i="${idx}"]`);
+  const f = _webFavs()[idx];
+  if (!row || !f) return;
+  row.dataset.favEditing = '1';
+  const name = row.querySelector('.web-fav-name');
+  row.querySelectorAll('.web-fav-x').forEach(x => { x.style.display = 'none'; });
+  name.innerHTML = `<input class="web-fav-note-inp" maxlength="100" placeholder="备注（留空清除）" value="${esc(f.note || '')}">`
+    + `<span class="web-fav-x" data-fav-note-ok title="保存">${ICO16.check}</span>`;
+  const inp = name.querySelector('input');
+  if (inp) {
+    inp.focus();
+    inp.select();
+    inp.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault(); ev.stopPropagation();
+        _webFavSaveNote(list, anchor, idx, inp.value);
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault(); ev.stopPropagation();
+        _webFavMenu(anchor);
+      }
+    });
+  }
+}
+function _webFavSaveNote(list, anchor, idx, val) {
+  const favs = _webFavs();
+  const f = favs[idx];
+  if (f) {
+    const note = String(val || '').trim().slice(0, 100);
+    if (note) f.note = note; else delete f.note;
+    _webFavsSave(favs);
+  }
+  list.remove();
+  _webFavMenu(anchor);
+}
+
+// ---- R-命名统一·密码助手（用户令）：无 form 的 fetch 登录命中 Chromium
+// 保存启发式盲区（保存条永不出现，用户实锤）→ 自建显式点击驱动：存/填/
+// 删全部手动，零自动行为（a557 锁号风险不回归）。密码 DPAPI 加密落盘
+// （后端 web_tabs._dpapi_*），填入由后端在网页控件内注入（明文不进 UI 文档）。
+function _webPwMenu(c) {
+  const old = document.getElementById('webPwMenu');
+  if (old) { old.remove(); return; }
+  const origin = (() => {
+    const u = (c._ctlUrl || (c._nav && c._nav.stack && c._nav.stack[c._nav.idx]) || '');
+    try { const x = new URL(u); return x.origin; } catch (_) { return ''; }
+  })();
+  if (!origin || !/^https?:/.test(origin)) {
+    showBanner('当前 tab 无可达站点地址', 2500, true);
+    return;
+  }
+  const anchor = c.wrap.querySelector('[data-web="pw"]');
+  const menu = document.createElement('div');
+  menu.id = 'webPwMenu';
+  menu.className = 'web-fav-menu';
+  menu.innerHTML = '<div class="web-fav-title">密码助手 · ' + esc(origin) + '</div>'
+    + '<div class="web-fav-item" data-pw-fill>' + ICO16.key + ' 填入已存密码</div>'
+    + '<div class="web-fav-item" data-pw-save>' + ICO16.save + ' 保存 / 覆盖本站密码</div>'
+    + '<div class="web-fav-item" data-pw-del style="color:var(--neon-red,#e5484d)">'
+    + ICO16.trash + ' 删除已存密码</div>';
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
+  const topUp = r.top - menu.offsetHeight - 6;
+  menu.style.top = (topUp >= 8 ? topUp : Math.min(r.bottom + 6,
+    Math.max(8, window.innerHeight - menu.offsetHeight - 8))) + 'px';
+  const close = (ev) => {
+    if (!menu.contains(ev.target) && ev.target !== anchor) {
+      menu.remove();
+      document.removeEventListener('click', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close, true), 0);
+  const act = (body) => fetch('/api/web/tabs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(Object.assign({ tab: c._tabId, origin }, body))
+  }).then(x => x.json()).catch(() => ({ ok: false }));
+  menu.addEventListener('click', (e) => {
+    const fill = e.target.closest('[data-pw-fill]');
+    if (fill) {
+      e.stopPropagation();
+      act({ act: 'pw_fill' }).then(j => {
+        if (j && j.ok) { showBanner('已填入（检查后提交）', 2000); menu.remove(); }
+        else showBanner('本站没有存档密码——先用「保存」', 3000, true);
+      });
+      return;
+    }
+    const svBtn = e.target.closest('[data-pw-save]');
+    if (svBtn) {
+      e.stopPropagation();
+      act({ act: 'pw_get' }).then(j => {
+        menu.innerHTML = '<div class="web-fav-title">保存 · ' + esc(origin) + '</div>'
+          + '<div style="padding:4px 12px 8px;display:flex;flex-direction:column;gap:6px;">'
+          + '<input class="web-fav-note-inp" id="pwUser" maxlength="128" placeholder="用户名（可空）" value="' + esc((j && j.user) || '') + '" style="width:100%">'
+          + '<input class="web-fav-note-inp" id="pwPass" maxlength="512" type="password" placeholder="密码" style="width:100%">'
+          + '<button class="btn primary" id="pwSaveGo" style="width:100%">保存</button></div>';
+        const uIn = menu.querySelector('#pwUser'), pIn = menu.querySelector('#pwPass');
+        const go = () => {
+          const pw = pIn.value;
+          if (!pw) { showBanner('密码不能为空', 2500, true); return; }
+          act({ act: 'pw_save', user: uIn.value, password: pw }).then(jj => {
+            showBanner(jj && jj.ok ? '已保存（DPAPI 加密落盘）' : '保存失败：' + ((jj && jj.err) || '未知'), 3000, (jj && !jj.ok));
+            if (jj && jj.ok) menu.remove();
+          });
+        };
+        menu.querySelector('#pwSaveGo').onclick = (ev) => { ev.stopPropagation(); go(); };
+        [uIn, pIn].forEach(el => el.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); go(); }
+          ev.stopPropagation();
+        }));
+        pIn.focus();
+      });
+      return;
+    }
+    const delBtn = e.target.closest('[data-pw-del]');
+    if (delBtn) {
+      e.stopPropagation();
+      act({ act: 'pw_del' }).then(() => {
+        showBanner('已删除本站存档', 2000);
+        menu.remove();
+      });
+      return;
     }
   });
 }

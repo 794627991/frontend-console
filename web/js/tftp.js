@@ -129,6 +129,7 @@ async function refreshTftp() {
   // 记忆等于没存。改为 clamp 到合法区间：越界说明窗口尺寸变了，不是记忆
   // 失效；存的值本身保留，窗口再变大仍能恢复原高度。
   let _savedH = 0;
+  let dragging = false, startY = 0, startH = 0;   // a563：声明上移（_applySaved 让位判断需要，避免 TDZ）
   try { _savedH = parseInt(localStorage.getItem('tftpPaneH') || '', 10) || 0; } catch(e) {}
   // a452（审计 P2）：上下限不能都用视口算——窗口 <380 时
   // `max(180, innerHeight-200)` 退化成 180，min/max 互相抵消，面板固定
@@ -138,6 +139,11 @@ async function refreshTftp() {
   function _paneBounds() {
     const parent = pane.parentElement;
     const avail = parent ? parent.clientHeight : window.innerHeight;
+    // a563（用户实锤：修了多次仍未真正修复）：父容器不可测（隐藏/尚未
+    // 布局，clientHeight<=0）时返回 null——原先会一路算出 [0,0] 把恢复
+    // clamp 成 0px 钉死面板，且窗口不再 resize 就无人再救。恢复/重套用
+    // 见到 null 一律跳过，等可测时再套
+    if (avail <= 0) return null;
     // a452（第二轮审计 P2）：hi 可小于 60（窗口高<260 或父容器高<120），
     // 原来 lo 仍被 Math.max(60, ...) 强抬到 60 → 返回值 [60,60] 下限反超
     // 上限，clamp 退化成常量、把高度钉死 60px（还超出可用高度，父容器
@@ -148,23 +154,99 @@ async function refreshTftp() {
     return [lo, hi];
   }
   function _clampPaneH(h) {
-    const [lo, hi] = _paneBounds();
-    return Math.max(lo, Math.min(h, hi));
+    const b = _paneBounds();
+    return b ? Math.max(b[0], Math.min(h, b[1])) : null;
   }
-  if (_savedH >= 60) pane.style.height = _clampPaneH(_savedH) + 'px';
-  // 窗口尺寸变化后重新套用（恢复的是上次的意图高度，不是上次的像素）。
-  // a452：用 rAF 合并——原来每个 resize 事件都同步读写一次 style，拖窗口
-  // 时连续强制重排。
+  // a563：恢复=「意图高度的重套用」，可安全重复调用。原先只在 IIFE 时
+  // 执行一次——启动瞬间父容器/窗口未就绪（pywebview 先显窗后最大化、
+  // 侧栏首帧前 clientHeight=0 等）这一次就废了，之后再无人补。
+  // 四重兜底（rAF×2 / load / 300ms / 1200ms）+ ResizeObserver 盯父容器
+  // （侧栏开合、布局沉淀、窗口最大化全覆盖），任何时序下终会套上。
+  let _appliedLog = false;
+  function _readSaved() {
+    // a563（根因自愈）：每次重套用前重读 localStorage——历版都在 IIFE
+    // 只读一次，首读撞上启动竞态（存储暂空/读取异常被 catch 成 0）则
+    // 该页终身 _savedH=0，所有兜底在 <60 早退永不再读，面板恒回 CSS 50%
+    try { _savedH = parseInt(localStorage.getItem('tftpPaneH') || '', 10) || 0; }
+    catch (e) {}
+  }
+  // a563（真正根治）：主应用每次启动端口随机 → localStorage 按 origin
+  //（含端口）隔离 → 跨启动必空——这才是「拖好的高度重启就丢、修了多次
+  // 未真正修复」的根源。服务端 config.json 通道（与 sidebar_w/calc_history
+  // 同款）：启动种子（服务端 → 本地），拖拽保存（本地 + 去抖上传）
+  (function () {
+    fetch('/api/theme').then(r => r.json()).then(j => {
+      const srvH = parseInt(j && j.tftp_pane_h, 10) || 0;
+      let curLocal = 0;
+      try { curLocal = parseInt(localStorage.getItem('tftpPaneH') || '', 10) || 0; }
+      catch (e) {}
+      if (curLocal >= 60) {
+        // 本地已有（同 origin 重开/本启动已拖过）：本地为准；与服务端不一致
+        // 则回传对齐（迟到种子绝不覆盖用户刚拖的新高度）
+        if (srvH !== curLocal) { _savedH = curLocal; _uploadSaved(); }
+      } else if (srvH >= 60) {
+        // 新 origin（端口变了）localStorage 必空 → 服务端种子
+        _savedH = srvH;
+        try { localStorage.setItem('tftpPaneH', String(srvH)); } catch (e) {}
+        _applySaved();
+      }
+    }).catch(() => {});
+  })();
+  function _uploadSaved() {
+    if (_savedH < 60) return;
+    clearTimeout(_uploadSaved._t);
+    _uploadSaved._t = setTimeout(() => {
+      try {
+        fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tftp_pane_h: _savedH }) }).catch(() => {});
+      } catch (e) {}
+    }, 500);
+  }
+  function _applySaved() {
+    if (dragging) return;             // a563：拖拽进行中不干预（sweep/RO 让位）
+    _readSaved();
+    if (_savedH < 60) return;
+    const h = _clampPaneH(_savedH);
+    if (h == null) return;            // 父容器不可测：等下一轮兜底
+    if (pane.style.height === h + 'px') return;   // 已套用幂等
+    pane.style.height = h + 'px';
+    if (!_appliedLog) {
+      _appliedLog = true;
+      try { console.debug('[tftp-pane] 恢复高度', _savedH, '->', h); } catch (e) {}
+    }
+  }
+  // a563 诊断探针（复发时控制台一键定位断在哪环）
+  window.__tftpH = function () {
+    return { saved: _savedH, style: pane.style.height, h: pane.offsetHeight,
+             bounds: _paneBounds(), innerH: window.innerHeight };
+  };
+  _applySaved();
+  requestAnimationFrame(() => requestAnimationFrame(_applySaved));
+  window.addEventListener('load', _applySaved);
+  setTimeout(_applySaved, 300);
+  setTimeout(_applySaved, 1200);
+  // a563：慢扫尾——前 15s 每秒一次（覆盖所有晚就绪：存储/布局/最大化/
+  // 侧栏沉淀），幂等无副作用。之后完全交 ResizeObserver 常驻
+  let _sweepN = 0;
+  const _sweep = setInterval(() => {
+    _applySaved();
+    if (++_sweepN >= 15) clearInterval(_sweep);
+  }, 1000);
+  // a563：ResizeObserver 替代（并保留）window resize——父容器高度变化
+  // 的所有路径（侧栏拖宽/开合、启动布局沉淀、窗口最大化）都触发重套用。
+  // rAF + setTimeout 双发：窗口被遮挡时 rAF 挂起，定时器兜底照跑
   let _rszPending = false;
-  window.addEventListener('resize', () => {
+  const _coalesced = () => {
     if (_rszPending) return;
     _rszPending = true;
-    requestAnimationFrame(() => {
-      _rszPending = false;
-      if (_savedH >= 60) pane.style.height = _clampPaneH(_savedH) + 'px';
-    });
-  });
-  let dragging = false, startY = 0, startH = 0;
+    const _run = () => { _rszPending = false; _applySaved(); };
+    requestAnimationFrame(_run);
+    setTimeout(_run, 120);
+  };
+  window.addEventListener('resize', _coalesced);
+  try {
+    new ResizeObserver(_coalesced).observe(pane.parentElement || pane);
+  } catch (e) {}
   resizer.addEventListener('mousedown', e => {
     dragging = true; startY = e.clientY; startH = pane.offsetHeight;
     resizer.classList.add('dragging');
@@ -174,9 +256,11 @@ async function refreshTftp() {
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
     // 向上拖增大：clientY 减小 → 高度增加。a452：上下限与恢复同一口径
-    // （原硬编码 180 / innerHeight-200，小窗口下与恢复逻辑打架）
-    const [_lo, _hi] = _paneBounds();
-    const h = Math.max(_lo, Math.min(startH + (startY - e.clientY), _hi));
+    // （原硬编码 180 / innerHeight-200，小窗口下与恢复逻辑打架）。
+    // a563：_paneBounds 可测性守卫（父容器隐藏时 null，跳过该帧）
+    const b = _paneBounds();
+    if (!b) return;
+    const h = Math.max(b[0], Math.min(startH + (startY - e.clientY), b[1]));
     pane.style.height = h + 'px';
   });
   document.addEventListener('mouseup', () => {
@@ -185,8 +269,15 @@ async function refreshTftp() {
     resizer.classList.remove('dragging');
     document.body.style.userSelect = '';
     try {
-      localStorage.setItem('tftpPaneH', pane.offsetHeight);
-      _savedH = pane.offsetHeight;   // a451：同步内存值，resize 才有正确意图高度
+      // a563：保存侧加值域守卫——父容器异常压缩态下 offsetHeight 可能
+      // 落到离谱小值，别把坏值写进记忆（<60 一律不存，保留旧值）
+      const h = pane.offsetHeight;
+      if (h >= 60) {
+        localStorage.setItem('tftpPaneH', h);
+        _savedH = h;   // a451：同步内存值，resize 才有正确意图高度
+        _uploadSaved();   // a563：服务端持久化（跨启动端口变化不丢）
+        try { console.debug('[tftp-pane] 记忆高度', h); } catch (e) {}
+      }
     } catch(e) {}
   });
 })();

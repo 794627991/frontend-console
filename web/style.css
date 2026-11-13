@@ -5825,6 +5825,9 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   white-space: nowrap; }
 .web-fav-x { color: var(--muted); padding: 0 4px; border-radius: 4px; flex-shrink: 0; }
 .web-fav-x:hover { color: var(--neon-red, #e5484d); }
+.web-fav-name .web-fav-note-inp { width: 150px; background: var(--bg-card); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; font-size: 12px; }
+.web-fav-note-inp:focus { outline: none; border-color: var(--accent); }
 .web-fav-empty { font-size: 12px; color: var(--muted); padding: 10px 12px; }
 
 /* a475：阅读模式 / 休眠层（Edge sleeping tabs + Reader 等价物） */

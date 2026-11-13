@@ -215,6 +215,15 @@ function refreshSidebar() {
       // （触发 _edCloseNow 的清理链）；误走 closeConnection 会发必然 404 的
       // /api/disconnect
       const isVcs = conn.meta.kind === 'vcs';
+      // R-命名统一：网页 tab 副行显示当前站点（host+路径），不落串口兜底
+      const isWeb = conn.meta.kind === 'web';
+      const webUrlDesc = isWeb ? (() => {
+        const u = conn._ctlUrl || (conn._nav && conn._nav.stack && conn._nav.stack[conn._nav.idx]) || '';
+        try {
+          const x = new URL(u);
+          return (x.host + (x.pathname && x.pathname !== '/' ? x.pathname : '')).slice(0, 40);
+        } catch (_) { return String(u).slice(0, 40); }
+      })() : '';
       // 编辑类 tab desc 前缀用后缀专属 SVG 图标（file-icons.js）；hex/对比/日志
       // 用 icons.js 线性图标（a261：emoji 退役；内联位加 vertical-align 对齐）
       const edIcon = (isEdit && conn.meta.kind === 'editor') ? fileIconHtml(conn.meta.label || '', 12) + ' 笔记'
@@ -229,7 +238,7 @@ function refreshSidebar() {
             ? String(conn.extPath).slice(_treeRootOf(conn.extPath).length + 1)
             : String(conn.extPath))
         : '';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? (conn.extPath ? esc(_pathTail) : edIcon) : isVcs ? 'git / svn 工作副本' : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isHarness ? `<span class="claude-ico"></span> Claude 对话 · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : `${conn.meta.baud || ''} baud`;
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? (conn.extPath ? esc(_pathTail) : edIcon) : isVcs ? 'git / svn 工作副本' : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isHarness ? `<span class="claude-ico"></span> Claude 对话 · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isWeb ? webUrlDesc : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
       const isDirty = isEdit && conn.dirty;
@@ -237,7 +246,7 @@ function refreshSidebar() {
         <span class="led"></span>
         <div class="info">
           <div class="name">${(isDirty ? '*' : '') + esc(conn.meta.label || pid)}</div>
-          <div class="desc" title="${conn.extPath ? esc(conn.extPath) : ''}">${(isEdit || isLog || isClaude || isHarness || isVcs) ? descText : esc(descText)} · <span class="baud" data-rows>${isEdit ? rowCount : rowCount + ' 行'}</span></div>
+          <div class="desc" title="${conn.extPath ? esc(conn.extPath) : ''}">${(isEdit || isLog || isClaude || isHarness || isVcs) ? descText : esc(descText)}${isWeb ? '' : ' · <span class="baud" data-rows>' + (isEdit ? rowCount : rowCount + ' 行') + '</span>'}</div>
         </div>
         <div class="actions"><button data-close="${pid}" title="${isLog ? '关闭' : '断开'}">✕</button></div>
       `;

@@ -58,6 +58,122 @@ def _log(level, msg):
         pass
 
 
+# ---------- 密码助手（R-命名统一批次，用户令） ----------
+# 背景：发布中心等「无 form 的 fetch 登录」命中 Chromium 保存启发式盲区，
+# 保存条永不出现（用户实锤）。本助手=显式点击驱动：点「保存」才存、
+# 点「填入」才填——零自动行为，a557 锁号风险（自动签到）不回归。
+# 存储：DATA_DIR/web_passwords.json，密码经 Windows DPAPI（当前用户域）
+# 加密落盘——保护级别与 Chromium 自身密码库同级；明文只在两个 loopback
+# 环节出现：保存时的 POST（origin 守卫内）与填入时的页面注入。
+def _pw_file():
+    try:
+        from src.app_state import DATA_DIR
+        import os
+        return os.path.join(DATA_DIR, "web_passwords.json")
+    except Exception:
+        import os
+        return os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                            "web_passwords.json")
+
+
+def _dpapi_protect(plain):
+    import ctypes, base64
+    from ctypes import wintypes
+
+    class BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    def _blob(b):
+        return BLOB(len(b), ctypes.cast(ctypes.create_string_buffer(b),
+                                        ctypes.POINTER(ctypes.c_char)))
+    cin, cout = _blob(plain), BLOB()
+    if not ctypes.windll.crypt32.CryptProtectData(
+            ctypes.byref(cin), None, None, None, None,
+            1, ctypes.byref(cout)):   # 1 = CRYPTPROTECT_UI_FORBIDDEN
+        raise OSError("CryptProtectData failed")
+    out = ctypes.string_at(cout.pbData, cout.cbData)
+    ctypes.windll.kernel32.LocalFree(cout.pbData)
+    return base64.b64encode(out).decode("ascii")
+
+
+def _dpapi_unprotect(b64):
+    import ctypes, base64
+    from ctypes import wintypes
+
+    class BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    raw = base64.b64decode(b64)
+
+    def _blob(b):
+        return BLOB(len(b), ctypes.cast(ctypes.create_string_buffer(b),
+                                        ctypes.POINTER(ctypes.c_char)))
+    cin, cout = _blob(raw), BLOB()
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+            ctypes.byref(cin), None, None, None, None,
+            1, ctypes.byref(cout)):
+        raise OSError("CryptUnprotectData failed")
+    out = ctypes.string_at(cout.pbData, cout.cbData)
+    ctypes.windll.kernel32.LocalFree(cout.pbData)
+    return out
+
+
+def _pw_load():
+    import json, os
+    try:
+        with open(_pw_file(), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _pw_store(d):
+    import json, os
+    p = _pw_file()
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(tmp, p)
+
+
+def _pw_origin_clean(origin):
+    try:
+        from urllib.parse import urlsplit
+        o = str(origin or "").strip()
+        sp = urlsplit(o if "://" in o else "http://" + o)
+        if sp.scheme not in ("http", "https") or not sp.hostname:
+            return ""
+        _default = (sp.scheme == "http" and sp.port == 80) or \
+                   (sp.scheme == "https" and sp.port == 443)
+        return sp.scheme + "://" + sp.hostname + (
+            "" if _default else ":" + str(sp.port))
+    except Exception:
+        return ""   # 畸形 origin（如 javascript:alert(1) 被补全后端口非数字）
+
+
+def _pw_fill_script(user, pwd):
+    """页面注入脚本（在网页 tab 自己的 CoreWebView2 里执行）：填用户名/
+    密码并派发 input/change（React 受控输入用原型 setter 兜底）。"""
+    import json
+    u, p = json.dumps(user or ""), json.dumps(pwd or "")
+    return ("(function(u,p){function sv(el,v){if(!el)return;"
+            "try{var d=Object.getOwnPropertyDescriptor(el.__proto__,'value');"
+            "if(d&&d.set){d.set.call(el,v);}else{el.value=v;}}catch(_){el.value=v;}"
+            "try{el.dispatchEvent(new Event('input',{bubbles:true}));"
+            "el.dispatchEvent(new Event('change',{bubbles:true}));}catch(_){}}"
+            "var pw=document.querySelector('input[type=password]');"
+            "if(!pw){return;}"
+            "sv(pw,p);"
+            "if(u){var vs=[].filter.call(document.querySelectorAll('input'),"
+            "function(el){var t=(el.type||'text').toLowerCase();"
+            "return (t==='text'||t==='email'||t==='tel')&&el.offsetParent;});"
+            "if(vs.length){sv(vs[0],u);}}})(" + u + "," + p + ");")
+
+
 class WebTabs:
     """WebView2 控件池：tab_id → 控件。布局 rect 由前端上报（DIP）。"""
 
@@ -443,6 +559,142 @@ class WebTabs:
             self._ui(_do)
         return {"ok": True}
 
+    def suspend(self, tab_id):
+        """R-外泄根治·静止帧：趁控件还可见抓一帧 PNG → 隐藏 → 帧推给前端
+        做占位背景（用户接受「静止」，不接受白屏——控件一藏露出 .web-body
+        底色）。抓帧失败/无 CoreWebView2 → 降级直接隐藏（前端保持暗色虚化
+        底）。UI 线程起手（a549 铁律）；流读取在完成回调（池线程读
+        MemoryStream 非 CoreWebView2 成员，不违铁律），推送经 _ui 归 UI。"""
+        ctl = self._ctl.get(tab_id)
+        if not ctl:
+            return {"ok": False, "err": "no tab"}
+
+        def _do():
+            diag = []
+            try:
+                import Microsoft.Web.WebView2.Core as C
+                import System
+                # R9.3 加固：System.IO 在部分 pythonnet 版本需显式引用
+                try:
+                    import System.IO  # noqa: F401
+                except Exception:
+                    try:
+                        import clr
+                        clr.AddReference("System.IO")
+                    except Exception as e2:
+                        diag.append("import-io:%r" % e2)
+                cvw = ctl.CoreWebView2
+                if cvw is None:
+                    diag.append("no-cvw")
+                    ctl.Visible = False
+                    self._diag(tab_id, diag)
+                    return
+                ms = System.IO.MemoryStream()
+                # R9.5：CoreWebView2CaptureFormat 在 pythonnet 下偶发「属性
+                # 返回裸 int 而非枚举实例」（用户实锤两连：先是 AttributeError，
+                # 修后 .PNG 返回 1 → CapturePreviewAsync(int) TypeError）。
+                # 解析目标=必须拿到真枚举实例：①属性+isinstance 校验；
+                # ②从 CapturePreviewAsync 方法签名的参数类型反射（参数的
+                # ParameterType 就是枚举 Type，比翻程序集可靠）；③裸 int
+                # 兜底（pythonnet 多数版本隐式转，失败即诊断可见）。
+                fmt = None
+                try:
+                    _f = C.CoreWebView2CaptureFormat.PNG
+                    import System as _S
+                    if isinstance(_f, _S.Enum):
+                        fmt = _f
+                    else:
+                        diag.append("fmt-notenum:%r" % (type(_f),))
+                except Exception as e:
+                    diag.append("fmt-attr:%r" % e)
+                if fmt is None:
+                    try:
+                        mi = cvw.GetType().GetMethod("CapturePreviewAsync")
+                        et = mi.GetParameters()[0].ParameterType
+                        fmt = System.Enum.ToObject(et, 1)
+                        diag.append("fmt-method")
+                    except Exception as e2:
+                        diag.append("fmt-refl:%r" % e2)
+                        fmt = 1
+                task = cvw.CapturePreviewAsync(fmt, ms)
+            except Exception as e:
+                _log("WARN", "suspend: %r" % e)
+                self._diag(tab_id, ["cap:%r" % e])
+                try:
+                    ctl.Visible = False
+                except Exception:
+                    pass
+                return
+
+            def _done(t):
+                data = b""
+                try:
+                    data = bytes(ms.ToArray())
+                except Exception as e:
+                    diag.append("read:%r" % e)
+                if not data:
+                    diag.append("empty-frame")
+
+                def _after():
+                    try:
+                        ctl.Visible = False
+                    except Exception:
+                        pass
+                    m = self._main_cvw
+                    if m:
+                        try:
+                            if data:
+                                import base64
+                                b64 = base64.b64encode(data).decode("ascii")
+                                if len(b64) <= 4 * 1024 * 1024:
+                                    m.ExecuteScriptAsync(
+                                        "window.__webTabShot && window.__webTabShot(%s, %s)"
+                                        % (json.dumps(tab_id),
+                                           json.dumps("data:image/png;base64," + b64)))
+                                    return
+                                diag.append("b64-big:%d" % len(b64))
+                        except Exception as e:
+                            diag.append("push:%r" % e)
+                        # 诊断直推前端 console——断点一眼可见（用户可开 DevTools）
+                        if diag:
+                            try:
+                                m.ExecuteScriptAsync(
+                                    "console.warn('[web-tabs] suspend: %s')"
+                                    % json.dumps(";".join(diag)))
+                            except Exception:
+                                pass
+                self._ui(_after)
+
+            try:
+                task.ContinueWith(
+                    System.Action[System.Threading.Tasks.Task](_done))
+            except Exception as e:
+                _log("WARN", "suspend cont: %r" % e)
+                self._diag(tab_id, ["cont:%r" % e])
+                try:
+                    ctl.Visible = False
+                except Exception:
+                    pass
+        self._ui(_do)
+        return {"ok": True}
+
+    def _diag(self, tab_id, diag):
+        """suspend 失败诊断直推前端 console（pythonw 下 stdout 丢失）。"""
+        if not diag:
+            return
+        _log("WARN", "suspend %s: %s" % (tab_id, ";".join(diag)))
+        m = self._main_cvw
+
+        def _push():
+            try:
+                m.ExecuteScriptAsync(
+                    "console.warn('[web-tabs] suspend: %s')"
+                    % json.dumps(";".join(diag)))
+            except Exception:
+                pass
+        if m:
+            self._ui(_push)
+
     def _apply_visibility(self):
         """按最近显隐意图应用（UI 线程内跑）。
 
@@ -647,6 +899,63 @@ def register(app):
             return jsonify(t.go_forward(tid))
         if act == "reload":
             return jsonify(t.reload(tid))
+        if act == "suspend":
+            # R-外泄根治·静止帧：抓帧→隐藏→回推（前端 reconcile 调用）
+            return jsonify(t.suspend(tid))
+        if act == "pw_get":
+            # 密码助手：查某 origin 是否有存档（只回用户名，密码不回前端
+            # ——填入走 pw_fill 后端注入，明文不进 UI 文档）
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            rec = _pw_load().get(o)
+            if not rec:
+                return jsonify({"ok": True, "has": False})
+            return jsonify({"ok": True, "has": True,
+                            "user": str(rec.get("u") or "")})
+        if act == "pw_save":
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            if not o:
+                return jsonify({"ok": False, "err": "bad origin"}), 400
+            user = str(d.get("user") or "").strip()[:128]
+            pwd = str(d.get("password") or "")[:512]
+            if not pwd:
+                return jsonify({"ok": False, "err": "密码不能为空"}), 400
+            store = _pw_load()
+            if len(store) >= 64 and o not in store:
+                return jsonify({"ok": False, "err": "存档站点数已达上限 64"}), 400
+            store[o] = {"u": user, "p": _dpapi_protect(pwd.encode("utf-8"))}
+            _pw_store(store)
+            return jsonify({"ok": True})
+        if act == "pw_del":
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            store = _pw_load()
+            if o in store:
+                del store[o]
+                _pw_store(store)
+            return jsonify({"ok": True})
+        if act == "pw_fill":
+            # 后端解密 → 在网页 tab 自己的 CoreWebView2 里注入填充脚本
+            # （明文不回传 UI 文档；UI 线程起手，a549 铁律）
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            rec = _pw_load().get(o)
+            if not rec:
+                return jsonify({"ok": False, "err": "not-saved"})
+            try:
+                pwd = _dpapi_unprotect(str(rec.get("p") or "")).decode("utf-8")
+            except Exception as e:
+                return jsonify({"ok": False,
+                                "err": "解密失败（DPAPI 域不匹配）：%r" % e})
+            ctl = t._ctl.get(tid)
+            if not ctl:
+                return jsonify({"ok": False, "err": "no tab"})
+
+            def _fill():
+                try:
+                    ctl.CoreWebView2.ExecuteScriptAsync(
+                        _pw_fill_script(str(rec.get("u") or ""), pwd))
+                except Exception as e:
+                    _log("WARN", "pw fill: %r" % e)
+            t._ui(_fill)
+            return jsonify({"ok": True})
         if act == "show":
             # a556：sq 序号透传（前端乱序保护）。R1 审计 W7：on/all 布尔
             # 穿透修正。R6 审计 W32：all=true=全隐（_want 记哨兵）。
