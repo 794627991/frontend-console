@@ -488,13 +488,13 @@ function _webReconcileVis() {
       shown[0]._ctlShown = false;
       return;
     }
-    if (shown.length > 1 || Object.values(connections).some(
-        c => c && c.meta && c.meta.kind === 'web' && c._ctlShown !== false)) {
-      _webCtlVisible(false, true);
-      for (const pid in connections) {
-        const c = connections[pid];
-        if (c && c.meta && c.meta.kind === 'web') c._ctlShown = false;
-      }
+    // R9.14：不再依赖镜像判断「是否有变化」——每次全隐都真实下发
+    //（幂等）。镜像免发建立在「前后端一致」假设上，后端 BeginInvoke
+    // 乱序/吞指令会使假设失效 → 冻结死锁（用户实证：手发 show 即恢复）
+    _webCtlVisible(false, true);
+    for (const pid in connections) {
+      const c = connections[pid];
+      if (c && c.meta && c.meta.kind === 'web') c._ctlShown = false;
     }
     return;
   }
@@ -508,11 +508,10 @@ function _webReconcileVis() {
       _webCtlVisible(false, false, c);   // 只发变化
     }
   }
-  if (target._ctlShown !== true) {
-    // 静止帧不清除：活页面（HWND）就位后背景图被盖住无碍；保留它意味着
-    // 下次隐藏的瞬间旧帧立即可见（迟到帧也比暗底强），新帧到达即覆盖
-    _webCtlVisible(true, false, target);
-  }
+  // R9.14：目标显示每次真实下发（幂等）——不依赖镜像判断。静止帧
+  // 不清除：活页面（HWND）就位后背景被盖住无碍，下次隐藏瞬间旧帧立即
+  // 可见（迟到帧也比暗底强），新帧到达即覆盖
+  _webCtlVisible(true, false, target);
 }
 // 兜底钩子：任何代码路径（含本文件未知的抽屉/悬浮/第三方）只要翻动
 // web wrap 的 display，0 推演延迟内必被捕获——「不可能漏路径」的保证。
@@ -679,7 +678,7 @@ window.__webTabNew = function (url) {
   // 只保留类名快速路径。代价：未在名单里的自定义浮层会啃控件边缘
   // （cosmetic），换取「绝不无端冻结」。待定位到具体误判源后重建。
   const anyOverlayOpen = () => {
-    if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu')]
+    if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu, .tab-overflow-list')]
         .some(shown)) return true;
     return false;
   };
