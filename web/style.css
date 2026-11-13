@@ -367,8 +367,13 @@
     /* a480（审计 A/B 确凿修正）：grid 三列 1fr auto 1fr 几何真居中——
        双 spacer 方案因左右段宽差恒右偏 ~73px，<1460px 两侧 spacer 塌缩、
        focus 单侧左伸还压 logo。三列方案：地址栏恒在窗口几何中心，focus
-       展宽由两个 1fr 侧列对称吸收，任何窗宽左右段纹丝不动 */
-    display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 300px) minmax(0, 1fr);
+       展宽由两个 1fr 侧列对称吸收，任何窗宽左右段纹丝不动。
+       a568（用户实锤「展开只向右」）：grid 1fr 对称吸收依赖左右列内容
+       宽度均衡，窄窗必破——灵动岛标准锚定改绝对定位：input 脱离文档流
+       left:50%+translateX(-50%)，收起/展开任何宽度都恒以顶栏几何中心
+       对称向两边扩展，与左右列内容无关；.topbar 回归 flex space-between
+       （左右两段自然对齐，即用户「左右稍微对齐」的诉求） */
+    display: flex; justify-content: space-between;
     align-items: center; gap: 14px;
     padding: 0 18px; height: 52px;
     background: linear-gradient(180deg, var(--bg-panel), var(--bg));
@@ -5784,11 +5789,14 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .recent-item.pinned { border-left: 2px solid var(--accent, #4cc2ff); }
 
 /* ===== a473：网页 tab（路线 A）——工具栏地址栏 / 收藏星标 / 网页面板 ===== */
-.top-url-bar {
-  /* R-灵动岛（用户需求）：收起=小胶囊（居中暗态占位），聚焦=弹性展宽成
+.topbar .top-url-bar {
+  /* R-灵动岛
+     a568：特异性升至 .topbar .top-url-bar（原 0-1-0 被 .topbar input 通用规则（用户需求）：收起=小胶囊（居中暗态占位），聚焦=弹性展宽成
      输入态，回车后 JS 清空+失焦缩回——纯 UI 动效，打开网址逻辑不变。
      a481 铁律沿用：grid item 展宽只能走 width（flex-basis 死代码）；
      弹性曲线用 iOS 手感 cubic-bezier(.32,.72,0,1)（无过冲的缓出） */
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);   /* 恒居中锚：width 动画每帧对称 */
   width: clamp(120px, 14vw, 150px); padding: 5px 14px;
   font-size: 12px; font-family: var(--font-mono); color: var(--fg);
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -5797,11 +5805,12 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   outline: none;
   transition: width .38s cubic-bezier(.32, .72, 0, 1),
               background-color .25s, border-color .2s, box-shadow .3s; }
-.top-url-bar::placeholder { color: var(--muted); opacity: .75; }
-.top-url-bar:hover { background: color-mix(in srgb, var(--fg) 10%, transparent);
+@media (max-width: 1100px) { .topbar .top-url-bar { width: clamp(96px, 11vw, 130px); } }
+.topbar .top-url-bar::placeholder { color: var(--muted); opacity: .75; }
+.topbar .top-url-bar:hover { background: color-mix(in srgb, var(--fg) 10%, transparent);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
-.top-url-bar:focus {
-  width: min(380px, 34vw); padding: 5px 14px;
+.topbar .top-url-bar:focus {
+  width: min(420px, 44vw); padding: 5px 14px;
   text-align: left; color: var(--fg);
   background: var(--bg-input); border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
