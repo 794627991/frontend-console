@@ -318,7 +318,7 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">关闭毛玻璃（backdrop 模糊，软件光栅最贵的外观开销）。注意：本档不管动画/过渡——虚机/远程桌面里若界面卡顿（GPU 合成吃紧），请开 终端设置→无GPU加速（动画降帧 16 帧/周期，观感保留，治本）。</div>
+      <div class="dd-sub">只关毛玻璃。动画卡顿请开「无GPU加速」（终端设置页）。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">Tab 模式</div>
@@ -579,26 +579,26 @@ async function _stRenderTermKeysPane(pane) {
           <input type="checkbox" id="stBoostPower">
           <span>同时切换 Windows 高性能电源计划<span class="dd-sub" style="display:block;">（改系统全局设置；关闭或退出工具时还原原计划。笔记本耗电增加）</span></span>
         </label>
-        <div class="dd-sub">工具进程 + 全部 WebView2 渲染进程提优先级——CPU 满载争抢时（并行编译/虚拟机等）界面不被挤压。标准档日常无感无风险；高档激进争抢；关闭还原 Normal。</div>
+        <div class="dd-sub">工具与渲染进程提优先级，CPU 满载时界面不被挤压。标准档无感，高档激进。ormal。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">无GPU加速（虚拟机/远程桌面）</div>
         <div class="dd-row" style="margin-top:6px;">
           <button class="btn ghost" id="tkNoGpuToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
         </div>
-        <div class="dd-sub">动画降帧而非禁用：补间压缩到 100ms、循环动画（spinner/脉动/进度条纹）步进 16 帧/周期、关毛玻璃与 backdrop 模糊、长列表视口外跳过绘制——保留动画观感，把逐帧光栅+远程桌面编码的账单降一个量级。远程桌面环境会在启动时提示建议开启（每次启动至多一次）。外网真机保持关闭即享完整 GPU 效果。外观页的「性能模式」是更激进的全禁档，两档同开时全禁优先。</div>
+        <div class="dd-sub">动画降帧（虚机/远程桌面建议开）：补间 100ms、循环动画 16 帧/周期、关毛玻璃——动画照常动，帧账单降一个量级。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">AI 网页操作（CDP）</div>
         <div class="dd-row" style="margin-top:6px;">
           <button class="btn ghost" id="tkCdpToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
         </div>
-        <div class="dd-sub">开启后 Claude 会话可用 devtools_* 工具直接操作内嵌浏览器（读页面/点按钮/填表单/截图/看网络请求）——换组件、报错分析都能让 AI 代办。端口仅绑本机（127.0.0.1:9222）。改动需<b>重启工具</b>生效；调试模式（run_debug.bat）本就自带。</div>
+        <div class="dd-sub">开启后 Claude 可用 devtools_* 工具操作内嵌浏览器（读页面/点击/填表/截图）。</div></div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
         <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:flex-start;" id="stNavKeysRow"></div>
-        <div class="dd-sub">编辑器内：转到定义 / 查找所有引用 / 工作区符号搜索（按符号名搜全库，跨文件找函数）。点击输入框后按下新组合键，保存即时生效；编辑器右键菜单同样可用这三项。</div>
+        <div class="dd-sub">转到定义 / 查找引用 / 符号搜索（跨文件找函数）。点输入框按新键即生效。
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">Claude 打开方式</div>
@@ -822,13 +822,9 @@ function _stNoGpuCard(pane) {
   const sync = () => {
     const on = document.documentElement.hasAttribute('data-nogpu');
     // a570：外观性能模式已收窄为「只关毛玻璃」，不再覆盖本档动画行为
-    const syncNote = document.documentElement.hasAttribute('data-perf')
-      ? '毛玻璃另由外观页性能模式关闭' : '无毛玻璃';
     btn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
-      + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
-      + '<small style="color:var(--muted);font-weight:400;">　' + (on
-        ? ('动画降帧中（补间 100ms · 循环 16 帧/周期 · ' + syncNote + '）')
-        : '点击开启：动画降帧而非禁用（虚机/远程桌面推荐）') + '</small>';
+      + (on ? '<b style="color:var(--accent)">已开启</b><small style="color:var(--muted);font-weight:400;">　动画降帧</small>'
+            : '已关闭<small style="color:var(--muted);font-weight:400;">　动画降帧，虚机/远程桌面建议开</small>');
   };
   btn.onclick = () => { toggleNoGpuMode(); sync(); };
   sync();
@@ -1696,7 +1692,7 @@ async function _stRenderUpdatePane(pane) {
         <div class="dd-actions" style="margin-top:8px;">
           <button class="btn ghost" id="upSrvToggle">—</button>
         </div>
-        <div class="dd-sub">开启后本机 8765 端口只读分发 dist/releases/ 下的版本包；首次开启 Windows 防火墙弹窗请允许（勾选专用网络）。把「同事升级地址」发给同事填到他们的这个输入框即可。</div>
+        <div class="dd-sub">本机 8765 端口只读分发版本包，供同事升级；首次开启请允许防火墙弹窗。同事填到他们的这个输入框即可。</div>
         <div class="dd-row" style="margin-top:10px;">
           <input autocomplete="off" type="text" id="upPwd" class="dd-input" spellcheck="false" placeholder="Web 门户登录密码（空=默认 888888）" style="flex:1;">
           <button class="btn ghost" id="upPwdSave">改密码</button>
@@ -2021,7 +2017,7 @@ async function _stRenderAssocPane(pane) {
   pane.innerHTML = `
     <div class="dd-body">
       <div class="dd-label">文件关联接管</div>
-      <div class="dd-sub">「接管」后，双击所选类型文件用本工具打开（编辑器/阅读器自动分发）；「还原」恢复系统原默认（如 txt 还原回记事本）。只改当前用户注册表（HKCU），完全可逆。</div>
+      <div class="dd-sub">接管后双击文件用本工具打开；「还原」恢复系统默认。只改当前用户注册表，可逆。。</div>
       <div class="assoc-list" id="assocList">加载中…</div>
       <div class="dd-actions" style="margin-top:14px;">
         <button class="btn ghost" id="assocAll" disabled>全部接管</button>
