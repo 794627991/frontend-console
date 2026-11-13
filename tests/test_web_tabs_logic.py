@@ -350,8 +350,9 @@ def test_anti_autosignin_injected(stub_clr):
     ctl = t._ctl['t1']
     assert len(ctl.cvw.injected) == 2
     assert "input[type=password]" in ctl.cvw.injected[0]
-    assert 'requestSubmit' in ctl.cvw.injected[1]
-    assert 'fcWrapped' in ctl.cvw.injected[1]
+    # R9.16：第二个注入 = 密码自动填充脚本（DPAPI 通道：pw_get/pw_save）
+    assert 'fcPwAutoV' in ctl.cvw.injected[1]
+    assert 'pw_get' in ctl.cvw.injected[1]
     assert ctl.cvw.Profile.PasswordAutofillEnabled is True
     assert ctl.cvw.Profile.GeneralAutofillEnabled is True
 

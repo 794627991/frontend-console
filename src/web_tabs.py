@@ -56,48 +56,173 @@ _SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 # ——只喂密码管理器，页面绝不跳转。自带真 form 的站点（SSO 等）不碰
 # （原生自管）；防自动签到守卫（_ANTI_AUTOSIGNIN_JS）照常生效。
 _PW_FORM_HELPER_JS = (
-    "window.__fcPwHelperV='R9.9';"
+    "window.__fcPwAutoV='R9.16';"
     "(function(){"
-    'console.debug("[fc-pw] injected @",location.href);'
-    "function wrap(pw){"
-    "if(pw.dataset.fcWrapped)return;pw.dataset.fcWrapped='1';"
-    "if(pw.form&&pw.form.tagName==='FORM')return;"
-    'var f=document.createElement("form");f.style.display="contents";'
-    'f.setAttribute("data-fc-pw","1");'
-    "pw.parentNode.insertBefore(f,pw);f.appendChild(pw);"
-    'f.addEventListener("submit",function(e){e.preventDefault();},true);'
-    "return f;}"
-    "function arm(pw){"
-    "if(pw.dataset.fcArmed)return;pw.dataset.fcArmed='1';"
-    "var f=wrap(pw);if(!f)return;"
-    "var btn=null,anc=pw.parentElement;"
+    "var ORIGIN=location.origin;"
+    'function api(body){return fetch("/api/web/tabs",{method:"POST",'
+    'headers:{"Content-Type":"application/json"},'
+    'body:JSON.stringify(Object.assign({tab:"__pid__",origin:ORIGIN},body))}'
+    ").then(function(r){return r.json();});}"
+    "function setVal(el,v){"
+    'try{var d=Object.getOwnPropertyDescriptor(el.__proto__,"value");'
+    "if(d&&d.set){d.set.call(el,v);}else{el.value=v;}}catch(_){el.value=v;}"
+    'try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}}'
+    "function pw(){return document.querySelector('input[type=password]');}"
+    "function userBox(pw){"
+    'var vs=[].filter.call(document.querySelectorAll("input"),'
+    'function(el){var t=(el.type||"text").toLowerCase();'
+    'return(t==="text"||t==="email"||t==="tel")&&el.offsetParent&&el!==pw;});'
+    "return vs.length?vs[vs.length-1]:null;}"
+    "function banner(txt,ms){"
+    'var b=document.createElement("div");b.id="fcPwBar";'
+    'b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;"'
+    '+"display:flex;gap:10px;align-items:center;justify-content:center;"'
+    '+"padding:8px 14px;background:#1f6feb;color:#fff;font:13px system-ui;"'
+    '+"box-shadow:0 2px 8px rgba(0,0,0,.4);";'
+    'b.innerHTML="<span>"+txt+"</span>";'
+    'var ok=document.createElement("button");ok.textContent="保存";'
+    'ok.style.cssText="background:#2ea043;color:#fff;border:0;border-radius:6px;"'
+    '+"padding:3px 14px;cursor:pointer;font:12px system-ui;";'
+    'var no=document.createElement("button");no.textContent="忽略";'
+    'no.style.cssText="background:transparent;color:#fff;border:1px solid #fff5;"'
+    '+"border-radius:6px;padding:3px 10px;cursor:pointer;font:12px system-ui;";'
+    "b.appendChild(ok);b.appendChild(no);document.body.appendChild(b);"
+    "var t=setTimeout(function(){b.remove();},ms||15000);"
+    "ok.onclick=function(){clearTimeout(t);return true;};"
+    "no.onclick=function(){clearTimeout(t);b.remove();return false;};return b;}"
+    "var pending=null;"
+    "function tryFill(){"
+    "var p=pw();if(!p||p.value)return;"
+    'api({act:"pw_get"}).then(function(j){'
+    "if(!j||!j.ok||!j.has)return;"
+    'var u=j.user||"";'
+    'setVal(p,j.pw||"");'
+    "var ub=userBox(p);if(ub&&u)setVal(ub,u);"
+    'console.debug("[fc-pw] autofilled");});}'
+    "function hookLogin(p){"
+    'if(p.dataset.fcHook)return;p.dataset.fcHook="1";'
+    'var f=p.closest("form");'
+    'if(f){f.addEventListener("submit",function(){'
+    "setTimeout(function(){check(p.value);},400);});}"
+    "var anc=p.parentElement;"
     "while(anc&&anc!==document.body){"
-    'btn=anc.querySelector("button, input[type=submit]");if(btn)break;'
-    "anc=anc.parentElement;}"
-    'if(!btn||btn.dataset.fcArmed)return;btn.dataset.fcArmed="1";'
-    'btn.addEventListener("click",function(){'
-    "if(!pw.value)return;"
-    "try{if(f.requestSubmit){f.requestSubmit();}"
-    'else{f.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));}}'
-    'catch(_){try{f.dispatchEvent(new Event("submit",'
-    "{bubbles:true,cancelable:true}));}catch(__){}}});}"
+    'var btn=anc.querySelector("button, input[type=submit]");'
+    'if(btn){btn.addEventListener("click",function(){'
+    'setTimeout(function(){var q=pw();check(q?q.value:"");},400);});break;}'
+    "anc=anc.parentElement;}}"
+    "function check(val){"
+    "if(!val)return;"
+    'api({act:"pw_get"}).then(function(j){'
+    "var saved=j&&j.has&&j.pw;"
+    "if(j&&j.has&&saved===val){return;}"
+    'if(!j||!j.has){banner("保存本站密码？",15000);}'
+    'else{banner("密码已变更——更新存档？",15000);}'
+    "pending=val;"
+    'var b=document.getElementById("fcPwBar");'
+    'if(b){var ok=b.querySelector("button");'
+    "ok.onclick=function(){b.remove();"
+    'api({act:"pw_save",user:(userBox(pw())||{}).value||"",password:pending})'
+    '.then(function(r){console.debug("[fc-pw] saved:",r&&r.ok);});};}});}'
     "function scan(){"
-    "var n=document.querySelectorAll('input[type=password]').length;"
-    "document.querySelectorAll('input[type=password]').forEach("
-    "function(p){try{arm(p);}catch(e){"
-    'console.warn("[fc-pw] arm skip:",e);}});'
-    "if(n)console.debug('[fc-pw] scan:',n,'pw(s)');"
-    '}'
-    "window.__fcPwMO=new MutationObserver(scan);"
-    "window.__fcPwMO.observe(document,{childList:true,subtree:true});"
-    'document.addEventListener("DOMContentLoaded",function(){'
-    'console.debug("[fc-pw] DOMC");scan();});'
-    'window.addEventListener("load",function(){setTimeout(scan,0);});'
-    'console.debug("[fc-pw] MO attached");'
+    "var p=pw();if(!p)return;"
+    "tryFill();"
+    "hookLogin(p);}"
+    "new MutationObserver(scan).observe(document,{childList:true,subtree:true});"
+    'document.addEventListener("DOMContentLoaded",scan);'
+    'if(window.addEventListener)window.addEventListener("load",function(){setTimeout(scan,0);});'
     "scan();"
-    'console.debug("[fc-pw] initial scan done");'
     "})();"
     )
+
+
+# ---------- 密码助手存储（R9.16 自动填充：DPAPI 按用户加密落盘） ----------
+def _pw_file():
+    try:
+        from src.app_state import DATA_DIR
+        import os
+        return os.path.join(DATA_DIR, "web_passwords.json")
+    except Exception:
+        import os
+        return os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                            "web_passwords.json")
+
+
+def _dpapi_protect(plain):
+    import ctypes, base64
+    from ctypes import wintypes
+
+    class BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    def _blob(b):
+        return BLOB(len(b), ctypes.cast(ctypes.create_string_buffer(b),
+                                        ctypes.POINTER(ctypes.c_char)))
+    cin, cout = _blob(plain), BLOB()
+    if not ctypes.windll.crypt32.CryptProtectData(
+            ctypes.byref(cin), None, None, None, None,
+            1, ctypes.byref(cout)):
+        raise OSError("CryptProtectData failed")
+    out = ctypes.string_at(cout.pbData, cout.cbData)
+    ctypes.windll.kernel32.LocalFree(cout.pbData)
+    return base64.b64encode(out).decode("ascii")
+
+
+def _dpapi_unprotect(b64):
+    import ctypes, base64
+    from ctypes import wintypes
+
+    class BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    raw = base64.b64decode(b64)
+
+    def _blob(b):
+        return BLOB(len(b), ctypes.cast(ctypes.create_string_buffer(b),
+                                        ctypes.POINTER(ctypes.c_char)))
+    cin, cout = _blob(raw), BLOB()
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+            ctypes.byref(cin), None, None, None, None,
+            1, ctypes.byref(cout)):
+        raise OSError("CryptUnprotectData failed")
+    out = ctypes.string_at(cout.pbData, cout.cbData)
+    ctypes.windll.kernel32.LocalFree(cout.pbData)
+    return out
+
+
+def _pw_load():
+    import json, os
+    try:
+        with open(_pw_file(), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _pw_store(d):
+    import json, os
+    pf = _pw_file()
+    os.makedirs(os.path.dirname(pf), exist_ok=True)
+    tmp = pf + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(tmp, pf)
+
+
+def _pw_origin_clean(origin):
+    try:
+        from urllib.parse import urlsplit
+        o = str(origin or "").strip()
+        sp = urlsplit(o if "://" in o else "http://" + o)
+        if sp.scheme not in ("http", "https") or not sp.hostname:
+            return ""
+        dflt = (sp.scheme == "http" and sp.port == 80) or                (sp.scheme == "https" and sp.port == 443)
+        return sp.scheme + "://" + sp.hostname + (
+            "" if dflt else ":" + str(sp.port))
+    except Exception:
+        return ""
 
 
 def get_tabs():
@@ -324,9 +449,10 @@ class WebTabs:
                     try:
                         cvw.AddScriptToExecuteOnDocumentCreatedAsync(
                             _ANTI_AUTOSIGNIN_JS)
-                    # R9.9：原生密码保存/填充打通脚本（无 form 登录站点）
+                    # R9.16：密码自动填充脚本（DPAPI 存取，无 form 登录站点）
                         cvw.AddScriptToExecuteOnDocumentCreatedAsync(
-                            _PW_FORM_HELPER_JS)
+                            _PW_FORM_HELPER_JS.replace(
+                                '"__pid__"', json.dumps(tab_id)))
                     except Exception as e:
                         _log("WARN", "anti-autosignin: %r" % e)
                     # R4 审计 D2：网页 tab 的 DevTools（右键「检查」/F12）与
@@ -841,6 +967,40 @@ def register(app):
         if act == "suspend":
             # R-外泄根治·静止帧：抓帧→隐藏→回推（前端 reconcile 调用）
             return jsonify(t.suspend(tid))
+        if act == "pw_get":
+            # 密码助手（R9.16 自动填充）：回已存凭据给**页面内注入脚本**
+            # ——明文只出现在 loopback 响应+页面内存，不落 UI 文档存储
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            rec = _pw_load().get(o)
+            if not rec:
+                return jsonify({"ok": True, "has": False})
+            try:
+                pwd = _dpapi_unprotect(str(rec.get("p") or "")).decode("utf-8")
+            except Exception as e:
+                return jsonify({"ok": False, "err": "dpapi:%r" % e})
+            return jsonify({"ok": True, "has": True,
+                            "user": str(rec.get("u") or ""), "pw": pwd})
+        if act == "pw_save":
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            if not o:
+                return jsonify({"ok": False, "err": "bad origin"}), 400
+            pwd = str(d.get("password") or "")[:512]
+            if not pwd:
+                return jsonify({"ok": False, "err": "empty"}), 400
+            store = _pw_load()
+            if len(store) >= 64 and o not in store:
+                return jsonify({"ok": False, "err": "上限 64 站"}), 400
+            store[o] = {"u": str(d.get("user") or "").strip()[:128],
+                        "p": _dpapi_protect(pwd.encode("utf-8"))}
+            _pw_store(store)
+            return jsonify({"ok": True})
+        if act == "pw_del":
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            store = _pw_load()
+            if o in store:
+                del store[o]
+                _pw_store(store)
+            return jsonify({"ok": True})
         if act == "show":
             # a556：sq 序号透传（前端乱序保护）。R1 审计 W7：on/all 布尔
             # 穿透修正。R6 审计 W32：all=true=全隐（_want 记哨兵）。
