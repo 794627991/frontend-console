@@ -1445,6 +1445,8 @@ def api_theme():
                         # 跨启动（端口必变）必丢 = 面板恒回 CSS 50%
                         #（用户实锤"修了很多次未真正修复"的根源）
                         "tftp_pane_h": max(0, min(4000, int(cfg.get("tftp_pane_h") or 0))),
+                        # a564：折叠态（只剩标题栏）跨启动记忆
+                        "tftp_pane_collapsed": bool(cfg.get("tftp_pane_collapsed")),
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
                         "tray_prompt_shown": bool(cfg.get("tray_prompt_shown", False)),
                         "claude_ui_mode": cfg.get("claude_ui_mode", "harness"),
@@ -1535,6 +1537,10 @@ def api_theme():
             _h = 0
         _save_config({**_load_config(),
                       "tftp_pane_h": max(0, min(4000, _h))})
+    if "tftp_pane_collapsed" in data:
+        # a564：折叠态持久化（bool 白名单）
+        _save_config({**_load_config(),
+                      "tftp_pane_collapsed": bool(data["tftp_pane_collapsed"])})
     # 关闭到托盘（close_to_tray：设置页开关）+ 首次提示已展示标记（tray_prompt_shown）
     _tk = {}
     if "close_to_tray" in data:

@@ -1177,6 +1177,15 @@
     font-size: 11px; font-weight: 600; letter-spacing: 1px;
     color: var(--muted); text-transform: uppercase;
   }
+  /* a564：折叠态（VSCode 面板语义）——只剩标题栏；点击标题栏展开 */
+  .tftp-pane.collapsed { height: auto; min-height: 0; }
+  .tftp-pane.collapsed .tftp-dir,
+  .tftp-pane.collapsed .tftp-list { display: none; }
+  .tftp-head:hover { color: var(--fg); }
+  .tftp-collapse-ind { flex-shrink: 0; }
+  .tftp-collapse-ind::before { content: '▾'; display: inline-block;
+    transition: transform .15s; }
+  .tftp-pane.collapsed .tftp-collapse-ind::before { content: '▸'; }
   .tftp-toggle {
     display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
     font-size: 10px; font-weight: 500; letter-spacing: 0;

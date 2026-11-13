@@ -130,7 +130,49 @@ async function refreshTftp() {
   // 失效；存的值本身保留，窗口再变大仍能恢复原高度。
   let _savedH = 0;
   let dragging = false, startY = 0, startH = 0;   // a563：声明上移（_applySaved 让位判断需要，避免 TDZ）
+  let _collapsed = false;      // a564：折叠态（只剩标题栏，VSCode 面板语义）
+  let _dragCollapse = false;   // 拖拽过程中「本次将折叠」预判
+  const COLLAPSE_TH = 90;      // 拖到 90px 以下 → 松手折叠
   try { _savedH = parseInt(localStorage.getItem('tftpPaneH') || '', 10) || 0; } catch(e) {}
+  try { _collapsed = localStorage.getItem('tftpPaneCollapsed') === '1'; } catch(e) {}
+
+  // a564：折叠/展开。折叠=只剩标题栏（高度 auto，dir/list 藏）；展开=
+  // 上次展开高度（无记忆则父容器 35% 兜底）。save=落盘（本地+服务端）
+  function _setCollapsed(on, save) {
+    _collapsed = !!on;
+    if (_collapsed) {
+      pane.classList.add('collapsed');
+      pane.style.height = '';            // 高度交还 CSS（auto=标题栏）
+    } else {
+      pane.classList.remove('collapsed');
+      _applySaved();
+    }
+    if (save !== false) {
+      try { localStorage.setItem('tftpPaneCollapsed', _collapsed ? '1' : '0'); } catch (e) {}
+      _uploadSaved();
+    }
+  }
+  // a564：默认展开高度——有记忆用记忆，否则父容器 35%（VSCode 面板默认观感）
+  function _defaultExpandH() {
+    if (_savedH >= 60) return _savedH;
+    const b = _paneBounds();
+    if (!b) return 300;
+    return Math.max(b[0], Math.min(Math.round((pane.parentElement.clientHeight) * 0.35), b[1]));
+  }
+  // a564：标题栏点击=切换折叠（启动/停止按钮与端口编辑等交互区除外）
+  const _head = pane.querySelector('.tftp-head');
+  if (_head) {
+    _head.style.cursor = 'pointer';
+    _head.title = '点击折叠 / 展开（拖到最小也可折叠）';
+    const _ind = document.createElement('span');
+    _ind.className = 'tftp-collapse-ind';
+    _head.prepend(_ind);
+    _head.addEventListener('click', e => {
+      if (e.target.closest && e.target.closest('#tftpToggle, #httpFilePort'))
+        return;
+      _setCollapsed(!_collapsed);
+    });
+  }
   // a452（审计 P2）：上下限不能都用视口算——窗口 <380 时
   // `max(180, innerHeight-200)` 退化成 180，min/max 互相抵消，面板固定
   // 180px；而 .tftp-pane 是 flex-shrink:0 + 父容器 overflow:hidden，容器
@@ -190,36 +232,48 @@ async function refreshTftp() {
         try { localStorage.setItem('tftpPaneH', String(srvH)); } catch (e) {}
         _applySaved();
       }
+      // a564：折叠态对齐（服务端为准——跨启动唯一可靠源）
+      const srvC = !!(j && j.tftp_pane_collapsed);
+      if (srvC !== _collapsed) {
+        try { localStorage.setItem('tftpPaneCollapsed', srvC ? '1' : '0'); } catch (e) {}
+        _setCollapsed(srvC, false);
+      }
     }).catch(() => {});
   })();
   function _uploadSaved() {
-    if (_savedH < 60) return;
+    if (_savedH < 60 && !_collapsed) return;   // a564：折叠态也要上传标志
     clearTimeout(_uploadSaved._t);
     _uploadSaved._t = setTimeout(() => {
       try {
+        const body = { tftp_pane_collapsed: _collapsed };
+        if (_savedH >= 60) body.tftp_pane_h = _savedH;
         fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tftp_pane_h: _savedH }) }).catch(() => {});
+          body: JSON.stringify(body) }).catch(() => {});
       } catch (e) {}
     }, 500);
   }
   function _applySaved() {
     if (dragging) return;             // a563：拖拽进行中不干预（sweep/RO 让位）
+    if (_collapsed) return;           // a564：折叠态高度交还 CSS，不套用
     _readSaved();
-    if (_savedH < 60) return;
-    const h = _clampPaneH(_savedH);
+    // a564：无记忆时不再裸退（留 50%）——展开默认=父容器 35%（VSCode
+    // 面板观感），仅套用不写入记忆
+    const target = _savedH >= 60 ? _savedH : _defaultExpandH();
+    const h = _clampPaneH(target);
     if (h == null) return;            // 父容器不可测：等下一轮兜底
     if (pane.style.height === h + 'px') return;   // 已套用幂等
     pane.style.height = h + 'px';
     if (!_appliedLog) {
       _appliedLog = true;
-      try { console.debug('[tftp-pane] 恢复高度', _savedH, '->', h); } catch (e) {}
+      try { console.debug('[tftp-pane] 恢复高度', target, '->', h); } catch (e) {}
     }
   }
   // a563 诊断探针（复发时控制台一键定位断在哪环）
   window.__tftpH = function () {
     return { saved: _savedH, style: pane.style.height, h: pane.offsetHeight,
-             bounds: _paneBounds(), innerH: window.innerHeight };
+             collapsed: _collapsed, bounds: _paneBounds(), innerH: window.innerHeight };
   };
+  _setCollapsed(_collapsed, false);   // a564：启动即套折叠态（如有）
   _applySaved();
   requestAnimationFrame(() => requestAnimationFrame(_applySaved));
   window.addEventListener('load', _applySaved);
@@ -260,7 +314,16 @@ async function refreshTftp() {
     // a563：_paneBounds 可测性守卫（父容器隐藏时 null，跳过该帧）
     const b = _paneBounds();
     if (!b) return;
-    const h = Math.max(b[0], Math.min(startH + (startY - e.clientY), b[1]));
+    const raw = startH + (startY - e.clientY);
+    // a564（VSCode 语义）：拖到阈值以下 → 预览贴标题栏，松手折叠
+    if (raw < COLLAPSE_TH) {
+      _dragCollapse = true;
+      const headEl = pane.querySelector('.tftp-head');
+      pane.style.height = (headEl ? headEl.offsetHeight : 34) + 'px';
+      return;
+    }
+    _dragCollapse = false;
+    const h = Math.max(b[0], Math.min(raw, b[1]));
     pane.style.height = h + 'px';
   });
   document.addEventListener('mouseup', () => {
@@ -268,6 +331,18 @@ async function refreshTftp() {
     dragging = false;
     resizer.classList.remove('dragging');
     document.body.style.userSelect = '';
+    // a564：本次拖拽判定折叠 → 折叠（保留 _savedH=上次展开高度，VSCode 同款）
+    if (_dragCollapse) {
+      _dragCollapse = false;
+      _setCollapsed(true);
+      return;
+    }
+    // a564：从折叠态拖开 → 摘折叠类（不走红 _setCollapsed 的 _applySaved，
+    // 保住本次拖出来的高度），再按常规保存
+    if (_collapsed) {
+      _collapsed = false;
+      pane.classList.remove('collapsed');
+    }
     try {
       // a563：保存侧加值域守卫——父容器异常压缩态下 offsetHeight 可能
       // 落到离谱小值，别把坏值写进记忆（<60 一律不存，保留旧值）
@@ -419,7 +494,7 @@ setInterval(() => {
   if (!_tftpRunning || _tftpActive) return;      // 仅运行中且无传输
   if (document.hidden) return;
   const pane = $('tftpPane');
-  if (pane && pane.offsetHeight === 0) return;   // 面板收起
+  if (pane && (pane.offsetHeight === 0 || pane.classList.contains('collapsed'))) return;   // 面板收起/折叠（a564）
   refreshTftp();
 }, 2000);       // 运行中空闲
 setInterval(() => {
