@@ -318,7 +318,7 @@ function _stRenderAppearancePane(pane) {
       <div class="dd-row" style="margin-top:6px;">
         <button class="btn ghost" id="apPerfToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
       </div>
-      <div class="dd-sub">关闭毛玻璃（backdrop 模糊，软件光栅最贵的外观开销）。动画/过渡不在此档管——需要动画降帧请用终端设置里的「无GPU加速」（两档可同开，毛玻璃双保险）。</div>
+      <div class="dd-sub">关闭毛玻璃（backdrop 模糊，软件光栅最贵的外观开销）。注意：本档不管动画/过渡——虚机/远程桌面里若界面卡顿（GPU 合成吃紧），请开 终端设置→无GPU加速（动画降帧 16 帧/周期，观感保留，治本）。</div>
     </div>
     <div class="dd-cur" style="margin-top:8px;">
       <div class="dd-label">Tab 模式</div>

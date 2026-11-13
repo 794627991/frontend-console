@@ -82,13 +82,15 @@ function applyStyle(id, persist) {
     // a468：无 GPU 加速模式（虚机/RDP——动画降帧档），与 perf 分档共存
     if (j.ok && j.nogpu_mode) document.documentElement.setAttribute('data-nogpu', '');
     // a468：远程桌面一次性建议（不自动开——外网真机共用同一份配置，
-    // 自动开会在切回真机时残留降级；每次启动至多提示一次）
-    if (j.ok && j.remote_session && !j.nogpu_mode && !j.perf_mode) {
+    // 自动开会在切回真机时残留降级；每次启动至多提示一次）。
+    // a570 修订：perf 已收窄为只关毛玻璃，压不住动画合成账单——perf 开着
+    // 不再构成「已优化」豁免，RDP 会话照样提示
+    if (j.ok && j.remote_session && !j.nogpu_mode) {
       try {
         if (!localStorage.getItem('hg-nogpu-suggest-done')) {
           localStorage.setItem('hg-nogpu-suggest-done', '1');
           if (typeof showBanner === 'function')
-            showBanner('检测到远程桌面会话——若界面卡顿，建议开启 设置→外观→无GPU加速（动画降帧优化）', 8000);
+            showBanner('检测到远程桌面会话——若界面卡顿，建议开启 设置→终端设置→无GPU加速（动画降帧：补间 100ms/循环 16 帧，观感保留）', 8000);
         }
       } catch (_) {}
     }
