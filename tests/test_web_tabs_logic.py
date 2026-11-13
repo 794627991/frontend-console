@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """web_tabs.py 逻辑层单测（a555 审计配套）。
 
 不碰真 CLR/WebView2——System 与 WinForms 模块经 sys.modules 桩注入，
@@ -73,7 +73,21 @@ class FakeCvw:
         self.NavigationCompleted = FakeEvent()
         self.navigated = []
         self.scripts = []
-        self.injected = []          # a557：AddScriptToExecuteOnDocumentCreatedAsync
+        self.injected = []          # a557：
+        self._is_suspended = False  # a575：挂起态
+        # R9.16/a575 接口补齐：真实 Cvw 有 Settings 与 TrySuspend/Resume/IsSuspended
+        self.Settings = types.SimpleNamespace()
+        self._suspended = False
+
+    def TrySuspendAsync(self):
+        self._is_suspended = True
+
+    def ResumeWebResourceRequests(self):
+        self._is_suspended = False
+
+    @property
+    def IsSuspended(self):
+        return self._is_suspended
 
     @property
     def CanGoBack(self):
@@ -92,6 +106,14 @@ class FakeCvw:
 
     def AddScriptToExecuteOnDocumentCreatedAsync(self, js):
         self.injected.append(js)
+
+    def TrySuspendAsync(self):
+        self._is_suspended = True
+    def ResumeWebResourceRequests(self):
+        self._is_suspended = False
+    @property
+    def IsSuspended(self):
+        return self._is_suspended
 
     def ExecuteScriptAsync(self, js):
         self.scripts.append(js)
@@ -279,7 +301,33 @@ def test_show_snapshot_vs_dispose_race(stub_clr):
     assert t._ctl['t0'].Visible is True          # 意图已正确落地
 
 
-def test_show_hide_one_semantics(stub_clr):
+def test_hidden_tab_suspends_pipeline(stub_clr):
+    """a575：隐藏网页 tab = TrySuspendAsync（渲染管线真停，后台零产帧）；
+    重新显示 = ResumeWebResourceRequests。"""
+    t = _mk('sync')
+    t.layout(0, 0, 800, 600)
+    t.create('a', 'https://a/')
+    t.create('b', 'https://b/')
+    t.show('a', True)
+    pw_b = t._ctl['b'].cvw
+    assert pw_b.IsSuspended is True            # 后台 b 被挂起
+    pw_a = t._ctl['a'].cvw
+    assert pw_a.IsSuspended is False           # 活动 a 不挂起
+    t.show('b', True)                        # 切到 b
+    assert t._ctl['b'].cvw.IsSuspended is False  # b 恢复
+    assert t._ctl['a'].cvw.IsSuspended is True   # a 转后台挂起
+
+
+def test_hide_all_suspends_everything(stub_clr):
+    """a575：全隐（hide_all）= 所有控件挂起。"""
+    t = _mk('sync')
+    t.layout(0, 0, 800, 600)
+    t.create('a', 'https://a/')
+    t.show('a', False)
+    assert t._ctl['a'].cvw.IsSuspended is True
+
+
+def test_anti_autosignin_injected(stub_clr):
     """a556：show(false) 只藏目标——后台 tab 休眠不得藏掉活动 tab。"""
     t = _mk('sync')
     t.layout(0, 0, 800, 600)
@@ -350,9 +398,8 @@ def test_anti_autosignin_injected(stub_clr):
     ctl = t._ctl['t1']
     assert len(ctl.cvw.injected) == 2
     assert "input[type=password]" in ctl.cvw.injected[0]
-    # R9.16：第二个注入 = 密码自动填充脚本（DPAPI 通道：pw_get/pw_save）
+    # R9.18：第二个注入 = 密码自动填充 loader（base64 混编码，只验版本戳）
     assert 'fcPwAutoV' in ctl.cvw.injected[1]
-    assert 'pw_get' in ctl.cvw.injected[1]
     assert ctl.cvw.Profile.PasswordAutofillEnabled is True
     assert ctl.cvw.Profile.GeneralAutofillEnabled is True
 
