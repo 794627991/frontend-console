@@ -939,6 +939,29 @@ class LanzQuotaWorker:
         new = [t for t in stamps if ts - t < window] + [ts]
         return ([], True) if len(new) >= limit else (new, False)
 
+    def _locked_wait(self, cred, epoch_of_cred):
+        """a454/a559/a561：锁定/熔断停登等待。
+
+        手动解锁（清 _locked）/换凭据/换代唤醒；熔断带冷却时间戳的，
+        冷却到期（30 分钟）自动恢复——进程重启型风暴的跨进程熔断不能
+        只靠手动。"""
+        while not self._stop.is_set():
+            with self._lock:
+                if not self._locked or self._cred != cred:
+                    return
+                if self._cred_epoch != epoch_of_cred:
+                    return
+                trip = getattr(self, "_trip_ts", 0.0)
+            if trip and time.time() - trip >= 1800:
+                with self._lock:
+                    self._locked = False
+                    self._trip_ts = 0.0
+                _save_marks([], 0.0)
+                log.info("SSO 熔断冷却到期，自动恢复")
+                return
+            self._wake.wait(5)
+            self._wake.clear()
+
     def _run(self):
         client = None
         cur_cred = object()
@@ -946,7 +969,20 @@ class LanzQuotaWorker:
         epoch_of_cred = 0
         fail_n = 0
         cur_done = 0.0          # a559：最近一次已见的登录成功时刻
-        login_ok_ts = []        # a559：30 分钟滑窗内的重登成功时刻（被踢熔断）
+        # a559：30 分钟滑窗内的重登成功时刻（被踢熔断）；
+        # a561 F5：初值改从盘上跨进程标记恢复，熔断冷却期内直接停登
+        login_ok_ts, trip_ts = _load_marks()
+        self._trip_ts = trip_ts
+        if trip_ts and time.time() - trip_ts < 1800:
+            with self._lock:
+                self._locked = True
+                self._login_err = (
+                    "SSO 登录过频熔断冷却中（至 %s）——近期有登录风暴或"
+                    "进程重启循环；冷却到期自动恢复，或手动刷新提前解锁"
+                    % time.strftime("%H:%M", time.localtime(trip_ts + 1800)))
+            self._emit("login_locked", self._login_err)
+            # epoch_of_cred=0（初始值）：等冷却到期/手动解锁/凭据提交
+            self._locked_wait(None, 0)
         while not self._stop.is_set():
             try:
                 with self._lock:
@@ -972,6 +1008,10 @@ class LanzQuotaWorker:
                     # 复用同一份快照，不要二次读共享字段。
                     epoch_of_cred = epoch[1]
                     fail_n = 0
+                    # a561 审计 F4：换账号不背旧账号的滑窗/熔断
+                    login_ok_ts = []
+                    self._trip_ts = 0.0
+                    _save_marks([], 0.0)
                 if not self._ensure_login(client, cred):
                     self._clear_loads("登录失败，模型负载暂不可用")
                     with self._lock:
@@ -983,14 +1023,7 @@ class LanzQuotaWorker:
                         # 一次的退避重登等于让锁定永久续期。停在这里，只等
                         # 用户手动刷新/强制重登（它们会清 _locked）或换凭据。
                         self._emit("login_locked", locked_err)
-                        while not self._stop.is_set():
-                            with self._lock:
-                                if not self._locked or self._cred != cred:
-                                    break
-                                if self._cred_epoch != epoch_of_cred:
-                                    break   # a452：同一凭据重提也要能跳出
-                            self._wake.wait(5)
-                            self._wake.clear()
+                        self._locked_wait(cred, epoch_of_cred)
                         continue
                     # a446：SSO 连续失败会锁号（实测 "Too many attempts"）。
                     # 固定 60s 重试等于持续敲锁定账号，改指数退避 60→120→
@@ -1012,30 +1045,34 @@ class LanzQuotaWorker:
                 # 锁号）。视同锁定停登，等用户确认单一登录处后手动刷新。
                 done_ts = getattr(self, "_login_done_ts", 0.0)
                 if done_ts != cur_done:
+                    prev_done = cur_done
                     cur_done = done_ts
-                    login_ok_ts, tripped = self._push_relogin(login_ok_ts,
-                                                              done_ts)
-                    if tripped:
-                        with self._lock:
-                            self._locked = True
-                            self._login_err = (
-                                "检测到 SSO 会话被反复踢（30 分钟内第 %d 次"
-                                "重登成功——另一台机器/实例在用同一账号？）。"
-                                "已停止自动重登：请确认只在一处登录后手动"
-                                "点刷新。" % len(login_ok_ts))
-                        login_ok_ts = []
-                        self._emit("login_locked", self._login_err)
-                        # 与 a454 锁定停登同款等待：手动刷新/强制重登/换
-                        # 凭据（都会清 _locked / 换代）才恢复
-                        while not self._stop.is_set():
+                    # a561 审计 F2：仅「距上次登录 <15 分钟」的重登计为被踢
+                    # 嫌疑——自然过期型重登（会话存活长）不计数，服务端会话
+                    # TTL ≥15 分钟时永不误熔断
+                    if prev_done and done_ts - prev_done < 900:
+                        login_ok_ts, tripped = self._push_relogin(login_ok_ts,
+                                                                  done_ts)
+                        _save_marks(login_ok_ts, 0.0)
+                        if tripped:
+                            self._trip_ts = time.time()
+                            _save_marks([], self._trip_ts)   # F5：落盘跨进程
                             with self._lock:
-                                if not self._locked or self._cred != cred:
-                                    break
-                                if self._cred_epoch != epoch_of_cred:
-                                    break
-                            self._wake.wait(5)
-                            self._wake.clear()
-                        continue
+                                self._locked = True
+                                self._login_err = (
+                                    "检测到 SSO 会话被反复踢（30 分钟内第 3 次"
+                                    "重登成功——另一台机器/实例在用同一账号？）。"
+                                    "已停止自动重登（30 分钟后自动恢复，或手动"
+                                    "点刷新提前解锁；若服务端会话有效期本就短，"
+                                    "也会触发本保护）")
+                            login_ok_ts = []
+                            self._emit("login_locked", self._login_err)
+                            self._locked_wait(cred, epoch_of_cred)
+                            continue
+                # a446（严重回归修复）：负载查询必须复用**这一个** client。
+                # 原先 _get_model_loads 自己 new LanzClient 并每 20s 登录一次，
+                # 同一 SSO 账号两个会话互相踢——worker 刚登录就被踢回 SSO
+                # 登录页，表现为「一直登录失败」，还会触发风控锁号。
                 # a446（严重回归修复）：负载查询必须复用**这一个** client。
                 # 原先 _get_model_loads 自己 new LanzClient 并每 20s 登录一次，
                 # 同一 SSO 账号两个会话互相踢——worker 刚登录就被踢回 SSO
@@ -1239,6 +1276,37 @@ _quota_loads_lock = threading.Lock()
 _quota_ts = None         # 上次 data 时间戳（前端显示"上次刷新 Ns 前"）
 _quota_lock = threading.Lock()
 _quota = None            # LanzQuotaWorker（HAS_LANZ 且凭据存在时才建）
+
+# a561 审计 F5：跨进程重登标记——进程重启型登录风暴（11-12 实锤形态：
+# worker 崩溃→重启→每次进程重建 quota worker 都立即真实登录一次）的滑窗
+# 在内存里，每个新进程从零计数拦不住。落盘共享 + 熔断冷却期内新进程
+# 也不自动登录，重启循环的登录率被压到每冷却期一次
+_MARKS_PATH = os.path.join(DATA_DIR, "lanz_login_marks.json")
+_MARKS_LOCK = threading.Lock()
+
+
+def _load_marks():
+    """读跨进程重登标记：([stamps], trip_ts)。任何异常→空标记（不拦登录）。"""
+    try:
+        with open(_MARKS_PATH, encoding="utf-8") as f:
+            j = json.load(f)
+        stamps = [t for t in j.get("stamps", [])
+                  if isinstance(t, (int, float))]
+        return stamps, float(j.get("trip_ts") or 0.0)
+    except Exception:
+        return [], 0.0
+
+
+def _save_marks(stamps, trip_ts=0.0):
+    try:
+        d = os.path.dirname(_MARKS_PATH)
+        if d and not os.path.isdir(d):
+            os.makedirs(d, exist_ok=True)
+        with _MARKS_LOCK, open(_MARKS_PATH, "w", encoding="utf-8") as f:
+            json.dump({"stamps": list(stamps[-4:]), "trip_ts": trip_ts}, f)
+    except Exception:
+        pass
+
 _cred_cache = None       # 凭据磁盘缓存（save/clear 时刷新；status 1s 轮询
                          # 不再每秒 load_credentials 读盘+JSON 解析）
 _cred_cached = False     # 缓存是否已初始化（None=无凭据 也是合法值）

@@ -46,6 +46,7 @@ from src.harness.lifecycle import _get_or_create
 from src.harness.session import HarnessSession
 from src.harness.consts import _sessions, _sessions_lock
 from src.app_state import DATA_DIR
+import src.app_state as _st   # a559审计P0：锁路径动态取当前 DATA_DIR（迁移后不分裂）
 
 log = logging.getLogger("hiklink_bot")
 # 文件日志：机器人链路排查全靠它（pythonw 无窗口，stdout 黑洞）
@@ -83,106 +84,146 @@ WELCOME_TEXT = ("✦ 前端小助手已上线！直接发消息即可下达指�
                 "回复会自动推回。/stop 停止当前任务。")
 _SESSION_LOCK = threading.Lock()
 
-# ---- a559 单飞锁（用户铁律：无论如何不允许互踢）----
-# 同机同时刻最多一个 bot 连 WS。文件锁 = "pid,ts"，持有者每 20s 刷 mtime，
-# >90s 未刷新（进程僵死/断电/崩溃残留）视为死锁允许接管。锁机制自身故障
-# 时放行不拦连接（宁可偶发互踢也不让机器人彻底不可用），但记日志。
+# ---- a559 单飞锁（用户铁律：无论如何不允许互踢；a561 审计加固）----
+# 同机同时刻最多一个 bot 连 WS。文件锁 = "pid,ts"：
+# - 创建用 O_CREAT|O_EXCL 原子操作（审计 P0：原 exists→open 纯君子协定，
+#   双进程并发可双获取即双 bot）
+# - 判活以 pid 为纲（审计 P1：原 mtime 90s 判活存在「整机休眠唤醒 ≤20s
+#   窗口被误判僵死→接管→双持有」；pid 活着就绝不接管，查不出也当活——
+#   保守方向=拒绝接管，绝不互踢）
+# - 锁路径动态取当前 DATA_DIR（审计 P0：迁移后新旧目录两把锁互不可见）
+# - 锁机制自身故障放行时仍 best-effort 落锁文件（原裸奔放行）
+
+_k32 = None
 
 
 def _pid_alive(pid):
-    """Windows 进程存活探测（OpenProcess 查询探针，不杀不挂）。"""
+    """Windows 进程存活探测（查询探针，不杀不挂）。
+
+    返回 True=活着/保守当活（含拒绝访问、查询异常）；
+    False=确认不存在/已退出。保守方向：拿不准就当活（拒绝接管）。"""
+    global _k32
     if not pid or pid <= 0:
         return False
     try:
-        h = ctypes.windll.kernel32.OpenProcess(0x1000, 0, int(pid))
+        if _k32 is None:
+            _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        h = _k32.OpenProcess(0x1000, 0, int(pid))
         if not h:
-            return False
+            # ERROR_ACCESS_DENIED(5)=进程存在但无权限 → 当活（绝不误接管）
+            return ctypes.get_last_error() == 5
         try:
             code = ctypes.c_ulong()
-            if ctypes.windll.kernel32.GetExitCodeProcess(
-                    h, ctypes.byref(code)):
+            if _k32.GetExitCodeProcess(h, ctypes.byref(code)):
                 return code.value == 259          # STILL_ACTIVE
             return True
         finally:
-            ctypes.windll.kernel32.CloseHandle(h)
+            _k32.CloseHandle(h)
     except Exception:
-        return False
+        return True
 
 
 class _BotSingleFlight(object):
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, path_fn):
+        self._path_fn = path_fn
         self._held = False
+
+    @property
+    def path(self):
+        try:
+            return self._path_fn()
+        except Exception:
+            return os.path.join(DATA_DIR, "hiklink_bot.lock")
+
+    def _write_self(self, p):
+        fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("%d,%d" % (os.getpid(), int(time.time())))
+        self._held = True
+        return True, "ok"
+
+    def _holder_pid(self, p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                try:
+                    return int((f.read().strip() or "0").split(",")[0])
+                except ValueError:
+                    return 0
+        except Exception:
+            return -1                    # 读不到：当作「有人在」（保守）
 
     def acquire(self):
         """返回 (ok, msg)。ok=False = 本机另一活进程已持有（不启动）。"""
         if self._held:
             return True, "ok"
+        p = self.path
         try:
-            if os.path.exists(self.path):
-                with open(self.path, encoding="utf-8") as f:
-                    try:
-                        pid = int((f.read().strip() or "0").split(",")[0])
-                    except ValueError:
-                        pid = 0
-                fresh = time.time() - os.path.getmtime(self.path) < 90
-                if (pid and pid != os.getpid() and _pid_alive(pid) and fresh):
-                    return False, ("机器人已在本机另一进程运行（PID %d），"
-                                   "单飞锁拦截未再启动" % pid)
-            d = os.path.dirname(self.path)
+            d = os.path.dirname(p)
             if d and not os.path.isdir(d):
                 os.makedirs(d, exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as f:
-                f.write("%d,%d" % (os.getpid(), int(time.time())))
-            self._held = True
-
-            def _keepalive():
-                while self._held:
+            for _ in range(3):
+                try:
+                    return self._write_self(p)    # 原子创建：唯一持有人
+                except FileExistsError:
+                    pid = self._holder_pid(p)
+                    if pid == os.getpid():
+                        # 自己的残留（异常退出没删干净）→ 清掉重拿
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
+                        continue
+                    if pid and pid > 0 and _pid_alive(pid):
+                        return False, ("机器人已在本机另一进程运行"
+                                       "（PID %d），单飞锁拦截未再启动" % pid)
+                    if pid == -1:
+                        return False, "单飞锁文件不可读，保守拒绝启动"
                     try:
-                        os.utime(self.path, None)
-                    except Exception:
-                        pass
-                    time.sleep(20)
-            threading.Thread(target=_keepalive, daemon=True,
-                             name="bot-lock-keepalive").start()
-            return True, "ok"
+                        os.remove(p)              # 确认死锁 → 接管
+                    except FileNotFoundError:
+                        pass                       # 恰被释放 → 重试创建
+            return False, "单飞锁竞争未决，本次不启动"
         except Exception as e:
             log.warning("单飞锁异常（放行）: %s", e)
-            return True, "ok"
+            try:
+                return self._write_self(self.path)   # 放行也落锁，不裸奔
+            except Exception:
+                return True, "ok"
 
     def release(self):
         self._held = False
         try:
-            if os.path.exists(self.path):
-                with open(self.path, encoding="utf-8") as f:
-                    try:
-                        pid = int((f.read().strip() or "0").split(",")[0])
-                    except ValueError:
-                        pid = 0
-                if pid == os.getpid():
-                    os.remove(self.path)
+            p = self.path
+            if os.path.exists(p) and self._holder_pid(p) == os.getpid():
+                os.remove(p)
         except Exception:
             pass
 
 
-_flight = _BotSingleFlight(os.path.join(DATA_DIR, "hiklink_bot.lock"))
+_flight = _BotSingleFlight(
+    lambda: os.path.join(_st.DATA_DIR, "hiklink_bot.lock"))
 atexit.register(_flight.release)
 
 
-def _reconnect_wait(lived_sec, kick_n):
-    """a559 铁律：重连等待计算（纯函数，tests 直测）。
+def _reconnect_wait(lived_sec, kick_n, was_authed=True):
+    """a559/a561 铁律：重连等待计算（纯函数，tests 直测）。
 
-    - 存活 ≥60s 的正常断线：kick 清零，3s 基础退避（原行为）
-    - 短命断线（<60s，即被同 appId 另一连接挤掉）：指数退避
-      3→6→12→…→1800s 封顶 + 抖动——11-12 风暴的驱动就是「连接成功即
-      重置 backoff=3」，被踢后永远 3s 一轮，479 次/天认证
-    - 连续第 5 轮起：熔断——每 300s 只探测一次（对方退出自然恢复）
+    - 未认证即断（was_authed=False，连接级故障而非被挤）：不计 kick，
+      交外层连接失败退避轨（3→30s），不进熔断（审计 P2：原 <60s 一律
+      计踢，弱网下永久熔断=可用性回归）
+    - 认证后存活 ≥60s 的正常断线：kick 清零，3s 基础退避
+    - 认证后短命断线（<60s，被同 appId 另一连接挤掉）：指数退避
+      3→6→12→24s+抖动——11-12 风暴的驱动就是「连接成功即重置 backoff=3」
+    - 连续第 5 轮起熔断：300→600→1200→1800s 递增探测（审计 P1：原恒
+      300s，两实例僵持时互踢永不收敛；递增后最坏 30 分钟一踢）
     返回 (wait_sec, new_kick_n, circuit_open)。"""
+    if not was_authed:
+        return 3, kick_n, False
     if lived_sec >= 60:
         return 3, 0, False
     kick_n += 1
     if kick_n >= 5:
-        return 300, kick_n, True
+        return min(300 * (2 ** (kick_n - 5)), 1800), kick_n, True
     wait = min(3 * (2 ** (kick_n - 1)), 1800)
     return wait + random.randint(0, max(1, min(wait // 2, 30))), kick_n, False
 
@@ -453,6 +494,7 @@ class HikLinkBot:
         self._lock = threading.Lock()
         self.owner_uid = None        # 服务端认证回包给的机器人归属账号（机主）
         self.auth_failed = False     # 最近一次认证被拒（手填凭据错/机器人被删）
+        self.kick_note = ""         # a561：熔断/连接不稳状态（status 暴露给 UI）
         self._last_trans = collections.OrderedDict()   # a239 B2-P3: 保序去重（set 无序截断可能丢掉最近的 transId，服务端重推即重复执行指令）
 
     def _trans(self):
@@ -558,6 +600,7 @@ class HikLinkBot:
                                 (last_frame or "")[:200], e)
                     break
             self.connected = False
+            was_authed = self.authenticated   # a561审计P2：认证前断线≠被挤
             self.authenticated = False
             # 统一在退出路径关闭并清引用：不留「已连但无人管」的僵尸连接
             try:
@@ -569,15 +612,27 @@ class HikLinkBot:
             if self._stop.is_set():
                 return
             wait, kick_n, tripped = _reconnect_wait(time.time() - t_conn,
-                                                    kick_n)
+                                                    kick_n, was_authed)
+            if not was_authed:
+                # 连接级故障（认证未过即断）：走连接失败退避轨，不进熔断
+                self.kick_note = "连接不稳（未完成认证）"
+                self._stop.wait(backoff)
+                backoff = min(backoff * 2, 30)
+                continue
+            backoff = 3
             if tripped:
+                self.kick_note = ("连接连续 %d 次被抢占（同 appId 另一实例"
+                                  "在线？）——熔断探测中" % kick_n)
                 log.warning("连接连续 %d 次被抢占（同 appId 另一实例在线？）"
-                            "——熔断：每 300s 探测一次，对方退出自然恢复",
+                            "——熔断：递增探测（300→1800s），对方退出自然恢复",
                             kick_n)
             elif kick_n:
+                self.kick_note = ""
                 log.info("短命断线（疑似被挤）第 %d 次，%.0fs 后重连",
                          kick_n, wait)
-            self._stop.wait(wait)   # a559：正常 3s / 被挤指数退避 / 熔断 300s
+            else:
+                self.kick_note = ""   # 健康断线（认证后 ≥60s）：清提示
+            self._stop.wait(wait)   # a559：正常 3s / 被挤指数退避 / 熔断递增探测
 
     def _heartbeat(self):
         while not self._stop.is_set() and self.connected and self.send_heartbeat:
@@ -767,6 +822,7 @@ class HikLinkBot:
                                 and not self._stop.is_set()),
                 "connected": self.connected, "authenticated": self.authenticated,
                 "auth_failed": af,
+                "kick_note": getattr(self, "kick_note", ""),   # a561：熔断态可见
                 "robot_num": self.robot_num, "session_id": self.session_id}
 
 
@@ -1323,9 +1379,17 @@ def _autostart():
     a558（SSO 锁号实锤）：仅真应用实例（FC_APP_BOOT，main.py / worker
     进程入口设置）自启。测试/临时实例（python -c 起 server、pytest 导入）
     不自启——每个临时实例的 bot 都会与常驻实例互踢（KICK_OUT × WS 认证
-    风暴，11-12 日志 479 次/天）。"""
+    风暴，11-12 日志 479 次/天）。
+    a561 审计 P0：offload 形态的**主进程**也不自启——bot 属 worker。
+    /api/data_dir/migrate 会在主进程懒加载本模块（server.py），原门挡不住
+    这种「合法带 FC_APP_BOOT 的主进程」，且迁移后锁路径分叉（新旧
+    DATA_DIR 两把锁互不可见）→ 双 bot 互踢。仅 CLAUDE_INLINE=1 单进程
+    排障形态或 worker 进程（CLAUDE_WORKER_PORT 由 _spawn_cmd 注入）自启。"""
     global _controller
     if os.environ.get("FC_APP_BOOT") != "1":
+        return
+    if (os.environ.get("CLAUDE_INLINE") != "1"
+            and not os.environ.get("CLAUDE_WORKER_PORT")):
         return
     try:
         _controller = HikLinkBotController()

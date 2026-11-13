@@ -40,9 +40,12 @@ import time
 
 # a558：worker 以进程入口运行（python -m src.worker_app）时标记合法 bot
 # 宿主/代理承载；被测试导入（build_app，见 test_route_smoke）时不标记——
-# 测试实例不得自启 bot/自动登录（SSO 锁号防线）。冻结形态走 main.py
-# --claude-worker，其顶部已先设 FC_APP_BOOT
-if __name__ == "__main__":
+# 测试实例不得自启 bot/自动登录（SSO 锁号防线）。
+# a561 审计 F1：冻结 worker（exe --claude-worker → main 分发以模块身份
+# import 本文件，__main__ 门不触发）原靠父进程 env 继承——链路脆弱且
+# 注释与事实不符。_spawn_cmd 对两种形态都注入 CLAUDE_WORKER_PORT，
+# 以它为准
+if __name__ == "__main__" or os.environ.get("CLAUDE_WORKER_PORT"):
     os.environ.setdefault("FC_APP_BOOT", "1")
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

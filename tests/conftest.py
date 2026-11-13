@@ -16,3 +16,6 @@ conftest.py 由 pytest 在收集测试模块**之前**导入，是唯一可靠�
 import os
 
 os.environ.setdefault("CLAUDE_INLINE", "1")
+# a561 审计 F13：残留环境不得让 pytest 变成"真应用实例"起 bot/
+# 自动登录（hiklink._autostart / proxy_module_init 都认这个标志）
+os.environ.pop("FC_APP_BOOT", None)

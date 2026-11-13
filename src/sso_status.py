@@ -16,9 +16,10 @@ import ssl
 import urllib.request
 
 DASHBOARD = "https://lanz.hikvision.com/resource/dashboard"
-# a446 实测文案 "Too many attempts, …"；补中英常见变体
-LOCK_HINTS = ("too many attempts", "account locked", "账号已被锁定",
-              "账号已锁定", "尝试次数", "锁定")
+# a561 审计 F11：词表照抄 proxy._is_lockout_msg 的确定式结论——裸「锁定」
+# 「尝试次数」会撞登录页静态警示语（"多次尝试将锁定账号"），页面改版即误报
+LOCK_HINTS = ("too many attempts", "account is locked", "has been locked",
+              "已被sso锁定", "已被 sso 锁定", "已被锁定", "尝试次数超限")
 
 
 def probe(timeout=10):
@@ -35,8 +36,9 @@ def probe(timeout=10):
         final_url = r.geturl()
     text = raw.decode("utf-8", "replace")
     low = text.lower()
-    hits = [h for h in LOCK_HINTS if h in low]
     on_login_page = "sso.hikvision.com" in final_url
+    # F11：只在登录页上判词，避免跟到错误页时正文误命中
+    hits = [h for h in LOCK_HINTS if h in low] if on_login_page else []
     if hits:
         return {"locked": True, "evidence": hits, "url": final_url,
                 "hint": "登录页带锁定文案——仍在锁定期"}
