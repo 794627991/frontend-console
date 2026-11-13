@@ -1374,6 +1374,35 @@ def _web_favs_clean(items):
     return out[:100]
 
 
+def _safe_cfg_int(v, lo, hi, default=0):
+    """a565 审计：config 脏值安全取整（GET /api/theme 不因手工编辑的
+    config.json 抛 TypeError/ValueError 而 500 连坐全前端初始化）。"""
+    try:
+        n = int(v)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(lo, min(hi, n))
+
+
+def _web_session_clean(d):
+    """网页导航栈会话清洗（a565，同 _web_favs_clean 口径）：
+    {stack: [http(s) url ≤2048 ×≤50], idx: 钳到栈内}；非法输入回空栈。"""
+    out = {"stack": [], "idx": -1}
+    if not isinstance(d, dict):
+        return out
+    stack = [str(u) for u in (d.get("stack") or [])
+             if isinstance(u, str) and u.startswith(("http://", "https://"))
+             and len(u) <= 2048 and u != "about:blank"][:50]
+    out["stack"] = stack
+    if stack:
+        try:
+            idx = int(d.get("idx") or 0)
+        except (TypeError, ValueError, OverflowError):   # a565 审计：Infinity→OverflowError 500
+            idx = 0
+        out["idx"] = max(0, min(idx, len(stack) - 1))
+    return out
+
+
 def _calc_hist_clean(items):
     """计算器历史清洗：只要 {expr,res} 均为字符串的条目，字符串截断 200 字符，上限 50。"""
     out = []
@@ -1417,6 +1446,12 @@ def _is_remote_session():
     return False
 
 
+# a565 审计：theme 字段级并发丢更新防线——_save_config({_load_config()}) 的
+# load 在锁外，Flask threaded 下两个并发 POST 以后提交者快照覆盖先提交者字段。
+# 各字段读改写整段进锁（nav_keys 同款思路，兑现其注释宣称的保护范围）
+_theme_fields_lock = threading.Lock()
+
+
 @app.route("/api/theme", methods=["GET", "POST"])
 def api_theme():
     """主题持久化。localStorage 按 origin（127.0.0.1:端口）隔离，而 Flask 每次
@@ -1443,10 +1478,14 @@ def api_theme():
                         "web_favs": _web_favs_clean(cfg.get("web_favs", [])),
                         # a563：TFTP 面板高度同款根因同款修——localStorage
                         # 跨启动（端口必变）必丢 = 面板恒回 CSS 50%
-                        #（用户实锤"修了很多次未真正修复"的根源）
-                        "tftp_pane_h": max(0, min(4000, int(cfg.get("tftp_pane_h") or 0))),
+                        #（用户实锤"修了很多次未真正修复"的根源）。
+                        # a565 审计：GET 侧 try（脏 config 不再连坐 500）
+                        "tftp_pane_h": _safe_cfg_int(cfg.get("tftp_pane_h"), 0, 4000),
                         # a564：折叠态（只剩标题栏）跨启动记忆
                         "tftp_pane_collapsed": bool(cfg.get("tftp_pane_collapsed")),
+                        # a565：网页导航栈会话（a475 会话恢复）同款根因同款修
+                        # ——localStorage 跨启动（端口必变）必丢，恢复从未生效
+                        "web_session": _web_session_clean(cfg.get("web_session")),
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
                         "tray_prompt_shown": bool(cfg.get("tray_prompt_shown", False)),
                         "claude_ui_mode": cfg.get("claude_ui_mode", "harness"),
@@ -1525,22 +1564,31 @@ def api_theme():
             }})
     if "calc_history" in data and isinstance(data["calc_history"], list):
         # 计算器历史持久化：[{expr, res}]，字符串白名单 + 上限 50（防 config 膨胀）
-        _save_config({**_load_config(), "calc_history": _calc_hist_clean(data["calc_history"])})
+        with _theme_fields_lock:
+            _save_config({**_load_config(), "calc_history": _calc_hist_clean(data["calc_history"])})
     if "web_favs" in data and isinstance(data["web_favs"], list):
         # 网页收藏持久化：清洗口径同上（url 白名单 + 100 条上限，防 config 膨胀）
-        _save_config({**_load_config(), "web_favs": _web_favs_clean(data["web_favs"])})
+        with _theme_fields_lock:
+            _save_config({**_load_config(), "web_favs": _web_favs_clean(data["web_favs"])})
     if "tftp_pane_h" in data:
         # a563：TFTP 面板高度持久化（int + 60..4000 钳制，防 config 膨胀）
         try:
             _h = int(data["tftp_pane_h"])
         except (TypeError, ValueError):
             _h = 0
-        _save_config({**_load_config(),
-                      "tftp_pane_h": max(0, min(4000, _h))})
+        with _theme_fields_lock:
+            _save_config({**_load_config(),
+                          "tftp_pane_h": max(0, min(4000, _h))})
     if "tftp_pane_collapsed" in data:
         # a564：折叠态持久化（bool 白名单）
-        _save_config({**_load_config(),
-                      "tftp_pane_collapsed": bool(data["tftp_pane_collapsed"])})
+        with _theme_fields_lock:
+            _save_config({**_load_config(),
+                          "tftp_pane_collapsed": bool(data["tftp_pane_collapsed"])})
+    if "web_session" in data:
+        # a565：网页导航栈会话持久化（dict 白名单清洗，防 config 膨胀）
+        with _theme_fields_lock:
+            _save_config({**_load_config(),
+                          "web_session": _web_session_clean(data["web_session"])})
     # 关闭到托盘（close_to_tray：设置页开关）+ 首次提示已展示标记（tray_prompt_shown）
     _tk = {}
     if "close_to_tray" in data:

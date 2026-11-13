@@ -528,6 +528,9 @@ def _watchdog_loop():
     """30s 验活：托盘线程死/窗口毁 → 停残骸重建（原生实现有日志有栈，
     正常不该死；此为兜底——用户实锤过两轮，宁可多一层保险）。"""
     import time
+    global _tray   # R9.7：声明必须在任何使用之前——Python 3.14 把「先使用
+    # 后声明 global」升级为硬 SyntaxError（a535 的函数中段声明在 3.14 编译
+    # 即失败，托盘隐藏线程因此死亡）。提前到函数顶部覆盖全部使用点。
     while True:
         time.sleep(30)
         with _lock:
@@ -544,7 +547,6 @@ def _watchdog_loop():
                 if _window is not None:
                     from src.app_state import RES_DIR
                     ico = os.path.join(RES_DIR, "ico", "app.ico")
-                    global _tray          # a535：函数内赋值无 global → UnboundLocalError
                     _tray = _NativeTray(
                         ico, "前端控制台",
                         _make_menu_provider(_window, _on_quit),

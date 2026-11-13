@@ -79,12 +79,60 @@ try {
       ? Math.min(Math.max(0, _saved.idx | 0), _webSavedNav.stack.length - 1) : -1;
   }
 } catch (_) {}
+let _webSessSrvReady = false;   // a565：种子完成前不上传（防空态覆盖服务端）
 function _webSessionSave() {
   const c = _webCur();
   const nav = c && c._nav;
   try { localStorage.setItem('web-session', JSON.stringify(
     nav || { stack: [], idx: -1 })); } catch (_) {}
+  // a565：跨启动持久化——localStorage 按 origin（含随机端口）隔离，
+  // 每次重启端口必变 = 「恢复上次网页」从未真正生效。服务端 config
+  // 通道（与 web_favs/tftp_pane_h 同款）。owner 门 + 去抖防连发
+  if (_webSessSrvReady && !(window.__webUiIsOwner && !window.__webUiIsOwner())) {
+    clearTimeout(_webSessionSave._t);
+    _webSessionSave._t = setTimeout(() => {
+      try {
+        const n = nav || { stack: [], idx: -1 };
+        fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ web_session: {
+            stack: n.stack.filter(x => typeof x === 'string'
+              && x !== 'about:blank').slice(0, 50), idx: n.idx | 0 } })
+        }).catch(() => {});
+      } catch (_) {}
+    }, 1500);   // a565 审计：1500ms 去抖——SPA 页内跳转也触发保存，防 config 写放大
+  }
 }
+// a565 启动种子：新 origin 的 localStorage 必空 → 从服务端回填（favs 同款：
+// 本地有值本地为准并回传对齐；迟到种子不覆盖已恢复/已导航的状态）
+(function () {
+  fetch('/api/theme').then(r => r.json()).then(j => {
+    _webSessSrvReady = true;
+    const srv = (j && typeof j.web_session === 'object' && j.web_session)
+      ? j.web_session : null;
+    if (!srv || !Array.isArray(srv.stack) || !srv.stack.length) return;
+    let cur = null;
+    try { cur = JSON.parse(localStorage.getItem('web-session') || 'null'); } catch (_) {}
+    const curOk = !!(cur && Array.isArray(cur.stack) && cur.stack.length);
+    if (_webSavedNav) return;   // 已从本地恢复/已开 tab 导航过——绝不覆盖
+    if (!curOk) {
+      // 新端口场景：服务端种子（含 about:blank 过滤与 idx 钳制，同 a556）
+      _webSavedNav = {
+        stack: srv.stack.filter(x => typeof x === 'string'
+          && x !== 'about:blank').slice(0, 50),
+        idx: -1 };
+      _webSavedNav.idx = _webSavedNav.stack.length
+        ? Math.min(Math.max(0, srv.idx | 0), _webSavedNav.stack.length - 1) : -1;
+      try { localStorage.setItem('web-session', JSON.stringify(_webSavedNav)); } catch (_) {}
+    } else if (JSON.stringify(cur) !== JSON.stringify(srv)) {
+      // a565 审计：兑现注释——本地为准，差异回传对齐（favs 同款），同
+      // origin 重开时服务端不再滞后到下次导航
+      try {
+        fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ web_session: cur }) }).catch(() => {});
+      } catch (_) {}
+    }
+  }).catch(() => { _webSessSrvReady = true; });
+})();
 // a475 睡眠巡检：网页 tab 不在前台累计计时（60s 一查，开销可忽略），
 // 到时置空 iframe（进程回收由 Chromium 完成）；前台/休眠态即停
 setInterval(() => {
@@ -199,9 +247,12 @@ function buildWebPanelTab(url, opts) {
   tab.className = 'tab';
   tab.dataset.portId = portId;
   tab.innerHTML = `<span class="led"></span><span class="tab-ico">${ICO16.link}</span>` +
-    `<span class="label">网页</span><span class="baud"></span><span class="close" title="关闭">${ICO16.x}</span>`;
+    `<span class="label">网页</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => {
-    if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; }
+    // R9.8：关闭钮已 SVG 化（ICO16.x 内嵌 path）——点击 target 是 svg/path
+    // 而非 .close 本身，classList.contains 判不中（用户实锤关闭失效）。
+    // closest 沿树上溯，文本字形与内嵌 SVG 双兼容
+    if (e.target.closest('.close')) { e.stopPropagation(); closeEditorTab(portId); return; }
     switchTab(portId);
   };
   const es = termArea.querySelector('.empty-state');
@@ -235,7 +286,7 @@ function buildWebPanelTab(url, opts) {
           <div>${ICO16.hourglass} 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
         </div>
         <div class="web-err" data-web-err style="display:none;">
-          <div class="web-err-title">⚠️ 页面加载异常</div>
+          <div class="web-err-title"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5l6 10.5H2z"/><path d="M8 6.5v3.2M8 11.4v.1"/></svg> 页面加载异常</div>
           <div class="web-err-msg">可能是网络不可达（内网无外联？）或网站拒绝被嵌入。</div>
           <div class="web-err-acts">
             <button class="btn" data-web-err="read">${ICO16.book} 用阅读模式打开</button>
@@ -315,13 +366,17 @@ function buildWebPanelTab(url, opts) {
     _webNavigate(url);
   } else if (_webSavedNav && _webSavedNav.idx >= 0
              && _webSavedNav.stack[_webSavedNav.idx]) {
-    // a475 会话恢复（a554 改为一次性消费）：无显式 URL 的首开回到上次页
+    // a475 会话恢复（a554 改为一次性消费）：无显式 URL 的首开回到上次页。
+    // a565 审计（启用器发现）：恢复目标=stack[idx]（用户上次实际所在，
+    // 可能停在后退中途）而非栈顶——a565 之前 localStorage 跨启动必空，
+    // 这条路径从未真正执行过，旧的「回栈顶」语义随持久化修通首次暴露
     conn._nav = _webSavedNav;
     _webSavedNav = null;
-    // a555 审计修：_webNavigate 会再 push 栈顶（[A,B]→[A,B,B]，恢复后
-    // 首次后退成空转）——idx 先退一位，push 后恰好回到原栈顶
-    conn._nav.idx -= 1;
-    _webNavigate(conn._nav.stack[conn._nav.stack.length - 1], conn);
+    const _k = conn._nav.idx;
+    // a555 审计修：_webNavigate 会再 push（恢复后首次后退成空转）——
+    // idx 先退一位，push 后恰好回到 _k
+    conn._nav.idx = _k - 1;
+    _webNavigate(conn._nav.stack[_k], conn);
   }
   return conn;
 }
@@ -412,15 +467,15 @@ function _webReconcileVis() {
   }
   // R9.6·反冻结自愈：若顶层激活 tab 就是网页、且它在屏/非阅读/非休眠/
   // 无浮层——按不变式它必须可见。推演循环却没选中它 = 某个连结项被陈旧
-  // 状态（残留 flex/中间态）污染 → 信任屏幕真值强改为它，并告警留痕。
+  // 状态（残留 flex/中间态）污染 → 信任屏幕真值强改为它（静默自愈；
+  // 2s 周期推演持续兜底，异常形态仅体现为偶见控件闪一下）。
   if (!target) {
     const aw = (typeof activePortId !== 'undefined') ? connections[activePortId] : null;
     const awOK = aw && aw.meta && aw.meta.kind === 'web' && aw.wrap
       && aw.wrap.style.display !== 'none' && !aw._ui.reader && !aw._ui.sleeping
       && !(window.__webOverlayOpen && window.__webOverlayOpen());
     if (awOK) {
-      console.warn('[web-tabs] reconcile anomaly: 激活网页 tab 应可见却未命中（已自愈）');
-      target = aw;
+      target = aw;   // R9.6·反冻结自愈：信任屏幕真值（静默，不打扰）
     }
   }
   if (!target) {
@@ -430,17 +485,8 @@ function _webReconcileVis() {
       c => c && c.meta && c.meta.kind === 'web' && c._ctlShown === true);
     if (shown.length === 1) {
       const sc = shown[0];
-      _webCtl(sc, { act: 'suspend' });
-      sc._ctlShown = false;
-      // R-外泄根治·自报：900ms 内帧没到 = 抓帧管线断——横幅直说，
-      // 不让用户猜暗色是「定格」还是「兜底」
-      sc._shotAt = 0;
-      setTimeout(() => {
-        if (sc._ctlShown === false && !sc._shotAt &&
-            connections[sc.portId] === sc && !sc._ui.reader && !sc._ui.sleeping) {
-          showBanner('静止帧未生成（已暗色兜底）——控制台应有 [web-tabs] suspend 诊断行', 4000, true);
-        }
-      }, 900);
+      _webCtl(shown[0], { act: 'suspend' });
+      shown[0]._ctlShown = false;
       return;
     }
     if (shown.length > 1 || Object.values(connections).some(
@@ -598,7 +644,6 @@ window.__webTabLoad = function (tid, on) {
 window.__webTabShot = function (tid, dataUrl) {
   const c = _webByTabId(tid);
   if (!c || !c.wrap) return;
-  c._shotAt = Date.now();   // 自报依据：帧已到达
   const host = c.wrap.querySelector('.web-host');
   if (host) {
     // 无条件上帧：活页面（HWND）可见时背景被盖住无碍；迟到帧保留到下次
@@ -1049,11 +1094,11 @@ document.addEventListener('keydown', (e) => {
     // 给可见反馈；真空输入才走「开网页 tab（恢复会话）」
     if (!u) {
       if (bar.value.trim()) { showBanner('该协议不允许在内嵌浏览器打开', 2500, true); return; }
-      buildWebPanelTab(); bar.blur(); return;
+      buildWebPanelTab(); bar.value = ''; bar.blur(); return;   // 灵动岛：清空+缩回
     }
     // a556（用户令）：顶栏输入网址回车即开新网页 tab——浏览器地址栏语义
     buildWebPanelTab(u, { newTab: true });
-    bar.blur();
+    bar.value = ''; bar.blur();   // 灵动岛：清空+缩回（打开网址不受影响）
   });
   const fav = document.getElementById('tabFavBtn');
   if (fav) fav.onclick = (e) => { e.stopPropagation(); _webFavMenu(fav); };
@@ -1083,7 +1128,7 @@ function _webFavMenu(anchor) {
     `<div class="web-fav-item" data-fav-i="${i}" title="${esc(f.url + (f.note ? ' · 备注：' + f.note : ''))}">`
     + `<span class="web-fav-name">${esc(f.note || f.title || _webShortUrl(f.url))}</span>`
     + `<span class="web-fav-x" data-fav-edit="${i}" title="编辑备注">${ICO16.pencil}</span>`
-    + `<span class="web-fav-x" data-fav-del="${i}" title="删除">${ICO16.x}</span></div>`).join('');
+    + `<span class="web-fav-x" data-fav-del="${i}" title="删除">✕</span></div>`).join('');
   if (!favs.length) html += '<div class="web-fav-empty">还没有收藏——网页 tab 里点收藏按钮，或地址栏打开后收藏</div>';
   list.innerHTML = html;
   document.body.appendChild(list);
@@ -1156,7 +1201,7 @@ function _webFavMenu(anchor) {
 }
 
 // R-命名统一·备注编辑：行内编辑态（移除 data-fav-i 的打开语义由
-// favEditing 标记拦截；Enter/✓ 保存、Esc 取消）
+// favEditing 标记拦截；Enter/对勾 保存、Esc 取消）
 function _webFavEnterEdit(list, anchor, idx) {
   const row = list.querySelector(`[data-fav-i="${idx}"]`);
   const f = _webFavs()[idx];

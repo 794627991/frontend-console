@@ -132,6 +132,7 @@ async function refreshTftp() {
   let dragging = false, startY = 0, startH = 0;   // a563：声明上移（_applySaved 让位判断需要，避免 TDZ）
   let _collapsed = false;      // a564：折叠态（只剩标题栏，VSCode 面板语义）
   let _dragCollapse = false;   // 拖拽过程中「本次将折叠」预判
+  let _dragMoved = false;      // a565 审计 BUG-2a：纯点击（无位移）≠拖拽
   const COLLAPSE_TH = 90;      // 拖到 90px 以下 → 松手折叠
   try { _savedH = parseInt(localStorage.getItem('tftpPaneH') || '', 10) || 0; } catch(e) {}
   try { _collapsed = localStorage.getItem('tftpPaneCollapsed') === '1'; } catch(e) {}
@@ -149,7 +150,7 @@ async function refreshTftp() {
     }
     if (save !== false) {
       try { localStorage.setItem('tftpPaneCollapsed', _collapsed ? '1' : '0'); } catch (e) {}
-      _uploadSaved();
+      _uploadSaved(true);   // a565 审计 BUG-1：折叠态变更强制落盘
     }
   }
   // a564：默认展开高度——有记忆用记忆，否则父容器 35%（VSCode 面板默认观感）
@@ -232,16 +233,28 @@ async function refreshTftp() {
         try { localStorage.setItem('tftpPaneH', String(srvH)); } catch (e) {}
         _applySaved();
       }
-      // a564：折叠态对齐（服务端为准——跨启动唯一可靠源）
+      // a564/a565 审计 BUG-3：折叠态对齐——本地键已有（含本启动用户刚
+      // 操作过）则本地为准、差异回传（与高度同款防护）；原先无条件以服务
+      // 端为准，迟到种子会把用户刚做的折叠当场弹回并连抹三层
       const srvC = !!(j && j.tftp_pane_collapsed);
-      if (srvC !== _collapsed) {
+      let curC = null;
+      try { curC = localStorage.getItem('tftpPaneCollapsed'); } catch (e) {}
+      if (curC === null) {
+        // 新 origin（本地无键）→ 服务端种子
         try { localStorage.setItem('tftpPaneCollapsed', srvC ? '1' : '0'); } catch (e) {}
-        _setCollapsed(srvC, false);
+        if (srvC !== _collapsed) _setCollapsed(srvC, false);
+      } else if ((curC === '1') !== srvC) {
+        _uploadSaved(true);   // 本地为准，回传对齐
       }
     }).catch(() => {});
   })();
-  function _uploadSaved() {
-    if (_savedH < 60 && !_collapsed) return;   // a564：折叠态也要上传标志
+  function _uploadSaved(force) {
+    // a565 审计 BUG-1：force=折叠态变更——必须落盘（原早退条件把「纯
+    // collapsed=false」的 POST 也挡掉，从不拖高度的用户展开后面板跨启动
+    // 自己又折叠了）；非 force 的纯高度路径维持原守卫。
+    if (!force && _savedH < 60 && !_collapsed) return;
+    // a565 审计：owner 门（与 web_favs 上传口径一致——第二 UI 不写 config）
+    if (window.__webUiIsOwner && !window.__webUiIsOwner()) return;
     clearTimeout(_uploadSaved._t);
     _uploadSaved._t = setTimeout(() => {
       try {
@@ -309,6 +322,7 @@ async function refreshTftp() {
   });
   document.addEventListener('mousemove', e => {
     if (!dragging) return;
+    _dragMoved = true;                 // a565 审计：有位移才算拖拽
     // 向上拖增大：clientY 减小 → 高度增加。a452：上下限与恢复同一口径
     // （原硬编码 180 / innerHeight-200，小窗口下与恢复逻辑打架）。
     // a563：_paneBounds 可测性守卫（父容器隐藏时 null，跳过该帧）
@@ -326,11 +340,30 @@ async function refreshTftp() {
     const h = Math.max(b[0], Math.min(raw, b[1]));
     pane.style.height = h + 'px';
   });
+  // a565 审计 RISK-4：mouseup 丢失（系统弹窗/切窗）不再粘手+残留折叠判定
+  const _dragReset = () => {
+    dragging = false;
+    _dragCollapse = false;
+    _dragMoved = false;
+    resizer.classList.remove('dragging');
+    document.body.style.userSelect = '';
+  };
+  window.addEventListener('blur', _dragReset);
+  document.documentElement.addEventListener('mouseleave', _dragReset);
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
     dragging = false;
     resizer.classList.remove('dragging');
     document.body.style.userSelect = '';
+    // a565 审计 BUG-2a：纯点击（按下-抬起无位移）≠拖拽——折叠态轻点
+    // 分隔条按「点击展开」处理（走 _setCollapsed 的记忆/默认高度），
+    // 绝不读 CSS 50% 的瞬时 offsetHeight 污染高度记忆；展开态轻点=无操作
+    if (!_dragMoved) {
+      _dragCollapse = false;
+      if (_collapsed) _setCollapsed(false);
+      return;
+    }
+    _dragMoved = false;
     // a564：本次拖拽判定折叠 → 折叠（保留 _savedH=上次展开高度，VSCode 同款）
     if (_dragCollapse) {
       _dragCollapse = false;
@@ -338,10 +371,13 @@ async function refreshTftp() {
       return;
     }
     // a564：从折叠态拖开 → 摘折叠类（不走红 _setCollapsed 的 _applySaved，
-    // 保住本次拖出来的高度），再按常规保存
+    // 保住本次拖出来的高度），再按常规保存。
+    // a565 审计 BUG-2b：摘类必须同步本地折叠键（原先残留 '1' → 同端口
+    // 重启闪跳/三态错乱）
     if (_collapsed) {
       _collapsed = false;
       pane.classList.remove('collapsed');
+      try { localStorage.setItem('tftpPaneCollapsed', '0'); } catch (e) {}
     }
     try {
       // a563：保存侧加值域守卫——父容器异常压缩态下 offsetHeight 可能
