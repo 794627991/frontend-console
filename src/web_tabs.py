@@ -17,10 +17,35 @@ document.domain/防盗链等 iframe 时代的一切限制结构性消失。
   设 Bounds；切 tab = 显示/隐藏控件
 """
 import json
-import threading
 
 _tabs = None            # WebTabs 单例（main._patched_ready 装配）
-_lock = threading.Lock()
+_HIDE_ALL = "__all__"    # R6 审计 W32：全隐哨兵（切回阅读态 tab）——前端 tab id
+                         # 恒为 web[:<epoch>]:<n> 形态（D1 未合时无 epoch 段），
+                         # 永不与该哨兵碰撞
+
+# a557（用户实锤：SSO 账号频繁登录被锁）：密码自动填充默认关。
+# a552 开启后，保存的 SSO 凭据在会话过期时会被 Chromium「自动签到」直接
+# 提交——每个网页 tab 的每次新开/刷新/休眠唤醒都变成一次登录尝试；且
+# web tab 的浏览器会话与 proxy 面板的 Python 会话（lanz_quota）是同账号
+# 的两个独立会话，互踢后浏览器侧即时自动重登 → a446 同款 ping-pong 风暴
+# 锁号。要恢复 a552 的自动填充改 True（配合 _ANTI_AUTOSIGNIN_JS，自担风险）。
+WEB_TAB_PASSWORD_AUTOFILL = False
+
+# a557：防自动签到脚本——密码表单 submit 若无近 3s 用户手势（pointerdown/
+# keydown）则拦截。浏览器 auto sign-in 无手势必被拦；用户真实点击/回车
+# 天然带手势不受影响。注入每个控件的所有后续文档（含跨域页，浏览器级）。
+_ANTI_AUTOSIGNIN_JS = (
+    "(function(){var g=0;"
+    "addEventListener('pointerdown',function(){g=Date.now()},true);"
+    "addEventListener('keydown',function(){g=Date.now()},true);"
+    "addEventListener('submit',function(e){try{"
+    "var f=e.target;if(!f||!f.querySelector)return;"
+    "if(!f.querySelector('input[type=password]'))return;"
+    "if(Date.now()-g>3000){e.preventDefault();}"
+    "}catch(_){}},true);})();")
+
+# a557：SSO 页面命中日志——控制台直接可见「谁在频繁打 SSO」（诊断锁号）
+_SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 
 
 def get_tabs():
@@ -37,8 +62,11 @@ def _log(level, msg):
 class WebTabs:
     """WebView2 控件池：tab_id → 控件。布局 rect 由前端上报（DIP）。"""
 
-    def __init__(self, form):
+    def __init__(self, form, cdp=False):
         self._form = form                    # pywebview 的 WinForms Form
+        self._cdp = bool(cdp)                # R4 审计 D2：CDP/DevTools 门控
+        #（=debug 或配置键 web_cdp，与 main.py 主进程同一口径——a473 原设计
+        #「默认关，开启需重启生效」；v3.4.99 终裁正常启动无 F12/右键/F5）
         self._main_cvw = None                # 工具主 UI 的 CoreWebView2（事件推送目标）
         self._ctl = {}                       # tab_id(str) → WebView2 控件
         self._env = None                     # 共享 CoreWebView2Environment
@@ -47,7 +75,9 @@ class WebTabs:
         self._want = None                    # a555：(tab_id, visible) 最近显隐意图
         self._want_seq = 0                   # a556：show 命令序号（乱序丢弃）
         self._pending = set()                # a555：create 在途的 tab（双发去重）
-        self._pend_nav = {}                  # a555：在途 tab 的后发导航（末次胜）
+        self._pend_nav = {}                  # a555：在途 tab 的后发导航（末次胜出）
+        self._cancel = set()                 # R1 审计 W5：create 在途中被 dispose（弃建标记）
+        self._epochs = {}                    # R4 审计 D1（W3）：tab → 页面纪元（dispose_all 按纪元回收）
         self._env_failed = False             # a555：env 永久失败 → 快速失败
         self._ensure_env()
 
@@ -80,7 +110,22 @@ class WebTabs:
             import Microsoft.Web.WebView2.Core as C
             udf = os.path.join(os.environ.get("LOCALAPPDATA", ""),
                                "fc_webview_tabs")
-            task = C.CoreWebView2Environment.CreateAsync(None, udf, None)
+            # R4 审计 D2（W4）：显式 options——①独立 CDP 端口 9223（AI 经
+            # devtools_cdp 多端口发现触达网页 tab，9222 归主 UI）——**仅
+            # debug 或 web_cdp 配置开启时附带**（a473 原门控：默认关）；
+            # ②自带主进程同款性能四旗——显式 AdditionalBrowserArguments
+            # 使本环境不再继承 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 环境
+            # 变量（W1 纵深：网页 tab 进程参数完全确定化）。9223 被占时
+            # 浏览器进程无 CDP 但功能不受损（与 9222 先占同款降级）。
+            opts = C.CoreWebView2EnvironmentOptions()
+            args = ("--disable-backgrounding-occluded-windows "
+                    "--disable-renderer-backgrounding "
+                    "--disable-background-timer-throttling "
+                    "--disable-features=CalculateNativeWinOcclusion")
+            if self._cdp:
+                args += " --remote-debugging-port=9223"
+            opts.AdditionalBrowserArguments = args
+            task = C.CoreWebView2Environment.CreateAsync(None, udf, opts)
             import System
 
             def _done(t):
@@ -106,10 +151,11 @@ class WebTabs:
             _log("WARN", "ui invoke: %r" % e)
 
     # ---------- tab 生命周期 ----------
-    def create(self, tab_id, url):
+    def create(self, tab_id, url, epoch=""):
         """开 tab：创建控件 → 初始化 → 导航。初始化是异步链（env →
         EnsureCoreWebView2Async → CoreWebView2 就绪 → Navigate），全程
-        ContinueWith 不阻塞 UI 线程。"""
+        ContinueWith 不阻塞 UI 线程。epoch=页面纪元（R4 审计 D1：刷新后
+        pagehide dispose_all(epoch) 按纪元回收，不误杀新纪元控件）。"""
         if self._env_failed:
             # a555：env 已判死——快速失败，别进下面的重试白等 5s
             return {"ok": False, "err": "WebView2 环境初始化失败"}
@@ -132,9 +178,15 @@ class WebTabs:
             self._pend_nav[tab_id] = url
             return {"ok": True}
         self._pending.add(tab_id)
+        self._epochs[tab_id] = epoch
 
         def _build():
             try:
+                if tab_id in self._cancel:
+                    # R1 审计 W5：create 在途期间 tab 已被关闭——不建控件、
+                    # 不接线、不导航（原先照建 → 永不 Dispose 的隐形孤儿）
+                    self._cancel.discard(tab_id)
+                    return
                 import Microsoft.Web.WebView2.WinForms as WF
                 import System
                 import System.Drawing
@@ -165,19 +217,60 @@ class WebTabs:
                 t.Result    # 确保异常在此可见
             except Exception as e:
                 _log("ERROR", "EnsureCoreWebView2Async: %r" % e)
+                # R3 审计 W21：except 变量在块尾被 CPython 隐式 del——闭包
+                # 延迟执行时 str(e) 抛 NameError 被吞（实测复现）。先固化
+                # 为普通局部变量再进 _rm 闭包。
+                err = str(e)
+                # R1 审计 W13：初始化失败原先只记日志——死控件永留 _ctl，
+                # tab 假活（无重试/无回收/无提示）。回收控件 + 通知前端关 tab。
+                self._ctl.pop(tab_id, None)
+                self._pend_nav.pop(tab_id, None)
+                self._epochs.pop(tab_id, None)
+
+                def _rm():
+                    try:
+                        self._form.Controls.Remove(ctl)
+                        ctl.Dispose()
+                    except Exception:
+                        pass
+                    # R2 审计 W14：通知前端必须在 UI 线程发（a549 铁律）。
+                    m = self._main_cvw
+                    if m:
+                        try:
+                            m.ExecuteScriptAsync(
+                                "window.__webTabDead && window.__webTabDead(%s, %s)"
+                                % (json.dumps(tab_id), json.dumps(err)))
+                        except Exception:
+                            pass
+                self._ui(_rm)
                 return
 
             def _on_ui():
                 try:
                     cvw = ctl.CoreWebView2
-                    # a552：密码自动填充（登录态便利，用户令）——开启后
-                    # Chromium 密码管理器弹「保存密码」气泡，下次打开同站
-                    # 自动填充账号密码（密码存 UDF 的 Login Data，持久）
+                    # a552 开密码自动填充（登录态便利）→ a557 默认关：
+                    # Chromium 自动签到会把会话过期变成自动提交的登录尝试
+                    # （多 tab × 新开/唤醒/刷新 = 频繁登录 → SSO 锁号，
+                    # 用户实锤）。改 WEB_TAB_PASSWORD_AUTOFILL 开回。
                     try:
-                        cvw.Profile.PasswordAutofillEnabled = True
+                        cvw.Profile.PasswordAutofillEnabled = \
+                            WEB_TAB_PASSWORD_AUTOFILL
                         cvw.Profile.GeneralAutofillEnabled = True
                     except Exception as e:
                         _log("WARN", "autofill: %r" % e)
+                    # a557：防自动签到脚本——先注册后首航，覆盖首个文档
+                    try:
+                        cvw.AddScriptToExecuteOnDocumentCreatedAsync(
+                            _ANTI_AUTOSIGNIN_JS)
+                    except Exception as e:
+                        _log("WARN", "anti-autosignin: %r" % e)
+                    # R4 审计 D2：网页 tab 的 DevTools（右键「检查」/F12）与
+                    # CDP 同门控——debug 或 web_cdp 开启才可用（v3.4.99 终裁
+                    # 「正常启动无 F12」对网页 tab 同样成立）
+                    try:
+                        cvw.Settings.AreDevToolsEnabled = self._cdp
+                    except Exception as e:
+                        _log("WARN", "devtools: %r" % e)
                     self._wire_events(tab_id, ctl, cvw)
                     cvw.Navigate(url or "about:blank")
                     # a555：create 在途期间后发的导航（末次胜出）
@@ -222,6 +315,9 @@ class WebTabs:
         def _on_src(s, a):
             try:
                 u = str(cvw.Source or "")
+                # a557：SSO 页面命中可见化——锁号诊断时在控制台数频次
+                if u and any(h in u for h in _SSO_HOSTS):
+                    _log("SSO", "login-page hit tab=%s %s" % (tab_id, u))
                 _push("window.__webTabUrl && window.__webTabUrl(%s, %s)"
                       % (json.dumps(tab_id), json.dumps(u)))
             except Exception:
@@ -254,7 +350,9 @@ class WebTabs:
 
         def _on_new_window(s, a):
             try:
-                u = str(a.Uri or "")
+                # R1 审计 W12：空 URI 原样吞（Handled=True 后既不推送也
+                # 不导航）——window.open('') 语义=空白页，降级 about:blank
+                u = str(a.Uri or "") or "about:blank"
                 a.set_Handled(True)
                 if u and not _push(
                         "window.__webTabNew && window.__webTabNew(%s)"
@@ -287,6 +385,13 @@ class WebTabs:
 
         def _go():
             try:
+                if ctl.CoreWebView2 is None:
+                    # R1 审计 W6：EnsureCoreWebView2Async 未完成窗口期，
+                    # 原路径 AttributeError 被吞 → URL 静默丢失（ok=True
+                    # 但页面不动，地址栏与页面脱节）。转入 _pend_nav，
+                    # 就绪后按「末次胜出」导航（与 create 双发同一机制）。
+                    self._pend_nav[tab_id] = url
+                    return
                 ctl.CoreWebView2.Navigate(url)
             except Exception as e:
                 _log("WARN", "navigate: %r" % e)
@@ -340,6 +445,13 @@ class WebTabs:
         if not self._want:
             return
         tab_id, visible = self._want
+        if tab_id == _HIDE_ALL:
+            # R6 审计 W32：全隐分支——阅读态/守卫态下任何网页控件都不得
+            # 可见；幂等（重复 layout 重复全隐无害），不动 BringToFront
+            # （恢复排他显示时由 show(X,True) 统一前置）
+            for c in list(self._ctl.values()):
+                c.Visible = False
+            return
         if visible:
             for tid, c in list(self._ctl.items()):
                 c.Visible = (tid == tab_id)
@@ -350,8 +462,9 @@ class WebTabs:
             if c:
                 c.Visible = False
 
-    def show(self, tab_id, visible, sq=0):
-        """切 tab：显示目标控件（排他），或只藏目标。
+    def show(self, tab_id, visible, sq=0, hide_all=False):
+        """切 tab：显示目标控件（排他），或只藏目标。hide_all=True=全隐
+        （R6 审计 W32：_want 记哨兵，防陈旧排他意图经 layout 弹出他 tab）。
 
         a555 审计修：首份 layout 到达前不显控件——默认 rect (0,0,800,600)
         是占位值，WebView2 原生窗口又在 DOM 之上，layout/show 两个独立
@@ -365,7 +478,10 @@ class WebTabs:
             if sq <= self._want_seq:
                 return {"ok": True}       # 乱序迟到的旧令
             self._want_seq = sq
-        self._want = (tab_id, bool(visible))
+        # R6 审计 W32：hide_all=True =「全隐」意图——哨兵写入 _want，
+        # layout 补显期与后续任何 layout 均不再按陈旧排他意图弹出
+        # 不相关控件。hide_all 时 visible 参数忽略；sq 门控照常生效。
+        self._want = (_HIDE_ALL, False) if hide_all else (tab_id, bool(visible))
         if visible and tab_id not in self._ctl and tab_id in self._pending:
             # a555：create 在途（show 先于 _build 被处理）——此刻应用会把
             # 其他已显示 tab 藏掉又无新控件可显。意图已记 _want，控件建好
@@ -385,21 +501,46 @@ class WebTabs:
     def dispose(self, tab_id):
         """关 tab：控件从 Form 移除并 Dispose（渲染进程回收）。"""
         ctl = self._ctl.pop(tab_id, None)
-        if not ctl:
-            return {"ok": True}
-
-        def _rm():
-            try:
-                self._form.Controls.Remove(ctl)
-                ctl.Dispose()
-            except Exception as e:
-                _log("WARN", "dispose: %r" % e)
-        self._ui(_rm)
+        self._epochs.pop(tab_id, None)
+        if ctl:
+            def _rm():
+                try:
+                    self._form.Controls.Remove(ctl)
+                    ctl.Dispose()
+                except Exception as e:
+                    _log("WARN", "dispose: %r" % e)
+            self._ui(_rm)
+        elif tab_id in self._pending:
+            # R1 审计 W5：create 在途中被关——原路径查无 ctl 直接 ok，
+            # 随后 _build 照常建出控件。登记取消标记 + 清理在途导航。
+            self._cancel.add(tab_id)
+            self._pending.discard(tab_id)
+            self._pend_nav.pop(tab_id, None)
         return {"ok": True}
 
-    def dispose_all(self):
+    def dispose_all(self, epoch=None):
+        """R4 审计 D1（W3/W24）：UI 页面卸载回收——按纪元回收 _ctl 与
+        _pending（在途 create 走 W5 取消路径），并归零会话水位。epoch
+        不匹配的控件（其他 UI 会话/其他纪元）不动；epoch=None=全部回收
+        （兼容无纪元的旧调用）。"""
         for tid in list(self._ctl.keys()):
-            self.dispose(tid)
+            if epoch is None or self._epochs.get(tid) == epoch:
+                self.dispose(tid)
+        for tid in [t for t in list(self._pending)
+                    if epoch is None or self._epochs.get(t) == epoch]:
+            self._cancel.add(tid)
+            self._pending.discard(tid)
+            self._pend_nav.pop(tid, None)
+            self._epochs.pop(tid, None)
+        self.reset_session()
+
+    def reset_session(self):
+        """R4 审计 D1（W3）：页面会话重置——seq 水位/显隐意图/在途导航
+        全部归零，刷新后的新页面从干净状态开始（旧 beacon 迟到不回踩）。"""
+        self._want_seq = 0
+        self._want = None
+        self._pend_nav.clear()
+        self._cancel.clear()
 
     # ---------- 布局（前端上报） ----------
     def layout(self, x, y, w, h):
@@ -434,6 +575,25 @@ def sys_path_append(p):
         sys.path.append(p)
 
 
+def _detect_cdp():
+    """R4 审计 D2：CDP/DevTools 门控探测——与 main.py 主进程同一口径
+    （debug 开启，或配置键 web_cdp 开启）。install 在 main.py :853 附近
+    被调用，早于 :1559 的 _wv_debug 赋值，故此处自行探测而非收参。"""
+    try:
+        from src.server import DEBUG_WEB
+        if DEBUG_WEB:
+            return True
+    except Exception:
+        pass
+    try:
+        import json as _json
+        from src.app_state import CONFIG_FILE
+        with open(CONFIG_FILE, encoding="utf-8") as _f:
+            return bool((_json.load(_f) or {}).get("web_cdp"))
+    except Exception:
+        return False
+
+
 # ---------- REST 蓝图 ----------
 def register(app):
     from flask import Blueprint, jsonify, request
@@ -448,8 +608,21 @@ def register(app):
         t = get_tabs()
         if not t:
             return jsonify({"ok": False, "err": "控件管理器未装配"})
+
+        def _num(k, dft=0):
+            # R1 审计 W7：x/y/w/h/sq 原样透传，"abc"/"NaN" → int() 抛
+            # ValueError → 裸 500。收口：非有限数值一律回落默认。
+            try:
+                v = float(d.get(k, dft))
+                if v != v or v in (float("inf"), float("-inf")):
+                    return dft
+                return int(v)
+            except (TypeError, ValueError, OverflowError):
+                return dft
+
         if act == "create":
-            return jsonify(t.create(tid, url))
+            # R4 审计 D1：epoch=页面纪元透传（pagehide dispose_all 按纪元回收）
+            return jsonify(t.create(tid, url, str(d.get("epoch") or "")))
         if act == "nav":
             return jsonify(t.navigate(tid, url))
         if act == "back":
@@ -459,25 +632,38 @@ def register(app):
         if act == "reload":
             return jsonify(t.reload(tid))
         if act == "show":
-            # a556：sq 序号透传（前端乱序保护）
-            return jsonify(t.show(tid, bool(d.get("on", True)),
-                                  int(d.get("sq") or 0)))
+            # a556：sq 序号透传（前端乱序保护）。R1 审计 W7：on/all 布尔
+            # 穿透修正。R6 审计 W32：all=true=全隐（_want 记哨兵）。
+            _on = d.get("on", True)
+            _all = d.get("all", False)
+            return jsonify(t.show(
+                tid,
+                _on if isinstance(_on, bool)
+                else str(_on).strip().lower() in ("true", "1", "yes", "on"),
+                _num("sq"),
+                _all if isinstance(_all, bool)
+                else str(_all).strip().lower() in ("true", "1", "yes", "on")))
         if act == "dispose":
             return jsonify(t.dispose(tid))
+        if act == "dispose_all":
+            # R4 审计 D1（W3）：页面卸载（pagehide beacon）按纪元回收——
+            # 只动本纪元控件，刷新后重建的新纪元 tab 不被迟到的 beacon 误杀
+            return jsonify(t.dispose_all(str(d.get("epoch") or "") or None))
         if act == "layout":
-            return jsonify(t.layout(d.get("x", 0), d.get("y", 0),
-                                    d.get("w", 0), d.get("h", 0)))
+            return jsonify(t.layout(_num("x"), _num("y"),
+                                    _num("w"), _num("h")))
         return jsonify({"ok": False, "err": "bad act"})
 
     app.register_blueprint(bp)
 
 
 def install(form):
-    """main._patched_ready 装配入口。"""
+    """main._patched_ready 装配入口。CDP/DevTools 门控自行探测
+    （=debug 或 web_cdp 配置，见 _detect_cdp）。"""
     global _tabs
     try:
-        _tabs = WebTabs(form)
-        _log("INFO", "WebTabs installed")
+        _tabs = WebTabs(form, cdp=_detect_cdp())
+        _log("INFO", "WebTabs installed (cdp=%s)" % _tabs._cdp)
         return _tabs
     except Exception as e:
         _log("ERROR", "install: %r" % e)

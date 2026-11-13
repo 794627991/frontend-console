@@ -73,6 +73,7 @@ class FakeCvw:
         self.NavigationCompleted = FakeEvent()
         self.navigated = []
         self.scripts = []
+        self.injected = []          # a557：AddScriptToExecuteOnDocumentCreatedAsync
 
     @property
     def CanGoBack(self):
@@ -88,6 +89,9 @@ class FakeCvw:
 
     def Navigate(self, u):
         self.navigated.append(u)
+
+    def AddScriptToExecuteOnDocumentCreatedAsync(self, js):
+        self.injected.append(js)
 
     def ExecuteScriptAsync(self, js):
         self.scripts.append(js)
@@ -335,6 +339,17 @@ def test_new_window_fallback_navigates(stub_clr):
     t._ctl['t1'].cvw.NewWindowRequested.fire(args)
     assert args.handled is True
     assert t._ctl['t1'].cvw.navigated[-1] == 'https://new/'
+
+
+def test_anti_autosignin_injected(stub_clr):
+    """a557：防自动签到脚本随控件初始化注入；autofill 默认关。"""
+    t = _mk('sync')
+    t.create('t1', 'https://a/')
+    ctl = t._ctl['t1']
+    assert len(ctl.cvw.injected) == 1
+    assert "input[type=password]" in ctl.cvw.injected[0]
+    assert ctl.cvw.Profile.PasswordAutofillEnabled is False
+    assert ctl.cvw.Profile.GeneralAutofillEnabled is True
 
 
 def test_env_failed_fast_return(stub_clr):
