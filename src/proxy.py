@@ -929,12 +929,24 @@ class LanzQuotaWorker:
         self._stop.set()
         self._wake.set()
 
+    @staticmethod
+    def _push_relogin(stamps, ts, window=1800, limit=3):
+        """a559：重登滑窗维护（纯函数，tests 直测）。
+
+        返回 (new_stamps, tripped)。窗口内第 limit 次重登 → tripped
+        （会话被另一处登录反复互踢——每次重登都是真实 SSO 登录，
+        次数失控即锁号，视同锁定停登）。"""
+        new = [t for t in stamps if ts - t < window] + [ts]
+        return ([], True) if len(new) >= limit else (new, False)
+
     def _run(self):
         client = None
         cur_cred = object()
         cur_epoch = 0
         epoch_of_cred = 0
         fail_n = 0
+        cur_done = 0.0          # a559：最近一次已见的登录成功时刻
+        login_ok_ts = []        # a559：30 分钟滑窗内的重登成功时刻（被踢熔断）
         while not self._stop.is_set():
             try:
                 with self._lock:
@@ -994,6 +1006,36 @@ class LanzQuotaWorker:
                     self._wake.clear()
                     continue
                 fail_n = 0
+                # a559 铁律（用户令：在线就不许反复登录）：新登录成功时刻
+                # 变化才计数——30 分钟内第 3 次「重新登录成功」= 会话被
+                # 另一处登录反复互踢（每次都是真实 SSO 登录，次数失控即
+                # 锁号）。视同锁定停登，等用户确认单一登录处后手动刷新。
+                done_ts = getattr(self, "_login_done_ts", 0.0)
+                if done_ts != cur_done:
+                    cur_done = done_ts
+                    login_ok_ts, tripped = self._push_relogin(login_ok_ts,
+                                                              done_ts)
+                    if tripped:
+                        with self._lock:
+                            self._locked = True
+                            self._login_err = (
+                                "检测到 SSO 会话被反复踢（30 分钟内第 %d 次"
+                                "重登成功——另一台机器/实例在用同一账号？）。"
+                                "已停止自动重登：请确认只在一处登录后手动"
+                                "点刷新。" % len(login_ok_ts))
+                        login_ok_ts = []
+                        self._emit("login_locked", self._login_err)
+                        # 与 a454 锁定停登同款等待：手动刷新/强制重登/换
+                        # 凭据（都会清 _locked / 换代）才恢复
+                        while not self._stop.is_set():
+                            with self._lock:
+                                if not self._locked or self._cred != cred:
+                                    break
+                                if self._cred_epoch != epoch_of_cred:
+                                    break
+                            self._wake.wait(5)
+                            self._wake.clear()
+                        continue
                 # a446（严重回归修复）：负载查询必须复用**这一个** client。
                 # 原先 _get_model_loads 自己 new LanzClient 并每 20s 登录一次，
                 # 同一 SSO 账号两个会话互相踢——worker 刚登录就被踢回 SSO
@@ -1084,6 +1126,7 @@ class LanzQuotaWorker:
                 self._login_failed = False
                 self._login_err = ""
                 self._locked = False      # a454：登录成功即解除锁定停登
+                self._login_done_ts = time.time()   # a559：新登录时刻（被踢熔断判据）
             self._emit("login_ok", cred[0])
             return True
         except lanz_quota.LanzAuthError as e:

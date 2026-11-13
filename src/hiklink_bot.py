@@ -20,12 +20,15 @@
     也可写 DATA_DIR/hiklink_session.json {"uid","password"} 覆盖。
 宿主接入点仅 server.py 一行 import（模块导入即自动连接，失败静默不影响主工具）。
 """
+import atexit
 import base64
 import collections   # a239: OrderedDict 保序去重
+import ctypes
 import hashlib
 import json
 import logging
 import os
+import random
 import shutil
 import ssl
 import struct
@@ -79,6 +82,109 @@ SESSION_PATH = os.path.join(DATA_DIR, "hiklink_session.json")
 WELCOME_TEXT = ("✦ 前端小助手已上线！直接发消息即可下达指令，"
                 "回复会自动推回。/stop 停止当前任务。")
 _SESSION_LOCK = threading.Lock()
+
+# ---- a559 单飞锁（用户铁律：无论如何不允许互踢）----
+# 同机同时刻最多一个 bot 连 WS。文件锁 = "pid,ts"，持有者每 20s 刷 mtime，
+# >90s 未刷新（进程僵死/断电/崩溃残留）视为死锁允许接管。锁机制自身故障
+# 时放行不拦连接（宁可偶发互踢也不让机器人彻底不可用），但记日志。
+
+
+def _pid_alive(pid):
+    """Windows 进程存活探测（OpenProcess 查询探针，不杀不挂）。"""
+    if not pid or pid <= 0:
+        return False
+    try:
+        h = ctypes.windll.kernel32.OpenProcess(0x1000, 0, int(pid))
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if ctypes.windll.kernel32.GetExitCodeProcess(
+                    h, ctypes.byref(code)):
+                return code.value == 259          # STILL_ACTIVE
+            return True
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    except Exception:
+        return False
+
+
+class _BotSingleFlight(object):
+    def __init__(self, path):
+        self.path = path
+        self._held = False
+
+    def acquire(self):
+        """返回 (ok, msg)。ok=False = 本机另一活进程已持有（不启动）。"""
+        if self._held:
+            return True, "ok"
+        try:
+            if os.path.exists(self.path):
+                with open(self.path, encoding="utf-8") as f:
+                    try:
+                        pid = int((f.read().strip() or "0").split(",")[0])
+                    except ValueError:
+                        pid = 0
+                fresh = time.time() - os.path.getmtime(self.path) < 90
+                if (pid and pid != os.getpid() and _pid_alive(pid) and fresh):
+                    return False, ("机器人已在本机另一进程运行（PID %d），"
+                                   "单飞锁拦截未再启动" % pid)
+            d = os.path.dirname(self.path)
+            if d and not os.path.isdir(d):
+                os.makedirs(d, exist_ok=True)
+            with open(self.path, "w", encoding="utf-8") as f:
+                f.write("%d,%d" % (os.getpid(), int(time.time())))
+            self._held = True
+
+            def _keepalive():
+                while self._held:
+                    try:
+                        os.utime(self.path, None)
+                    except Exception:
+                        pass
+                    time.sleep(20)
+            threading.Thread(target=_keepalive, daemon=True,
+                             name="bot-lock-keepalive").start()
+            return True, "ok"
+        except Exception as e:
+            log.warning("单飞锁异常（放行）: %s", e)
+            return True, "ok"
+
+    def release(self):
+        self._held = False
+        try:
+            if os.path.exists(self.path):
+                with open(self.path, encoding="utf-8") as f:
+                    try:
+                        pid = int((f.read().strip() or "0").split(",")[0])
+                    except ValueError:
+                        pid = 0
+                if pid == os.getpid():
+                    os.remove(self.path)
+        except Exception:
+            pass
+
+
+_flight = _BotSingleFlight(os.path.join(DATA_DIR, "hiklink_bot.lock"))
+atexit.register(_flight.release)
+
+
+def _reconnect_wait(lived_sec, kick_n):
+    """a559 铁律：重连等待计算（纯函数，tests 直测）。
+
+    - 存活 ≥60s 的正常断线：kick 清零，3s 基础退避（原行为）
+    - 短命断线（<60s，即被同 appId 另一连接挤掉）：指数退避
+      3→6→12→…→1800s 封顶 + 抖动——11-12 风暴的驱动就是「连接成功即
+      重置 backoff=3」，被踢后永远 3s 一轮，479 次/天认证
+    - 连续第 5 轮起：熔断——每 300s 只探测一次（对方退出自然恢复）
+    返回 (wait_sec, new_kick_n, circuit_open)。"""
+    if lived_sec >= 60:
+        return 3, 0, False
+    kick_n += 1
+    if kick_n >= 5:
+        return 300, kick_n, True
+    wait = min(3 * (2 ** (kick_n - 1)), 1800)
+    return wait + random.randint(0, max(1, min(wait // 2, 30))), kick_n, False
 
 
 def _load_session_file():
@@ -367,6 +473,12 @@ class HikLinkBot:
             return False, "websocket-client 未安装"
         if self._thread and self._thread.is_alive():
             return False, "已在运行"
+        # a559 单飞锁：本机另一进程已持有（bot 在线）→ 拒绝启动，绝不
+        # 上第二条连接互踢（用户铁律）
+        ok, msg = _flight.acquire()
+        if not ok:
+            log.warning("单飞锁拦截启动: %s", msg)
+            return False, msg
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name="hiklink-bot-ws")
@@ -383,12 +495,15 @@ class HikLinkBot:
                 pass
         self.connected = False
         self.authenticated = False
+        _flight.release()
         return True, "已停止"
 
     def _run(self):
-        """连接 → 认证 → 收帧。断线/被踢自动重连（退避 3~30s）——
-        同 robot 多实例会互踢（KICK_OUT），对方退出后重连即恢复。"""
+        """连接 → 认证 → 收帧。断线重连（a559 铁律级退避，见 _reconnect_wait：
+        正常断线 3s；被挤掉的短命断线指数退避至 30 分钟；连续 5 轮熔断
+        5 分钟一探——同 robot 另一实例退出后自然恢复）。"""
         backoff = 3
+        kick_n = 0
         while not self._stop.is_set():
             connected = False
             for url in (WS_BLUE, WS_RED):
@@ -421,6 +536,7 @@ class HikLinkBot:
                 backoff = min(backoff * 2, 30)
                 continue
             backoff = 3
+            t_conn = time.time()       # a559：连接寿命——短命=被同 appId 挤掉
             self._send({"appId": self.robot_num, "cmd": "CLIENT_AUTH",
                         "transId": self._trans(), "version": "1.0",
                         "appSecret": self.app_secret})
@@ -452,7 +568,16 @@ class HikLinkBot:
             self.ws = None
             if self._stop.is_set():
                 return
-            self._stop.wait(backoff)   # 断线/被踢 → 退避后重连
+            wait, kick_n, tripped = _reconnect_wait(time.time() - t_conn,
+                                                    kick_n)
+            if tripped:
+                log.warning("连接连续 %d 次被抢占（同 appId 另一实例在线？）"
+                            "——熔断：每 300s 探测一次，对方退出自然恢复",
+                            kick_n)
+            elif kick_n:
+                log.info("短命断线（疑似被挤）第 %d 次，%.0fs 后重连",
+                         kick_n, wait)
+            self._stop.wait(wait)   # a559：正常 3s / 被挤指数退避 / 熔断 300s
 
     def _heartbeat(self):
         while not self._stop.is_set() and self.connected and self.send_heartbeat:
