@@ -446,12 +446,12 @@ def test_route_chain_complete(stub_clr):
         client = app.test_client()
         acts = ["create", "nav", "back", "fwd", "reload", "suspend", "show",
                 "dispose", "dispose_all", "layout",
-                "pw_list", "pw_reveal", "pw_del"]   # a583 密码管理器
+                "pw_list", "pw_reveal", "pw_del", "pw_edit"]   # a583 密码管理器 / a592 手动改密码
         for act in acts:
             body = {"act": act, "tab": "t1", "url": "https://a/",
                     "on": True, "sq": 1, "all": False,
                     "x": 0, "y": 0, "w": 100, "h": 100, "epoch": "",
-                    "origin": "https://a/", "user": ""}   # pw_* 需带 origin
+                    "origin": "https://a/", "user": "", "pw": ""}   # pw_* 需带 origin
             # RA1/RA12：pw_* 双因子鉴权——同源 Origin + 启动期 token
             r = client.post("/api/web/tabs", json=body, headers={
                 "Origin": "http://localhost",

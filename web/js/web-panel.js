@@ -682,8 +682,12 @@ window.__webTabNew = function (url) {
   // 真实环境产生幻影 → 控件被永久隐藏 = 全黑冻结，且无浮层也持续）。
   // 只保留类名快速路径。代价：未在名单里的自定义浮层会啃控件边缘
   // （cosmetic），换取「绝不无端冻结」。待定位到具体误判源后重建。
+  // a592（用户实锤「点 🔑 没反应/一闪而过」）：原名单写死 #webFavMenu，
+  // 密码菜单 id 是 #webPwMenu、两者只共用 .web-fav-menu 类 → 密码菜单
+  // 不在名单 → WebView2 原生控件不隐藏 → 菜单被原生子窗口整块盖住，
+  // 用户只看到闪一下。改按类名匹配，两个菜单与将来同族浮层一并覆盖。
   const anyOverlayOpen = () => {
-    if ([...document.querySelectorAll('.modal, .ctx-menu, #webFavMenu, .nf-menu, .tab-overflow-list')]
+    if ([...document.querySelectorAll('.modal, .ctx-menu, .web-fav-menu, .nf-menu, .tab-overflow-list')]
         .some(shown)) return true;
     return false;
   };
@@ -720,6 +724,21 @@ window.__webTabNew = function (url) {
     } catch (e) { return 'diag-error: ' + e.message; }
   };
   window.__webOverlayOpen = anyOverlayOpen;   // R-外泄根治：推演函数读取
+  // a592：同步强制推演一次并**立即**下发隐藏——异步观察器要等两帧，
+  // 浮层首帧会被原生控件盖住（用户实锤「点 🔑 一闪而过」）。浮层打开时
+  // 直接把当前所有 web 控件的可见意图置 false（幂等，浮层关闭后
+  // _webReconcileVis 会按状态重新显示）。
+  window.__webHideCtlNow = function () {
+    try {
+      for (const pid in connections) {
+        const c = connections[pid];
+        if (c && c.meta && c.meta.kind === 'web' && c._ctlShown) {
+          c._ctlShown = false;
+        }
+      }
+      _webCtlVisible(false, true);
+    } catch (_) {}
+  };
   let pend = false;
   const sync = () => {
     pend = false;
@@ -1016,7 +1035,19 @@ function _webAct(act, wrap) {
     _webSyncUI(c);
     return;
   }
-  if (act === 'pw') { _webPwMgr(); return; }
+  if (act === 'pw') {
+    // a592：浮层隐藏控件是「推演 + 观察器」异步链（MutationObserver 只盯
+    // class 属性，菜单是新建节点先插 DOM 后 render）——先同步推演一次、
+    // 再在下两帧补两次，保证菜单出现前原生控件已经藏好（否则首帧菜单被
+    // 原生子窗口整块盖住，用户只看到"一闪"）。
+    if (typeof window.__webHideCtlNow === 'function') window.__webHideCtlNow();
+    _webPwMgr();
+    if (typeof window.__webHideCtlNow === 'function') {
+      window.__webHideCtlNow();
+      requestAnimationFrame(() => window.__webHideCtlNow());
+    }
+    return;
+  }
   if (act === 'claude' && url) {
     const btn = c.wrap.querySelector('[data-web="claude"]');
     btn.disabled = true;
@@ -1135,12 +1166,23 @@ function _webPwMgr() {
   menu.className = 'web-fav-menu';
   menu.innerHTML = '<div class="web-fav-title">密码管理 · 读取中…</div>';
   document.body.appendChild(menu);
+  // a592（用户实锤「往上弹」）：工具条贴着窗口顶部，锚点上方永远放不下，
+  // 原逻辑先试上方、放不下才落下方——但首个 render 前菜单高度只有一行
+  // 「读取中」，此时上方判定可能成立 → 菜单向上弹。改为**默认向下**：
+  // 只有下方确实放不下且上方放得下才向上（与下拉框直觉一致）。
   const pos = () => {
     const r = anchor.getBoundingClientRect();
     menu.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
-    const topUp = r.top - menu.offsetHeight - 6;
-    menu.style.top = (topUp >= 8 ? topUp : Math.min(r.bottom + 6,
-      Math.max(8, window.innerHeight - menu.offsetHeight - 8))) + 'px';
+    const h = menu.offsetHeight;
+    const below = r.bottom + 6;
+    const above = r.top - h - 6;
+    const fitsBelow = below + h <= window.innerHeight - 8;
+    const fitsAbove = above >= 8;
+    let top;
+    if (fitsBelow) top = below;
+    else if (fitsAbove) top = above;
+    else top = Math.max(8, window.innerHeight - h - 8);
+    menu.style.top = top + 'px';
   };
   pos();
   const close = (ev) => {
@@ -1181,6 +1223,7 @@ function _webPwMgr() {
         '<span class="web-fav-name">' + esc((it.user || '（无用户名）') + ' @ ' +
           (it.origin || '').replace(/^https?:\/\//, '')) + '</span>' +
         '<span class="web-fav-x" data-pw-show="' + i + '" title="显示密码">' + ICO16.eye + '</span>' +
+        '<span class="web-fav-x" data-pw-edit="' + i + '" title="修改密码">' + ICO16.pencil + '</span>' +
         '<span class="web-fav-x" data-pw-del="' + i + '" title="删除">✕</span></div>'
       ).join('')
       : '<div class="web-fav-empty">原生密码库还没有保存过密码——在网页 tab 登录时点保存条即可</div>');
@@ -1202,6 +1245,48 @@ function _webPwMgr() {
         });
         return;
       }
+      // a592（用户实锤「只能显隐，不能手动改」）：改密码——行内换成输入框，
+      // 回车保存 / Esc 取消。库被 Chromium 占用的情形由后端挂起、退出时落盘。
+      const ed = e.target.closest('[data-pw-edit]');
+      if (ed) {
+        e.stopPropagation();
+        const it = cur[+ed.dataset.pwEdit];
+        const row = ed.closest('.web-fav-item');
+        if (!row || row.dataset.editing) return;
+        row.dataset.editing = '1';
+        const nm = row.querySelector('.web-fav-name');
+        const orig = nm.innerHTML;
+        nm.innerHTML = '<input class="web-fav-note-inp" data-pw-inp ' +
+          'placeholder="输入新密码后回车保存" spellcheck="false" autocomplete="off" name="web_pw_new">';
+        const inp = nm.querySelector('[data-pw-inp]');
+        inp.focus();
+        const done = (save) => {
+          delete row.dataset.editing;
+          if (!save) { nm.innerHTML = orig; return; }
+          const val = inp.value;
+          nm.textContent = '保存中…';
+          api({ act: 'pw_edit', origin: it.origin, user: it.user, pw: val }).then(j => {
+            if (j && j.ok) {
+              nm.textContent = (it.user || '(无用户名)') + ' @ ' +
+                (it.origin || '').replace(/^https?:\/\//, '');
+              showBanner(j.immediate
+                ? '密码已修改'
+                : '已记录修改——完全退出工具后生效（密码库运行中被浏览器锁定）',
+                3500, !j.immediate);
+            } else {
+              nm.innerHTML = orig;
+              showBanner('修改失败：' + ((j && j.err) || '未知错误'), 3000, true);
+            }
+          });
+        };
+        inp.addEventListener('keydown', ev => {
+          if (ev.key === 'Enter') { ev.preventDefault(); done(true); }
+          else if (ev.key === 'Escape') { ev.preventDefault(); done(false); }
+          ev.stopPropagation();
+        });
+        inp.addEventListener('blur', () => { if (row.dataset.editing) done(true); });
+        return;
+      }
       const dl = e.target.closest('[data-pw-del]');
       if (dl) {
         e.stopPropagation();
@@ -1210,7 +1295,7 @@ function _webPwMgr() {
         api({ act: 'pw_del', origin: it.origin, user: it.user }).then(j => {
           if (j && j.ok) {
             showBanner(j.immediate ? '已删除' : '已标记删除——完全退出工具后生效（密码库运行中被浏览器锁定）', 3500, !j.immediate);
-            if (j.immediate) render(cur.filter(x => x !== it), true);
+            if (j.immediate) render(cur.filter(x => x !== it));
           } else showBanner('删除失败', 2500, true);
         });
         return;
@@ -1234,6 +1319,8 @@ function _webPwMgr() {
 function _webFavMenu(anchor) {
   const old = document.getElementById('webFavMenu');
   if (old) { old.remove(); return; }
+  // a592：同密钥菜单——首帧前先同步收掉原生控件，否则菜单被 HWND 盖住
+  if (typeof window.__webHideCtlNow === 'function') window.__webHideCtlNow();
   const favs = _webFavs();
   const cur = (_webCur() && _webCur()._nav.stack[_webCur()._nav.idx]) || '';
   const list = document.createElement('div');

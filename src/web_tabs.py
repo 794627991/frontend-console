@@ -177,7 +177,113 @@ def _pw_pending_file():
     return os.path.join(DATA_DIR, "pw_pending_del.json")
 
 
+def _pw_pending_load(p):
+    """a592：读挂起文件并归一成 dict 列表——兼容旧版 [origin, user] 二元组
+    与更老的纯字符串。所有消费方（del/edit flush）只认 dict。"""
+    import json, os
+    if not os.path.exists(p):
+        return []
+    try:
+        with open(p, encoding="utf-8") as _f:
+            raw = json.load(_f) or []
+    except Exception:
+        _log("WARN", "pw_pending_del.json 损坏，已重建")
+        return []
+    out = []
+    for it in raw:
+        if isinstance(it, dict):
+            out.append(it)
+        elif isinstance(it, (list, tuple)) and len(it) == 2:
+            out.append({"act": "del", "origin": it[0], "user": it[1]})
+        elif isinstance(it, str):
+            out.append({"act": "del", "origin": it, "user": None})
+    return out
+
+
+def _pw_pending_save(p, lst):
+    """RA5：原子写（临时文件 + os.replace），防截断丢全部记录。"""
+    import json, os
+    tmp = p + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(lst, f, ensure_ascii=False)
+        os.replace(tmp, p)   # RC9：原子替换（失败残留 .tmp 由 except 清）
+    except Exception:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        raise
+
+
+def _pw_encrypt(text):
+    """a592：明文按 Chromium v10 格式加回（AES-256-GCM），与 _pw_decrypt 对称。
+    本机 WebView2 实测为经典 v10（密钥在 Local State，DPAPI 包裹），
+    写回的 blob 浏览器可直接解密使用。返回 (ok, blob|err)。"""
+    key = _pw_v10_key()
+    if not key:
+        return False, "v10 密钥不可用（Local State 不可读或为 app-bound 形态）"
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        import os as _os
+        nonce = _os.urandom(12)          # 与解密端 blob[3:15] 对称
+        ct = AESGCM(key).encrypt(nonce, (text or "").encode("utf-8"), None)
+        return True, b"v10" + nonce + ct
+    except ImportError:
+        return False, "缺 cryptography 库"
+    except Exception as e:
+        return False, "AES-GCM 加密失败: %r" % e
+
+
+def _now_web_time():
+    """Chromium 的 date_* 是 1601-01-01 起的微秒数——写回必须同口径，
+    否则条目会被当成 1601 年创建、沉到列表最底。"""
+    import time
+    return int(time.time() * 1000000) + 11644473600000000
+
+
 _pw_del_lock = threading.Lock()
+
+
+def _pw_edit_apply(origin, user, newpw):
+    """a592：手动改密码。库空闲→立即写回并返回 (True, "")；被 Chromium
+    占用→挂起返回 (False, "")（退出工具时 _pw_edit_flush 落盘）；
+    加密失败→(False, 原因)。"""
+    import sqlite3
+    ok_enc, blob = _pw_encrypt(newpw)
+    if not ok_enc:
+        return False, blob
+    con = None
+    try:
+        con = sqlite3.connect(_pwdb_path(), timeout=0.3)
+        cur = con.execute(
+            "UPDATE logins SET password_value=?, date_password_modified=? "
+            "WHERE origin_url=? AND username_value=?",
+            (blob, _now_web_time(), origin, user))
+        con.commit()
+        return (True, "") if cur.rowcount else (False, "没有匹配的条目")
+    except Exception:
+        pass
+    finally:
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            pass
+    with _pw_del_lock:
+        try:
+            p = _pw_pending_file()
+            lst = [x for x in _pw_pending_load(p)
+                   if not (isinstance(x, dict) and x.get("act") == "edit"
+                           and x.get("origin") == origin
+                           and x.get("user") == user)]
+            lst.append({"act": "edit", "origin": origin, "user": user,
+                        "pw": newpw})
+            _pw_pending_save(p, lst)
+            return False, ""
+        except Exception as e:
+            _log("WARN", "pw_edit_apply: %r" % e)
+            return False, "挂起失败：%r" % e
 
 
 def _pw_del_defer(origin, user):
@@ -214,31 +320,14 @@ def _pw_del_defer(origin, user):
     with _pw_del_lock:
         try:
             p = _pw_pending_file()
-            lst = []
-            if os.path.exists(p):
-                try:
-                    # a591：with 保证句柄关闭
-                    with open(p, encoding="utf-8") as _f:
-                        lst = json.load(_f) or []
-                except Exception:
-                    # RA6（红队）：损坏的挂起文件不再静默吞——清空重建并告警
-                    lst = []
-                    _log("WARN", "pw_pending_del.json 损坏，已重建")
-            item = [origin, user]
+            # a592：统一走 dict 归一（兼容旧 [origin, user] 二元组），
+            # 否则本函数写入 list、edit 写入 dict，flush 端要分两套判据
+            lst = _pw_pending_load(p)
+            item = {"act": "del", "origin": origin, "user": user}
             if item not in lst:
                 lst.append(item)
             # RA5：原子写（临时文件 + os.replace），防截断丢全部记录
-            tmp = p + ".tmp"
-            try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(lst, f, ensure_ascii=False)
-                os.replace(tmp, p)   # RC9：原子替换（失败残留 .tmp 由 except 清）
-            except Exception:
-                try:
-                    os.remove(tmp)
-                except Exception:
-                    pass
-                raise
+            _pw_pending_save(p, lst)
             return False    # 已挂起，退出后生效
         except Exception as e:
             _log("WARN", "pw_del_defer: %r" % e)
@@ -279,11 +368,13 @@ def _pw_del_flush():
     try:
         con = sqlite3.connect(dbp)
         cur = con.cursor()
-        for it in lst:
-            if isinstance(it, list) and len(it) == 2:
-                o, u = it   # RA4：二元组 [origin, user] 精确删；旧格式字符串按全 origin（兼容）
-            else:
-                o, u = it, None
+        # a592：挂起条目已归一成 dict（edit 动作超出本节范围，由
+        # _pw_edit_flush 处理；这里只消费 del，其余跳过——原来按 list
+        # 判断的写法会把 dict 当成 origin 字符串执行 DELETE）
+        del_rows = [it for it in lst
+                    if isinstance(it, dict) and it.get("act") == "del"]
+        for it in del_rows:
+            o, u = it.get("origin"), it.get("user")
             try:
                 if u is None or u == "":
                     # RW8（终审）：空串 user 与 NULL 行等价（登录页无用户名
@@ -305,8 +396,8 @@ def _pw_del_flush():
         try:
             con2 = sqlite3.connect(dbp, timeout=0.3)
             remain = 0
-            for it in lst:
-                o, u = (it if isinstance(it, list) and len(it) == 2 else (it, None))
+            for it in del_rows:
+                o, u = it.get("origin"), it.get("user")
                 if u is None or u == "":
                     row = con2.execute(
                         "SELECT 1 FROM logins WHERE origin_url=? AND "
@@ -333,13 +424,95 @@ def _pw_del_flush():
         if remain == -1:
             _log("WARN", "pw_del_flush: 复核失败——挂起保留待重试")
             return
-        os.remove(p)
-        _log("INFO", "pw_del_flush: %d 条已删" % len(lst))
+        # a592：只移除已完成的 del 条目，保留 edit 条目给 _pw_edit_flush
+        left = [it for it in lst
+                if not (isinstance(it, dict) and it.get("act") == "del")]
+        if left:
+            _pw_pending_save(p, left)
+        else:
+            os.remove(p)
+        _log("INFO", "pw_del_flush: %d 条已删" % len(del_rows))
     except Exception as e:
         _log("WARN", "pw_del_flush: %r" % e)
     finally:
         # a591：删除阶段的连接必关（RA18 的形态：滞留句柄锁真实库）。
         # 复核连接 con2 已在自己的 finally 里关；这里兜 con。
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            pass
+
+
+def _pw_edit_flush():
+    """a592：退出流程调用——执行挂起的手动改密码。与 _pw_del_flush 同构：
+    写后复核（读回解密比对明文）才摘挂起，任何失败保留待下次退出重试。"""
+    import os, sqlite3
+    p = _pw_pending_file()
+    if not os.path.exists(p):
+        return
+    lst = _pw_pending_load(p)
+    edits = [it for it in lst
+             if isinstance(it, dict) and it.get("act") == "edit"]
+    if not edits:
+        return
+    dbp = _pwdb_path()
+    if not os.path.exists(dbp) or os.path.getsize(dbp) == 0:
+        _log("WARN", "pw_edit_flush: 密码库缺失或空——挂起保留")
+        return
+    con = None
+    try:
+        con = sqlite3.connect(dbp)
+        cur = con.cursor()
+        for it in edits:
+            ok_e, blob = _pw_encrypt(it.get("pw") or "")
+            if not ok_e:
+                _log("WARN", "pw_edit_flush: 加密失败 %r" % blob)
+                continue
+            try:
+                cur.execute(
+                    "UPDATE logins SET password_value=?, "
+                    "date_password_modified=? WHERE origin_url=? AND "
+                    "username_value=?",
+                    (blob, _now_web_time(), it.get("origin"), it.get("user")))
+            except Exception:
+                pass
+        con.commit()
+        # 复核：写后读回解密比对明文，一致才算成功
+        done = []
+        con2 = None
+        try:
+            con2 = sqlite3.connect(dbp, timeout=0.3)
+            for it in edits:
+                row = con2.execute(
+                    "SELECT password_value FROM logins WHERE origin_url=? "
+                    "AND username_value=? ORDER BY date_created DESC LIMIT 1",
+                    (it.get("origin"), it.get("user"))).fetchone()
+                if not row:
+                    continue
+                ok_d, txt = _pw_decrypt(row[0])
+                if ok_d and txt == (it.get("pw") or ""):
+                    done.append(it)
+        except Exception:
+            done = []
+        finally:
+            try:
+                if con2 is not None:
+                    con2.close()
+            except Exception:
+                pass
+        if not done:
+            _log("WARN", "pw_edit_flush: 复核未通过——挂起保留")
+            return
+        left = [it for it in lst if it not in done]
+        if left:
+            _pw_pending_save(p, left)
+        else:
+            os.remove(p)
+        _log("INFO", "pw_edit_flush: %d 条已改" % len(done))
+    except Exception as e:
+        _log("WARN", "pw_edit_flush: %r" % e)
+    finally:
         try:
             if con is not None:
                 con.close()
@@ -1155,8 +1328,13 @@ class WebTabs:
             _log("INFO", "flush_on_exit done (grace=%dms, ctls=%d)"
                  % (grace_ms, len(ctls)))
             # a583：浏览器进程已停 → Login Data 解锁，执行挂起的密码删除
+            # a592：手动改密码共用同一挂起文件，一并执行
             try:
                 _pw_del_flush()
+            except Exception:
+                pass
+            try:
+                _pw_edit_flush()
             except Exception:
                 pass
         except Exception as e:
@@ -1342,6 +1520,26 @@ def register(app):
                 return jsonify({"ok": False, "err": "bad origin"}), 400
             now = _pw_del_defer(_o, _u)
             return jsonify({"ok": True, "immediate": now})
+        if act == "pw_edit":
+            # a592（用户实锤「只能显隐，不能手动改」）：手动改密码。
+            # 库空闲则立即写回（v10 加密），被 Chromium 占用则挂起、
+            # 退出工具时统一落盘（与删除同一挂起文件，act=edit 区分）。
+            _g = _pw_guard()
+            if _g is not None:
+                return _g
+            _o = str(d.get("origin") or "")
+            _u = str(d.get("user") or "")
+            _pw = d.get("pw")
+            if not _o:
+                return jsonify({"ok": False, "err": "bad origin"}), 400
+            if not isinstance(_pw, str):
+                return jsonify({"ok": False, "err": "bad pw"}), 400
+            ok2, err2 = _pw_edit_apply(_o, _u, _pw)
+            if ok2:
+                return jsonify({"ok": True, "immediate": True})
+            if err2:
+                return jsonify({"ok": False, "err": err2})
+            return jsonify({"ok": True, "immediate": False})
         if act == "suspend":
             # R-外泄根治·静止帧：抓帧→隐藏→回推（前端 reconcile 调用）
             return jsonify(t.suspend(tid))
@@ -1382,12 +1580,14 @@ def shutdown(grace_ms=1200):
     # 不再各睡一个 grace（实测 3 次=600ms×3）
     if getattr(_tabs, "_closing", False) and _tabs is not None:
         _pw_del_flush()
+        _pw_edit_flush()
         return
     try:
         # RA14（红队复验）：挂起删除无论有无控件都执行
         if _tabs is not None:
             _tabs.flush_on_exit(grace_ms)
         _pw_del_flush()   # RA11/RA14
+        _pw_edit_flush()  # a592：挂起的手动改密码
         _tabs = None      # RB8：装配引用清空（flush 已完成，重复调用走
                           # _closing 短路 + 无控件分支，幂等）
     except Exception as e:

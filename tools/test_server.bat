@@ -21,5 +21,6 @@ set "CLAUDE_INLINE=1"
 set "FC_APP_BOOT="
 echo [test-server] sandbox HOME = %FC_TEST_SANDBOX%
 echo [test-server] real config/data untouched (all writes go to sandbox)
-cd /d "%~dp0"
+rem This script lives in tools/; repo root is one level up.
+cd /d "%~dp0.."
 python -m src.server

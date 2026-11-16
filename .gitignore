@@ -81,3 +81,7 @@ src/_fcpk_key.py
 # a348R：该空壳目录仅剩 `.download-ok` 下载标记，被 `git add -A` 误纳入过一次；
 # 显式忽略，防止残留标记再次进库。
 /vendor/onlyoffice/
+
+# 代码索引/设计稿：本地工具数据，不入库（用户令 a592）
+/.codegraph/
+/design/

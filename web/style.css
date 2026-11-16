@@ -3996,7 +3996,13 @@ html {
 .h-msg-foot { display: flex; flex-wrap: wrap; align-items: center;
   gap: 4px 8px; margin-top: 2px; min-width: 0; max-width: 100%; }
 .h-msg-foot .h-mmeta { min-width: 0; }
-.h-msg-foot .hg-msg-acts { margin-top: 0; margin-left: auto; flex-shrink: 0; }
+/* a591（用户实锤「回滚到这里还是被截断」）：a589 只让**整个按钮组**换行，
+   但按钮组自身是不换行的 flex 容器 + flex-shrink:0 —— 窗口一窄，三按钮
+   总宽超气泡宽就整组溢出，被 .hg-flow 的 overflow-x:hidden 从右缘裁掉
+   （截图里的半截圆钮）。修：组自身允许换行 + 允许收缩，且 max-width:100%
+   把可用宽度钉死在脚行内——放不下时组内按钮折行，绝不溢出气泡。 */
+.h-msg-foot .hg-msg-acts { margin-top: 0; margin-left: auto; flex-shrink: 1;
+  flex-wrap: wrap; max-width: 100%; justify-content: flex-end; gap: 4px; }
 /* v3.1h：全部 AI 消息 hover 浮现动作条（复制/编辑参考 ChatGPT 式消息下方
    右对齐；回滚钮仍只在 can-rewind 授予后出现） */
 .h-msg.asst:hover .hg-msg-acts { display: flex; }
