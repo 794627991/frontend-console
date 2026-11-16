@@ -71,6 +71,8 @@ class FakeCvw:
         self.DocumentTitleChanged = FakeEvent()
         self.NavigationStarting = FakeEvent()
         self.NavigationCompleted = FakeEvent()
+        self.WebMessageReceived = FakeEvent()   # R9.17：WebMessage 桥
+        self.posted = []
         self.navigated = []
         self.scripts = []
         self.injected = []          # a557：
@@ -114,6 +116,9 @@ class FakeCvw:
     @property
     def IsSuspended(self):
         return self._is_suspended
+
+    def PostWebMessageAsJson(self, j):
+        self.posted.append(j)
 
     def ExecuteScriptAsync(self, js):
         self.scripts.append(js)

@@ -56,7 +56,7 @@ _SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 # ——只喂密码管理器，页面绝不跳转。自带真 form 的站点（SSO 等）不碰
 # （原生自管）；防自动签到守卫（_ANTI_AUTOSIGNIN_JS）照常生效。
 _PW_FORM_HELPER_JS = (
-    "window.__fcPwAutoV='R9.16.2';try{eval(atob('d2luZG93Ll9fZmNQd0F1dG9WPSdSOS4xNi4yJzsKdmFyIF9fRkNfQVBJPWZ1bmN0aW9uKGIpe3JldHVybiBmZXRjaCgnL2FwaS93ZWIvdGFicycse21ldGhvZDonUE9TVCcsaGVhZGVyczp7J0NvbnRlbnQtVHlwZSc6J2FwcGxpY2F0aW9uL2pzb24nfSxib2R5OkpTT04uc3RyaW5naWZ5KE9iamVjdC5hc3NpZ24oe3RhYjonX19QSURfXycsb3JpZ2luOmxvY2F0aW9uLm9yaWdpbn0sYikpfSkudGhlbihmdW5jdGlvbihyKXtyZXR1cm4gci5qc29uKCk7fSk7fTsKdmFyIF9fRkNfU0VUPWZ1bmN0aW9uKGVsLHYpe3RyeXt2YXIgZD1PYmplY3QuZ2V0T3duUHJvcGVydHlEZXNjcmlwdG9yKGVsLl9fcHJvdG9fXywndmFsdWUnKTtpZihkJiZkLnNldCl7ZC5zZXQuY2FsbChlbCx2KTt9ZWxzZXtlbC52YWx1ZT12O319Y2F0Y2goXyl7ZWwudmFsdWU9djt9dHJ5e2VsLmRpc3BhdGNoRXZlbnQobmV3IEV2ZW50KCdpbnB1dCcse2J1YmJsZXM6dHJ1ZX0pKTt9Y2F0Y2goXyl7fX07CnZhciBfX0ZDX1BXPWZ1bmN0aW9uKCl7cmV0dXJuIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoJ2lucHV0W3R5cGU9cGFzc3dvcmRdJyl9Owp2YXIgX19GQ19MQVNUPW51bGw7CnZhciBfX0ZDX0JBUj1mdW5jdGlvbih0eHQsbXMpe3ZhciBiPWRvY3VtZW50LmNyZWF0ZUVsZW1lbnQoJ2RpdicpO2IuaWQ9J2ZjUHdCYXInO2Iuc3R5bGUuY3NzVGV4dD0ncG9zaXRpb246Zml4ZWQ7dG9wOjA7bGVmdDowO3JpZ2h0OjA7ei1pbmRleDoyMTQ3NDgzNjQ3O2Rpc3BsYXk6ZmxleDtnYXA6MTBweDthbGlnbi1pdGVtczpjZW50ZXI7anVzdGlmeS1jb250ZW50OmNlbnRlcjtwYWRkaW5nOjhweCAxNHB4O2JhY2tncm91bmQ6IzFmNmZlYjtjb2xvcjojZmZmO2ZvbnQ6MTNweCBzeXN0ZW0tdWknO2IudGV4dENvbnRlbnQ9dHh0O2RvY3VtZW50LmJvZHkuYXBwZW5kQ2hpbGQoYik7c2V0VGltZW91dChmdW5jdGlvbigpe2lmKGIucGFyZW50Tm9kZSliLnJlbW92ZSgpO30sbXN8fDE1MDAwKTtyZXR1cm4gYjt9Owp2YXIgX19GQ19TQVZFPWZ1bmN0aW9uKHYpe19fRkNfQVBJKHthY3Q6J3B3X3NhdmUnLHVzZXI6JycscGFzc3dvcmQ6dn0pLnRoZW4oZnVuY3Rpb24ocil7aWYociYmci5vayl7X19GQ19MQVNUPXY7fX0pO307CnZhciBfX0ZDX1NDQU49ZnVuY3Rpb24oKXt2YXIgcD1fX0ZDX1BXKCk7aWYoIXApcmV0dXJuO3RyeUZpbGwocCk7aG9vayhwKTt9Owp2YXIgdHJ5RmlsbD1mdW5jdGlvbihwKXtfX0ZDX0FQSSh7YWN0Oidwd19nZXQnfSkudGhlbihmdW5jdGlvbihqKXtpZighanx8IWoub2t8fCFqLmhhcylyZXR1cm47dmFyIHN2PWoucHd8fCcnO2lmKCFzdnx8cC52YWx1ZSlyZXR1cm47X19GQ19TRVQocCxzdik7dmFyIHViPShmdW5jdGlvbihwKXt2YXIgdnM9W10uZmlsdGVyLmNhbGwoZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnaW5wdXQnKSxmdW5jdGlvbihlbCl7dmFyIHQ9KGVsLnR5cGV8fCd0ZXh0JykudG9Mb3dlckNhc2UoKTtyZXR1cm4odD09PSd0ZXh0J3x8dD09PSdlbWFpbCd8fHQ9PT0ndGVsJykmJmVsLm9mZnNldFBhcmVudCYmZWwhPT1wO30pO3JldHVybiB2cy5sZW5ndGg/dnNbdnMubGVuZ3RoLTFdOm51bGw7fSkocCk7aWYodWImJmoudXNlcilfX0ZDX1NFVCh1YixqLnVzZXIpO19fRkNfTEFTVD1zdjtjb25zb2xlLmRlYnVnKCdbZmMtcHddIGF1dG9maWxsZWQnKTt9KTt9Owp2YXIgaG9vaz1mdW5jdGlvbihwKXtpZihwLmRhdGFzZXQuZmNIb29rKXJldHVybjtwLmRhdGFzZXQuZmNIb29rPScxJzt2YXIgY2hrPWZ1bmN0aW9uKCl7dmFyIHY9cC52YWx1ZTtpZighdilyZXR1cm47aWYoX19GQ19MQVNUPT09dilyZXR1cm47X19GQ19BUEkoe2FjdDoncHdfZ2V0J30pLnRoZW4oZnVuY3Rpb24oail7dmFyIHNhdmVkPShqJiZqLmhhcyk/KGoucHd8fCcnKTpudWxsO2lmKHNhdmVkPT09dil7X19GQ19MQVNUPXY7cmV0dXJuO312YXIgYmFyPV9fRkNfQkFSKChzYXZlZD09PW51bGwpPyfkv53lrZjmnKznq5nlr4bnoIHvvJ8nOiflr4bnoIHlt7Llj5jmm7TigJTigJTmm7TmlrDlrZjmoaPvvJ8nLDE1MDAwKTt2YXIgb2s9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnYnV0dG9uJyk7b2sudGV4dENvbnRlbnQ9J+S/neWtmCc7b2suc3R5bGUuY3NzVGV4dD0nYmFja2dyb3VuZDojMmVhMDQzO2NvbG9yOiNmZmY7Ym9yZGVyOjA7Ym9yZGVyLXJhZGl1czo2cHg7cGFkZGluZzozcHggMTRweDtjdXJzb3I6cG9pbnRlcjtmb250OjEycHggc3lzdGVtLXVpJztiYXIuYXBwZW5kQ2hpbGQob2spO29rLm9uY2xpY2s9ZnVuY3Rpb24oKXtiYXIucmVtb3ZlKCk7X19GQ19TQVZFKHYpO307fSk7fTtwLmFkZEV2ZW50TGlzdGVuZXIoJ2NoYW5nZScsZnVuY3Rpb24oKXtzZXRUaW1lb3V0KGZ1bmN0aW9uKCl7Y2hrKCk7fSw0MDApO30pO2RvY3VtZW50LmFkZEV2ZW50TGlzdGVuZXIoJ2NsaWNrJyxmdW5jdGlvbigpe3NldFRpbWVvdXQoZnVuY3Rpb24oKXtjaGsoKTt9LDUwMCk7fSk7fTs='));}catch(e){console.error('[fc-pw] loader:',e.message);}"
+    "window.__fcPwAutoV='R9.17';try{eval(atob('d2luZG93Ll9fZmNQd0F1dG9WPSdSOS4xNyc7CnZhciBfX0ZDX0lEPTAsX19GQ19DQj17fTsKd2luZG93LmNocm9tZS53ZWJ2aWV3LmFkZEV2ZW50TGlzdGVuZXIoJ21lc3NhZ2UnLGZ1bmN0aW9uKGUpe3RyeXt2YXIgbT0odHlwZW9mIGUuZGF0YT09PSdzdHJpbmcnKT9KU09OLnBhcnNlKGUuZGF0YSk6ZS5kYXRhO2lmKG0mJm0uX19mYyYmX19GQ19DQlttLmlkXSl7X19GQ19DQlttLmlkXShtKTtkZWxldGUgX19GQ19DQlttLmlkXTt9fWNhdGNoKF8pe319KTsKdmFyIF9fRkNfQVBJPWZ1bmN0aW9uKGIpe3JldHVybiBuZXcgUHJvbWlzZShmdW5jdGlvbihyZXMpe3ZhciB3PXdpbmRvdy5jaHJvbWUmJndpbmRvdy5jaHJvbWUud2VidmlldztpZighd3x8IXcucG9zdE1lc3NhZ2Upe3Jlcyh7b2s6ZmFsc2UsZXJyOiduby1icmlkZ2UnfSk7cmV0dXJuO312YXIgaWQ9J2ZjJysoKytfX0ZDX0lEKTtfX0ZDX0NCW2lkXT1yZXM7dHJ5e3cucG9zdE1lc3NhZ2UoSlNPTi5zdHJpbmdpZnkoe19fZmM6MSxpZDppZCxib2R5OmJ9KSk7fWNhdGNoKF8pe3Jlcyh7b2s6ZmFsc2UsZXJyOidwb3N0LWZhaWwnfSk7fX0pO307CnZhciBfX0ZDX1NFVD1mdW5jdGlvbihlbCx2KXt0cnl7dmFyIGQ9T2JqZWN0LmdldE93blByb3BlcnR5RGVzY3JpcHRvcihlbC5fX3Byb3RvX18sJ3ZhbHVlJyk7aWYoZCYmZC5zZXQpe2Quc2V0LmNhbGwoZWwsdik7fWVsc2V7ZWwudmFsdWU9djt9fWNhdGNoKF8pe2VsLnZhbHVlPXY7fXRyeXtlbC5kaXNwYXRjaEV2ZW50KG5ldyBFdmVudCgnaW5wdXQnLHtidWJibGVzOnRydWV9KSk7fWNhdGNoKF8pe319Owp2YXIgX19GQ19QVz1mdW5jdGlvbigpe3JldHVybiBkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCdpbnB1dFt0eXBlPXBhc3N3b3JkXScpfTsKdmFyIF9fRkNfTEFTVD1udWxsOwp2YXIgX19GQ19CQVI9ZnVuY3Rpb24odHh0LG1zKXt2YXIgYj1kb2N1bWVudC5jcmVhdGVFbGVtZW50KCdkaXYnKTtiLmlkPSdmY1B3QmFyJztiLnN0eWxlLmNzc1RleHQ9J3Bvc2l0aW9uOmZpeGVkO3RvcDowO2xlZnQ6MDtyaWdodDowO3otaW5kZXg6MjE0NzQ4MzY0NztkaXNwbGF5OmZsZXg7Z2FwOjEwcHg7YWxpZ24taXRlbXM6Y2VudGVyO2p1c3RpZnktY29udGVudDpjZW50ZXI7cGFkZGluZzo4cHggMTRweDtiYWNrZ3JvdW5kOiMxZjZmZWI7Y29sb3I6I2ZmZjtmb250OjEzcHggc3lzdGVtLXVpJztiLnRleHRDb250ZW50PXR4dDtkb2N1bWVudC5ib2R5LmFwcGVuZENoaWxkKGIpO3NldFRpbWVvdXQoZnVuY3Rpb24oKXtpZihiLnBhcmVudE5vZGUpYi5yZW1vdmUoKTt9LG1zfHwxNTAwMCk7cmV0dXJuIGI7fTsKdmFyIF9fRkNfU0FWRT1mdW5jdGlvbih2KXtfX0ZDX0FQSSh7YWN0Oidwd19zYXZlJyx1c2VyOicnLHBhc3N3b3JkOnZ9KS50aGVuKGZ1bmN0aW9uKHIpe2lmKHImJnIub2spe19fRkNfTEFTVD12O319KTt9Owp2YXIgdHJ5RmlsbD1mdW5jdGlvbihwKXtfX0ZDX0FQSSh7YWN0Oidwd19nZXQnLG9yaWdpbjpsb2NhdGlvbi5vcmlnaW59KS50aGVuKGZ1bmN0aW9uKGope2lmKCFqfHwhai5va3x8IWouaGFzKXJldHVybjt2YXIgc3Y9ai5wd3x8Jyc7aWYoIXN2fHxwLnZhbHVlKXJldHVybjtfX0ZDX1NFVChwLHN2KTtfX0ZDX0xBU1Q9c3Y7Y29uc29sZS5kZWJ1ZygnW2ZjLXB3XSBhdXRvZmlsbGVkJyk7fSk7fTsKdmFyIGhvb2s9ZnVuY3Rpb24ocCl7aWYocC5kYXRhc2V0LmZjSG9vaylyZXR1cm47cC5kYXRhc2V0LmZjSG9vaz0nMSc7dmFyIGNoaz1mdW5jdGlvbigpe3ZhciB2PXAudmFsdWU7aWYoIXYpcmV0dXJuO2lmKF9fRkNfTEFTVD09PXYpcmV0dXJuO19fRkNfQVBJKHthY3Q6J3B3X2dldCcsb3JpZ2luOmxvY2F0aW9uLm9yaWdpbn0pLnRoZW4oZnVuY3Rpb24oail7dmFyIHNhdmVkPShqJiZqLmhhcyk/KGoucHd8fCcnKTpudWxsO2lmKHNhdmVkPT09dil7X19GQ19MQVNUPXY7cmV0dXJuO312YXIgYmFyPV9fRkNfQkFSKChzYXZlZD09PW51bGwpPyfkv53lrZjmnKznq5nlr4bnoIHvvJ8nOiflr4bnoIHlt7Llj5jmm7TigJTigJTmm7TmlrDlrZjmoaPvvJ8nLDE1MDAwKTt2YXIgb2s9ZG9jdW1lbnQuY3JlYXRlRWxlbWVudCgnYnV0dG9uJyk7b2sudGV4dENvbnRlbnQ9J+S/neWtmCc7b2suc3R5bGUuY3NzVGV4dD0nYmFja2dyb3VuZDojMmVhMDQzO2NvbG9yOiNmZmY7Ym9yZGVyOjA7Ym9yZGVyLXJhZGl1czo2cHg7cGFkZGluZzozcHggMTRweDtjdXJzb3I6cG9pbnRlcjtmb250OjEycHggc3lzdGVtLXVpJztiYXIuYXBwZW5kQ2hpbGQob2spO29rLm9uY2xpY2s9ZnVuY3Rpb24oKXtiYXIucmVtb3ZlKCk7X19GQ19TQVZFKHYpO307fSk7fTtwLmFkZEV2ZW50TGlzdGVuZXIoJ2NoYW5nZScsZnVuY3Rpb24oKXtzZXRUaW1lb3V0KGNoayw0MDApO30pO2RvY3VtZW50LmFkZEV2ZW50TGlzdGVuZXIoJ2NsaWNrJyxmdW5jdGlvbigpe3NldFRpbWVvdXQoY2hrLDUwMCk7fSk7fTsKdmFyIF9fRkNfU0NBTj1mdW5jdGlvbigpe3ZhciBwPV9fRkNfUFcoKTtpZighcClyZXR1cm47dHJ5RmlsbChwKTtob29rKHApO307Cm5ldyBNdXRhdGlvbk9ic2VydmVyKF9fRkNfU0NBTikub2JzZXJ2ZShkb2N1bWVudCx7Y2hpbGRMaXN0OnRydWUsc3VidHJlZTp0cnVlfSk7CmRvY3VtZW50LmFkZEV2ZW50TGlzdGVuZXIoJ0RPTUNvbnRlbnRMb2FkZWQnLF9fRkNfU0NBTik7CmlmKHdpbmRvdy5hZGRFdmVudExpc3RlbmVyKXdpbmRvdy5hZGRFdmVudExpc3RlbmVyKCdsb2FkJyxmdW5jdGlvbigpe3NldFRpbWVvdXQoX19GQ19TQ0FOLDApO30pOwpfX0ZDX1NDQU4oKTs='));}catch(e){console.error('[fc-pw] loader:',e.message);}"
     )
 
 
@@ -384,8 +384,7 @@ class WebTabs:
                         _log("WARN", "anti-autosignin inject: %r" % e)
                     try:
                         cvw.AddScriptToExecuteOnDocumentCreatedAsync(
-                            _PW_FORM_HELPER_JS.replace(
-                                "'__PID__'", json.dumps(tab_id)))
+                            _PW_FORM_HELPER_JS)
                         _log("INFO", "pw-helper injected for %s" % tab_id)
                     except Exception as e:
                         _log("WARN", "pw-helper inject: %r" % e)
@@ -491,6 +490,60 @@ class WebTabs:
             except Exception:
                 pass
         cvw.NewWindowRequested += _on_new_window
+
+        # R9.17：WebMessage 桥——注入脚本（页面内）经 chrome.webview.postMessage
+        # 调 pw_get/pw_save（此前 fetch 相对路径打到页面自己的服务器=全链不通
+        # 的真凶；绝对 URL 又被跨源守卫 403）。原生通道：无 HTTP/无 CORS/无
+        # 端口依赖。防伪：页面自报 origin 必须与控件当前 Source 的 origin
+        # 一致，否则拒绝（防恶意页面跨站读他人密码）。UI 线程回调（a549 OK）。
+        def _on_webmsg(sender, args):
+            try:
+                raw = args.WebMessageAsJson
+                if not raw:
+                    return
+                d = json.loads(raw)
+                if not (isinstance(d, dict) and d.get("__fc")):
+                    return
+                body = d.get("body") or {}
+                act = str(body.get("act") or "")
+                claimed = _pw_origin_clean(str(body.get("origin") or ""))
+                src_org = _pw_origin_clean(str(cvw.Source or ""))
+                reply = {"__fc": 1, "id": d.get("id")}
+                if not claimed or claimed != src_org:
+                    reply.update({"ok": False, "err": "origin-mismatch"})
+                elif act == "pw_get":
+                    rec = _pw_load().get(claimed)
+                    if not rec:
+                        reply.update({"ok": True, "has": False})
+                    else:
+                        try:
+                            _pwd = _dpapi_unprotect(
+                                str(rec.get("p") or "")).decode("utf-8")
+                            reply.update({"ok": True, "has": True,
+                                          "user": str(rec.get("u") or ""),
+                                          "pw": _pwd})
+                        except Exception as e:
+                            reply.update({"ok": False, "err": "dpapi:%r" % e})
+                elif act == "pw_save":
+                    _pwd = str(body.get("password") or "")[:512]
+                    if not _pwd:
+                        reply.update({"ok": False, "err": "empty"})
+                    else:
+                        store = _pw_load()
+                        if len(store) >= 64 and claimed not in store:
+                            reply.update({"ok": False, "err": "limit"})
+                        else:
+                            store[claimed] = {
+                                "u": str(body.get("user") or "").strip()[:128],
+                                "p": _dpapi_protect(_pwd.encode("utf-8"))}
+                            _pw_store(store)
+                            reply.update({"ok": True})
+                else:
+                    reply.update({"ok": False, "err": "bad-act"})
+                cvw.PostWebMessageAsJson(json.dumps(reply))
+            except Exception as e:
+                _log("WARN", "webmsg: %r" % e)
+        cvw.WebMessageReceived += _on_webmsg
 
         # 标题 → 前端 tab label
         def _on_title(s, a):
