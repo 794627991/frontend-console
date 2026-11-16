@@ -841,7 +841,7 @@ class HarnessSession:
         # 老会话（升级前无 scheme 标记）同样只走容量判定，天然兼容。
         try:
             eff_model = self._eff_model()
-            if eff_model and self.session_id and not skip_capacity:
+            if _should_run_capacity_check(eff_model, self.session_id, skip_capacity):
                 used, _w, _c = _session_ctx_used(self)
                 # v2.27.22：窗口走候选链（配置名后缀优先）——实报裸名无 [1M]
                 # 信息，单看它 1M 会话会被判成 256K 误拒（用户实锤）
@@ -849,34 +849,23 @@ class HarnessSession:
                 # v4.2：跨方案判定用**当前方案**的窗口，不回落 last_result
                 # 实报（那是旧方案旧网关报的，切方案后不成立）
                 _lwin = live_ctx_window(self) or mwin
-                _over = bool(used and used >= int(_lwin * 0.97))
-                # v4.2R（审计 P0）：远程小助手超窗时**先续命**——它是无人在场
-                # 的通道，续命是唯一出路（v2.27.15 定调「手机侧无感」）。
-                # 此前容量拦截在前、续命分支在后，导致小助手切小窗方案后
-                # 直接收到拒发文案，任务中断。续命成功即已重发本条，直接返回。
-                if _over and self._is_remote_bot_session() and \
-                        not (text or "").lstrip().startswith("/compact") and \
-                        self._autorenew_on_overflow(text, image_paths, file_paths,
-                                                    used, _lwin, eff_model):
-                    return True, None
+                # a591：处置判据抽成 _capacity_verdict（纯函数，可测）——
+                # 原 20 行 if 里的 P0 续命次序与 /compact 豁免一条测试都没有。
+                _verdict = _capacity_verdict(
+                    used, _lwin, text, self._is_remote_bot_session(), True)
+                if _verdict == "renew":
+                    if self._autorenew_on_overflow(text, image_paths, file_paths,
+                                                   used, _lwin, eff_model):
+                        return True, None
+                    # 续命失败：落回容量拦截（别把用户消息静默吞了）
                 _cap = _scheme_capacity_block(self, used, _lwin, text)
                 if _cap:
                     return False, _cap
-                if _over:
-                    # /compact 是超窗的解药，守卫必须放行——否则满窗时唯一
-                    # 出口被自己锁死（v2.28.10 用户实锤）；压缩后
-                    # _session_ctx_used 撞压缩边界归零。爆死态（单轮巨量注入）
-                    # 连 /compact 都压不动，/rescue 与 /rewind 是逃生门——它们
-                    # 走本地路由，不经此处（续发见 skip_capacity）。
-                    if not (text or "").lstrip().startswith("/compact"):
-                        return False, ("当前上下文已约 %dK tokens，超过模型「%s」"
-                                       "的 %dK 窗口——可 /rescue 智能救援"
-                                       "（强烈推荐：裁中部大回合并自动续跑），"
-                                       "或 /rewind 回退上一回合，或 /compact 压缩"
-                                       "（爆死态可能压不动），或新建会话"
-                                       % (round(used / 1024),
-                                          eff_model,
-                                          round(_lwin / 1024)))
+                # a591：这里原来还有一段 `if _over: ... return False, 文案`。
+                # 它不可达——_over 与 _scheme_capacity_block 的最后一条判据
+                # 是同一条线（used >= int(win*0.97)），非 /compact 时上面
+                # 必先 return。唯一逃过的是 _lwin<=0 的病态态（0K 窗口文案），
+                # 那种情况更该放行而不是拒发。删掉可防两套口径日后漂移。
         except Exception:
             pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
         # v3.5.100（用户拍板「回合以我的消息为界」）：用户消息=大回合边界——
@@ -1030,8 +1019,9 @@ class HarnessSession:
             # v4.2R（审计 P2-5 副产）：斜杠命令**不消耗**这条声明——加了
             # 前缀就再也不以 "/" 开头，CLI 侧不再当命令识别（/compact 失效）。
             # 声明留给下一条真人消息。
-            if getattr(self, "_model_switch_note", None) and \
-                    not (text or "").lstrip().startswith("/"):
+            # a591：判据抽成 _should_inject_switch_note（纯函数），测试按行为
+            # 验证而不是对源码做字符串 grep（后者重构即碎、行为改烂照样绿）。
+            if _should_inject_switch_note(text, getattr(self, "_model_switch_note", None)):
                 full_text = ("[系统说明：本会话已切换模型。识图口径：%s]\n\n"
                              % self._model_switch_note) + full_text
                 self._model_switch_note = None
@@ -2264,6 +2254,56 @@ def _live_config_fp():
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
     except Exception:
         return ""
+
+
+def _should_run_capacity_check(eff_model, session_id, skip_capacity):
+    """本条消息是否进入容量判定。
+
+    a591：抽出纯函数——P1（/rescue 裁剪重发的 skip_capacity）此前零覆盖，
+    若要测它只能 grep 源码，那是签名比对不是行为测试。
+    """
+    return bool(eff_model and session_id and not skip_capacity)
+
+
+def _capacity_verdict(used, lwin, text, is_remote_bot, renew_ok):
+    """本条消息的容量处置：'pass' / 'renew' / 'block:<文案>'。
+
+    从 send_message 抽出（a591）：原逻辑散在 20 行 if 里，且 P0 续命与
+    P1 skip_capacity 两条最要害的路径一条测试都没有。抽成纯函数后测试
+    直接喂值验行为，不需要起进程。
+
+    次序（v4.2R 审计 P0）：超窗时**远程小助手先续命**，续命成功即放行；
+    续命失败/非小助手才落容量拦截（v4.2R P1 的 skip_capacity 在调用方
+    短路，不进本函数）。/compact 永远放行——它是超窗唯一出口。
+    """
+    try:
+        used = int(used or 0)
+        lwin = int(lwin or 0)
+    except Exception:
+        return "pass"
+    if used <= 0 or lwin <= 0:
+        return "pass"
+    if (text or "").lstrip().startswith("/compact"):
+        return "pass"
+    over = used >= int(lwin * 0.97)
+    if not over:
+        return "pass"
+    if is_remote_bot and renew_ok:
+        return "renew"
+    return "block"
+
+
+def _should_inject_switch_note(text, note):
+    """本条消息是否该被加上「已切换模型」前缀。
+
+    a591：从 send_message 内联条件抽出来——斜杠命令必须以 "/" 原样到达 CLI，
+    加了前缀它就不再被当命令识别（/compact 等全废）。抽成纯函数是为了让
+    测试按**行为**覆盖，而不是 grep 源码字符串。
+    note 为空 → 不加（没有待注入的声明）。
+    """
+    if not note:
+        return False
+    return not (text or "").lstrip().startswith("/")
 
 
 def _scheme_capacity_block(s, used, cur_win, text=""):

@@ -103,11 +103,15 @@ class ShellConnection(BaseConnection):
         # ConPTY 下的终端能力声明——没有这两个变量，很多 CLI 会退化成无颜色纯文本
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("COLORTERM", "truecolor")
-        # 刻意不设 PYTHONIOENCODING（a588 实测）：设成 utf-8 后 cmd 里
-        # `python x.py > out.txt` 写出 UTF-8 字节，紧接着 `type out.txt` 在 936
-        # 代码页下变成 `涓枃...`；不设则由 Python 自己跟随控制台代码页，
-        # 写出的就是 936 字节，`type` 读回正确。用户在真 cmd 里得到的
-        # 行为与这里必须一致。
+        # 必须 **pop** 而不是「不主动设」（a591）：宿主进程（本工具自身由
+        # Claude Code / 各种启动链拉起）常带着 PYTHONIOENCODING=utf-8，
+        # dict(os.environ) 会原样继承——于是 cmd 里 `python x.py > out.txt`
+        # 照旧写出 UTF-8 字节，936 代码页下 `type out.txt` 是 `涓枃...`。
+        # 终端里的 Python 必须跟随控制台代码页（=用户在真 cmd 里的行为）。
+        env.pop("PYTHONIOENCODING", None)
+        # 同理：PYTHONUTF8=1 / PYTHONLEGACYWINDOWSSTDIO 也会强制 UTF-8 输出
+        env.pop("PYTHONUTF8", None)
+        env.pop("PYTHONLEGACYWINDOWSSTDIO", None)
         try:
             self._proc = pp.PtyProcess.spawn(self._argv, cwd=self.cwd, env=env,
                                              dimensions=(self._rows, self._cols))
@@ -155,10 +159,27 @@ class ShellConnection(BaseConnection):
         if self._proc is None:
             return
         # PtyProcessUnicode 语义：write 接 str
-        self._proc.write(data.decode("utf-8", errors="replace"))
+        # a591：与 resize 同锁——两者都操作同一个 PtyProcess（ConPTY 句柄），
+        # 原来 write 裸调、resize 持 self.lock，等于两把规矩管一个对象。
+        # close 路径已把 _proc 置 None，锁内再查一次防「取到后被关」。
+        with self.lock:
+            proc = self._proc
+            if proc is None:
+                return
+            try:
+                proc.write(data.decode("utf-8", errors="replace"))
+            except Exception:
+                # close/terminate 竞态：写已关闭的 PTY 抛 IOError/OSError，
+                # 不能让异常冒到 /api/send_raw 变成 500（界面上毫无意义的报错）
+                pass
 
     def _io_close(self):
-        proc, self._proc = self._proc, None
+        # a591：与 _io_write 同一把锁——置 None 与取用必须互斥，否则
+        # 「_io_write 取到 proc → close 置 None 并 terminate → write 打向
+        # 已关句柄」。锁内只做摘除，真正的 terminate 放锁外（它含
+        # 0.1s sleep，持锁会让打字卡顿）。
+        with self.lock:
+            proc, self._proc = self._proc, None
         if proc is None:
             return
         try:
@@ -173,10 +194,11 @@ class ShellConnection(BaseConnection):
 
     def resize(self, rows, cols):
         self._rows, self._cols = rows, cols
-        if self._proc is None:
-            return
         try:
             with self.lock:
-                self._proc.setwinsize(rows, cols)
+                proc = self._proc
+                if proc is None:
+                    return
+                proc.setwinsize(rows, cols)
         except Exception:
             pass

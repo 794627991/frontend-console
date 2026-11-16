@@ -631,7 +631,9 @@ window.__webTabTitle = function (tid, title) {
   // 用户令：后台回收（休眠→about:blank）不得把网页名刷成空白——
   // 空/空白标题（about:blank 阶段推送）直接忽略，保留最后真实标题
   var t = String(title || '').trim();
-  if (c && t && t !== 'about:blank') _webSetLabel(c, title);
+  // a591：检查用 t（已 trim），赋值也要用 t——原来检查 t、传原文 title，
+  // 首尾带空白的标题会以原样进标签（与判据不一致）。
+  if (c && t && t !== 'about:blank') _webSetLabel(c, t);
 };
 // 控件内 window.open / target=_blank → 本面板内导航
 // 控件导航开始/完成 → 加载指示（刷新转圈+地址栏呼吸，a553 找回）
@@ -1121,6 +1123,7 @@ document.addEventListener('keydown', (e) => {
 })();
 
 let __fcPwToken = '';   // RA12：密码管理器鉴权 token（boot 后经 /api/status 取得）
+let __fcPwTokenPromise = null;   // a591：token 拉取的 in-flight 共享（防首次打开 403）
 // ---- a583 密码管理器：列出原生密码库（Chromium Login Data）已存站点，
 // 支持显示明文（后端三层解密）与删除（库锁定时挂起、退出后生效） ----
 function _webPwMgr() {
@@ -1147,18 +1150,28 @@ function _webPwMgr() {
     }
   };
   setTimeout(() => document.addEventListener('click', close, true), 0);
-  if (!__fcPwToken) {
-    fetch('/api/status').then(r => r.json()).then(j => {
+  // a591：token 必须「先取后用」——原实现发起 fetch 后不等结果就往下走，
+  // 首次打开（刷新页面后第一次点 🔑）必然无 token → pw_list 403 →
+  // render([]) → 把一个有密码的库显示成「还没有保存过密码」。第二次才正常。
+  const ensurePwToken = () => {
+    if (__fcPwToken) return Promise.resolve(__fcPwToken);
+    if (__fcPwTokenPromise) return __fcPwTokenPromise;
+    __fcPwTokenPromise = fetch('/api/status').then(r => r.json()).then(j => {
       if (j && j.pw_token) __fcPwToken = j.pw_token;
-    }).catch(() => {});
-  }
+      return __fcPwToken;
+    }).catch(() => null).finally(() => { __fcPwTokenPromise = null; });
+    return __fcPwTokenPromise;
+  };
   const api = (body) => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (__fcPwToken) headers['X-FC-Token'] = __fcPwToken;   // RA12：密码端点鉴权
-    return fetch('/api/web/tabs', {
-      method: 'POST', headers,
-      body: JSON.stringify(body)
-    }).then(r => r.json()).catch(() => ({ ok: false }));
+    // 每次调用都先确保 token 就位（并发调用共享同一个 in-flight promise）
+    return ensurePwToken().then(() => {
+      const headers = { 'Content-Type': 'application/json' };
+      if (__fcPwToken) headers['X-FC-Token'] = __fcPwToken;   // RA12：密码端点鉴权
+      return fetch('/api/web/tabs', {
+        method: 'POST', headers,
+        body: JSON.stringify(body)
+      }).then(r => r.json()).catch(() => ({ ok: false }));
+    });
   };
   const render = (items) => {
     menu.innerHTML = '<div class="web-fav-title">密码管理' +
@@ -1204,7 +1217,18 @@ function _webPwMgr() {
       }
     };
   };
-  api({ act: 'pw_list' }).then(j => render((j && j.ok && j.items) || []));
+  // a591：403/失败不能渲染成「还没有保存过密码」——那是把鉴权失败说成空库，
+  // 用户会以为自己的密码丢了。只有 ok 且 items 为空才是真·空态。
+  api({ act: 'pw_list' }).then(j => {
+    if (!j || !j.ok) {
+      menu.innerHTML = '<div class="web-fav-title">密码管理</div>' +
+        '<div class="web-fav-empty">无法读取密码库：' + esc((j && j.err) || '请求失败') +
+        '' + '（再点一次 🔑 重试）</div>';
+      pos();
+      return;
+    }
+    render(j.items || []);
+  });
 }
 
 function _webFavMenu(anchor) {

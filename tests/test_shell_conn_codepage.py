@@ -80,13 +80,45 @@ def _captured_env(monkeypatch_argv="cmd"):
 
 
 def test_env_does_not_force_python_encoding():
+    """代码必须 **主动剔除** 会强制 UTF-8 输出的变量。
+
+    上一版（a588）断言 `"PYTHONIOENCODING" not in env`——那是拿
+    `dict(os.environ)` 当基准，钉的是「启动这条链的宿主机有没有这个变量」，
+    不是代码行为：宿主机带着它就必红，不带它即使代码写错也绿。
+    a591 改成先往宿主环境里塞一个毒值再捕获，断言代码把它清掉了。
+    """
+    POISON = {"PYTHONIOENCODING": "utf-8",
+              "PYTHONUTF8": "1",
+              "PYTHONLEGACYWINDOWSSTDIO": "1"}
     got = _captured_env()
     env = got["env"]
-    assert "PYTHONIOENCODING" not in env, "不该注入 PYTHONIOENCODING：%r" % env.get("PYTHONIOENCODING")
+    for k in POISON:
+        assert k not in env, ("%s 必须从子进程 env 里剔除，实际=%r"
+                              % (k, env.get(k)))
     # TERM/COLORTERM 用 setdefault：CI/宿主可能已有值，这里只要求「有值」
     assert env.get("TERM")
     assert env.get("COLORTERM")
     assert got["argv"] == ["cmd.exe", "/K"]
+
+
+def test_poisoned_host_env_is_stripped():
+    """把毒值真塞进 os.environ，验证代码剔除（不靠宿主运气）。"""
+    import os as _os
+    poison = {"PYTHONIOENCODING": "utf-8:surrogateescape",
+              "PYTHONUTF8": "1",
+              "PYTHONLEGACYWINDOWSSTDIO": "1"}
+    saved = {k: _os.environ.get(k) for k in poison}
+    try:
+        _os.environ.update(poison)
+        env = _captured_env()["env"]
+        for k in poison:
+            assert k not in env, "宿主带 %s 时必须剔除，实际=%r" % (k, env.get(k))
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
 
 
 # ---- 3. cwd 必须是绝对路径 --------------------------------------------

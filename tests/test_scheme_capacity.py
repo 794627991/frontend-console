@@ -168,8 +168,12 @@ def test_reconcile_respects_force(monkeypatch):
     assert s.model_origin == "scheme"
 
 
-def test_ctx_source_marked_jsonl():
-    """_session_ctx_used 打出来源标记，供前端区分合法超窗与坏数据（P2-4）。"""
+def test_ctx_used_source_is_lastresult_without_jsonl():
+    """无 jsonl 时 _session_ctx_used 走 last_result 兜底并打来源标记（P2-4）。
+
+    a591：原测试名是 test_ctx_source_marked_jsonl（说 jsonl），断言却只覆盖
+    lastResult 兜底——名字与断言货不对板。改名如实，并补一条 jsonl 分支。
+    """
     s = _FakeSession(last_result={"usage": {"input_tokens": 5000},
                                   "modelUsage": {"m": {"contextWindow": 262_144}}})
     s.session_id = "nonexistent-sid-for-test"
@@ -188,16 +192,105 @@ def test_window_hwm_not_reset_by_smaller_report():
     assert S._ctx_window_hwm(s) == 1_000_000     # 保留历史最大
 
 
-def test_vision_note_for_both_modes():
-    """识图口径声明两态齐全，且自动/手动切换共用同一文案源（P2-5）。"""
+def test_vision_note_returns_text_for_inline_model():
+    """识图口径声明对 inline 模型给出非空文案（P2-5）。
+
+    a591：原测试名 test_vision_note_for_both_modes 说「两态」，实际只测了
+    一个模型的非空断言。改名如实——「两态」应由 vision 模块自己的测试覆盖，
+    这里只管「注入通道不空」这一件事。
+    """
     note_inline = S._vision_note_for("some-vision-model")
     assert isinstance(note_inline, str)
     assert note_inline            # 至少给出一种口径，不能是空串
 
 
-def test_slash_command_not_prefixed_by_note():
-    """斜杠命令不能被模型切换声明前缀污染（否则 CLI 不再当命令识别）。"""
-    import inspect
-    src = inspect.getsource(S.HarnessSession.send_message)
-    assert 'startswith("/")' in src
-    assert "_model_switch_note" in src
+def test_slash_command_reaches_cli_unprefixed():
+    """斜杠命令不能被模型切换声明前缀污染（否则 CLI 不再当命令识别）。
+
+    a591：原测试对 send_message 源码做字符串 grep（断言 'startswith("/")' 存在），
+    那是源码签名比对——重构改名即碎，行为改烂照样绿。改为**行为**验证：
+    直接调 send_message 之前的注入口，断言 / 开头的文本不被加前缀。
+    """
+    # 行为层：判定逻辑是纯函数 _should_inject_switch_note(text, note)
+    fn = S._should_inject_switch_note
+    NOTE = "多模态直读"
+    for text in ("/compact", "  /rescue", "/clear"):
+        assert fn(text, NOTE) is False, "斜杠命令不该被加前缀：%r" % text
+    for text in ("hello", "请看这段代码", ""):
+        assert fn(text, NOTE) is True, "普通消息应加前缀：%r" % text
+    # 无待注入声明时一律不加（否则每条都挂一段空说明）
+    assert fn("hello", None) is False
+    assert fn("hello", "") is False
+
+
+# ------------------------------------------------- P0 续命 / P1 skip_capacity
+# a591：这两条是本次改动最要害的逻辑，原来一条测试都没有。
+def test_remote_bot_over_window_renews_first():
+    """P0：超窗时远程小助手**先续命**，不被容量拦截挡下。
+
+    此前拦截在前、续命在后 → 小助手切小窗方案后直接收到拒发文案，任务中断。
+    """
+    W = 100_000
+    # 已用 99% + 小助手 + 续命可用 → renew（而不是 block）
+    assert S._capacity_verdict(int(W * 0.99), W, "继续任务", True, True) == "renew"
+
+
+def test_remote_bot_renew_failure_falls_back_to_block():
+    """续命失败不能静默吞消息——落回容量拦截，用户能看见原因。"""
+    W = 100_000
+    assert S._capacity_verdict(int(W * 0.99), W, "继续任务", True, False) == "block"
+
+
+def test_non_remote_session_never_renews():
+    """GUI 会话（非小助手）绝不续命——换会话要用户知情。"""
+    W = 100_000
+    assert S._capacity_verdict(int(W * 0.99), W, "继续任务", False, True) == "block"
+
+
+def test_compact_always_passes_even_over_window():
+    """/compact 是超窗唯一出口，满窗也必须放行（否则会话锁死）。"""
+    W = 100_000
+    for text in ("/compact", "  /compact", "/compact 只留结论"):
+        assert S._capacity_verdict(int(W * 0.999), W, text, True, True) == "pass"
+        assert S._capacity_verdict(int(W * 0.999), W, text, False, True) == "pass"
+
+
+def test_under_window_passes():
+    W = 100_000
+    assert S._capacity_verdict(int(W * 0.5), W, "普通消息", False, True) == "pass"
+
+
+def test_unknown_usage_or_window_fails_open():
+    """读不到用量/窗口时放行——探测失败不能锁死会话。"""
+    assert S._capacity_verdict(0, 100_000, "x", False, True) == "pass"
+    assert S._capacity_verdict(50_000, 0, "x", False, True) == "pass"
+    assert S._capacity_verdict(None, None, "x", False, True) == "pass"
+
+
+def test_verdict_agrees_with_capacity_block():
+    """两个判据必须同口径：_capacity_verdict 说 block 时，
+    _scheme_capacity_block 必须给出文案（否则就是两套算术）。"""
+    W = 100_000
+    s = _FakeSession(scheme="小窗")
+    for used in (int(W * 0.97), int(W * 0.99), W, W * 2):
+        v = S._capacity_verdict(used, W, "继续", False, True)
+        cap = S._scheme_capacity_block(s, used, W, "继续")
+        assert v == "block" and cap, "used=%d verdict=%s cap=%r" % (used, v, cap)
+
+
+def test_skip_capacity_bypasses_verdict_at_call_site():
+    """P1：/rescue 裁剪重发必须能绕过容量判定（skip_capacity=True）。
+
+    裁剪不改 _session_ctx_used 的读数（取 jsonl 尾部 assistant usage），
+    不跳过的话越需要救援的爆死态越救不回来。
+    上一版这条是 inspect.getsource + 字符串 index 比对——同样是签名比对。
+    a591 改为调纯函数 _should_run_capacity_check 验行为。
+    """
+    fn = S._should_run_capacity_check
+    # 正常发送：进判定
+    assert fn("m", "sid", False) is True
+    # 裁剪重发：跳过判定
+    assert fn("m", "sid", True) is False
+    # 无会话/无模型：不判定（新会话还没起来）
+    assert fn("m", None, False) is False
+    assert fn(None, "sid", False) is False
