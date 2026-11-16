@@ -1049,6 +1049,50 @@ def api_connect():
             _drop_connecting(port_id)
         return jsonify({"ok": True, "port_id": port_id, "kind": "telnet",
                         "msg": f"已连接 {host}:{port}"})
+    elif kind == "shell":
+        # a581（用户需求）：本地终端——起来就是可敲命令的 shell 窗口。
+        # 引擎见 src/shell_conn.py（ConPTY，与 ClaudeConnection 同源）。
+        from .shell_conn import ShellConnection, SHELLS
+        shell = (data.get("shell") or "cmd").strip().lower()
+        # 白名单必须校验：shell 名直接进 argv[0]，任意值等于任意可执行注入
+        if shell not in SHELLS:
+            return jsonify({"ok": False,
+                            "err": "不支持的 shell：%s" % shell}), 400
+        cwd = (data.get("cwd") or "").strip()
+        if cwd and not os.path.isdir(cwd):
+            return jsonify({"ok": False, "err": "目录不存在：%s" % cwd}), 400
+        # 多开：同一 shell 每次新建一个序号实例（与 claude:{n} 同构）
+        with _ports_lock:
+            n = 1
+            while "shell:%s:%d" % (shell, n) in _ports:
+                n += 1
+            port_id = "shell:%s:%d" % (shell, n)
+        # ConPTY spawn 在杀软实时扫描下可达秒级 → 构造移出 _ports_lock
+        # （同 SSH/串口/claude 分支），占位锁防同目标重入
+        if not _acquire_connecting(port_id):
+            return jsonify({"ok": False, "err": "该终端正在打开中，请稍候"}), 400
+        try:
+            p = None
+            try:
+                p = ShellConnection(shell=shell, cwd=cwd or None, port_id=port_id)
+            except ValueError as e:
+                return jsonify({"ok": False, "err": str(e)}), 400
+            except Exception as e:
+                if p is not None:
+                    try: p.close()
+                    except Exception: pass
+                return jsonify({"ok": False, "err": str(e) or e.__class__.__name__}), 500
+            with _ports_lock:
+                if port_id in _ports:      # 极端并发：后到者关掉自己
+                    try: p.close()
+                    except Exception: pass
+                    return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
+                _ports[port_id] = p
+        finally:
+            _drop_connecting(port_id)
+        return jsonify({"ok": True, "port_id": port_id, "kind": "shell",
+                        "shell": shell, "cwd": p.cwd,
+                        "msg": "已打开终端（%s）" % p.shell_name})
     elif kind == "claude":
         # Claude Code 本地终端（ConPTY 跑真实 CLI，设计见 docs/CLAUDE_CODE_INTEGRATION.md）
         from .claude_conn import (ClaudeConnection, ClaudeNotFoundError,
@@ -1811,7 +1855,7 @@ def api_recent():
         keep = []
         for it in data["replace"]:
             t = (it.get("type") or "").strip()
-            if t not in ("ssh", "serial", "file", "claude") or not (it.get("key") or "").strip():
+            if t not in ("ssh", "serial", "file", "claude", "telnet", "shell") or not (it.get("key") or "").strip():
                 continue
             _e = {"type": t, "key": it["key"], "label": (it.get("label") or "").strip(),
                   "ts": it.get("ts") or 0, "data": it.get("data") or {}}
@@ -1827,8 +1871,11 @@ def api_recent():
         _save_config({**_load_config(), "recent": keep})
         return jsonify({"ok": True, "recent": keep})
     t = (data.get("type") or "").strip()
-    if t not in ("ssh", "serial", "file", "claude"):
-        return jsonify({"ok": False, "err": "type 须为 ssh/serial/file/claude"}), 400
+    # a581：补 shell（本地终端）与 telnet——设计核实实测两者原来都被 400 拒，
+    # 即「最近打开」对它们从未生效（telnet 是既有缺陷，顺带修）。
+    if t not in ("ssh", "serial", "file", "claude", "telnet", "shell"):
+        return jsonify({"ok": False,
+                        "err": "type 须为 ssh/serial/file/claude/telnet/shell"}), 400
     item = {"type": t, "key": (data.get("key") or "").strip(),
             "label": (data.get("label") or "").strip(), "data": data.get("data") or {}}
     if not item["key"]:

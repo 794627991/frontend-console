@@ -110,8 +110,38 @@ async function connectTelnet(host, port, quiet) {
   } catch(e) { if (nid) notifyTaskDone(nid, {ok:false, title:`Telnet 连接请求失败 ${host}:${port}`, detail:String(e), ms:8000}); return {ok: false, err: 'Telnet 连接请求失败：' + e}; }
 }
 
-function closeConnection(portId) {
-  // D-3（P3）附带防御：直调 closeConnection 绕过编辑器完整 dispose 链
+// a581（用户需求）：本地终端——起来直接就是可敲命令的 shell 窗口
+// 名字映射必须在 connectShell 之前定义：const 有 TDZ，函数体虽在调用时才求值，
+// 但把常量放前面能消除「先调后定义」的阅读歧义。
+const SHELL_LABEL = { cmd: '命令提示符', powershell: 'PowerShell', pwsh: 'PowerShell 7', bash: 'Git Bash' };
+async function connectShell(shell, cwd, quiet) {
+  const nid = quiet ? null : notifyTask({type:'shell', title:'正在打开终端', detail: shell});
+  try {
+    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'shell', shell, cwd})});
+    const j = await r.json();
+    if (j.ok) {
+      const port_id = j.port_id;
+      const _dup = /:(\d+)$/.exec(port_id);
+      const _name = (SHELL_LABEL[shell] || '终端');
+      const _lbl = _name + (_dup && +_dup[1] > 1 ? ' ·' + _dup[1] : '');
+      if (nid) notifyTaskDone(nid, {ok:true, title:'已打开 ' + _name, detail: j.cwd || ''});
+      const conn = buildTerminal(port_id, {kind:'shell', label:_lbl, shell, cwd:j.cwd || cwd || ''});
+      connections[port_id] = conn;
+      switchTab(port_id);
+      refreshSidebar();
+      refreshGlobalStatus();
+      _recentAdd({type:'shell', key:`shell:${shell}:${cwd || ''}`, label:_name + (cwd ? ' · ' + cwd : ''),
+                  data:{shell, cwd: cwd || ''}});
+      // 焦点抢到 xterm（照 claude tab 的做法），打开即可敲
+      setTimeout(() => { try { conn.term && conn.term.focus(); } catch(e) {} }, 200);
+    } else {
+      if (nid) notifyTaskDone(nid, {ok:false, title:'打开终端失败', detail:j.err || '未知错误', ms:8000});
+    }
+    return j;
+  } catch(e) { if (nid) notifyTaskDone(nid, {ok:false, title:'打开终端请求失败', detail:String(e), ms:8000}); return {ok: false, err: '打开终端请求失败：' + e}; }
+}
+
+function closeConnection(portId) {  // D-3（P3）附带防御：直调 closeConnection 绕过编辑器完整 dispose 链
   // （hex/diff/bindiff 无专属关闭函数——四类统一转发，sidebar.js:198/:233 实证）
   // （编辑器 _edCloseNow 的完整 dispose）=5 倍泄漏（3.1MB/次 vs 0.58MB）
   // R3 审计 W22（P1）：web 必须同样转发——web-panel 的 closeEditorTab
@@ -210,6 +240,7 @@ function refreshSidebar() {
       const isLog = conn.meta.kind === 'log';
       const isEdit = conn.meta.kind === 'editor' || conn.meta.kind === 'hex' || conn.meta.kind === 'diff' || conn.meta.kind === 'bindiff';
       const isClaude = conn.meta.kind === 'claude';
+      const isShell = conn.meta.kind === 'shell';
       const isHarness = conn.meta.kind === 'harness';
       // a434：版本面板（独立主区 tab）无连接语义，关闭走 closeEditorTab
       // （触发 _edCloseNow 的清理链）；误走 closeConnection 会发必然 404 的
@@ -238,7 +269,7 @@ function refreshSidebar() {
             ? String(conn.extPath).slice(_treeRootOf(conn.extPath).length + 1)
             : String(conn.extPath))
         : '';
-      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : (isEdit || isLog) ? (conn.extPath ? esc(_pathTail) : edIcon) : isVcs ? 'git / svn 工作副本' : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isHarness ? `<span class="claude-ico"></span> Claude 对话 · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isWeb ? webUrlDesc : `${conn.meta.baud || ''} baud`;
+      const descText = isSSH ? `SSH · ${conn.meta.host || ''}` : isTelnet ? `Telnet · ${conn.meta.host || ''}` : isShell ? `终端 · ${SHELL_LABEL[conn.meta.shell] || conn.meta.shell || ''}${conn.meta.cwd ? ' · ' + String(conn.meta.cwd).split(/[\\/]/).pop() : ''}` : (isEdit || isLog) ? (conn.extPath ? esc(_pathTail) : edIcon) : isVcs ? 'git / svn 工作副本' : isClaude ? `<span class="claude-ico"></span> Claude · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isHarness ? `<span class="claude-ico"></span> Claude 对话 · ${(conn.meta.cwd || '').split(/[\\\\/]/).pop() || ''}` : isWeb ? webUrlDesc : `${conn.meta.baud || ''} baud`;
       const rowCount = conn.term ? conn.term.buffer.active.length : (conn.logState ? conn.logState.total : (isEdit ? _edStatText(conn) : 0));
       // 编辑器类 tab：未保存时名字带 * + dirty 类（led 橙色，与 _edMarkTab 同步）
       const isDirty = isEdit && conn.dirty;
@@ -376,6 +407,10 @@ $('btnNewConn').onclick = async () => {
   // 注意：显示时必须设 'flex'（而非 ''）——两个字段块是 flex 列布局（gap 撑内部间距），
   // 设 '' 会回退成默认 block，内部 gap 失效、间距又挤回老样子
   $('connSerialFields').style.display = 'flex'; $('connSSHFields').style.display = 'none';
+  // a581：telnet/shell 字段块也要复位——原来漏了 telnet，上次停在 telnet 时
+  // 重开弹窗字段还亮着（既有缺陷，顺带修）
+  $('connTelnetFields').style.display = 'none';
+  $('connShellFields').style.display = 'none';
   $('btnRefreshPorts').style.display = '';   // 刷新按钮只跟串口（SSH 不需要枚举端口）
   $('connAuthPassword').style.display = ''; $('connAuthKey').style.display = 'none';
   $('connModal').classList.add('show');
@@ -416,6 +451,7 @@ document.querySelectorAll('.conn-type-btn').forEach(btn => {
     $('connSerialFields').style.display = _connType === 'serial' ? 'flex' : 'none';
     $('connSSHFields').style.display = _connType === 'ssh' ? 'flex' : 'none';
     $('connTelnetFields').style.display = _connType === 'telnet' ? 'flex' : 'none';
+    $('connShellFields').style.display = _connType === 'shell' ? 'flex' : 'none';
     $('btnRefreshPorts').style.display = _connType === 'serial' ? '' : 'none';
   };
 });
@@ -456,6 +492,17 @@ $('connConfirm').onclick = async () => {
       if (!host) { errEl.textContent = '请填主机地址'; errEl.classList.add('show'); return; }
       btn.textContent = '连接中…';
       j = await connectTelnet(host, port, true);
+    } else if (_connType === 'shell') {
+      const shell = $('connShellKind').value || 'cmd';
+      const cwd = $('connShellCwd').value.trim();
+      // 非空时必须是绝对路径（Windows 盘符或 UNC），否则后端子进程 cwd 会
+      // 相对工具进程解析，用户看到「目录不存在」却不知为何
+      if (cwd && !/^[a-zA-Z]:[\\/]|^\\\\/.test(cwd)) {
+        errEl.textContent = '工作目录请填绝对路径，如 D:\\AI\\前端控制台';
+        errEl.classList.add('show'); return;
+      }
+      btn.textContent = '打开中…';
+      j = await connectShell(shell, cwd, true);
     } else {
       const port = $('connPort').value, baud = $('connBaud').value;
       if (!port) { errEl.textContent = '请选择串口'; errEl.classList.add('show'); return; }
@@ -469,6 +516,19 @@ $('connConfirm').onclick = async () => {
   }
 };
 $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('串口端口已刷新'); };
+// a581：终端工作目录选择器（复用 pywebview 原生目录对话框，同 tftp 的写法）
+const _shPick = $('connShellCwdPick');
+if (_shPick) _shPick.onclick = async () => {
+  try {
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.pick_dir))
+      throw new Error('no-bridge');
+    let d = await window.pywebview.api.pick_dir();
+    if (Array.isArray(d)) d = d[0] || '';
+    if (d) $('connShellCwd').value = d;
+  } catch (e) {
+    showBanner('目录选择器暂不可用，可直接输入路径', 3000, true);
+  }
+};
 
 // 终端功能按钮（暂停/清屏/^C/^D/时间戳等）已移到各连接区顶部工具栏
 // （terminal-core.js buildTerminal 内，仿日志 tab 的 log-viewer-toolbar），
@@ -479,8 +539,8 @@ $('btnRefreshPorts').onclick = async () => { await loadPorts(); showBanner('串�
 // ============================================================
 // 最近打开（SSH/串口/文件 快捷重开，后端 config.json 持久化 + 自动去重）
 // ============================================================
-const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '<span>' + ICO16.link + '</span>', serial: '<span>' + ICO16.plug + '</span>', telnet: '<span>' + ICO16.monitor + '</span>' };  // 类型区分图标（claude 用官方星形标志；file 按后缀动态生成 fileIconHtml）
-const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', telnet: 'Telnet', file: '文件' };
+const RECENT_ICON = { claude: '<span class="claude-ico"></span>', ssh: '<span>' + ICO16.link + '</span>', serial: '<span>' + ICO16.plug + '</span>', telnet: '<span>' + ICO16.monitor + '</span>', shell: '<span>' + ICO16.terminal + '</span>' };  // 类型区分图标（claude 用官方星形标志；file 按后缀动态生成 fileIconHtml）
+const RECENT_TYPE_NAME = { claude: 'Claude 会话', ssh: 'SSH', serial: '串口', telnet: 'Telnet', file: '文件', shell: '终端' };
 let _recentList = [];
 
 async function loadRecentList() {
@@ -518,6 +578,7 @@ function renderRecentList() {
     { type: 'file',   name: '文件' },
     { type: 'ssh',    name: 'SSH' },
     { type: 'telnet', name: 'Telnet' },
+    { type: 'shell',  name: '终端' },
   ];
   groups.forEach(g => {
     const items = _recentList.map((it, i) => ({it, i}))
@@ -616,6 +677,9 @@ function openRecentItem(it) {
   } else if (it.type === 'telnet') {
     const d = it.data || {};
     connectTelnet(d.host, d.port || '23');
+  } else if (it.type === 'shell') {
+    const d = it.data || {};
+    connectShell(d.shell || 'cmd', d.cwd || '');
   } else if (it.type === 'file') {
     // 文件分发：外部文件（extPath 绝对路径，含拖入）统一走 openDroppedFile 智能分发
     // （文本类含小 .log → 编辑器，超大 .log/未知 → 查看器）；

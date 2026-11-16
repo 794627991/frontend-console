@@ -71,7 +71,7 @@ function buildTerminal(portId, meta) {
   // 第4轮盲测实锤（高）：label 裸 span 无 .label 类（无 overflow/min-width:0 约束）——
   // tab 压缩时文本不收缩把 ✕ 顶出 tab 被 overflow:hidden 裁掉（6 tab 时 5/6 的 ✕ 不可见
   // 不可点）。补 .label 类与全站其他 tab（editor/hex/log/...）对齐，省略号生效 ✕ 保位
-  tab.innerHTML = `<span class="led"></span><span class="label">${esc(meta.label || portId)}</span><span class="baud" style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' || meta.kind === 'telnet' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
+  tab.innerHTML = `<span class="led"></span><span class="label">${esc(meta.label || portId)}</span><span class="baud" style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' || meta.kind === 'telnet' || meta.kind === 'shell' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => {
     if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
     switchTab(portId);
@@ -82,7 +82,7 @@ function buildTerminal(portId, meta) {
   wrap.dataset.portId = portId;
   wrap.style.display = 'none';
   wrap.innerHTML = `
-    ${meta.kind === 'claude' ? '' : `
+    ${(meta.kind === 'claude' || meta.kind === 'shell') ? '' : `
     <div class="term-toolbar">
       <button class="lv-btn term-tb-pause" title="暂停/恢复滚屏"><span>${ICO16.pause}</span> 暂停</button>
       <button class="lv-btn term-tb-clear" title="清屏（只清显示，缓冲历史不丢）">⊘ 清屏</button>
@@ -112,7 +112,7 @@ function buildTerminal(portId, meta) {
   // 放连接区内，tab 栏保持整洁——按钮只作用于本连接
   // claude 终端不渲染工具栏（上面的 innerHTML 已跳过）：串口专属功能（清屏/时间戳/
   // 暂停滚屏/新日志）对 claude 无意义，^C/^D/跳底也不再要——按需求整栏去掉。
-  const _noTb = meta.kind === 'claude';
+  const _noTb = (meta.kind === 'claude' || meta.kind === 'shell');
   const tb = _noTb ? {} : {
     pause: wrap.querySelector('.term-tb-pause'),
     clear: wrap.querySelector('.term-tb-clear'),
@@ -202,7 +202,7 @@ function buildTerminal(portId, meta) {
     // CLI 终端（子代理输出容器，20 轮审查滚到 5.5 万节点/台实测）限 1 万行
     //（输出在会话流/histcache 另有一份，可回看）；串口终端保留 10 万长
     // 回滚（用户拍板），两者互不影响
-    scrollback: (meta.kind === 'claude') ? 10000 : 100000,
+    scrollback: (meta.kind === 'claude' || meta.kind === 'shell') ? 10000 : 100000,
     allowProposedApi: true,
     convertEol: false,        // 保留原始 \r\n，设备输出原样
     theme: _termThemeFor(document.documentElement.getAttribute('data-theme') || 'deepblue'),
@@ -241,7 +241,10 @@ function buildTerminal(portId, meta) {
   // 本地宽窗口里长命令回显错位拼接（svn st 实锤）
   conn._lastCols = 0; conn._lastRows = 0;
   conn.term.onResize(({cols, rows}) => {
-    if (!conn.meta || (conn.meta.kind !== 'claude' && conn.meta.kind !== 'ssh')) return;
+    // a581：shell 是标准 PTY 应用，比 ssh 更需要尺寸同步（长命令回显按列宽
+    // 回绕，不同步必错位）
+    if (!conn.meta || !(conn.meta.kind === 'claude' || conn.meta.kind === 'ssh'
+        || conn.meta.kind === 'shell')) return;
     clearTimeout(conn._resizeTimer);
     conn._resizeTimer = setTimeout(() => {
       if (connections[portId] !== conn) return;
@@ -410,7 +413,9 @@ function buildTerminal(portId, meta) {
   // ---- 全屏模式提示条（xterm 自身处理全屏序列，这里只显示提示 + 退出按钮）----
   // claude 终端不建：新版 claude fullscreen renderer 的 TUI 重绘会触发全屏检测误报
   // （提示条「top/htop」对 claude 完全不适用且遮挡界面）；串口/SSH 场景保持不变
-  if (meta.kind !== 'claude') {
+  // a581：shell 也不建——cmd 的 `cls`/PowerShell 的 `Clear-Host` 发 \x1b[2J，
+  // 命中 ansi_utils 的全屏强判据，一开终端就误报「全屏模式」黄条遮界面。
+  if (meta.kind !== 'claude' && meta.kind !== 'shell') {
     const overlay = document.createElement('div');
     overlay.className = 'screen-overlay';
     overlay.dataset.screen = portId;

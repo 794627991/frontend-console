@@ -40,9 +40,11 @@ let activePortId = null;
     editor: '编辑器', hex: 'Hex', diff: '对比', bindiff: 'Bin对比',
     log: '日志', office: '文件', proxy: '代理', bitcalc: '计算器', vcs: '版本',
     web: '网页',   // a473：内网页面浏览 tab（iframe，SSO 走应用档 cookie）
+    shell: '终端',   // a581：本地 shell（cmd/PowerShell/Git Bash），可多开
   };
   const _GROUP_ICON = {
     serial: ICO16.plug, ssh: ICO16.terminal, telnet: ICO16.terminal,
+    shell: ICO16.terminal,
     claude: ICO16.zap, harness: ICO16.robot,
     editor: ICO16.file, hex: ICO16.hex, diff: ICO16.compare, bindiff: ICO16.compare,
     log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear, bitcalc: ICO16.calc,
@@ -51,7 +53,7 @@ let activePortId = null;
   const _groupOf = c => (c.meta && c.meta.kind) || 'other';
   // 第7轮盲测P5：列表/抽屉组序对齐标签栏的 sortKey 类型序（串口→SSH→日志→
   // 编辑器类→Claude→…），原来跟 connections 插入序导致"Claude 在日志前"不一致
-  const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, log: 2, diff: 3, editor: 3,
+  const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, shell: 1, log: 2, diff: 3, editor: 3,
     hex: 3, bindiff: 3, office: 3, bitcalc: 3, vcs: 3, note: 3, claude: 4, harness: 5, proxy: 6,
     web: 7 };
   // 用户需求：同类只开一个时不收进抽屉（平铺直达，一点即达），开第二个才收。
@@ -827,7 +829,7 @@ function _notifyStack() {
 }
 // claude 用自绘星形图标（.claude-ico 内联 SVG，与顶栏按钮/tab 同款），不用 emoji——
 // emoji 在不同系统字体下渲染不一致（Win10 是黑白轮廓），自绘 SVG 才能保品牌色 D97757。
-const _NOTIFY_ICON = { ssh: ICO16.link, serial: ICO16.plug, telnet: ICO16.monitor, file: ICO16.file, diff: ICO16.compare, hex: ICO16.hex, log: ICO16.log, claude: '<span class="claude-ico"></span>', generic: ICO16.gear };
+const _NOTIFY_ICON = { ssh: ICO16.link, serial: ICO16.plug, telnet: ICO16.monitor, shell: ICO16.terminal, file: ICO16.file, diff: ICO16.compare, hex: ICO16.hex, log: ICO16.log, claude: '<span class="claude-ico"></span>', generic: ICO16.gear };
 
 function _notifyBuild(o) {
   const d = document.createElement('div');

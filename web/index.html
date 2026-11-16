@@ -336,6 +336,7 @@ if (window.__HG_DBG__) {
         <button class="conn-type-btn active" data-type="serial">串口</button>
         <button class="conn-type-btn" data-type="ssh">SSH</button>
         <button class="conn-type-btn" data-type="telnet">Telnet</button>
+        <button class="conn-type-btn" data-type="shell">终端</button>
       </div>
       <!-- 串口字段 -->
       <div id="connSerialFields" style="flex-direction:column;gap:18px">
@@ -395,6 +396,27 @@ if (window.__HG_DBG__) {
           <label for="connTelnetPort">端口</label>
           <input type="number" id="connTelnetPort" value="23" min="1" max="65535" style="margin-top:8px;">
         </div>
+      </div>
+      <!-- 终端字段（a581：本地 shell，起来即可敲命令） -->
+      <div id="connShellFields" style="display:none;flex-direction:column;gap:18px">
+        <div>
+          <label for="connShellKind">Shell</label>
+          <select id="connShellKind" style="margin-top:8px;">
+            <option value="cmd" selected>命令提示符（cmd）</option>
+            <option value="powershell">PowerShell</option>
+            <option value="bash">Git Bash</option>
+          </select>
+        </div>
+        <div>
+          <label for="connShellCwd">工作目录 <span style="color:var(--muted);font-weight:normal;">（留空 = 用户主目录）</span></label>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <input type="text" id="connShellCwd" placeholder="如 D:\AI\前端控制台" autocomplete="off" style="flex:1;">
+            <button class="btn ghost icon-btn" id="connShellCwdPick" type="button" title="选择目录" aria-label="选择目录">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 3.5h5l1.5 2h6.5v7h-13z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="dd-sub">打开后直接是可敲命令的终端窗口。点 ✕ 关闭即结束该 shell 进程。</div>
       </div>
       <div class="conn-err" id="connErr"></div>
       <div class="actions">
