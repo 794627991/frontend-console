@@ -19,14 +19,16 @@ from .claude_conn import _get_pty
 
 # 可选 shell：值 → (显示名, 命令行构造)。cmd 用 /K 保持窗口不退（用户要的是
 # 「起来后直接就能敲命令」的常驻终端，不是执行完一条就关）。
+#
+# 代码页刻意**不**改（a588 实测）：ConPTY 会把子进程按当前代码页写出的字节
+# 转成 UTF-8 交给我们，所以用户看到的中文与真实终端里完全一致。人为
+# `chcp 65001` 反而让 cmd 用 UTF-8 解释既有 GBK 文件——实测 `type 日志.txt`
+# 从「正确」变成 `����־`，`python ... > out.txt` 后 `type out.txt` 同样乱码，
+# 而默认 936 下这两类都正确。UTF-8 文本（源码/JSON）在 936 下会花，但那条路
+# 走「打开日志/编辑器」tab（内部自动探测编码），不该靠改终端代码页解决。
 SHELLS = {
-    # cmd 的 /K 里可以写重定向（>nul 由 cmd 自己解释）
-    "cmd": ("命令提示符", ["cmd.exe", "/K", "chcp 65001>nul"]),
-    # PowerShell 的 -Command 后面是**PowerShell 表达式**，`>nul` 会被当成参数
-    # 传 chcp 而报「参数格式不正确 - 65001>nul」（实测）。重定向必须写 PS 语法。
-    "powershell": ("PowerShell",
-                   ["powershell.exe", "-NoLogo", "-NoExit",
-                    "-Command", "chcp 65001 > $null"]),
+    "cmd": ("命令提示符", ["cmd.exe", "/K"]),
+    "powershell": ("PowerShell", ["powershell.exe", "-NoLogo", "-NoExit"]),
     "pwsh": ("PowerShell 7", ["pwsh.exe", "-NoLogo", "-NoExit"]),
     "bash": ("Git Bash", ["bash.exe", "--login", "-i"]),
 }
@@ -41,6 +43,23 @@ def _resolve_shell(shell):
     return key, name, argv
 
 
+def validate_cwd(cwd):
+    """校验用户给的工作目录。返回错误文案，None 表示通过。
+
+    抽成纯函数是为了让 API 层与 ShellConnection 用同一套判据（此前两边
+    各写一半：server 只查 isdir，相对路径按 Flask 进程 cwd 解析——用户以为
+    指定了目录，实际在别处跑命令）。空串合法（= 用户主目录）。
+    """
+    cwd = (cwd or "").strip()
+    if not cwd:
+        return None
+    if not os.path.isabs(cwd):
+        return "工作目录请填绝对路径：%s" % cwd
+    if not os.path.isdir(cwd):
+        return "目录不存在：%s" % cwd
+    return None
+
+
 class ShellConnection(BaseConnection):
     """本地 ConPTY 终端。kind='shell'。
 
@@ -51,11 +70,13 @@ class ShellConnection(BaseConnection):
     def __init__(self, shell="cmd", cwd=None, cols=120, rows=30, port_id=None):
         super().__init__(port_id or "shell:1")
         self.shell_key, self.shell_name, self._argv = _resolve_shell(shell)
-        self.cwd = cwd or os.path.expanduser("~")
         # a581（设计核实）：cwd 非法不能静默回落 ~——用户会以为路径生效，实际
         # 在 home 里跑命令。抛给 server 转 400 内联红字。
-        if not os.path.isdir(self.cwd):
-            raise ValueError("目录不存在：%s" % self.cwd)
+        # a588：判据抽到 validate_cwd，与 API 层共用（相对路径也要拒）。
+        _err = validate_cwd(cwd)
+        if _err:
+            raise ValueError(_err)
+        self.cwd = (cwd or "").strip() or os.path.expanduser("~")
         self._cols, self._rows = cols, rows
         # 兼容 api_status 的 p.port/p.baud 字段
         self.port = self.shell_name
@@ -82,9 +103,11 @@ class ShellConnection(BaseConnection):
         # ConPTY 下的终端能力声明——没有这两个变量，很多 CLI 会退化成无颜色纯文本
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("COLORTERM", "truecolor")
-        # chcp 65001 已在 argv 里给 cmd/powershell；这里再给一个环境兜底，
-        # 防止某些 shell 忽略 argv（例如 pwsh 7 无 chcp 子命令）
-        env["PYTHONIOENCODING"] = "utf-8"
+        # 刻意不设 PYTHONIOENCODING（a588 实测）：设成 utf-8 后 cmd 里
+        # `python x.py > out.txt` 写出 UTF-8 字节，紧接着 `type out.txt` 在 936
+        # 代码页下变成 `涓枃...`；不设则由 Python 自己跟随控制台代码页，
+        # 写出的就是 936 字节，`type` 读回正确。用户在真 cmd 里得到的
+        # 行为与这里必须一致。
         try:
             self._proc = pp.PtyProcess.spawn(self._argv, cwd=self.cwd, env=env,
                                              dimensions=(self._rows, self._cols))

@@ -1063,15 +1063,18 @@ def api_connect():
     elif kind == "shell":
         # a581（用户需求）：本地终端——起来就是可敲命令的 shell 窗口。
         # 引擎见 src/shell_conn.py（ConPTY，与 ClaudeConnection 同源）。
-        from .shell_conn import ShellConnection, SHELLS
+        from .shell_conn import ShellConnection, SHELLS, validate_cwd
         shell = (data.get("shell") or "cmd").strip().lower()
         # 白名单必须校验：shell 名直接进 argv[0]，任意值等于任意可执行注入
         if shell not in SHELLS:
             return jsonify({"ok": False,
                             "err": "不支持的 shell：%s" % shell}), 400
         cwd = (data.get("cwd") or "").strip()
-        if cwd and not os.path.isdir(cwd):
-            return jsonify({"ok": False, "err": "目录不存在：%s" % cwd}), 400
+        # a588：绝对路径 + 存在性，与 ShellConnection 共用同一判据（原来只查
+        # isdir，相对路径会按 Flask 进程 cwd 解析——用户以为指定了目录）
+        _cwd_err = validate_cwd(cwd)
+        if _cwd_err:
+            return jsonify({"ok": False, "err": _cwd_err}), 400
         # 多开：同一 shell 每次新建一个序号实例（与 claude:{n} 同构）
         with _ports_lock:
             n = 1
