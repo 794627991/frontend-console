@@ -1257,13 +1257,27 @@ function _webPwMgr() {
         const nm = row.querySelector('.web-fav-name');
         const orig = nm.innerHTML;
         nm.innerHTML = '<input class="web-fav-note-inp" data-pw-inp ' +
-          'placeholder="输入新密码后回车保存" spellcheck="false" autocomplete="off" name="web_pw_new">';
+          'type="password" placeholder="输入新密码后回车保存" spellcheck="false" autocomplete="off" name="web_pw_new">';
         const inp = nm.querySelector('[data-pw-inp]');
         inp.focus();
+        // a594（审计 #7）：原 done(true) 在 blur 时无条件提交——打到一半点别处
+        // 就把半截输入入库；空串更会把已存密码无声清成空的（立即执行路径
+        // 会真写 v10 加密的空串）。三道闸：
+        //   ① 只有显式回车才保存（blur 一律视为取消）
+        //   ② 空白串拒绝提交并提示
+        //   ③ 输入框 type=password（原来是 text，改密码全程明文显示在屏幕上）
+        let settled = false;
         const done = (save) => {
+          if (settled) return;
+          settled = true;
           delete row.dataset.editing;
           if (!save) { nm.innerHTML = orig; return; }
           const val = inp.value;
+          if (!val.trim()) {
+            nm.innerHTML = orig;
+            showBanner('新密码不能为空——已取消', 3000, true);
+            return;
+          }
           nm.textContent = '保存中…';
           api({ act: 'pw_edit', origin: it.origin, user: it.user, pw: val }).then(j => {
             if (j && j.ok) {
@@ -1284,7 +1298,8 @@ function _webPwMgr() {
           else if (ev.key === 'Escape') { ev.preventDefault(); done(false); }
           ev.stopPropagation();
         });
-        inp.addEventListener('blur', () => { if (row.dataset.editing) done(true); });
+        // blur = 取消（不再提交）。用 setTimeout 让 Escape 的显式取消先落。
+        inp.addEventListener('blur', () => setTimeout(() => done(false), 0));
         return;
       }
       const dl = e.target.closest('[data-pw-del]');

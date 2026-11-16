@@ -177,9 +177,15 @@ def _pw_pending_file():
     return os.path.join(DATA_DIR, "pw_pending_del.json")
 
 
-def _pw_pending_load(p):
+def _pw_pending_load(p, rebuild_on_error=True):
     """a592：读挂起文件并归一成 dict 列表——兼容旧版 [origin, user] 二元组
-    与更老的纯字符串。所有消费方（del/edit flush）只认 dict。"""
+    与更老的纯字符串。所有消费方（del/edit flush）只认 dict。
+
+    a594（审计 #8）：原来只有调用方「用完就 append 再 save」的路径，
+    损坏时返回 [] 等于摧毁重建；而 _pw_del_flush 又自己内联 json.load，
+    损坏时保留——同一个文件同一个故障两种命运。加 rebuild_on_error：
+    defer 路径（要改文件）用 True 重建，flush 路径（只读）用 False 保留。
+    """
     import json, os
     if not os.path.exists(p):
         return []
@@ -187,7 +193,8 @@ def _pw_pending_load(p):
         with open(p, encoding="utf-8") as _f:
             raw = json.load(_f) or []
     except Exception:
-        _log("WARN", "pw_pending_del.json 损坏，已重建")
+        _log("WARN", "pw_pending_del.json 损坏%s"
+             % ("，已重建" if rebuild_on_error else "，保留待下次"))
         return []
     out = []
     for it in raw:
@@ -256,10 +263,20 @@ def _pw_edit_apply(origin, user, newpw):
     con = None
     try:
         con = sqlite3.connect(_pwdb_path(), timeout=0.3)
-        cur = con.execute(
-            "UPDATE logins SET password_value=?, date_password_modified=? "
-            "WHERE origin_url=? AND username_value=?",
-            (blob, _now_web_time(), origin, user))
+        # a594（审计 #6）：user 为空串时匹配 NULL≡''——与 reveal/del 同口径。
+        # 原来即时路径也是严格 username_value=?，NULL 行永远「没有匹配的条目」，
+        # 而同一行的 👁 能看（a591 修的）、✕ 能删。三颗按钮三种 NULL 宇宙观。
+        if user is None or user == "":
+            cur = con.execute(
+                "UPDATE logins SET password_value=?, date_password_modified=? "
+                "WHERE origin_url=? AND "
+                "(username_value IS NULL OR username_value='')",
+                (blob, _now_web_time(), origin))
+        else:
+            cur = con.execute(
+                "UPDATE logins SET password_value=?, date_password_modified=? "
+                "WHERE origin_url=? AND username_value=?",
+                (blob, _now_web_time(), origin, user))
         con.commit()
         return (True, "") if cur.rowcount else (False, "没有匹配的条目")
     except Exception:
@@ -272,13 +289,22 @@ def _pw_edit_apply(origin, user, newpw):
             pass
     with _pw_del_lock:
         try:
+            import base64
             p = _pw_pending_file()
             lst = [x for x in _pw_pending_load(p)
                    if not (isinstance(x, dict) and x.get("act") == "edit"
                            and x.get("origin") == origin
                            and x.get("user") == user)]
+            # a594（审计 #4）：挂起**不落明文**——存已算好的 v10 blob（base64）。
+            # 原实现把 newpw 原样 json.dump 进 DATA_DIR，等于把用户密码明文
+            # 抄进第二个文件：自家 _live_config_fp 的教义是「凭据不许抄进
+            # 另一个文件」，server.py:861 又把安全边界锚在 DPAPI 用户边界上，
+            # 而那个明文文件就在边界之下（任何本机进程直接读文件即可，
+            # 连 DPAPI 都不用碰）。blob 本就已算出（即时路径用的就是它），
+            # 存 blob 一举解决「落盘明文」与「退出时密钥可用性」两件事。
             lst.append({"act": "edit", "origin": origin, "user": user,
-                        "pw": newpw})
+                        "blob": base64.b64encode(blob).decode("ascii"),
+                        "at": _now_web_time()})
             _pw_pending_save(p, lst)
             return False, ""
         except Exception as e:
@@ -339,22 +365,27 @@ def _pw_del_flush():
     RA15（红队复验）：验证删除确实生效才删挂起文件——库缺失/0 字节假库/
     语句失败时保留挂起文件（下次退出重试），绝不假成功。损坏文件重建时
     WARN（RA16 同源）。"""
-    import json, os, sqlite3
+    import os, sqlite3
     p = _pw_pending_file()
     if not os.path.exists(p):
         return
-    try:
-        # a591：with 保证句柄关闭（原来 json.load(open(...)) 泄漏文件对象）
-        with open(p, encoding="utf-8") as _f:
-            lst = json.load(_f) or []
-    except Exception as e:
-        _log("WARN", "pw_del_flush 挂起文件损坏，已放弃: %r" % e)
-        return
+    # a594（审计 #8）：损坏时保留（rebuild_on_error=False）——flush 是只读
+    # 消费方，没有「重建」的资格；同时改用归一 loader，del/edit 同语义。
+    lst = _pw_pending_load(p, rebuild_on_error=False)
     if not lst:
+        # 文件存在但解析为空/失败：解析失败时不能删（保留待下次），
+        # 真空数组才是历史遗留的空挂起，可清。
         try:
-            os.remove(p)   # 空挂起（历史遗留）清理
+            import json as _json
+            with open(p, encoding="utf-8") as _f:
+                _raw = _json.load(_f)
         except Exception:
-            pass
+            return          # 损坏：保留
+        if not _raw:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
         return
     dbp = _pwdb_path()
     if not os.path.exists(dbp) or os.path.getsize(dbp) == 0:
@@ -445,9 +476,24 @@ def _pw_del_flush():
 
 
 def _pw_edit_flush():
-    """a592：退出流程调用——执行挂起的手动改密码。与 _pw_del_flush 同构：
-    写后复核（读回解密比对明文）才摘挂起，任何失败保留待下次退出重试。"""
-    import os, sqlite3
+    """a592：退出流程调用——执行挂起的手动改密码。
+
+    a594 重写（审计 #4/#5/#6）：
+    - 挂起里存的是 base64 v10 blob，不是明文（#4：不再把用户密码抄进
+      DATA_DIR 第二个文件）。老格式（"pw" 明文键）仍然接受并就地转成 blob
+      写回，下一次退出起再无明文。
+    - 复核判据改成「库里这行的 blob 是否就是我要写的那份」，而不是
+      「解密出来等于明文」。后者数学上会永败：用户在浏览器里又改了一次
+      密码、或 NULL 用户名条目（UPDATE 永远 0 行），都会让挂起永不清空
+      （#5 的 livelock）。
+    - 每条带 attempts 计数，超过上限即弃（#5：没有任何 bailout 是原罪）。
+    - user 为空串时 UPDATE 同时匹配 NULL 与 ''（#6：与 reveal/del 同口径，
+      原来 edit 用严格 username_value=?，NULL 行永远「没有匹配的条目」）。
+    """
+    import base64
+    import os
+    import sqlite3
+    MAX_ATTEMPTS = 3
     p = _pw_pending_file()
     if not os.path.exists(p):
         return
@@ -464,60 +510,129 @@ def _pw_edit_flush():
     try:
         con = sqlite3.connect(dbp)
         cur = con.cursor()
+        resolved = []      # 已收敛（写入成功或确认放弃）的条目
         for it in edits:
-            ok_e, blob = _pw_encrypt(it.get("pw") or "")
-            if not ok_e:
-                _log("WARN", "pw_edit_flush: 加密失败 %r" % blob)
-                continue
-            try:
-                cur.execute(
-                    "UPDATE logins SET password_value=?, "
-                    "date_password_modified=? WHERE origin_url=? AND "
-                    "username_value=?",
-                    (blob, _now_web_time(), it.get("origin"), it.get("user")))
-            except Exception:
-                pass
-        con.commit()
-        # 复核：写后读回解密比对明文，一致才算成功
-        done = []
-        con2 = None
-        try:
-            con2 = sqlite3.connect(dbp, timeout=0.3)
-            for it in edits:
-                row = con2.execute(
-                    "SELECT password_value FROM logins WHERE origin_url=? "
-                    "AND username_value=? ORDER BY date_created DESC LIMIT 1",
-                    (it.get("origin"), it.get("user"))).fetchone()
-                if not row:
+            # 老格式明文键 → 就地加密成 blob（本次就写完，下轮不再有明文）
+            if it.get("blob"):
+                blob = base64.b64decode(it["blob"])
+            elif isinstance(it.get("pw"), str):
+                ok_e, blob = _pw_encrypt(it["pw"])
+                if not ok_e:
+                    _log("WARN", "pw_edit_flush: 加密失败 %r" % blob)
+                    _bump_attempt(it)
+                    if (it.get("attempts") or 0) >= MAX_ATTEMPTS:
+                        resolved.append(it)
                     continue
-                ok_d, txt = _pw_decrypt(row[0])
-                if ok_d and txt == (it.get("pw") or ""):
-                    done.append(it)
-        except Exception:
-            done = []
-        finally:
+                it["blob"] = base64.b64encode(blob).decode("ascii")
+                it.pop("pw", None)
+            else:
+                resolved.append(it)     # 既无 blob 也无明文：无效条目，弃
+                continue
+            o, u = it.get("origin"), it.get("user")
             try:
-                if con2 is not None:
-                    con2.close()
-            except Exception:
-                pass
-        if not done:
-            _log("WARN", "pw_edit_flush: 复核未通过——挂起保留")
-            return
-        left = [it for it in lst if it not in done]
-        if left:
-            _pw_pending_save(p, left)
-        else:
-            os.remove(p)
-        _log("INFO", "pw_edit_flush: %d 条已改" % len(done))
+                if u is None or u == "":
+                    # #6：与 reveal/del 同口径——NULL 与 '' 都算命中
+                    cur.execute(
+                        "UPDATE logins SET password_value=?, "
+                        "date_password_modified=? WHERE origin_url=? AND "
+                        "(username_value IS NULL OR username_value='')",
+                        (blob, _now_web_time(), o))
+                else:
+                    cur.execute(
+                        "UPDATE logins SET password_value=?, "
+                        "date_password_modified=? WHERE origin_url=? AND "
+                        "username_value=?", (blob, _now_web_time(), o, u))
+                if cur.rowcount:
+                    resolved.append(it)
+                else:
+                    # 没有匹配行（条目已被删/browser 侧改过用户名）→ 数次数。
+                    # a594：已达到上限就摘账；未达上限则本轮**不进 resolved**
+                    # （挂起保留，等下轮重试），理由见下方 verified 注释。
+                    _bump_attempt(it)
+                    if (it.get("attempts") or 0) >= MAX_ATTEMPTS:
+                        _log("WARN", "pw_edit_flush: 无匹配行且达上限，放弃 %r"
+                             % (o,))
+                        resolved.append(it)
+            except Exception as e:
+                _log("WARN", "pw_edit_flush: UPDATE 失败 %r" % e)
+                _bump_attempt(it)
+                if (it.get("attempts") or 0) >= MAX_ATTEMPTS:
+                    resolved.append(it)
+        con.commit()
     except Exception as e:
         _log("WARN", "pw_edit_flush: %r" % e)
+        return
     finally:
         try:
             if con is not None:
                 con.close()
         except Exception:
             pass
+    # 复核：#5 改成「库里是不是已经是这份 blob」——不比对明文，
+    # 因此浏览器侧改动/条目消失都不会让它永远失败。
+    verified = []
+    con2 = None
+    try:
+        con2 = sqlite3.connect(dbp, timeout=0.3)
+        for it in resolved:
+            if not it.get("blob"):
+                verified.append(it)     # 无效条目/已放弃：直接摘账
+                continue
+            want = base64.b64decode(it["blob"])
+            o, u = it.get("origin"), it.get("user")
+            if u is None or u == "":
+                row = con2.execute(
+                    "SELECT password_value FROM logins WHERE origin_url=? AND "
+                    "(username_value IS NULL OR username_value='') "
+                    "ORDER BY date_created DESC LIMIT 1", (o,)).fetchone()
+            else:
+                row = con2.execute(
+                    "SELECT password_value FROM logins WHERE origin_url=? AND "
+                    "username_value=? ORDER BY date_created DESC LIMIT 1",
+                    (o, u)).fetchone()
+            if row and row[0] == want:
+                verified.append(it)
+            else:
+                # a594：见面已在 UPDATE 阶段数过次数（rowcount=0 或异常），
+                # 这里不再重复计数——否则每轮 +2，上限形同虚设且日志说反。
+                _log("INFO", "pw_edit_flush: 复核看到库内 blob 非本次写入"
+                     "（条目可能在浏览器侧又被改过）%r" % (o,))
+                # 已达上限的（UPDATE 阶段就摘进 resolved 的）直接摘账；
+                # 未达上限的留待下轮——UPDATE 已重试过，这里不再叠加。
+                if (it.get("attempts") or 0) >= MAX_ATTEMPTS:
+                    verified.append(it)
+    except Exception:
+        pass          # 复核失败：什么都不摘（保持原行为，下轮重试）
+    finally:
+        try:
+            if con2 is not None:
+                con2.close()
+        except Exception:
+            pass
+    if not verified:
+        # a594：**必须**把本轮的 attempts 增量写回——否则计数永远停在 1，
+        # 上限形同虚设（原实现这里直接 return，孤儿条目永不收敛）。
+        try:
+            _pw_pending_save(p, lst)
+        except Exception:
+            pass
+        _log("WARN", "pw_edit_flush: 复核未通过——挂起保留（已记重试次数）")
+        return
+    left = [it for it in lst if it not in verified]
+    if left:
+        _pw_pending_save(p, left)
+    else:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+    _log("INFO", "pw_edit_flush: %d 条已改（另 %d 条达上限放弃）"
+         % (len(verified), len([v for v in verified if (v.get("attempts") or 0) >= MAX_ATTEMPTS])))
+
+
+def _bump_attempt(it):
+    """挂起条目重试计数（_pw_edit_flush 的 bailout 依据）。"""
+    it["attempts"] = int(it.get("attempts") or 0) + 1
 
 
 # RA12（红队复验真修）：密码管理器鉴权 token——启动期随机生成，进程
@@ -1534,6 +1649,12 @@ def register(app):
                 return jsonify({"ok": False, "err": "bad origin"}), 400
             if not isinstance(_pw, str):
                 return jsonify({"ok": False, "err": "bad pw"}), 400
+            # a594（审计 #9）：长度上限——原收任意长度字符串直接 AES 后写
+            # Login DB，10MB 密码也照单全收。自家 RW7 连时间戳都钳位防
+            # 配置膨胀，这里不该是例外。4096 远超任何真实密码。
+            if len(_pw) > 4096:
+                return jsonify({"ok": False,
+                                "err": "密码过长（上限 4096 字符）"}), 400
             ok2, err2 = _pw_edit_apply(_o, _u, _pw)
             if ok2:
                 return jsonify({"ok": True, "immediate": True})
