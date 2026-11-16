@@ -174,7 +174,8 @@ _pw_del_lock = threading.Lock()
 def _pw_del_defer(origin, user):
     """运行中库被锁（Chromium 常驻）→ 挂 pending，退出流程（浏览器已停）
     统一执行。立即尝试写入，成功则当场生效。
-    RA4：user=None 删全部（兼容），否则按 origin+user 精确。
+    RA4/RW12：user=None 或 '' 时按 origin 全删（登录页无用户名场景
+    Chromium 存 NULL/空串行，两者等价）；否则按 origin+user 精确。
     RA5：挂起文件读-改-写全程持锁 + 临时文件原子替换。"""
     import json, os, sqlite3, tempfile
     con = None

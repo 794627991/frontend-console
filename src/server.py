@@ -858,11 +858,13 @@ def api_status():
                 "kind": getattr(p, "kind", "serial"),
                 "host": getattr(p, "host", None), "username": getattr(p, "username", None),
             }
-    # RW1（终审）：密码管理器 token 经 /api/status 下发——UI boot 必调
-    # （且工具主 UI 文档才消费），本机其他进程仍拿不到明文密码（明文走
-    # WebMessage 桥 + origin 防伪，token 只解锁「管理列表/删改」）。
-    # 注：/api/status 无鉴权可读 token ≠ RA1 已复活——RA1 的核心资产
-    # （密码明文）已迁移 WebMessage 桥，REST pw 路由只剩管理面。
+    # RW1/RW11（终审如实版）：token 经无鉴权 GET 下发——本机其他进程
+    # 可取得并调用 pw 管理面（列表/删改/明文 reveal）。这与 Edge/Chrome
+    # 的暴露等价：本机进程读 Chromium 密码库+DPAPI 解密同样可得明文。
+    # 真正的安全边界是 DPAPI 用户边界（Windows 登录会话），不是 HTTP 层。
+    # 防「浏览器跨站面」（RA2 盲 CSRF）由 _pw_guard 的 Origin 校验承担；
+    # 防「其他浏览器标签页」（跨标签）由同源策略承担。多用户/远程场景
+    # 需要更强边界时，应评估命名管道或 OS 级 ACL，属架构演进项。
     try:
         from src.web_tabs import PW_TOKEN as _pw_tok
     except Exception:
@@ -1427,6 +1429,9 @@ def _web_favs_clean(items):
             ts = int(it.get("ts") or 0)
         except (TypeError, ValueError, OverflowError):
             ts = 0   # RC3/RC6（红队复验）：畸形/inf 落 0，不再 500
+        # RW7（终审）：巨整数钳位——10^400 位数字原样落 config = 膨胀攻击
+        if ts < 0 or ts > 4102444800000:   # 2100 年上界
+            ts = 0
         entry = {"url": url,
                  "title": str(it.get("title") or "").strip()[:200],
                  "ts": ts}
