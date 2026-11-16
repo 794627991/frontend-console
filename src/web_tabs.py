@@ -84,7 +84,9 @@ def _pw_v10_key():
     ls = os.path.join(os.environ.get("LOCALAPPDATA", ""),
                       "fc_webview_tabs", "EBWebView", "Local State")
     try:
-        ek = json.load(open(ls, encoding="utf-8"))["os_crypt"]["encrypted_key"]
+        # a591：with 保证句柄关闭（原来 json.load(open(...)) 泄漏文件对象）
+        with open(ls, encoding="utf-8") as _f:
+            ek = json.load(_f)["os_crypt"]["encrypted_key"]
         raw = base64.b64decode(ek)
         if raw[:5] != b"DPAPI":
             return None      # app-bound v20 形态（本机实测不是）
@@ -146,16 +148,23 @@ def _pw_entries():
     db = _pwdb_copy()
     if not db:
         return []
+    con = None
     try:
         con = sqlite3.connect(db)
         rows = con.execute(
             "SELECT origin_url, username_value FROM logins "
             "ORDER BY origin_url").fetchall()
-        con.close()
         return [{"origin": r[0], "user": r[1] or ""} for r in rows if r[0]]
+    except Exception:
+        return []   # RW5（终审）：畸形库不再裸 500（回归 a584 修复）
     finally:
-        # RA3（红队）：库副本含全部用户名/足迹——不留 %TEMP%
+        # RA3（红队）：库副本含全部用户名/足迹——不留 %TEMP%；连接必关
         import os as _os
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            pass
         try:
             _os.remove(db)
         except Exception:
@@ -181,8 +190,12 @@ def _pw_del_defer(origin, user):
     con = None
     try:
         con = sqlite3.connect(_pwdb_path(), timeout=0.3)
-        if user is None:
-            con.execute("DELETE FROM logins WHERE origin_url=?", (origin,))
+        if user is None or user == "":
+            # RW9（终审复验）：空串 user 与 NULL 行等价（挂起分支同口径
+            # ——否则库空闲时 NULL 行删不掉永存）
+            con.execute("DELETE FROM logins WHERE origin_url=? AND "
+                        "(username_value IS NULL OR username_value='')",
+                        (origin,))
         else:
             con.execute("DELETE FROM logins WHERE origin_url=? AND "
                         "username_value=?", (origin, user))
@@ -204,7 +217,9 @@ def _pw_del_defer(origin, user):
             lst = []
             if os.path.exists(p):
                 try:
-                    lst = json.load(open(p, encoding="utf-8")) or []
+                    # a591：with 保证句柄关闭
+                    with open(p, encoding="utf-8") as _f:
+                        lst = json.load(_f) or []
                 except Exception:
                     # RA6（红队）：损坏的挂起文件不再静默吞——清空重建并告警
                     lst = []
@@ -240,7 +255,9 @@ def _pw_del_flush():
     if not os.path.exists(p):
         return
     try:
-        lst = json.load(open(p, encoding="utf-8")) or []
+        # a591：with 保证句柄关闭（原来 json.load(open(...)) 泄漏文件对象）
+        with open(p, encoding="utf-8") as _f:
+            lst = json.load(_f) or []
     except Exception as e:
         _log("WARN", "pw_del_flush 挂起文件损坏，已放弃: %r" % e)
         return
@@ -255,6 +272,10 @@ def _pw_del_flush():
         # RA15：库缺失/0字节（上次异常退出造出的假库）——保留挂起，不造假
         _log("WARN", "pw_del_flush: 密码库缺失或空——挂起保留待下次退出重试")
         return
+    # a591：删除阶段连接必关入 finally——RA18 自己写「滞留句柄锁真实库」，
+    # 但这一段原来 con.close() 是裸语句，中途抛异常（含上面 for 里的意外）
+    # 就漏到 GC 才释放，正是 RA18 要防的形态。
+    con = None
     try:
         con = sqlite3.connect(dbp)
         cur = con.cursor()
@@ -276,11 +297,11 @@ def _pw_del_flush():
             except Exception:
                 pass
         con.commit()
-        con.close()
         # RA15/RW4（终审）：删后复核——复核自身失败（锁库）也保留挂起，
         # 绝不 os.remove 假成功；上次版本复核 except 吞掉后照删=假成功
         # 实测（14.65s 锁等待、pending 消失、行未删）。
         remain = -1   # -1=复核未完成（保留挂起，下次重试）
+        con2 = None
         try:
             con2 = sqlite3.connect(dbp, timeout=0.3)
             remain = 0
@@ -297,9 +318,15 @@ def _pw_del_flush():
                         "username_value=?", (o, u)).fetchone()
                 if row:
                     remain += 1
-            con2.close()
         except Exception:
             remain = -1
+        finally:
+            # RW10（终审复验）：复核连接必关（异常路径滞留至 GC 实测）
+            try:
+                if con2 is not None:
+                    con2.close()
+            except Exception:
+                pass
         if remain > 0:
             _log("WARN", "pw_del_flush: %d 条未删净——挂起保留" % remain)
             return
@@ -310,11 +337,22 @@ def _pw_del_flush():
         _log("INFO", "pw_del_flush: %d 条已删" % len(lst))
     except Exception as e:
         _log("WARN", "pw_del_flush: %r" % e)
+    finally:
+        # a591：删除阶段的连接必关（RA18 的形态：滞留句柄锁真实库）。
+        # 复核连接 con2 已在自己的 finally 里关；这里兜 con。
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            pass
 
 
 # RA12（红队复验真修）：密码管理器鉴权 token——启动期随机生成，进程
-# 生命周期不变。UI 经 server.py 暴露的 pw_token 取得（同源），本机其他
-# 进程无法预知（原 Origin 自指校验 Host/Origin 均可伪造=打穿）。
+# 生命周期不变。UI 经 server.py 暴露的 pw_token 取得（同源）。
+# a591 口径修正：原文写「本机其他进程无法预知」是**错的**——/api/status
+# 无鉴权下发 pw_token（server.py 已如实注明），本机任何进程都能取到。
+# token 挡的是「浏览器跨站面」（攻击者不知道 token，且 Origin 校验兜底），
+# 不是本机进程。真实边界是 DPAPI 用户边界，见 server.py 同处注释。
 import secrets as _secrets
 PW_TOKEN = _secrets.token_urlsafe(24)
 
@@ -990,6 +1028,12 @@ class WebTabs:
             self._want = None
         else:
             stale = False
+        # a591：旧纪元的迟到指令必须在**写入任何状态之前**退出。
+        # 原实现先把 sq 水位抬高、把 self._want 无条件写回，再 if stale: return
+        # ——返回值说 "stale-epoch-dropped"，实际什么都没丢：旧 show 已入账
+        # _want，下一个 layout 到达照常应用（红队报告指出，审计报告也这么写）。
+        if stale:
+            return {"ok": True, "stale-epoch-dropped": True}
         if sq:
             if sq <= self._want_seq:
                 return {"ok": True}       # 乱序迟到的旧令
@@ -998,8 +1042,6 @@ class WebTabs:
         # layout 补显期与后续任何 layout 均不再按陈旧排他意图弹出
         # 不相关控件。hide_all 时 visible 参数忽略；sq 门控照常生效。
         self._want = (_HIDE_ALL, False) if hide_all else (tab_id, bool(visible))
-        if stale:
-            return {"ok": True, "stale-epoch-dropped": True}
         if visible and tab_id not in self._ctl and tab_id in self._pending:
             # a555：create 在途（show 先于 _build 被处理）——此刻应用会把
             # 其他已显示 tab 藏掉又无新控件可显。意图已记 _want，控件建好
@@ -1058,9 +1100,16 @@ class WebTabs:
             self._pend_nav.pop(tid, None)
             self._epochs.pop(tid, None)
             n += 1
-        # RB7-1：二扫——第一扫后到此刻之间完成的 _build（控件已入 _ctl）
+        # RB7-1：二扫——第一扫后到此刻之间完成的 _build（控件已入 _ctl）。
+        # RW3（终审真修）：孤儿判据扩展——「_epochs 无记录的控件」= pending
+        # 分支已 pop 纪元的窗口内 _build 完成者，一并回收（否则同纪元
+        # beacon 永不回收，100/100 复现）。有纪元记录的仍按纪元匹配。
         for tid in list(self._ctl.keys()):
-            if epoch is None or self._epochs.get(tid) == epoch:
+            _has_epoch = tid in self._epochs
+            _match = (epoch is None
+                      or self._epochs.get(tid) == epoch
+                      or (not _has_epoch and epoch is not None))
+            if _match:
                 self.dispose(tid)
                 n += 1
         if n or epoch is None:
@@ -1248,12 +1297,23 @@ def register(app):
             con = None
             try:
                 con = sqlite3.connect(db)
-                row = con.execute(
-                    "SELECT password_value FROM logins WHERE origin_url=? "
-                    "AND username_value=? ORDER BY date_created DESC "
-                    "LIMIT 1", (_o, _u)).fetchone()   # RA8：多条取最新
+                # a591：user 为空串时必须同时匹配 NULL 行——_pw_entries 把
+                # NULL 渲染成 ''，UI 回传的也是 ''，而 SQL 里 '' != NULL，
+                # 原写法让「无用户名」条目永远 not-found（眼睛按钮永久 ❌），
+                # 删除侧却按 NULL+'' 全口径删——同一条目看不了却删得掉。
+                if _u == "":
+                    row = con.execute(
+                        "SELECT password_value FROM logins WHERE origin_url=? "
+                        "AND (username_value IS NULL OR username_value='') "
+                        "ORDER BY date_created DESC LIMIT 1",
+                        (_o,)).fetchone()   # RA8：多条取最新
+                else:
+                    row = con.execute(
+                        "SELECT password_value FROM logins WHERE origin_url=? "
+                        "AND username_value=? ORDER BY date_created DESC "
+                        "LIMIT 1", (_o, _u)).fetchone()   # RA8：多条取最新
             except Exception as e:
-                return jsonify({"ok": False, "err": "库读取失败：%r" % e})
+                return jsonify({"ok": False, "err": "库读取失败：%r" % e}), 400
             finally:
                 # RA17（红队复验）：连接关闭+副本即删入 finally（异常路径也清）
                 try:
