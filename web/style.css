@@ -3987,10 +3987,16 @@ html {
    （can-rewind 类由 result 结算/历史重建授予，随 innerHTML 快照存活）；
    未授予的消息连按钮都不显示，视觉干净 */
 .h-msg.asst .hg-msg-acts { display: none; margin-top: 2px; justify-content: flex-end; }
-/* v3.4.42：消息脚行——署名左、动作条右，一行贴住气泡（hover 显条不再撑高） */
-.h-msg-foot { display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; margin-top: 2px; }
-.h-msg-foot .hg-msg-acts { margin-top: 0; }
+/* v3.4.42：消息脚行——署名左、动作条右，一行贴住气泡（hover 显条不再撑高）
+   a445（用户实锤「回滚按钮被截断」）：按钮组宽度是固定的（两个圆钮 + 回滚
+   胶囊），气泡一宽或窗口一窄，space-between 单行布局就会把右端挤出 .h-msg
+   被 .hg-flow 的 overflow-x:hidden 裁掉。改 flex-wrap + 动作条 margin-left:auto
+   ——放得下时仍是一行贴右，放不下时动作条整体换到下一行且继续靠右，任何宽度
+   都不会被裁 */
+.h-msg-foot { display: flex; flex-wrap: wrap; align-items: center;
+  gap: 4px 8px; margin-top: 2px; min-width: 0; max-width: 100%; }
+.h-msg-foot .h-mmeta { min-width: 0; }
+.h-msg-foot .hg-msg-acts { margin-top: 0; margin-left: auto; flex-shrink: 0; }
 /* v3.1h：全部 AI 消息 hover 浮现动作条（复制/编辑参考 ChatGPT 式消息下方
    右对齐；回滚钮仍只在 can-rewind 授予后出现） */
 .h-msg.asst:hover .hg-msg-acts { display: flex; }
