@@ -161,10 +161,18 @@ function _aiPanelRefit() {
   requestAnimationFrame(fire);        // 过渡起点先适配一次
   setTimeout(fire, 340);              // 过渡（width .3s）结束后按最终宽度再适配
 }
+// a59x（用户令「默认状态下终端助手收起」）：启动默认折叠；用户展开则记忆
+// （localStorage ai_panel_open），下次启动跟随上次选择；无记录恒收起。
+// 写点收口在 _aiPanelSet（三处点击全走它）。
+const _AI_PANEL_KEY = 'ai_panel_open';
+function _aiPanelRemember(open) {
+  try { localStorage.setItem(_AI_PANEL_KEY, open ? '1' : '0'); } catch (_) {}
+}
 $('aiToggle').onclick = () => {
   const p = $('aiPanel');
   p.classList.toggle('collapsed');
   $('aiToggle').textContent = p.classList.contains('collapsed') ? '‹' : '›';
+  _aiPanelRemember(!p.classList.contains('collapsed'));
   _aiPanelSyncBtn();
   _aiPanelRefit();
 };
@@ -174,6 +182,7 @@ $('aiPanelBtn').onclick = e => {
   const p = $('aiPanel');
   p.classList.remove('collapsed');
   $('aiToggle').textContent = '›';
+  _aiPanelRemember(true);
   _aiPanelSyncBtn();
   _aiPanelRefit();
 };
@@ -183,11 +192,22 @@ $('aiPanel').querySelector('.ai-icon').addEventListener('click', () => {
   if (p.classList.contains('collapsed')) {
     p.classList.remove('collapsed');
     $('aiToggle').textContent = '›';
+    _aiPanelRemember(true);
     _aiPanelSyncBtn();
     _aiPanelRefit();
   }
 });
-_aiPanelSyncBtn();
+// a59x 默认态：无「用户上次展开」记录 → 折叠起步（复用折叠链保按钮/-refit 同步）
+(function () {
+  let open = false;
+  try { open = localStorage.getItem(_AI_PANEL_KEY) === '1'; } catch (_) {}
+  if (!open) {
+    $('aiPanel').classList.add('collapsed');
+    $('aiToggle').textContent = '‹';
+  }
+  _aiPanelRemember(open);
+  _aiPanelSyncBtn();
+})();
 window._aiPanelSyncBtn = _aiPanelSyncBtn;   // harness 隐藏/显示面板时同步按钮
 
 // ---- 标签页切换 ----

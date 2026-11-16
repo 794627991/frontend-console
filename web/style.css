@@ -56,6 +56,9 @@
     --fs-base: var(--ui-font-size);
     --fs-lg: calc(var(--ui-font-size) + 1px);
     --fs-xl: calc(var(--ui-font-size) + 2px);
+    /* a59x 自绘窗控：红底上的前景色（zcode --color-destructive-foreground
+       同位，恒白不随主题——红 hover 上白字是 Windows 窗控惯例） */
+    --on-danger: #ffffff;
   }
   /* ============ 主题换肤 ============
      data-theme 挂 <html>，JS 换属性即整窗换色。每套只覆盖调色板变量，
@@ -391,8 +394,11 @@
     white-space: nowrap;
     min-width: 28px;
   }
-  @media (max-width: 1500px) { .logo .ver { display: none; } }
-  @media (max-width: 1360px) { .logo span:not(.icon):not(.ver) { display: none; } }
+  /* a59x 定调（用户实锤）：非最大化只显示工具图标，最大化才显示工具名+
+     版本号——is-max 态反转（窄窗媒体查询的渐进隐藏一并让位给本定调） */
+  .logo > span:not(.icon) { display: none; }
+  body.is-max .logo > span:not(.icon) { display: inline; }
+  body.is-max .logo .ver { display: inline; }
   .logo .icon {
     width: 28px; height: 28px; border-radius: 7px;
     overflow: hidden;   /* 机器人图标真图（/ico/app.png），不再是渐变底 emoji */
@@ -760,6 +766,42 @@
   .topbar .topbar-left { display: flex; align-items: center; gap: 14px; }
   .topbar .topbar-right { display: flex; align-items: center; gap: 14px;
     justify-content: flex-end; }
+
+  /* ---- a59x 自绘窗控（zcode DesktopWindowControls 逐值复刻）----
+     原生标题栏已由后端摘除（main.py _strip_window_caption），顶栏即窗顶。
+     28×28 圆角钮 / 16px 图形 / 2px 间距 / 关闭红 hover = zcode 原值；
+     颜色全走变量（skins 铁律③），无标题栏后拖拽区在 topbar 上由
+     win-controls.js 托管（WebView2 不认 app-region: drag）。 */
+  .win-controls { display: flex; align-items: center; gap: 2px;
+    margin-left: 4px; flex-shrink: 0; }
+  .win-controls .wc-btn { width: 28px; height: 28px; padding: 0;
+    border: none; border-radius: 6px; background: transparent;
+    color: var(--fg); cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease; }
+  .win-controls .wc-btn svg { width: 16px; height: 16px; display: block; }
+  .win-controls .wc-btn:hover { background: var(--bg-input); color: var(--fg-bright); }
+  .win-controls .wc-btn:active { background: var(--border); }
+  .win-controls .wc-close:hover { background: var(--neon-red); color: var(--on-danger); }
+  /* 最大化↔还原字形切换（win-controls.js 驱动 data-max；zcode 同构） */
+  .win-controls .wc-btn .ic-restore { display: none; }
+  .win-controls .wc-btn[data-max="true"] .ic-max { display: none; }
+  .win-controls .wc-btn[data-max="true"] .ic-restore { display: block; }
+
+  /* 顶栏即标题栏：整条可拖拽（交互元素由 win-controls.js 放行），
+     禁选防拖拽时拖出蓝选区（pywebview text_select=True 的反制） */
+  .topbar { user-select: none; -webkit-user-select: none; }
+  .topbar input, .topbar textarea { user-select: text; -webkit-user-select: text; }
+
+  /* 最大化越界补偿（main.py 实测下发 --wv-overhang）：无题窗最大化时
+     边框被推到屏外会裁掉顶栏/两侧，Electron 内部做了这事，我们自理 */
+  /* 审计 P1 + 复审 P1（snap 残留）：padding 补偿与 is-max 拆类——
+     .hg-overhang 由 overhang>0 驱动（最大化经 MaximizedBounds 钉 workarea
+     后恒 0；Aero snap 半屏等非 max 越界态也补），body.is-max 专管 logo 定调 */
+  body.hg-overhang { padding-top: var(--wv-overhang, 0px);
+    padding-left: var(--wv-overhang, 0px);
+    padding-right: var(--wv-overhang, 0px);
+    padding-bottom: var(--wv-overhang, 0px); }
   .topbar select, .topbar input {
     background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 10px; font-size: 12px; font-family: var(--font-ui);
@@ -818,6 +860,58 @@
     display: flex; flex-direction: column;
     overflow: hidden;
   }
+  /* ---- a59x 侧栏最小化（VSCode Activity Bar 语义，用户定调）----
+     .mini：44px 竖排图标条独占，sheets/面板/TFTP 全隐；点图标展开到
+     对应面板，底部条 » 恢复上次面板；状态存 localStorage 跨启动。
+     隐藏规则必须 !important：`.sidebar-sheet-pane[data-sheet=search].active`
+     （三选择子+靠后，style.css:5409 同级翻车），面板泄漏用户实锤 */
+  .sidebar.mini { width: 44px !important; }   /* !important 压 1336px 窄窗 130px 媒体查询 */
+  .sidebar.mini .sidebar-sheets,
+  .sidebar.mini .sidebar-sheet-pane,
+  .sidebar.mini .tftp-resizer,
+  .sidebar.mini .tftp-pane { display: none !important; }
+  .sidebar-rail { display: none; }
+  .sidebar.mini .sidebar-rail { display: flex; flex-direction: column;
+    align-items: center; padding: 8px 0; gap: 4px; flex: 1; }
+  .sidebar-rail .rail-btn { width: 32px; height: 32px; padding: 0;
+    border: none; border-radius: 6px; background: transparent;
+    color: var(--muted); cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; transition: background 0.15s ease, color 0.15s ease; }
+  .sidebar-rail .rail-btn:hover { background: var(--bg-input); color: var(--fg-bright); }
+  .sidebar-rail .rail-btn.active { color: var(--accent); }
+  .sidebar-rail .rail-btn.active::before { content: ''; position: absolute;
+    left: -6px; top: 7px; width: 2px; height: 18px;
+    background: var(--accent); border-radius: 1px; }
+  /* 侧栏收放钮在顶栏 conn-area 尾（v3：底部条占一整排，用户实锤撤除）；
+     mini 态箭头翻转成 » 并贴 rail 底（rail-expand margin-top:auto） */
+  .sidebar-rail .rail-expand { margin-top: auto; }
+  /* 侧栏收放手柄（v4，用户定调位置：侧栏右缘垂直居中，VSCode 折叠手柄
+     同位；v1 底部条占一排 / v2 顶栏钮不和谐，均用户实锤撤除）。挂
+     sidebar-resizer 内随宽度/mini 跟随；常隐 hover 显形（同 resizer
+     显形语言），mini 态常显+箭头翻转成 » */
+  .sidebar-resizer { position: relative; }
+  .sidebar-resizer .sb-edge { position: absolute; left: 2px; top: 50%;
+    transform: translate(-50%, -50%); width: 18px; height: 44px;
+    border: 1px solid var(--border); border-radius: 9px;
+    background: var(--bg-panel); color: var(--muted);
+    cursor: pointer; padding: 0; display: flex;
+    align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 0.15s ease, color 0.15s ease,
+      border-color 0.15s ease, background 0.15s ease; z-index: 6; }
+  .sidebar-resizer:hover .sb-edge, .sidebar-resizer .sb-edge:hover {
+    opacity: 1; }
+  /* 审计P2：opacity:0 不禁命中测试——隐形钮吞侧栏右缘/main 左缘点击；
+     默认禁命中，hover resizer 或自身时恢复 */
+  .sidebar-resizer .sb-edge { pointer-events: none; }
+  .sidebar-resizer:hover .sb-edge, .sidebar-resizer .sb-edge:hover {
+    pointer-events: auto; }
+  .sidebar-resizer .sb-edge:hover { color: var(--fg-bright);
+    border-color: var(--border-glow); background: var(--bg-card); }
+  /* mini 态手柄整个隐藏：恢复入口=rail 底 »（用户实锤：中间常显 + 双入口
+     重复）；展开态手柄 hover 才显，是唯一收起入口，无重复 */
+  body.sb-mini .sidebar-resizer .sb-edge { display: none; }
+
   /* ===== 侧栏双 sheet：打开 / 最近 ===== */
   .sidebar-sheets {
     flex-shrink: 0; display: flex; gap: 4px; padding: 10px 10px 4px;
@@ -881,7 +975,10 @@
   }
   .port-item.connected .led { background: var(--neon-green); box-shadow: 0 0 8px var(--neon-green); }
   .port-item .info { flex: 1; min-width: 0; }
-  .port-item .name { font-size: 12px; font-weight: 600; color: var(--fg-bright); font-family: var(--font-mono); }
+  /* a59x（用户实锤：vcs 对比条目超长名「A@HEAD ↔ B」把卡片顶穿）：name 补
+     单行截断（与下方 desc/.recent-item .name 同款防护——name 漏了多年） */
+  .port-item .name { font-size: 12px; font-weight: 600; color: var(--fg-bright); font-family: var(--font-mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .port-item .desc { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .port-item .baud { font-size: 10px; color: var(--accent); font-family: var(--font-mono); }
   .port-item .actions { display: none; gap: 4px; }
@@ -1178,10 +1275,27 @@
   }
   .tftp-head {
     padding: 10px 14px 8px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center;
+    /* a59x 二修（用户实锤两张截图）：space-between 三子项（::before 折叠
+       箭头 + 标题 + 徽章）宽侧栏时标题被挤去中间「不贴左」——改 flex-start
+       + 徽章 margin-left:auto 钉右；gap 保窄侧栏不重叠。单行契约：标题
+       可省略截断，徽章恒整行（同 tftp-dir .path 防护） */
+    justify-content: flex-start; gap: 8px;
     font-size: 11px; font-weight: 600; letter-spacing: 1px;
     color: var(--muted); text-transform: uppercase;
+    white-space: nowrap; min-width: 0;
+    padding-right: 14px;   /* a59x 四修：溢出已由收缩链根治，回 14 与左对称（用户实锤不对称丑） */
   }
+  /* 收缩链（a59x 五修）：a564 的折叠指示 span 是 JS prepend 的第一个 span，
+     旧 span:first-of-type 选择器命中它——窄宽度 ▶ 被 ellipsis 缩没（用户实锤
+     「▶ 没了左边显宽」）。改用 .tftp-title 精准命中标题；指示符 flex-shrink:0
+     恒显（1285 行既有规则不再被覆盖） */
+  .tftp-head .tftp-title { min-width: 0; flex-shrink: 1;
+    display: block; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .tftp-head .tftp-collapse-ind { flex-shrink: 0; }
+  .tftp-head .tftp-toggle { flex-shrink: 0; white-space: nowrap;
+    margin-left: auto; }
   /* a564：折叠态（VSCode 面板语义）——只剩标题栏；点击标题栏展开 */
   .tftp-pane.collapsed { height: auto; min-height: 0; }
   .tftp-pane.collapsed .tftp-dir,
@@ -1298,7 +1412,12 @@
      才能压住；130px 侧栏 + 260px center = 390px，400px 视口也能装下完整 tab 栏。
      恢复宽度后本块失效，内联拖拽宽度自动回来，侧栏拖拽体验不受影响 */
   @media (max-width: 560px) {
-    .sidebar { width: 130px !important; }
+    /* a59x：130px 是 3-tab 时代旧值——4 tab（+搜索）后 130px 必换行（用户
+       实锤「缩最小全换行」）。底线提到 200px（4 tab+徽标不换行的实测安全值）；
+     mini 图标条恒 44px：本块 !important 靠后会压过 a59x 的 mini 规则，不补
+     这条窄窗下 mini 态会变 130px 空白条 */
+    .sidebar { width: 200px !important; }
+    .sidebar.mini { width: 44px !important; }
     .main > .center { min-width: 260px; }
   }
   .tabs {
@@ -5896,3 +6015,18 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 
 /* R1 审计 W11（A11'）：a493 的 .web-blank-hint 规则已删（a544 后 iframe
    XFO 场景结构性消失，前端 hint 元素同步删除） */
+
+  /* ---- a59x 边缘 resize 热区（白框终局方案配套）----
+     inset 带与 WebView2 有固有白框（试金石实验实锤），命中改走页面层：
+     四边+四角 6px 隐形条，cursor 提示拖拽方向；is-max 态隐藏 */
+  .edge-hot { position: fixed; z-index: 12; background: transparent;
+    pointer-events: auto; }
+  .edge-hot[data-edge="n"]  { top: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+  .edge-hot[data-edge="s"]  { bottom: 0; left: 0; right: 0; height: 6px; cursor: ns-resize; }
+  .edge-hot[data-edge="e"]  { right: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+  .edge-hot[data-edge="w"]  { left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+  .edge-hot[data-edge="ne"] { top: 0; right: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+  .edge-hot[data-edge="nw"] { top: 0; left: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+  .edge-hot[data-edge="se"] { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+  .edge-hot[data-edge="sw"] { bottom: 0; left: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+  body.is-max .edge-hot { display: none; }

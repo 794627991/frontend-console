@@ -236,6 +236,499 @@ def find_and_focus_existing_window():
         return False
 
 
+# ---- 无题化窗体 + 自绘窗控（a59x，用户定调参考 zcode 桌面端复刻）----
+# 设计照抄 zcode（Electron）Windows 分支：窗控三钮由页面自绘，窗口去原生
+# 标题栏但保留缩放边框。Electron frameless 在 Win32 底层正是「WS_THICKFRAME
+# 在、WS_CAPTION 摘」的窗——缩放边框/Aero snap/DWM 阴影全保留；拖拽 =
+# drag 区命中 HTCAPTION，拖动/双击最大化/贴靠/右键系统菜单全是系统行为。
+# WebView2 不认 -webkit-app-region，这里走同构 Win32 路径（SendMessage
+# WM_NCLBUTTONDOWN HTCAPTION），交互效果与 zcode 一字不差。
+
+_WS_CAPTION = 0x00C00000
+_WS_SYSMENU = 0x00080000
+_WS_THICKFRAME = 0x00040000
+_WS_MINIMIZEBOX = 0x00020000
+_WS_MAXIMIZEBOX = 0x00010000
+_GWL_STYLE = -16
+_GWL_WNDPROC = -4
+_WM_NCCALCSIZE = 0x0083
+_WM_NCHITTEST = 0x0084
+_WM_NCPAINT = 0x0085
+# 未文档化 legacy 非客户区绘制消息：激活切换时系统用它们画白色边框——
+# NCPAINT 拦不住（Chromium/Electron 自绘 chrome 的经典坑，标准解法=吞掉）
+_WM_NCUAHDRAWCAPTION = 0x00AE
+_WM_NCUAHDRAWFRAME = 0x00AF
+_WM_SYSCOMMAND = 0x0112
+_SC_MAXIMIZE = 0xF030
+_SC_RESTORE = 0xF120
+_HT_CLIENT = 1
+# HT* 边缘命中码（winuser.h）：L/R/T/B 及四角组合
+_HT_EDGE = {"l": 10, "r": 11, "t": 12, "tl": 13, "tr": 14,
+            "b": 15, "bl": 16, "br": 17}
+
+# WndProc 子类化状态（_strip 成功路径设置；回调必须持模块级引用防 GC）。
+# 按 hwnd 记录（审计 P2：全局单份 + 幂等守卫在句柄重建场景永久丢子类）
+_orig_wndproc = {"fn": None, "hwnd": 0}
+# 自管还原 bounds（严重 bug 根修：无题窗 NCCALCSIZE=0 下系统 RestoreBounds
+# 不含边框，max↔restore 循环逐次漂移膨胀——实测第一次 restore client 高
+# 1622>屏 1540，第二次宽 +18；记录 maximize 前真实 bounds 自管写回）
+_fc_restore = {"bounds": None}
+_WNDPROC_CB = None
+# 审计 P3：回调每条消息 import ctypes + 重设 argtypes 是千级/秒的纯开销——
+# 模块级预声明一次（消息处理高频路径零 import）
+_ct_u32 = None
+def _wndproc_apis():
+    global _ct_u32
+    if _ct_u32 is None:
+        import ctypes as _ct
+        u = _ct.windll.user32
+        u.CallWindowProcW.argtypes = [_ct.c_void_p, _ct.c_void_p, _ct.c_uint,
+                                      _ct.c_longlong, _ct.c_longlong]
+        u.CallWindowProcW.restype = _ct.c_longlong
+        u.GetWindowRect.argtypes = [_ct.c_void_p, _ct.POINTER(_tagRECT)]
+        u.GetWindowRect.restype = _ct.c_bool
+        _ct_u32 = u
+    return _ct_u32
+
+
+def _fc_wndproc(hwnd, msg, wparam, lparam):
+    """无题窗的消息过滤器：
+    - WM_NCCALCSIZE(wParam=1) 返回 0 → 非客户区清零，客户区占满整窗（黑条
+      根除，Electron frameless 同款）。代价：THICKFRAME 的边缘 resize 命中带
+      一并被清（用户实测三问题之一「无法调整大小」）——由下方 WM_NCHITTEST
+      自管补回（Electron hwnd_message_handler.cc 同款，NCCALCSIZE 全清 +
+      NCHITTEST 自算边缘）。
+    - WM_NCHITTEST：原过程回 HTCLIENT 且非最大化时，鼠标在窗缘 resize 带
+      （SM_CXSIZEFRAME+SM_CXPADDEDBORDER×DPI，约 8px@96dpi）内则返回对应
+      HTLEFT/HTTOP/…/HTBOTTOMRIGHT——边缘缩放恢复。
+    其余消息原样转发原 WndProc。"""
+    if msg == _WM_NCCALCSIZE and wparam:
+        return 0
+    if msg == _WM_NCPAINT:
+        # 激活切换时系统重画非客户区——NCHITTEST 返回 HT* 的边缘带被视作
+        # 非客户区，默认绘制涂白（用户实锤「切进程切回来必现白框」）。
+        # 跳过系统绘制：带内由 Form.BackColor（主题色）呈现，无缝。
+        return 0
+    if msg == _WM_SYSCOMMAND and wparam & 0xFFF0 in (_SC_MAXIMIZE, _SC_RESTORE):
+        # 审计 P1：原生最大化/还原（Win+方向键/Alt+Space 菜单）绕过 toggle_max
+        # 批次——不记录则 restore 走系统 RestoreBounds 复现漂移（实测首还原
+        # 高 1622>屏 1540）；漂移 bounds 又反向污染自管记录。同步记录/写回。
+        try:
+            f2 = _orig_wndproc.get("win")
+            if f2 is not None:
+                fnat = getattr(f2, "native", None)
+                if fnat is not None and wparam & 0xFFF0 == _SC_MAXIMIZE:
+                    from System.Windows.Forms import FormWindowState as _FS
+                    if fnat.WindowState != _FS.Minimized:
+                        _fc_restore["bounds"] = fnat.Bounds
+                # SC_RESTORE 不处理：Bounds 稍后由 maximized/restore 流程写回，
+                # 此处只保证 maximize 前有干净记录
+        except Exception:
+            pass
+        # 不 return，继续走转发让系统正常执行最大化/还原
+    if msg in (_WM_NCUAHDRAWCAPTION, _WM_NCUAHDRAWFRAME):
+        # 白框真凶（NCPAINT 拦截无效的用户复现实锤）：未文档化 legacy NC
+        # 绘制消息，激活切换必发，画系统色边框盖住主题色带。Electron
+        # hwnd_message_handler 同款吞法。
+        return 0
+    if msg == _WM_NCHITTEST:
+        try:
+            u = _wndproc_apis()
+            r = u.CallWindowProcW(_orig_wndproc["fn"], hwnd, msg, wparam, lparam)
+            if r != _HT_CLIENT or not _orig_wndproc.get("win"):
+                return r   # 系统已判非客户区（罕见）直接沿用
+            # 最大化不可 resize，整窗 HTCLIENT（页面自管交互）
+            f = getattr(_orig_wndproc["win"], "native", None)
+            from System.Windows.Forms import FormWindowState
+            if f is not None and f.WindowState == FormWindowState.Maximized:
+                return r
+            # 物理屏幕坐标（lparam 打包两 signed short，多屏可为负）
+            x = lparam & 0xFFFF
+            y = (lparam >> 16) & 0xFFFF
+            if x >= 0x8000: x -= 0x10000
+            if y >= 0x8000: y -= 0x10000
+            rc = _tagRECT()
+            if not u.GetWindowRect(hwnd, ctypes.byref(rc)):
+                return r
+            try:
+                dpi = u.GetDpiForWindow(hwnd) or 96
+            except Exception:
+                dpi = 96
+            b = _edge_border_phys_px(_orig_wndproc["win"])   # 与露出带宽一致
+            l = x < rc.left + b
+            t = y < rc.top + b
+            rgt = x >= rc.right - b
+            btm = y >= rc.bottom - b
+            if l and t:   return _HT_EDGE["tl"]
+            if rgt and t: return _HT_EDGE["tr"]
+            if l and btm: return _HT_EDGE["bl"]
+            if rgt and btm: return _HT_EDGE["br"]
+            if l:   return _HT_EDGE["l"]
+            if rgt: return _HT_EDGE["r"]
+            if t:   return _HT_EDGE["t"]
+            if btm: return _HT_EDGE["b"]
+            return r
+        except Exception:
+            try:
+                return _wndproc_apis().CallWindowProcW(
+                    _orig_wndproc["fn"], hwnd, msg, wparam, lparam)
+            except Exception:
+                return 0
+    try:
+        return _wndproc_apis().CallWindowProcW(
+            _orig_wndproc["fn"], hwnd, msg, wparam, lparam)
+    except Exception:
+        return 0
+
+
+def _subclass_ncclient(win):
+    """给主窗挂 _fc_wndproc（GUI 线程内调；按 hwnd 幂等——同 hwnd 已挂跳过，
+    换 hwnd（句柄重建）则重挂，旧 proc 随旧窗消亡无需恢复）。"""
+    global _WNDPROC_CB
+    try:
+        import ctypes as _ct
+        hwnd = _win_hwnd(win)
+        if not hwnd:
+            return
+        if _orig_wndproc["hwnd"] == hwnd and _WNDPROC_CB is not None:
+            return   # 同窗已挂
+        _u = _ct.windll.user32
+        _u.GetWindowLongPtrW.argtypes = [_ct.c_void_p, _ct.c_int]
+        _u.GetWindowLongPtrW.restype = _ct.c_longlong
+        _u.SetWindowLongPtrW.argtypes = [_ct.c_void_p, _ct.c_int, _ct.c_longlong]
+        _u.SetWindowLongPtrW.restype = _ct.c_longlong
+        _orig_wndproc["fn"] = _u.GetWindowLongPtrW(hwnd, _GWL_WNDPROC)
+        if not _orig_wndproc["fn"]:
+            return   # 审计 P3（存疑项收口）：读到 0 再装子类 = CallWindowProcW(NULL) 吞全部消息
+        _orig_wndproc["hwnd"] = hwnd
+        _orig_wndproc["win"] = win   # NCHITTEST 判最大化用（GUI 线程读安全）
+        _WNDPROC_CB = _ct.WINFUNCTYPE(_ct.c_longlong, _ct.c_void_p, _ct.c_uint,
+                                      _ct.c_longlong, _ct.c_longlong)(_fc_wndproc)
+        _u.SetWindowLongPtrW(hwnd, _GWL_WNDPROC, _ct.cast(_WNDPROC_CB, _ct.c_void_p).value)
+    except Exception:
+        _orig_wndproc["fn"] = None   # 失败回原生态：残留黑条但不炸窗
+
+
+def _win_hwnd(win):
+    """pywebview 窗 → Win32 HWND（native 即 WinForms Form，见 winforms.py:194）。
+    未 shown/已销毁返回 0。"""
+    try:
+        f = getattr(win, "native", None)
+        if f is None:
+            return 0
+        # pythonnet 的 IntPtr 不支持 int() 直转（实测 TypeError），必须走
+        # ToInt64() 方法（pywebview 自身用 ToInt32 同款路径）
+        return int(f.Handle.ToInt64())
+    except Exception:
+        return 0
+
+
+def _edge_border_phys_px(win):
+    """窗缘 resize 命中带宽度（物理 px）= SM_CXSIZEFRAME+SM_CXPADDEDBORDER
+    按窗 DPI（GetSystemMetricsForDpi 精确，避免系统 DPI 双重缩放）。
+    NCCALCSIZE 清非客户区后此带必须由 WebView2 让位（见 _set_edge_pad）。"""
+    try:
+        import ctypes as _ct
+        hwnd = _win_hwnd(win)
+        if not hwnd:
+            return 8
+        u = _ct.windll.user32
+        try:
+            dpi = u.GetDpiForWindow(hwnd) or 96
+        except Exception:
+            dpi = 96
+        # 【试金石实验】inset 归零：判定白框与 inset 带的因果关系
+        # （命中暂弃；实验完按结论恢复 4px 或重构命中通道）
+        return 0
+    except Exception:
+        return 8
+
+
+def _invoke_gui(win, fn):
+    """GUI 线程封送执行（已在 GUI 线程时 .NET Invoke 同步直执行，无死锁）。"""
+    try:
+        f = getattr(win, "native", None)
+        if f is None:
+            return
+        from System.Windows.Forms import MethodInvoker
+        f.Invoke(MethodInvoker(fn))
+    except Exception:
+        try:
+            fn()
+        except Exception:
+            pass
+
+
+def _set_edge_pad(win, phys_px):
+    """WebView2 边缘让位（终版，手动布局）：
+    教训链：Form.Padding 对 Dock 子项无效（Form.DisplayRectangle 怪癖）→
+    Panel(Dock=Fill)+Padding 仍无效——**Panel 本身也是子控件**，Dock=Fill 照
+    样盖满客户区，WM_NCHITTEST 发给 Panel（HTCLIENT），主窗收不到（用户实测
+    「染红阶段也不见光标」+ 四边异色框）。启动 3s 内能拽=子窗尚未就位的裸窗
+    期。终修：Panel 摘 Dock 手动布局 Location=(b,b) Size=(client-2b)，边缘带
+    成为主窗**裸区**（无任何子控件）→ 主窗必收 NCHITTEST → 自管 HT* 命中。
+    Form.Resize 持续同步；最大化 inset=0 铺满（MaximizedBounds 已钉 workarea）。
+    带内底色=Form.BackColor（页面经 /api/window/bg 上报 --bg-panel 同色，
+    与顶栏/侧栏无缝）。"""
+    def _do():
+        try:
+            import clr as _clr
+            _clr.AddReference("System.Drawing")
+            import System
+            import clr as _clr2
+            _clr2.AddReference("System.Drawing")
+            from System.Drawing import Point, Size
+            from System.Windows.Forms import Panel, FormWindowState
+            f = getattr(win, "native", None)
+            if f is None:
+                return
+            holder = None
+            wv = None
+            for c in list(f.Controls):
+                if getattr(c, "Name", "") == "fc_edge_holder":
+                    holder = c
+                    break
+                wv = wv or c   # pywebview 只加一个子控件（webview）
+            if holder is None:
+                if wv is None:
+                    return
+                holder = Panel()
+                holder.Name = "fc_edge_holder"
+                f.Controls.Remove(wv)
+                holder.Controls.Add(wv)   # wv 已 Dock=Fill——在 Panel 内继续 Fill
+                f.Controls.Add(holder)
+
+                # 激活切换白框终修：Controller bounds ±1 重提交逼 Chromium 重画
+                # 呈现面（zcode attachWindowsWindowRepaint 的 WebView2 等价）；
+                # Controller 初始化完成后补染主题色兜底（启动时序缺口）
+                import System
+                import System.Reflection as _srf
+                _BF = _srf.BindingFlags
+                def _ctrl():
+                    try:
+                        fld = wv.GetType().GetField("_coreWebView2Controller",
+                              _BF.NonPublic | _BF.Instance)
+                        return fld.GetValue(wv) if fld is not None else None
+                    except Exception:
+                        return None
+                def _force_repaint(*_a):
+                    try:
+                        ctrl = _ctrl()
+                        if ctrl is None:
+                            return
+                        b2 = ctrl.Bounds
+                        ctrl.Bounds = System.Drawing.Rectangle(
+                            b2.X, b2.Y, b2.Width + 1, b2.Height)
+                        ctrl.Bounds = b2
+                    except Exception:
+                        pass
+                def _on_init_done(*_a):
+                    try:
+                        ctrl = _ctrl()
+                        if ctrl is not None:
+                            c2 = f.BackColor
+                            ctrl.DefaultBackgroundColor = System.Drawing.Color.FromArgb(
+                                c2.R, c2.G, c2.B)
+                            _force_repaint()
+                    except Exception:
+                        pass
+                wv.CoreWebView2InitializationCompleted += _on_init_done
+                f.Activated += _force_repaint
+                holder._fc_repaint = _force_repaint   # 闭包持引用防 GC
+                holder._fc_init = _on_init_done
+                cur = [int(phys_px)]
+                def _lay(_s=None, _a=None):
+                    try:
+                        b = 0 if f.WindowState == FormWindowState.Maximized else cur[0]
+                        w2 = f.ClientSize.Width - 2 * b
+                        h2 = f.ClientSize.Height - 2 * b
+                        if w2 > 0 and h2 > 0:
+                            holder.Location = Point(b, b)
+                            holder.Size = Size(w2, h2)
+                    except Exception:
+                        pass
+                f.Resize += _lay
+                holder._fc_lay = _lay          # 闭包持引用防 GC
+                holder._fc_cur = cur           # inset 值存 holder 上（重启幂等）
+            holder._fc_cur[0] = int(phys_px)
+            holder._fc_lay()
+        except Exception:
+            pass
+    _invoke_gui(win, _do)
+
+
+def _set_form_bg(win, r, g, b):
+    """Form 边缘带底色跟随页面主题（win-controls.js 监听 data-theme 上报）。"""
+    def _do():
+        try:
+            import clr as _clr
+            _clr.AddReference("System.Drawing")
+            from System.Drawing import Color
+            f = getattr(win, "native", None)
+            if f is None:
+                return
+            f.BackColor = Color.FromArgb(int(r), int(g), int(b))
+            # WebView2 呈现层白底根修（用户实锤「外圈红中间白」）：包装属性
+            # DefaultBackgroundColor 只在 CoreWebView2 创建前有效，运行时设置
+            # 被 Controller 忽略——反射取内部 CoreWebView2Controller 直接设
+            # Controller.DefaultBackgroundColor（UI 线程，本批次即 GUI 线程）
+            try:
+                holder = None
+                for c in f.Controls:
+                    if getattr(c, "Name", "") == "fc_edge_holder":
+                        holder = c
+                        break
+                if holder is not None and holder.Controls.Count > 0:
+                    wv = holder.Controls[0]
+                    import System.Reflection as _srf
+                    _BF = _srf.BindingFlags
+                    fld = wv.GetType().GetField("_coreWebView2Controller",
+                          _BF.NonPublic | _BF.Instance)
+                    ctrl = fld.GetValue(wv) if fld is not None else None
+                    if ctrl is None:
+                        pr = wv.GetType().GetProperty("CoreWebView2Controller",
+                              _BF.NonPublic | _BF.Instance)
+                        ctrl = pr.GetValue(wv) if pr is not None else None
+                    if ctrl is not None:
+                        ctrl.DefaultBackgroundColor = Color.FromArgb(int(r), int(g), int(b))
+                    else:
+                        wv.DefaultBackgroundColor = Color.FromArgb(int(r), int(g), int(b))
+            except Exception:
+                pass
+            # DWM 窗口边框线染同色：DWMWA_BORDER_COLOR=34（Win11；35 是
+            # caption 色——第一版染错了属性，白线残留实锤）
+            import ctypes as _ct
+            c3 = _ct.c_uint((int(b) << 16) | (int(g) << 8) | int(r))   # 0x00BBGGRR
+            for _attr in (34, 35):
+                try:
+                    _ct.windll.dwmapi.DwmSetWindowAttribute(
+                        _win_hwnd(win), _attr, _ct.byref(c3), 4)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    _invoke_gui(win, _do)
+
+
+def _pin_maximized_bounds(win):
+    """钉最大化 bounds=所在屏工作区（实测实锤：无题窗 WinForms maximize 的
+    rect 底部贴到屏幕底而非工作区底——页面底部 55 物理px 被任务栏盖，overhang
+    补偿只是遮丑，这个是根修）。MaximizedBounds 设 workarea 后最大化 rect 精确
+    等于工作区，overhang 恒 0，CSS 补偿自然空转（机制保留作保险）。GUI 线程调。"""
+    try:
+        from System.Windows.Forms import Screen
+        f = getattr(win, "native", None)
+        if f is None:
+            return
+        f.MaximizedBounds = Screen.FromHandle(f.Handle).WorkingArea
+    except Exception:
+        pass
+
+
+def _strip_window_caption(win):
+    """摘 WS_CAPTION、保 THICKFRAME/SYSMENU/MinBox/MaxBox。
+    必须在 GUI 线程动窗体样式（snip.py:319-328 的 SetWindowPos 被弹回教训），
+    本函数任意线程可调：内部 Invoke(MethodInvoker) 封送 GUI 线程同步执行。
+    shown/loaded 双挂点幂等重试（shown 偶发不触发/句柄重建场景兜底）。"""
+    def _do():
+        try:
+            import ctypes as _ct
+            hwnd = _win_hwnd(win)
+            if not hwnd:
+                return
+            _u = _ct.windll.user32
+            # 64 位句柄/返回值必须显式声明，否则按 32 位截断
+            # （main.py EnumWindows 同款教训）
+            _u.GetWindowLongPtrW.argtypes = [_ct.c_void_p, _ct.c_int]
+            _u.GetWindowLongPtrW.restype = _ct.c_longlong
+            _u.SetWindowLongPtrW.argtypes = [_ct.c_void_p, _ct.c_int, _ct.c_longlong]
+            _u.SetWindowLongPtrW.restype = _ct.c_longlong
+            _u.SetWindowPos.argtypes = [_ct.c_void_p, _ct.c_void_p,
+                                        _ct.c_int, _ct.c_int, _ct.c_int, _ct.c_int,
+                                        _ct.c_uint]
+            style = _u.GetWindowLongPtrW(hwnd, _GWL_STYLE)
+            if not style:
+                return
+            style = (int(style) & ~_WS_CAPTION) | _WS_SYSMENU | _WS_THICKFRAME \
+                | _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX
+            _u.SetWindowLongPtrW(hwnd, _GWL_STYLE, style)
+            # FRAMECHANGED 让非客户区立即按新样式重算（NOMOVE|NOSIZE|NOZORDER|NOACTIVATE）
+            _u.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0020 | 0x0002 | 0x0001 | 0x0004 | 0x0010)
+            # 非客户区清零（WM_NCCALCSIZE 过滤）：残边在亮色主题露黑条（用户实锤）
+            _subclass_ncclient(win)
+            # WebView2 边缘让位：Dock=Fill 子窗盖满客户区会吞 WM_NCHITTEST，
+            # 主窗自管边缘命中失效（用户实测「无法调整大小」）——Padding 让
+            # 子窗缩进 resize 带，露出 Form 区域收 NCHITTEST
+            _set_edge_pad(win, _edge_border_phys_px(win))
+            # 冷启 maximized（--open-file）路径：pywebview 内部 maximize 不走
+            # toggle_max 路由，此处补钉 MaximizedBounds（幂等，非最大化设了
+            # 也只在下次 maximize 生效）
+            from System.Windows.Forms import FormWindowState as _FS
+            f = getattr(win, "native", None)
+            if f is not None and f.WindowState == _FS.Maximized:
+                _pin_maximized_bounds(win)
+        except Exception:
+            pass
+    try:
+        f = getattr(win, "native", None)
+        if f is None:
+            return
+        from System.Windows.Forms import MethodInvoker
+        f.Invoke(MethodInvoker(_do))
+    except Exception:
+        pass
+
+
+class _tagRECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint),
+                ("rcMonitor", _tagRECT), ("rcWork", _tagRECT),
+                ("dwFlags", ctypes.c_uint)]
+
+
+def _maximize_overhang_css_px(win):
+    """无题窗（THICKFRAME 在、CAPTION 摘）最大化时窗口矩形越出工作区——
+    四边边框被推到屏外，客户区顶部/两侧被裁。实测 window rect vs workarea
+    得每侧越界物理 px，÷ DPI 缩放转 CSS px 给页面做 body.is-max 补偿
+    （Electron 内部做了这事，我们自理）。非最大化/量不到返回 0。
+    纯 user32 调用，任意线程可调（避开 GUI 线程 evaluate_js 死锁坑）。"""
+    try:
+        import ctypes as _ct
+        hwnd = _win_hwnd(win)
+        if not hwnd:
+            return 0.0
+        _u = _ct.windll.user32
+        _u.GetWindowRect.argtypes = [_ct.c_void_p, _ct.POINTER(_tagRECT)]
+        _u.GetMonitorInfoW.argtypes = [_ct.c_void_p, _ct.POINTER(_MONITORINFO)]
+        rc = _tagRECT()
+        if not _u.GetWindowRect(hwnd, _ct.byref(rc)):
+            return 0.0
+        mon = _u.MonitorFromWindow(hwnd, 2)   # MONITOR_DEFAULTTONEAREST（审计 P2：1=PRIMARY 副屏补偿错乱）
+        if not mon:
+            return 0.0
+        mi = _MONITORINFO()
+        mi.cbSize = _ct.sizeof(_MONITORINFO)
+        if not _u.GetMonitorInfoW(mon, _ct.byref(mi)):
+            return 0.0
+        try:
+            dpi = _u.GetDpiForWindow(hwnd) or 96
+        except Exception:
+            dpi = 96
+        scale = float(dpi) / 96.0
+        # 对称越界，取上/左其中一个即可（还原态理论为 0，防御性 max(0,…))
+        over_top = max(0, mi.rcWork.top - rc.top)
+        over_left = max(0, mi.rcWork.left - rc.left)
+        over_bottom = max(0, rc.bottom - mi.rcWork.bottom)
+        # 四边对称取值（审计 P1：底部不补则页面下缘被任务栏盖 8px）
+        return round(max(over_top, over_left, over_bottom) / scale, 1)
+    except Exception:
+        return 0.0
+
+
 def _raise_existing_instance():
     """旧实例活着：HTTP 通知它自唤（托盘隐藏态唯一可靠通道），失败再跨进程置前。"""
     try:
@@ -373,6 +866,38 @@ def _run_claude_worker_mode():
         except Exception: pass
     from src import worker_app
     worker_app.main()
+
+
+def _patch_pywebview_move():
+    """修 pywebview 6.2.1 winforms move() 的 None 实参崩溃（自绘窗控拖拽地基）。
+
+    winforms.py:636-644 的 move() 给 SetWindowPos 传 None 当 hWndInsertAfter/
+    cx/cy（指望 ctypes 转 NULL），但无 argtypes 声明时 None 走 int(None)
+    → TypeError（用户实锤拖拽静默失效，栈见日志）。自绘标题栏的顶栏拖拽
+    （win-controls.js → pywebviewMoveWindow 特例 → 本 move）全靠它。
+    本仓库已有摘 pywebview 拦截的先例（_unhook_webview_intercept），同款
+    手法：类方法级替换 + 显式 argtypes + fail-safe（patch 不上不挡启动）。"""
+    try:
+        import ctypes as _ct
+        from webview.platforms import winforms as _wf
+        def move(self, x, y):
+            # 逻辑 px → 物理 px（原实现同式）；SWP_NOSIZE|NOZORDER|SHOWWINDOW
+            try:
+                u = _ct.windll.user32
+                u.SetWindowPos.argtypes = [_ct.c_void_p, _ct.c_void_p,
+                                           _ct.c_int, _ct.c_int,
+                                           _ct.c_int, _ct.c_int, _ct.c_uint]
+                u.SetWindowPos.restype = _ct.c_bool
+                scale = getattr(self, "_scale", 1)
+                xp = int(x * scale) if scale != 1 else int(x)
+                yp = int(y * scale) if scale != 1 else int(y)
+                u.SetWindowPos(self.Handle.ToInt64(), None, xp, yp, 0, 0,
+                               0x0001 | 0x0004 | 0x0040)
+            except Exception:
+                pass
+        _wf.BrowserView.BrowserForm.move = move
+    except Exception:
+        pass
 
 
 def _unhook_webview_intercept():
@@ -782,6 +1307,8 @@ def main():
     # 摘除 pywebview 全 URL 拦截（串口卡顿第一现场，见函数注释）——
     # 必须在 webview.start 之前：拦截器在窗口创建时注册
     _unhook_webview_intercept()
+    # 修 move() None 实参崩溃（自绘窗控顶栏拖拽的地基，见函数注释）
+    _patch_pywebview_move()
     # 优化 WebView2 启动：禁用 file url（我们用 HTTP）省浏览器参数；关默认菜单省 UI 初始化
     webview.settings["ALLOW_FILE_URLS"] = False
     webview.settings["SHOW_DEFAULT_MENUS"] = False
@@ -919,6 +1446,223 @@ def main():
                         _t.sleep(0.15)          # 等全屏退出布局完成再拉最大化
                         w.maximize()
                     w.focus()
+                except Exception:
+                    pass
+            threading.Thread(target=_do, daemon=True).start()
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    # ---- a59x 自绘窗控路由（zcode 复刻：页面三钮 + 顶栏拖拽的后端通道）----
+    # 命令语义与 zcode desktopCommandHandlers.ts 对齐：MinimizeWindow /
+    # ToggleMaximizeWindow（isMaximized 二态切）/ CloseWindow（走托盘语义链）。
+    @app.route("/api/window/minimize", methods=["POST"])
+    def _api_window_minimize():
+        w = getattr(main, "_win", None)
+        if w is not None:
+            def _do():
+                try:
+                    w.minimize()
+                except Exception:
+                    pass
+            threading.Thread(target=_do, daemon=True).start()
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    @app.route("/api/window/toggle_max", methods=["POST"])
+    def _api_window_toggle_max():
+        # zcode ToggleMaximizeWindow 同构：isMaximized → unmaximize，否则
+        # maximize。**架构铁律（py-spy 死锁实锤）**：一切 .NET Control 成员
+        # 调用（WindowState/Bounds/Invoke/Screen）必须打包进单个 GUI 线程
+        # 批次——后台线程直调 Control 成员=跨线程未定义行为（SendMessage
+        # 同步等 GUI、GUI 等 GIL 进 Python 回调，互等死锁，10 连 toggle 泄
+        # 漏 50+ 线程）。后台线程只做 Invoke 投递 + join 收口。
+        w = getattr(main, "_win", None)
+        out = {"ok": False, "max": False, "overhang": 0}
+        if w is not None:
+            _done = threading.Event()
+
+            def _do_gui():
+                try:
+                    import clr as _clr
+                    _clr.AddReference("System.Drawing")
+                    from System.Drawing import Rectangle as _Rect
+                    from System.Windows.Forms import FormWindowState, Screen as _Screen
+                    f = getattr(w, "native", None)
+                    if f is None:
+                        return
+                    if f.WindowState == FormWindowState.Maximized:
+                        # 自管还原（_fc_restore 注释）：先切 Normal 再写回
+                        # maximize 前记录的 bounds（钳到工作区内）
+                        f.WindowState = FormWindowState.Normal
+                        rb = _fc_restore["bounds"]
+                        if rb is not None:
+                            try:
+                                wa = _Screen.FromHandle(f.Handle).WorkingArea
+                                _nx = max(wa.Left, min(rb.X, wa.Right - max(rb.Width, 200)))
+                                _ny = max(wa.Top, min(rb.Y, wa.Bottom - max(rb.Height, 200)))
+                                f.Bounds = _Rect(_nx, _ny, min(rb.Width, wa.Width),
+                                                 min(rb.Height, wa.Height))
+                            except Exception:
+                                pass
+                        _set_edge_pad(w, _edge_border_phys_px(w))   # 还原边缘 resize 带
+                        out["max"] = False
+                    else:
+                        try:
+                            if f.WindowState != FormWindowState.Minimized:
+                                _fc_restore["bounds"] = f.Bounds   # 记录拖拽后的最新值
+                        except Exception:
+                            pass
+                        _pin_maximized_bounds(w)
+                        f.WindowState = FormWindowState.Maximized
+                        _set_edge_pad(w, 0)   # 最大化铺满（bounds 已钉 workarea 无越界）
+                        out["max"] = True
+                    out["ok"] = True
+                except Exception:
+                    pass
+                finally:
+                    _done.set()
+
+            try:
+                from System.Windows.Forms import MethodInvoker
+                f_native = getattr(w, "native", None)
+                if f_native is not None:
+                    f_native.Invoke(MethodInvoker(_do_gui))
+            except Exception:
+                pass
+            if not _done.is_set():
+                out["err"] = "timeout"
+        out["overhang"] = _maximize_overhang_css_px(w) if w is not None else 0
+        return ('{"ok": %s, "max": %s, "overhang": %s}' % (
+                    "true" if out["ok"] else "false",
+                    "true" if out["max"] else "false", out["overhang"]),
+                200, {"Content-Type": "application/json"})
+
+    @app.route("/api/window/state")
+    def _api_window_state():
+        # zcode GetDesktopWindowChromeState 同构：页面启动时拉初态
+        # （冷启最大化/重启恢复时事件可能早于页面就绪，拉取兜底）。
+        # 带 overhang（审计 P1：冷启最大化只回 max 不回补偿值 → is-max 置位
+        # 但 --wv-overhang 恒 0，顶/左/右裁 8px 且无后续事件不可自愈）。
+        w = getattr(main, "_win", None)
+        maxed = False
+        try:
+            from System.Windows.Forms import FormWindowState
+            f = getattr(w, "native", None) if w is not None else None
+            if f is not None:
+                maxed = f.WindowState == FormWindowState.Maximized
+        except Exception:
+            pass
+        over = _maximize_overhang_css_px(w) if w is not None else 0
+        return ('{"ok": true, "max": %s, "overhang": %s}' % (
+                    "true" if maxed else "false", over),
+                200, {"Content-Type": "application/json"})
+
+    # ---- a59x 边缘 resize（页面热区+自研，inset=0 白框终局方案的配套）----
+    # 主窗裸区方案（inset>0+主窗 NCHITTEST）与 WebView2 呈现有固有白框
+    # （试金石实验实锤：inset=0 白框消失）——命中改走页面热区：前端四边
+    # 热区 mousedown 报方向+鼠标，mousemove 报绝对坐标，后端 GUI 线程按
+    # 「起点 bounds+delta」绝对 SetWindowPos（幂等、丢帧无累积误差）。
+    _fc_resize = {"active": False, "edge": "", "mx": 0, "my": 0, "bounds": None}
+
+    @app.route("/api/window/resize_begin", methods=["POST"])
+    def _api_resize_begin():
+        from flask import request
+        d = request.get_json(force=True, silent=True) or {}
+        edge = str(d.get("edge") or "")
+        if edge not in ("n", "s", "e", "w", "ne", "nw", "se", "sw"):
+            return '{"ok": false}', 200, {"Content-Type": "application/json"}
+        w = getattr(main, "_win", None)
+        if w is None:
+            return '{"ok": false}', 200, {"Content-Type": "application/json"}
+
+        def _do():
+            try:
+                f = getattr(w, "native", None)
+                if f is None:
+                    return
+                _fc_resize.update(active=True, edge=edge,
+                                  mx=int(d.get("x") or 0), my=int(d.get("y") or 0),
+                                  bounds=f.Bounds)
+            except Exception:
+                _fc_resize["active"] = False
+        _invoke_gui(w, _do)
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    @app.route("/api/window/resize_move", methods=["POST"])
+    def _api_resize_move():
+        from flask import request
+        d = request.get_json(force=True, silent=True) or {}
+        if not _fc_resize["active"]:
+            return '{"ok": true}', 200, {"Content-Type": "application/json"}
+        w = getattr(main, "_win", None)
+        if w is None:
+            return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+        def _do():
+            try:
+                import clr as _clr
+                _clr.AddReference("System.Drawing")
+                from System.Drawing import Rectangle as _Rect
+                f = getattr(w, "native", None)
+                r = _fc_resize["bounds"]
+                if f is None or r is None:
+                    return
+                dx = (int(d.get("x") or 0) - _fc_resize["mx"])
+                dy = (int(d.get("y") or 0) - _fc_resize["my"])
+                try:
+                    scale = (f.DeviceDpi or 96) / 96.0
+                except Exception:
+                    scale = 1.0
+                dx = int(dx * scale)
+                dy = int(dy * scale)
+                e = _fc_resize["edge"]
+                nx, ny, nw, nh = r.X, r.Y, r.Width, r.Height
+                if "e" in e: nw = r.Width + dx
+                if "s" in e: nh = r.Height + dy
+                if "w" in e: nw = r.Width - dx; nx = r.X + dx
+                if "n" in e: nh = r.Height - dy; ny = r.Y + dy
+                # min_size 钳制（CSS 900×600 → 物理；拖左/上缘时保持对缘不动）
+                minw = int(900 * scale)
+                minh = int(600 * scale)
+                if nw < minw:
+                    if "w" in e: nx -= (minw - nw)
+                    nw = minw
+                if nh < minh:
+                    if "n" in e: ny -= (minh - nh)
+                    nh = minh
+                f.Bounds = _Rect(nx, ny, nw, nh)
+            except Exception as _e:
+                _fc_resize["err"] = repr(_e)   # 静默吞错的教训：NameError 卡死拖拽
+        _invoke_gui(w, _do)
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    @app.route("/api/window/resize_end", methods=["POST"])
+    def _api_resize_end():
+        _fc_resize["active"] = False
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    @app.route("/api/window/bg", methods=["POST"])
+    def _api_window_bg():
+        # Form 边缘带底色跟随页面主题（win-controls.js 监听 data-theme 上报
+        # body backgroundColor；NCCALCSIZE 清非客户区后露出的 Form 区域用页面
+        # 同色，视觉无缝，亮暗主题都不露馅）
+        from flask import request
+        c = str((request.get_json(force=True, silent=True) or {}).get("color") or "")
+        m = __import__("re").search(r"rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)", c)
+        if m:
+            w = getattr(main, "_win", None)
+            if w is not None:
+                _set_form_bg(w, int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    @app.route("/api/window/close", methods=["POST"])
+    def _api_window_close():
+        # 自绘 ✕ 与原生 X 同语义：destroy→Form.Close→closing 拦截链
+        # （close_to_tray 默认驻托盘）。_try_destroy 是托盘「退出」同款
+        # 通道（后台线程 + 兜底硬退），此处只走 destroy 不置真退标记。
+        w = getattr(main, "_win", None)
+        if w is not None:
+            def _do():
+                try:
+                    w.destroy()
                 except Exception:
                     pass
             threading.Thread(target=_do, daemon=True).start()
@@ -1439,6 +2183,45 @@ def main():
         threading.Thread(target=_quit_async, daemon=True).start()
 
     window.events.closing += on_closing
+
+    # ---- a59x 无题化 + 状态回推（zcode DesktopWindowChromeStateChanged 同构）----
+    # 单飞信号闸（终审 P3 补回）：evaluate_js 无超时，WebView2 尺寸剧变时
+    # EvaluateJavaScriptAsync 可能挂死（py-spy 实锤）——非阻塞抢闸失败即
+    # 跳过，卡死线程堆积上限 1，正确性由前端 state 拉取兜底
+    _hg_push_gate = threading.Semaphore(1)
+    _hg_last_state = {"max": None, "over": -1.0}
+    def _hg_push_win_state(maxed, force=False):
+        """最大化态变化推给页面：切 ▢/❐ 字形 + 最大化越界补偿值。
+        pywebview 事件回调在后台线程执行（Event.set 开线程），evaluate_js
+        内部 marshal 回 GUI——on_closing 注释里的 GUI 线程死锁坑在此不适用；
+        页面未就绪时求值失败静默（冷启最大化场景由 /api/window/state 拉取兜底）。"""
+        if not _hg_push_gate.acquire(blocking=False):
+            return   # 已有推送卡在 evaluate_js——跳过（state 拉取兜底）
+        try:
+            over = _maximize_overhang_css_px(window)
+            # 审计 P1（snap 保险）：Aero snap 半屏贴靠无 maximized/restored 事件
+            # ——resized/moved 也会调进来，值没变就跳过（拖拽时不逐帧刷 JS）
+            if not force and _hg_last_state["max"] == maxed \
+                    and abs(_hg_last_state["over"] - over) < 0.5:
+                return
+            _hg_last_state["max"] = maxed
+            _hg_last_state["over"] = over
+            window.evaluate_js(
+                "window._hgWinState&&window._hgWinState({max:%s,overhang:%s})"
+                % ("true" if maxed else "false", over))
+        except Exception:
+            pass
+        finally:
+            _hg_push_gate.release()
+
+    window.events.maximized += lambda: _hg_push_win_state(True)
+    window.events.restored += lambda: _hg_push_win_state(False)
+    # resized/moved 高频推送摘除（py-spy 实锤：每事件一线程，evaluate_js 卡死
+    # 堆积）——snap/移动场景改由前端 resize 防抖拉取 /api/window/state
+    # shown 后摘 WS_CAPTION（GUI 线程 Invoke 封送）；loaded 再补一刀幂等
+    # （shown 偶发不触发/句柄重建场景兜底——strip 幂等无副作用）
+    window.events.shown += lambda: _strip_window_caption(window)
+    window.events.loaded += lambda: _strip_window_caption(window)
 
     # 窗口加载完成后注册原生拖拽：pywebview 的 WebView2 后端能拿到文件绝对路径
     # （Chromium 标准 File.path 不暴露，但 pywebview 通过 CoreWebView2File.Path 获取，

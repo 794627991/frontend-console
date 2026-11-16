@@ -704,6 +704,57 @@ document.querySelectorAll('.sidebar-sheet-tab').forEach(tab => {
   };
 });
 
+// ============================================================
+// a59x 侧栏最小化（VSCode Activity Bar 语义，用户定调）：
+// « 收起为竖排图标条；图标条里点图标=展开到对应面板；底部 » =恢复上次
+// 面板（"点击一个按键之后恢复成现在状态"）；状态存 localStorage 跨启动。
+// ============================================================
+(function () {
+  const sb = document.getElementById('sidebar');
+  const exp = document.getElementById('sbExpand');
+  if (!sb || !exp) return;
+  const KEY = 'sidebar_mini';
+  let last = 'open';   // 收起时刻的活动面板（» 恢复目标）
+
+  function activeSheet() {
+    const t = document.querySelector('.sidebar-sheet-tab.active');
+    return t ? t.dataset.sheet : 'open';
+  }
+  function syncRail() {
+    const s = activeSheet();
+    document.querySelectorAll('.sidebar-rail .rail-btn[data-sheet]').forEach(b =>
+      b.classList.toggle('active', b.dataset.sheet === s));
+  }
+  function miniOn() {
+    last = activeSheet();
+    syncRail();
+    sb.classList.add('mini');
+    document.body.classList.add('sb-mini');   // 边缘手柄箭头翻转
+    try { localStorage.setItem(KEY, '1'); } catch (_) {}
+  }
+  function miniOff(sheet) {
+    sb.classList.remove('mini');
+    document.body.classList.remove('sb-mini');
+    try { localStorage.setItem(KEY, '0'); } catch (_) {}
+    if (sheet) {
+      const t = document.querySelector('.sidebar-sheet-tab[data-sheet="' + sheet + '"]');
+      if (t) t.click();   // 复用现有 sheet 切换（面板/徽标联动全保）
+    }
+  }
+  // 收放手柄（sidebar-resize.js 建，贴侧栏右缘垂直居中）→ CustomEvent 解耦；
+  // 双态：展开态点 = 收起，mini 态点 = 恢复上次面板
+  document.addEventListener('fc:sidebar-toggle', () => {
+    sb.classList.contains('mini') ? miniOff(last) : miniOn();
+  });
+  exp.addEventListener('click', () => miniOff(last));
+  document.querySelectorAll('.sidebar-rail .rail-btn[data-sheet]').forEach(b => {
+    b.addEventListener('click', () => miniOff(b.dataset.sheet));
+  });
+  // 启动恢复形态（a59x 用户令「默认左边栏收起」）：无记录或上次收起 →
+  // mini 图标条起步；仅当用户上次明确展开过（'0'）才展开起步
+  try { if (localStorage.getItem(KEY) !== '0') miniOn(); } catch (_) { miniOn(); }
+})();
+
 
 // ============================================================
 // 日志库
