@@ -84,6 +84,12 @@ class HarnessSession:
         self.busy = False
         self.busy_since = None   # 本轮处理计时起点 ms（busy 时有效，供前端恢复计时）
         self.bridge_fp = None    # 注入时的识图引导词指纹（send 前热更检测，见 start()）
+        # v4.2：本进程启动时注入的**网关配置指纹**（BASE_URL/TOKEN/模型映射/
+        # 窗口键）。env 是启动时快照——切 API 方案后活进程仍揣旧 token 打
+        # 新网关（401/405）、拿旧模型名（glm-* vs DeepSeek-*）打新网关
+        # （400 model not found）。send 前比对，变了就 kill+resume 换新配置。
+        # 随元数据落盘：进程被回收重建后仍能判出「这个进程启动时是哪套配置」
+        self._env_fp = None
         # a154：最近一次注入的 --append-system-prompt 字符数（容量卡分类
         # 估算用；start() 每次组装后落账）
         self.sys_prompt_chars = 0
@@ -193,8 +199,13 @@ class HarnessSession:
                 # 后队列不丢；gen 让 /rewind 后作废旧代条目的判定可跨重启
                 "inbox": _inbox,
                 "gen": _gen,
-                # v3.5.98：会话方案名随元数据落盘（GC/重启后拦截判定不失忆）
+                # v3.5.98：会话方案名随元数据落盘（GC/重启后标注不失忆）
                 "scheme": self.scheme,
+                # v4.2：进程启动时注入的网关配置指纹随元数据落盘——进程被
+                # 闲置回收/重启后重建的对象仍能判出「启动时是哪套配置」，
+                # 否则 _env_fp=None 会让热更判定失效（旧 token 打新网关）。
+                # 值只是 16 位 sha256 摘要，不含 token 明文（见 _live_config_fp）
+                "env_fp": self._env_fp or None,
                 # v3.5.154：大回合保活标记随元数据落盘——进程死亡（任务/回传
                 # 全丢）后，重启的新进程据此识别「上一回合的 turn_hold 未收尾」，
                 # 切回会话/重连订阅时补发 turn_complete 解前端挂死
@@ -343,6 +354,13 @@ class HarnessSession:
             env["MAX_THINKING_TOKENS"] = str(
                 {"low": 4096, "medium": 10240, "high": 20480, "max": 31999}[self.think])
         _trust_workspace(self.cwd)
+        # v4.2：记录本进程启动时注入的网关配置指纹（与 env 注入同源）。
+        # send 前与 settings.json 现值比对，变了就换新进程——否则切方案后
+        # 旧进程拿旧 token/旧模型名打新网关必 401/405/400。
+        try:
+            self._env_fp = _live_config_fp() or None
+        except Exception:
+            self._env_fp = None
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             self._proc = subprocess.Popen(
@@ -794,20 +812,15 @@ class HarnessSession:
         # too long（实测 267112 > 262144）——直接拦在发送前并给出路。
         # 3% 余量：prompt 除历史外还有 system/工具定义等固定开销。
         # /compact 后 _session_ctx_used 撞压缩边界归零，即可继续发。
-        # v3.5.98：跨方案拒发（用户需求「切了方案就不让发，新开会话」）——
-        # 会话创建时打的方案名与当前激活方案不一致 → 拒发。不同方案的
-        # 模型映射/上下文窗口完全不同，旧会话续发必错位。仅拦有标记且
-        # 不一致的（用户拍板：无标记的升级前旧会话放行）。
-        try:
-            from src.claude_default import active_scheme_name
-            cur_scheme = active_scheme_name()
-            if self.scheme and cur_scheme and self.scheme != cur_scheme:
-                return False, ("当前 API 方案是「%s」，本会话是「%s」方案创建的——"
-                               "模型映射与上下文窗口已随方案切换，旧会话续发会错位。"
-                               "请新建会话（历史消息仍可在列表中回看）"
-                               % (cur_scheme, self.scheme))
-        except Exception:
-            pass
+        # v4.2（用户拍板推翻 v3.5.98 的方案名硬拦）：跨方案不再无条件拒发，
+        # 改为**只按上下文容量判定**——智谱/lanzi 之间模型映射不兼容，但
+        # 「能不能继续」的物理依据只有一条：本会话已用 tokens 放不放得进
+        # **当前方案**的窗口。规则：
+        #   · 小窗会话 → 切大窗方案：永远放行（容量只增不减）；
+        #   · 大窗会话 → 切小窗方案：已用 ≤ 小窗安全线则放行，超了才拦；
+        #   · 判定用当前方案窗口现算，不信"会话创建时的方案名"（方案名
+        #     相同的两个方案窗口也可能不同；方案名不同的也可能一样大）。
+        # 老会话（升级前无 scheme 标记）同样只走容量判定，天然兼容。
         try:
             eff_model = self._eff_model()
             if eff_model and self.session_id:
@@ -815,7 +828,13 @@ class HarnessSession:
                 # v2.27.22：窗口走候选链（配置名后缀优先）——实报裸名无 [1M]
                 # 信息，单看它 1M 会话会被判成 256K 误拒（用户实锤）
                 mwin = _session_ctx_window(self)
-                if used and used >= int(mwin * 0.97):
+                # v4.2：跨方案判定用**当前方案**的窗口，不回落 last_result
+                # 实报（那是旧方案旧网关报的，切方案后不成立）
+                _lwin = live_ctx_window() or mwin
+                _cap = _scheme_capacity_block(self, used, _lwin, text)
+                if _cap:
+                    return False, _cap
+                if used and used >= int(_lwin * 0.97):
                     # v2.27.15：小助手自动续命（用户定调：超窗时自动重开会话
                     # 并映射旧链接，手机侧无感）。500K 历史塞不进 256K 窗口，
                     # headless 也无手动 /compact 入口——唯一出路是开新会话：
@@ -825,13 +844,15 @@ class HarnessSession:
                     # 静默换会话违背「我不同意方案A」的定调。
                     if self._is_remote_bot_session() and \
                             self._autorenew_on_overflow(text, image_paths, file_paths,
-                                                        used, mwin, eff_model):
+                                                        used, _lwin, eff_model):
                         return True, None
                     # v2.28.10：/compact 是超窗的解药，守卫必须放行——否则满窗
                     # 时唯一出口被自己锁死（用户实锤：手动压缩发不出去，红条
                     # 就是拒发语）。压缩后 _session_ctx_used 撞压缩边界归零。
                     # v2.28.11：爆死态（单轮巨量注入，如 Read 大图）连 /compact
                     # 都压不动（压缩请求自身超窗）——/rewind 回退是终极逃生门。
+                    # v4.2：容量判定已先进 _scheme_capacity_block，此处只在
+                    # 容量放行的前提下走原超窗出路（含 /compact 放行特判）
                     if not (text or "").lstrip().startswith("/compact"):
                         # a463：/rescue 首推——超窗救援丢中部最大回合（首回合
                         # 任务定义与最近内容保留），末回合被丢时自动重发指令
@@ -844,7 +865,7 @@ class HarnessSession:
                                        "（爆死态可能压不动），或新建会话"
                                        % (round(used / 1024),
                                           eff_model,
-                                          round(mwin / 1024)))
+                                          round(_lwin / 1024)))
         except Exception:
             pass   # 检测自身失败不拦发送（读不到用量时维持原行为）
         # v3.5.100（用户拍板「回合以我的消息为界」）：用户消息=大回合边界——
@@ -889,6 +910,45 @@ class HarnessSession:
                             self.kill_proc(quiet=True)
                             if not self.revive_if_dead():
                                 return False, "会话进程已退出（识图引导词已更新，请重发）"
+                except Exception:
+                    pass
+            # v4.2：网关配置指纹热更（切 API 方案的兜底）——env 是启动时注入
+            # 的，切方案后活进程仍揣旧 token/旧模型名。指纹变了就**先对齐
+            # 模型名**（旧网关私有名新网关不认，400 model not found）再
+            # kill+resume 换新配置，上下文与 session_id 全保留（与切模型同款）。
+            # 放在 base_url 自愈与 bridge_fp 之后：那两路已先重启过的进程指纹已新。
+            # _env_fp=None（升级前后的老会话物体/元数据缺字段）：无法比对，
+            # 补记当前指纹即可——因为老进程若真揣旧配置，模型名对齐会在
+            # 下一轮触发重启并重新落账；这里不做「无依据的强制重启」。
+            if self.alive:
+                try:
+                    _fp_now = _live_config_fp()
+                    if self._env_fp is None:
+                        self._env_fp = _fp_now or None
+                        self.sync_meta()
+                    elif _fp_now and _fp_now != self._env_fp:
+                        log.info("活配置已变（切方案/改设置），重启进程换新配置")
+                        _swapped = _reconcile_model_with_live(self)
+                        if _swapped:
+                            # 与 set_model 同款：新模型首条消息前置识图口径声明，
+                            # 并把切换写进对话流（用户须知情模型变了）
+                            self.emit({"kind": "model_switched",
+                                       "text": "%s → %s（随 API 方案切换）"
+                                               % (_swapped, self.model)})
+                        with self._start_lock:   # kill+revive 原子对
+                            self.kill_proc(quiet=True)
+                            if not self.revive_if_dead():
+                                return False, "会话进程已退出（API 配置已更新，请重发）"
+                        # v4.2：会话已在新方案下跑起来——把 scheme 更新为当前
+                        # 方案（前端「⇄旧方案」标记随之消失，标注不再误导）
+                        try:
+                            from src.claude_default import active_scheme_name
+                            _now = active_scheme_name() or None
+                            if _now and _now != self.scheme:
+                                self.scheme = _now
+                                self.sync_meta()
+                        except Exception:
+                            pass
                 except Exception:
                     pass
             # v2.37（P0+）派发前自愈：Task/SendMessage 派发前确保本形态角色
@@ -2077,6 +2137,130 @@ def _ctx_reported_window(s):
         return 0
 
 
+def _read_live_env():
+    """当前 settings.json 的 env 节（活配置真源：切方案后随之变化）。
+    读失败返回 {}——调用方按「未知」处理，不拦发送。"""
+    try:
+        p = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+        with open(p, "r", encoding="utf-8") as f:
+            env = (json.load(f) or {}).get("env") or {}
+        return env if isinstance(env, dict) else {}
+    except Exception:
+        return {}
+
+
+def live_ctx_window():
+    """**当前方案**的上下文窗口（tokens）。与 _session_ctx_window 的区别：
+    后者会回落会话 last_result 的网关实报（那是旧方案的旧网关报的，切方案
+    后不成立）；容量判定必须只看活配置，否则大窗方案下攒的 500K 会被旧
+    实报的 1M 判成「放得下」而打进 256K 的新网关。
+
+    取值：settings 的 MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW → 当前模型
+    映射里的 [1M] 后缀 → 兜底 256K。返回 0 = 完全未知（不参与判定）。"""
+    env = _read_live_env()
+    for key in ("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"):
+        v = str(env.get(key) or "").strip()
+        if v.isdigit() and int(v) > 0:
+            return int(v)
+    for k in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+              "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+              "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FLASH_MODEL"):
+        n = str(env.get(k) or "").lower()
+        if "[1m]" in n or n.endswith("1m"):
+            return _CTX_WINDOW_1M
+    return _CTX_WINDOW_DEFAULT
+
+
+def _live_config_fp():
+    """活配置指纹：决定 claude 进程 env 的键集合（网关/token/模型映射/
+    窗口）。env 是启动时注入的，切方案或手改设置后指纹变 → 活进程揣着
+    旧 token 打新网关必 401/405，必须静默重启续上下文。返回 "" 表示读不到
+    （不触发重启）。
+
+    **只返回 16 位 hex 摘要，不含任何明文**：本值随元数据落盘
+    （claude_harness.json 每个会话一份），若直接存 AUTH_TOKEN 等于把凭据
+    抄进另一个文件。sha256 足以判断"配置有没有变"，且不可逆。"""
+    env = _read_live_env()
+    if not env:
+        return ""
+    keys = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FLASH_MODEL",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW")
+    raw = "\x1f".join("%s=%s" % (k, env.get(k) or "") for k in keys)
+    try:
+        import hashlib
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return ""
+
+
+def _scheme_capacity_block(s, used, cur_win, text=""):
+    """跨方案发送的**唯一**拦截依据：已用上下文放不进当前窗口才拦。
+
+    v4.2（用户拍板）：智谱 / lanzi 模型映射不兼容是事实，但"能不能继续"
+    的物理判据只有容量——旧规则按方案名硬拒导致"小窗切大窗也被拦"。
+    规则：
+      · used <=0（读不到用量）→ 放行（fail-open，不能因探测失败锁死会话）；
+      · cur_win <=0（读不到当前窗口）→ 放行；
+      · `/compact` 无条件放行——它是超窗唯一出口，拦了就把会话锁死；
+      · used + 固定开销 <= 当前窗口安全线 → 放行（小→大、大→小皆然）；
+      · 否则 → 拦截并给出该方案下的具体出路（/compact / /rescue / 换大窗
+        方案 / 新建会话）。
+    固定开销（system + 工具 schema）按窗口 3% 估，与既有超窗守卫同口径。
+    返回拦截文案或 None。"""
+    try:
+        used = int(used or 0)
+        cur_win = int(cur_win or 0)
+    except Exception:
+        return None
+    if used <= 0 or cur_win <= 0:
+        return None
+    if (text or "").lstrip().startswith("/compact"):
+        return None
+    if used < int(cur_win * 0.97):
+        return None
+    try:
+        from src.claude_default import active_scheme_name
+        cur = active_scheme_name() or "当前"
+    except Exception:
+        cur = "当前"
+    old = getattr(s, "scheme", None) or "未标记"
+    return ("本会话已用上下文约 %dK tokens，放不进「%s」方案的 %dK 窗口"
+            "（本会话创建于「%s」方案）。可：/compact 压缩后继续、"
+            "/rescue 裁剪中部大回合、切回大窗口方案、或新建会话"
+            "（历史消息仍可在列表中回看）"
+            % (round(used / 1024), cur, round(cur_win / 1024), old))
+
+
+def _reconcile_model_with_live(s):
+    """切方案后把会话模型对齐到**当前方案**的模型映射。
+
+    模型名是各网关私有的（智谱 glm-* / lanzi DeepSeek-*），切方案后旧名
+    新网关不认（400 model not found），与容量无关——名字对不上就会失败。
+    规则：
+      · 当前方案有模型列表，且 self.model 不在其中 → 换成本方案默认模型；
+      · 列表为空（settings 读不到）或 self.model 为空 → 不动（fail-open；
+        空 model 时 CLI 本就用 settings 默认）；
+      · 已在列表内 → 不动（同名模型跨网关可用，不该被无谓切换）。
+    返回切换前的旧模型名（发生了切换）或 None。调用方负责发事件告知用户。"""
+    try:
+        am = available_models()
+        models = list(am.get("models") or [])
+        default = am.get("default")
+        cur = s.model
+        if not models or not cur or cur in models or not default:
+            return None
+        s.model = default
+        s.live_model = None        # 旧实报随模型切换作废
+        s.last_result = None       # 旧窗口/用量口径作废（容量判定不沿用旧网关实报）
+        log.info("跨方案兼容：模型 %s 不在当前方案映射内，回落 %s", cur, default)
+        return cur
+    except Exception:
+        return None
+
+
 def _session_ctx_used(s):
     """会话已用上下文 tokens（/ctx 与 set_model 窗口预检共用）。
     取值顺序：jsonl 尾部倒扫最新非零 usage（跳过子代理行；撞压缩边界
@@ -2141,12 +2325,20 @@ def _session_ctx_used(s):
     # 判坏阈值必须用「模型真实能力」而非 settings 压缩线：settings 调小后
     #（如 500K 而模型 1M）落在 (settings, 实报] 的合法用量会被误判成坏数据
     # → 前端见 used=0 直接 return，环冻结在旧读数。故取两者较大者。
-    try:
-        _w = max(_session_ctx_window(s), _ctx_reported_window(s))
-        if _w and used > _w:
-            used = 0
-    except Exception:
-        pass
+    # v4.2：跨方案后 used 可能**合法地**超过当前方案窗口（大窗会话切小窗）
+    # ——那是必须被容量判定拦下的真实值，绝不能当坏数据归零（归零=放行
+    # → 打进小窗网关 400）。故：
+    #   · jsonl 真值（found）：一律保留，超窗就是超窗，交给
+    #     _scheme_capacity_block 拦；
+    #   · last_result 兜底（!found）：累计口径嫌疑，超窗判坏归零（a255 原意），
+    #     阈值用“模型真实能力”=当前方案窗口与实报取大，避免误杀合法值。
+    if not found:
+        try:
+            _w = max(live_ctx_window() or 0, _ctx_reported_window(s) or 0)
+            if _w and used > _w:
+                used = 0
+        except Exception:
+            pass
     return used, window, compacted
 
 # ---- from claude_harness.py:2901 (_CTX_WINDOW_1M) ----

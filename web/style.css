@@ -1615,25 +1615,15 @@
     display: flex; flex-direction: column;
     transition: width 0.3s;
   }
-  .ai-panel.collapsed { width: 30px; }
-  /* 折叠态：隐藏所有内容，只留长方形把手（不再露出裁切的一截标签页） */
+  /* 折叠态：宽度归 0、边框撤掉——完全不占横向空间（用户定调「一点空间不占」），
+     展开入口移到标签栏右上角的图标按钮（#aiPanelBtn）。
+     min-width:0 必写：flex item 的 min-width:auto 会按内容最小宽撑开，
+     子元素虽已 display:none，显式归零才在异常 DOM 下也保 0 宽 */
+  .ai-panel.collapsed { width: 0; min-width: 0; border-left: none; overflow: hidden; }
   .ai-panel.collapsed .panel-body, .ai-panel.collapsed .ai-head-detail,
   .ai-panel.collapsed #aiToggle, .ai-panel.collapsed .ai-head,
   .ai-panel.collapsed .panel-toolbar, .ai-panel.collapsed .panel-tabs { display: none; }
-  /* 长条把手：默认隐藏，折叠态出现。无边框融入背景、竖排长条、只有 ‹ 箭头
-     （去掉「工具」二字；不再用 writing-mode——它会把 ‹ 旋转 90° 看起来像 ^） */
-  .ai-rail-handle {
-    display: none; position: absolute; left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
-    padding: 28px 0; width: 100%;
-    font-size: 16px; font-weight: 600;
-    background: var(--bg-card); color: var(--muted);
-    border: none; cursor: pointer; white-space: nowrap; transition: all 0.2s;
-  }
-  .ai-rail-handle:hover { color: var(--accent); }
-  .ai-panel.collapsed .ai-rail-handle { display: block; }
-  /* 折叠态去掉面板左边缘线：只剩窄条把手，不留边框痕迹 */
-  .ai-panel.collapsed { border-left: none; }
+  /* 旧折叠把手已废弃：展开入口移到标签栏右上角 #aiPanelBtn */
   .ai-head .ai-icon { cursor: pointer; transition: transform 0.2s; }
   .ai-head .ai-icon:hover { transform: scale(1.12); }
   .ai-head {

@@ -1218,7 +1218,7 @@ def harness_sessions():
                       "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
                       "created": m.get("created", 0), "last_active": last_active,
                       "alive": alive, "busy": busy, "busy_since": busy_since,
-                      "scheme": m.get("scheme") or ""})   # v3.5.98：会话方案名（前端标注）
+                      "scheme": m.get("scheme") or ""})   # 会话**最近一次运行**的方案名（前端标注用；v4.2 起非拦截依据）
     items.sort(key=lambda x: -x["last_active"])
     _cur_scheme = ""
     try:

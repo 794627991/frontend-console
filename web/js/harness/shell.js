@@ -50,6 +50,8 @@ function _hgPanelMode(on) {
   const p = document.getElementById('aiPanel');
   if (!p) return;
   p.classList.toggle('hg-hide', !!on);
+  // a444：折叠态展开按钮（标签栏右上角）跟着一起藏/显
+  if (typeof window._aiPanelSyncBtn === 'function') window._aiPanelSyncBtn();
 }
 
 function _harnessClose(portId) {

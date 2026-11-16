@@ -145,16 +145,37 @@ $('replaySeek').onchange = async function() {
 // ============================================================
 // 右侧工具面板（搜索 / 感知 / 分析 / 命令）
 // ============================================================
+// a444：折叠态改为「面板 0 宽 + 标签栏右上角图标按钮」——完全让出横向空间。
+// 展开入口 = #aiPanelBtn（折叠时显示）；折叠入口 = 面板头部的 › 按钮。
+function _aiPanelSyncBtn() {
+  const p = $('aiPanel'), b = $('aiPanelBtn');
+  if (!p || !b) return;
+  const col = p.classList.contains('collapsed');
+  // 折叠且面板真在显示（harness tab 激活时 .hg-hide 整体隐藏，按钮也该藏）
+  b.style.display = (col && !p.classList.contains('hg-hide')) ? '' : 'none';
+}
+// 面板宽度是 flex 项实宽变化，不会触发 window resize——xterm/日志/搜索分栏
+// 都只监听 window resize，必须手动补一脚，否则折叠后终端仍按旧列宽换行。
+function _aiPanelRefit() {
+  const fire = () => { try { window.dispatchEvent(new Event('resize')); } catch (_) {} };
+  requestAnimationFrame(fire);        // 过渡起点先适配一次
+  setTimeout(fire, 340);              // 过渡（width .3s）结束后按最终宽度再适配
+}
 $('aiToggle').onclick = () => {
   const p = $('aiPanel');
   p.classList.toggle('collapsed');
   $('aiToggle').textContent = p.classList.contains('collapsed') ? '‹' : '›';
+  _aiPanelSyncBtn();
+  _aiPanelRefit();
 };
-// 折叠把手：点击展开（折叠态唯一入口）
-$('aiRailHandle').onclick = () => {
+// 标签栏图标：点击展开面板
+$('aiPanelBtn').onclick = e => {
+  e.stopPropagation();
   const p = $('aiPanel');
   p.classList.remove('collapsed');
   $('aiToggle').textContent = '›';
+  _aiPanelSyncBtn();
+  _aiPanelRefit();
 };
 // 折叠后点击图标重新展开
 $('aiPanel').querySelector('.ai-icon').addEventListener('click', () => {
@@ -162,8 +183,12 @@ $('aiPanel').querySelector('.ai-icon').addEventListener('click', () => {
   if (p.classList.contains('collapsed')) {
     p.classList.remove('collapsed');
     $('aiToggle').textContent = '›';
+    _aiPanelSyncBtn();
+    _aiPanelRefit();
   }
 });
+_aiPanelSyncBtn();
+window._aiPanelSyncBtn = _aiPanelSyncBtn;   // harness 隐藏/显示面板时同步按钮
 
 // ---- 标签页切换 ----
 document.querySelectorAll('.panel-tab').forEach(tab => {
