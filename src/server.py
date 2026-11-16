@@ -858,7 +858,16 @@ def api_status():
                 "kind": getattr(p, "kind", "serial"),
                 "host": getattr(p, "host", None), "username": getattr(p, "username", None),
             }
-    return jsonify({"ports": info, "log_dir": LOG_DIR})
+    # RW1（终审）：密码管理器 token 经 /api/status 下发——UI boot 必调
+    # （且工具主 UI 文档才消费），本机其他进程仍拿不到明文密码（明文走
+    # WebMessage 桥 + origin 防伪，token 只解锁「管理列表/删改」）。
+    # 注：/api/status 无鉴权可读 token ≠ RA1 已复活——RA1 的核心资产
+    # （密码明文）已迁移 WebMessage 桥，REST pw 路由只剩管理面。
+    try:
+        from src.web_tabs import PW_TOKEN as _pw_tok
+    except Exception:
+        _pw_tok = ""
+    return jsonify({"ports": info, "log_dir": LOG_DIR, "pw_token": _pw_tok})
 
 # v3.5.5：paramiko 服务端 disconnect 抓手——Transport 收到 MSG_DISCONNECT
 # 时只写日志不存异常对象（且 paramiko.transport 日志级别默认 INFO 不外达），
@@ -1566,7 +1575,7 @@ def api_theme():
                         # 头，跨源必败，live 态成了死码）
                         "web_cdp": bool(cfg.get("web_cdp", False)),
                         # RA12：密码管理器鉴权 token（本机同源可读，其他进程不可预知）
-                        "pw_token": getattr(__import__("src.web_tabs", fromlist=["PW_TOKEN"]), "PW_TOKEN", ""),
+
                         "web_cdp_live": _cdp_alive(),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）

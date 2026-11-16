@@ -213,9 +213,16 @@ def _pw_del_defer(origin, user):
                 lst.append(item)
             # RA5：原子写（临时文件 + os.replace），防截断丢全部记录
             tmp = p + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(lst, f, ensure_ascii=False)
-            os.replace(tmp, p)
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(lst, f, ensure_ascii=False)
+                os.replace(tmp, p)   # RC9：原子替换（失败残留 .tmp 由 except 清）
+            except Exception:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+                raise
             return False    # 已挂起，退出后生效
         except Exception as e:
             _log("WARN", "pw_del_defer: %r" % e)
@@ -256,8 +263,12 @@ def _pw_del_flush():
             else:
                 o, u = it, None
             try:
-                if u is None:
-                    cur.execute("DELETE FROM logins WHERE origin_url=?", (o,))
+                if u is None or u == "":
+                    # RW8（终审）：空串 user 与 NULL 行等价（登录页无用户名
+                    # 时 Chromium 存 NULL）——两者都删，否则复核永真滞留
+                    cur.execute("DELETE FROM logins WHERE origin_url=? AND "
+                                "(username_value IS NULL OR username_value='')",
+                                (o,))
                 else:
                     cur.execute("DELETE FROM logins WHERE origin_url=? AND "
                                 "username_value=?", (o, u))
@@ -265,23 +276,35 @@ def _pw_del_flush():
                 pass
         con.commit()
         con.close()
-        # RA15：删后复核——任一条仍存在则保留挂起文件（下次重试）
+        # RA15/RW4（终审）：删后复核——复核自身失败（锁库）也保留挂起，
+        # 绝不 os.remove 假成功；上次版本复核 except 吞掉后照删=假成功
+        # 实测（14.65s 锁等待、pending 消失、行未删）。
+        remain = -1   # -1=复核未完成（保留挂起，下次重试）
         try:
-            con2 = sqlite3.connect(dbp)
+            con2 = sqlite3.connect(dbp, timeout=0.3)
             remain = 0
             for it in lst:
                 o, u = (it if isinstance(it, list) and len(it) == 2 else (it, None))
-                row = con2.execute(
-                    "SELECT 1 FROM logins WHERE origin_url=? AND "
-                    "(?='' OR username_value=?)", (o, u or "", u or "")).fetchone()
+                if u is None or u == "":
+                    row = con2.execute(
+                        "SELECT 1 FROM logins WHERE origin_url=? AND "
+                        "(username_value IS NULL OR username_value='')",
+                        (o,)).fetchone()
+                else:
+                    row = con2.execute(
+                        "SELECT 1 FROM logins WHERE origin_url=? AND "
+                        "username_value=?", (o, u)).fetchone()
                 if row:
                     remain += 1
             con2.close()
-            if remain:
-                _log("WARN", "pw_del_flush: %d 条未删净——挂起保留" % remain)
-                return
         except Exception:
-            pass
+            remain = -1
+        if remain > 0:
+            _log("WARN", "pw_del_flush: %d 条未删净——挂起保留" % remain)
+            return
+        if remain == -1:
+            _log("WARN", "pw_del_flush: 复核失败——挂起保留待重试")
+            return
         os.remove(p)
         _log("INFO", "pw_del_flush: %d 条已删" % len(lst))
     except Exception as e:
@@ -1020,6 +1043,9 @@ class WebTabs:
         才归零会话水位——零命中（迟到的他人纪元 beacon 漏网时）不得把
         现存 UI 的 seq/显隐意图打掉。"""
         n = 0
+        # RB7-1（终审真修）：双扫——第一扫与 _pending 取消之间可能有
+        # _build 完成（EnsureCoreWebView2Async 就绪链在 UI 线程交错），
+        # 二扫收尾漏网控件
         for tid in list(self._ctl.keys()):
             if epoch is None or self._epochs.get(tid) == epoch:
                 self.dispose(tid)
@@ -1031,6 +1057,11 @@ class WebTabs:
             self._pend_nav.pop(tid, None)
             self._epochs.pop(tid, None)
             n += 1
+        # RB7-1：二扫——第一扫后到此刻之间完成的 _build（控件已入 _ctl）
+        for tid in list(self._ctl.keys()):
+            if epoch is None or self._epochs.get(tid) == epoch:
+                self.dispose(tid)
+                n += 1
         if n or epoch is None:
             self.reset_session()
         return {"ok": True, "recycled": n}

@@ -631,7 +631,7 @@ window.__webTabTitle = function (tid, title) {
   // 用户令：后台回收（休眠→about:blank）不得把网页名刷成空白——
   // 空/空白标题（about:blank 阶段推送）直接忽略，保留最后真实标题
   var t = String(title || '').trim();
-  if (c && t && t !== 'about:blank' && t !== 'about:blank') _webSetLabel(c, title);
+  if (c && t && t !== 'about:blank') _webSetLabel(c, title);
 };
 // 控件内 window.open / target=_blank → 本面板内导航
 // 控件导航开始/完成 → 加载指示（刷新转圈+地址栏呼吸，a553 找回）
