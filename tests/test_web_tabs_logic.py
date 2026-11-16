@@ -401,10 +401,8 @@ def test_anti_autosignin_injected(stub_clr):
     t = _mk('sync')
     t.create('t1', 'https://a/')
     ctl = t._ctl['t1']
-    assert len(ctl.cvw.injected) == 2
+    assert len(ctl.cvw.injected) == 1
     assert "input[type=password]" in ctl.cvw.injected[0]
-    # R9.18：第二个注入 = 密码自动填充 loader（base64 混编码，只验版本戳）
-    assert 'fcPwAutoV' in ctl.cvw.injected[1]
     assert ctl.cvw.Profile.PasswordAutofillEnabled is True
     assert ctl.cvw.Profile.GeneralAutofillEnabled is True
 

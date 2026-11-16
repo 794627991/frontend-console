@@ -273,7 +273,6 @@ function buildWebPanelTab(url, opts) {
         <input class="web-url" data-web-input spellcheck="false" autocomplete="off"
                placeholder="输入网址，回车打开">
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">${ICO16.star}</button>
-        <button class="btn ghost icon-btn" data-web="pw" title="密码助手：填入 / 保存 / 删除本站密码">${ICO16.key}</button>
         <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">${ICO16.book} 阅读</button>
         <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框——需登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
         <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">${ICO16.openExt} 浏览器</button>
@@ -1012,7 +1011,6 @@ function _webAct(act, wrap) {
     _webSyncUI(c);
     return;
   }
-  if (act === 'pw' && c) { _webPwMenu(c); return; }
   if (act === 'claude' && url) {
     const btn = c.wrap.querySelector('[data-web="claude"]');
     btn.disabled = true;
@@ -1117,78 +1115,6 @@ document.addEventListener('keydown', (e) => {
   const fav = document.getElementById('tabFavBtn');
   if (fav) fav.onclick = (e) => { e.stopPropagation(); _webFavMenu(fav); };
 })();
-
-// 密码助手菜单（R9.16 配套手动兜底）：填入/保存/删除——自动填充为主，
-// 此菜单为手动覆盖通道（自动填错时改密码、清除存档）
-function _webPwMenu(c) {
-  const old = document.getElementById('webPwMenu');
-  if (old) { old.remove(); return; }
-  const origin = (() => {
-    const u = (c._ctlUrl || (c._nav && c._nav.stack && c._nav.stack[c._nav.idx]) || '');
-    try { const x = new URL(u); return x.origin; } catch (_) { return ''; }
-  })();
-  if (!origin || !/^https?:/.test(origin)) {
-    showBanner('当前 tab 无站点地址', 2500, true);
-    return;
-  }
-  const anchor = c.wrap.querySelector('[data-web="pw"]');
-  const menu = document.createElement('div');
-  menu.id = 'webPwMenu';
-  menu.className = 'web-fav-menu';
-  menu.innerHTML = '<div class="web-fav-title">密码助手 · ' + esc(origin) + '</div>'
-    + '<div class="web-fav-item" data-pw-fill>' + ICO16.key + ' 填入已存密码</div>'
-    + '<div class="web-fav-item" data-pw-save>' + ICO16.save + ' 手动保存 / 覆盖</div>'
-    + '<div class="web-fav-item" data-pw-del style="color:var(--neon-red,#e5484d)">'
-    + ICO16.trash + ' 删除已存密码</div>';
-  document.body.appendChild(menu);
-  const r = anchor.getBoundingClientRect();
-  menu.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
-  const topUp = r.top - menu.offsetHeight - 6;
-  menu.style.top = (topUp >= 8 ? topUp : Math.min(r.bottom + 6,
-    Math.max(8, window.innerHeight - menu.offsetHeight - 8))) + 'px';
-  const close = (ev) => {
-    if (!menu.contains(ev.target) && !(anchor && anchor.contains(ev.target))) {
-      menu.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 0);
-  const act = (body) => fetch('/api/web/tabs', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(Object.assign({ tab: c._tabId, origin }, body))
-  }).then(x => x.json()).catch(() => ({ ok: false }));
-  menu.addEventListener('click', (e) => {
-    const fill = e.target.closest('[data-pw-fill]');
-    if (fill) {
-      e.stopPropagation();
-      act({ act: 'pw_fill' }).then(j => {
-        showBanner(j && j.ok ? '已填入（检查后提交）' : '本站没有存档', 2500, !(j && j.ok));
-        if (j && j.ok) menu.remove();
-      });
-      return;
-    }
-    if (e.target.closest('[data-pw-save]')) {
-      e.stopPropagation();
-      const u = prompt('用户名（可空）：', '');
-      if (u === null) return;
-      const pw = prompt('密码：', '');
-      if (!pw) return;
-      act({ act: 'pw_save', user: u, password: pw }).then(j => {
-        showBanner(j && j.ok ? '已保存' : '保存失败：' + ((j && j.err) || '未知'), 2500, !(j && j.ok));
-        if (j && j.ok) menu.remove();
-      });
-      return;
-    }
-    if (e.target.closest('[data-pw-del]')) {
-      e.stopPropagation();
-      act({ act: 'pw_del' }).then(() => {
-        showBanner('已删除本站存档', 2000);
-        menu.remove();
-      });
-      return;
-    }
-  });
-}
 
 function _webFavMenu(anchor) {
   const old = document.getElementById('webFavMenu');
