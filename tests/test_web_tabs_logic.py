@@ -242,6 +242,7 @@ def stub_clr(monkeypatch):
 
 
 def _mk(mode='sync'):
+    from src import web_tabs as wt
     from src.web_tabs import WebTabs
 
     class _T(WebTabs):
@@ -250,6 +251,9 @@ def _mk(mode='sync'):
 
     t = _T(FakeForm(mode))
     t._env = object()
+    # RB8 后语义：shutdown 会把模块级 _tabs 置 None（退出后拒绝一切）——
+    # 测试进程内同语义：_mk 装配新实例即更新模块引用（与 install 等价）
+    wt._tabs = t
     return t
 
 
@@ -448,12 +452,18 @@ def test_route_chain_complete(stub_clr):
                     "on": True, "sq": 1, "all": False,
                     "x": 0, "y": 0, "w": 100, "h": 100, "epoch": "",
                     "origin": "https://a/", "user": ""}   # pw_* 需带 origin
-            # RA1：pw_* 强鉴权要求同源 Origin——test_client 默认无 Origin
-            r = client.post("/api/web/tabs", json=body,
-                            headers={"Origin": "http://localhost"})
+            # RA1/RA12：pw_* 双因子鉴权——同源 Origin + 启动期 token
+            r = client.post("/api/web/tabs", json=body, headers={
+                "Origin": "http://localhost",
+                "X-FC-Token": __import__("src.web_tabs",
+                                         fromlist=["PW_TOKEN"]).PW_TOKEN})
             j = r.get_json()
             assert r.status_code == 200, (act, r.status_code, j)
             assert j.get("err") != "bad act", (act, j)
+        # 反向钉 RA1：错误 token 必 403（鉴权活着）
+        r = client.post("/api/web/tabs", json={"act": "pw_list", "tab": "t1"},
+                        headers={"X-FC-Token": "wrong", "Origin": "http://localhost"})
+        assert r.status_code == 403, (r.status_code, r.get_json())
         # 反向钉：未知 act 必须报 bad act（兜底行必须在）
         r = client.post("/api/web/tabs", json={"act": "__nope__", "tab": "t1"})
         assert r.status_code == 200 and r.get_json().get("err") == "bad act"

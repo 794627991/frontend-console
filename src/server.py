@@ -1416,8 +1416,8 @@ def _web_favs_clean(items):
             continue
         try:
             ts = int(it.get("ts") or 0)
-        except (TypeError, ValueError):
-            ts = 0   # RC3：畸形 ts 落 0，不再 500
+        except (TypeError, ValueError, OverflowError):
+            ts = 0   # RC3/RC6（红队复验）：畸形/inf 落 0，不再 500
         entry = {"url": url,
                  "title": str(it.get("title") or "").strip()[:200],
                  "ts": ts}
@@ -1565,6 +1565,8 @@ def api_theme():
                         # 127.0.0.1:9222 被 CORS 拒——/json/version 无 ACAO
                         # 头，跨源必败，live 态成了死码）
                         "web_cdp": bool(cfg.get("web_cdp", False)),
+                        # RA12：密码管理器鉴权 token（本机同源可读，其他进程不可预知）
+                        "pw_token": getattr(__import__("src.web_tabs", fromlist=["PW_TOKEN"]), "PW_TOKEN", ""),
                         "web_cdp_live": _cdp_alive(),
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
@@ -1628,8 +1630,8 @@ def api_theme():
         # a563：TFTP 面板高度持久化（int + 60..4000 钳制，防 config 膨胀）
         try:
             _h = int(data["tftp_pane_h"])
-        except (TypeError, ValueError):
-            _h = 0
+        except (TypeError, ValueError, OverflowError):
+            _h = 0   # RC7（红队复验）：inf/超大值不再 500
         with _theme_fields_lock:
             _save_config({**_load_config(),
                           "tftp_pane_h": max(0, min(4000, _h))})

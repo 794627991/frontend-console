@@ -1120,6 +1120,7 @@ document.addEventListener('keydown', (e) => {
   if (fav) fav.onclick = (e) => { e.stopPropagation(); _webFavMenu(fav); };
 })();
 
+let __fcPwToken = '';   // RA12：密码管理器鉴权 token（boot 后经 /api/status 取得）
 // ---- a583 密码管理器：列出原生密码库（Chromium Login Data）已存站点，
 // 支持显示明文（后端三层解密）与删除（库锁定时挂起、退出后生效） ----
 function _webPwMgr() {
@@ -1146,10 +1147,19 @@ function _webPwMgr() {
     }
   };
   setTimeout(() => document.addEventListener('click', close, true), 0);
-  const api = (body) => fetch('/api/web/tabs', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }).then(r => r.json()).catch(() => ({ ok: false }));
+  if (!__fcPwToken) {
+    fetch('/api/status').then(r => r.json()).then(j => {
+      if (j && j.pw_token) __fcPwToken = j.pw_token;
+    }).catch(() => {});
+  }
+  const api = (body) => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (__fcPwToken) headers['X-FC-Token'] = __fcPwToken;   // RA12：密码端点鉴权
+    return fetch('/api/web/tabs', {
+      method: 'POST', headers,
+      body: JSON.stringify(body)
+    }).then(r => r.json()).catch(() => ({ ok: false }));
+  };
   const render = (items) => {
     menu.innerHTML = '<div class="web-fav-title">密码管理' +
       (items.length ? ' · ' + items.length + ' 个站点' : '') + '</div>' +
@@ -1184,7 +1194,7 @@ function _webPwMgr() {
         e.stopPropagation();
         const it = cur[+dl.dataset.pwDel];
         if (!confirm('删除 ' + (it.origin || '') + ' 的已存密码？')) return;
-        api({ act: 'pw_del', origin: it.origin }).then(j => {
+        api({ act: 'pw_del', origin: it.origin, user: it.user }).then(j => {
           if (j && j.ok) {
             showBanner(j.immediate ? '已删除' : '已标记删除——完全退出工具后生效（密码库运行中被浏览器锁定）', 3500, !j.immediate);
             if (j.immediate) render(cur.filter(x => x !== it), true);

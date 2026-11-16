@@ -177,6 +177,7 @@ def _pw_del_defer(origin, user):
     RA4：user=None 删全部（兼容），否则按 origin+user 精确。
     RA5：挂起文件读-改-写全程持锁 + 临时文件原子替换。"""
     import json, os, sqlite3, tempfile
+    con = None
     try:
         con = sqlite3.connect(_pwdb_path(), timeout=0.3)
         if user is None:
@@ -185,10 +186,17 @@ def _pw_del_defer(origin, user):
             con.execute("DELETE FROM logins WHERE origin_url=? AND "
                         "username_value=?", (origin, user))
         con.commit()
-        con.close()
         return True     # 库恰好空闲（无网页 tab）——立即生效
     except Exception:
         pass
+    finally:
+        # RA18（红队复验）：连接必须关闭——滞留句柄锁真实库（实测
+        # PermissionError 需 GC 才释放）
+        try:
+            if con is not None:
+                con.close()
+        except Exception:
+            pass
     with _pw_del_lock:
         try:
             p = _pw_pending_file()
@@ -215,37 +223,76 @@ def _pw_del_defer(origin, user):
 
 
 def _pw_del_flush():
-    """退出流程调用（浏览器进程已停、库解锁）：执行挂起的删除。"""
+    """退出流程调用（浏览器进程已停、库解锁）：执行挂起的删除。
+    RA15（红队复验）：验证删除确实生效才删挂起文件——库缺失/0 字节假库/
+    语句失败时保留挂起文件（下次退出重试），绝不假成功。损坏文件重建时
+    WARN（RA16 同源）。"""
     import json, os, sqlite3
     p = _pw_pending_file()
     if not os.path.exists(p):
         return
     try:
         lst = json.load(open(p, encoding="utf-8")) or []
-    except Exception:
+    except Exception as e:
+        _log("WARN", "pw_del_flush 挂起文件损坏，已放弃: %r" % e)
+        return
+    if not lst:
+        try:
+            os.remove(p)   # 空挂起（历史遗留）清理
+        except Exception:
+            pass
+        return
+    dbp = _pwdb_path()
+    if not os.path.exists(dbp) or os.path.getsize(dbp) == 0:
+        # RA15：库缺失/0字节（上次异常退出造出的假库）——保留挂起，不造假
+        _log("WARN", "pw_del_flush: 密码库缺失或空——挂起保留待下次退出重试")
         return
     try:
-        con = sqlite3.connect(_pwdb_path())
+        con = sqlite3.connect(dbp)
+        cur = con.cursor()
         for it in lst:
-            # RA4：二元组 [origin, user] 精确删；旧格式字符串按全 origin（兼容）
             if isinstance(it, list) and len(it) == 2:
-                o, u = it
+                o, u = it   # RA4：二元组 [origin, user] 精确删；旧格式字符串按全 origin（兼容）
             else:
                 o, u = it, None
             try:
                 if u is None:
-                    con.execute("DELETE FROM logins WHERE origin_url=?", (o,))
+                    cur.execute("DELETE FROM logins WHERE origin_url=?", (o,))
                 else:
-                    con.execute("DELETE FROM logins WHERE origin_url=? AND "
+                    cur.execute("DELETE FROM logins WHERE origin_url=? AND "
                                 "username_value=?", (o, u))
             except Exception:
                 pass
         con.commit()
         con.close()
+        # RA15：删后复核——任一条仍存在则保留挂起文件（下次重试）
+        try:
+            con2 = sqlite3.connect(dbp)
+            remain = 0
+            for it in lst:
+                o, u = (it if isinstance(it, list) and len(it) == 2 else (it, None))
+                row = con2.execute(
+                    "SELECT 1 FROM logins WHERE origin_url=? AND "
+                    "(?='' OR username_value=?)", (o, u or "", u or "")).fetchone()
+                if row:
+                    remain += 1
+            con2.close()
+            if remain:
+                _log("WARN", "pw_del_flush: %d 条未删净——挂起保留" % remain)
+                return
+        except Exception:
+            pass
         os.remove(p)
         _log("INFO", "pw_del_flush: %d 条已删" % len(lst))
     except Exception as e:
         _log("WARN", "pw_del_flush: %r" % e)
+
+
+# RA12（红队复验真修）：密码管理器鉴权 token——启动期随机生成，进程
+# 生命周期不变。UI 经 server.py 暴露的 pw_token 取得（同源），本机其他
+# 进程无法预知（原 Origin 自指校验 Host/Origin 均可伪造=打穿）。
+import secrets as _secrets
+PW_TOKEN = _secrets.token_urlsafe(24)
 
 
 def get_tabs():
@@ -419,7 +466,14 @@ class WebTabs:
                 _log("ERROR", "create: %r" % e)
             finally:
                 self._pending.discard(tab_id)
-        self._ui(_build)
+                # RB7-1（红队复验·P2）：被 cancel 的 tab 纪元随弃——否则
+                # dispose_all「快照→_cancel.add」窗口内完成的 _build 会让
+                # 纪元被 pop 后标记滞留 → 同纪元 beacon 永不回收
+                #（强制 100/100 复现）。
+                if tab_id in self._cancel:
+                    self._epochs.pop(tab_id, None)
+        self._ui(_build)   # RB7-1 修复回归：上一次替换误删了本行（_build
+                           # 从未被投递 → 全部测试 KeyError 't1'）
         return {"ok": True}
 
     def _wire(self, tab_id, ctl, url):
@@ -903,8 +957,15 @@ class WebTabs:
         # → 新页 show 被丢 20-74s 死 UI。误重置由前端 2s 重发（R9.14 恒发）
         # 自愈（≤2s）。epoch=None（无标签）保持旧行为，兼容。
         if epoch is not None and epoch != getattr(self, "_want_epoch", None):
+            # RB7-2（红队复验）：旧纪元迟到指令不得污染新纪元——换纪元时
+            # 重置水位但**丢弃本次意图**（旧页的 show 是过时指令；新纪元
+            # 自己的 show 马上会到）。误丢弃由前端恒发自愈（≤2s）。
+            stale = True
             self._want_epoch = epoch
             self._want_seq = 0
+            self._want = None
+        else:
+            stale = False
         if sq:
             if sq <= self._want_seq:
                 return {"ok": True}       # 乱序迟到的旧令
@@ -913,6 +974,8 @@ class WebTabs:
         # layout 补显期与后续任何 layout 均不再按陈旧排他意图弹出
         # 不相关控件。hide_all 时 visible 参数忽略；sq 门控照常生效。
         self._want = (_HIDE_ALL, False) if hide_all else (tab_id, bool(visible))
+        if stale:
+            return {"ok": True, "stale-epoch-dropped": True}
         if visible and tab_id not in self._ctl and tab_id in self._pending:
             # a555：create 在途（show 先于 _build 被处理）——此刻应用会把
             # 其他已显示 tab 藏掉又无新控件可显。意图已记 _want，控件建好
@@ -1119,11 +1182,13 @@ def register(app):
         if act == "reload":
             return jsonify(t.reload(tid))
         def _pw_guard():
-            # RA1/RA2（红队）：全局守卫放行无-Origin 请求（MCP/urllib 语义），
-            # 密码端点必须更严——仅 UI 同源 fetch（Origin == http://<本次host>）
-            # 放行。本机其他进程（两次调用导出全库明文的攻击）与异端口/
-            # 无端口 Origin（盲 CSRF 删除）全部 403。
+            # RA12（红队复验真修）：双因子——①X-FC-Token == 模块级 PW_TOKEN
+            # （启动期随机，本机其他进程不可预知；UI 经 /api/status 同源取得）
+            # ②Origin 与本次 host 同源（浏览器跨站面）。二者全过才放行。
             from flask import request as _rq
+            tok = (_rq.headers.get("X-FC-Token") or "")
+            if tok != PW_TOKEN:
+                return jsonify({"ok": False, "err": "forbidden"}), 403
             org = (_rq.headers.get("Origin") or "").strip().rstrip("/")
             if org != ("http://" + (_rq.host or "")):
                 return jsonify({"ok": False, "err": "forbidden"}), 403
@@ -1148,21 +1213,26 @@ def register(app):
                 return jsonify({"ok": False, "err": "密码库不可读"})
             # RA7（红队）：畸形库时 execute 抛出须关连接+删副本+500→400
             import os as _os
+            con = None
             try:
                 con = sqlite3.connect(db)
                 row = con.execute(
                     "SELECT password_value FROM logins WHERE origin_url=? "
                     "AND username_value=? ORDER BY date_created DESC "
                     "LIMIT 1", (_o, _u)).fetchone()   # RA8：多条取最新
-                con.close()
             except Exception as e:
                 return jsonify({"ok": False, "err": "库读取失败：%r" % e})
-            # RA3：副本即删
-            import os as _os
-            try:
-                _os.remove(db)
-            except Exception:
-                pass
+            finally:
+                # RA17（红队复验）：连接关闭+副本即删入 finally（异常路径也清）
+                try:
+                    if con is not None:
+                        con.close()
+                except Exception:
+                    pass
+                try:
+                    _os.remove(db)
+                except Exception:
+                    pass
             if not row:
                 return jsonify({"ok": False, "err": "not-found"})
             ok, text = _pw_decrypt(row[0])
@@ -1216,13 +1286,18 @@ def shutdown(grace_ms=1200):
     """a582：退出前优雅关闭 WebView2（main._do_real_cleanup 在 taskkill
     树杀之前调用）。fail-safe：任何异常吞掉，绝不阻塞退出主流程。"""
     global _tabs
-    if _tabs is None:
+    # RB8（红队复验）：重入保护 + 单次 grace——多次退出调用点（main 3 处）
+    # 不再各睡一个 grace（实测 3 次=600ms×3）
+    if getattr(_tabs, "_closing", False) and _tabs is not None:
+        _pw_del_flush()
         return
     try:
+        # RA14（红队复验）：挂起删除无论有无控件都执行
         if _tabs is not None:
             _tabs.flush_on_exit(grace_ms)
-        else:
-            _pw_del_flush()   # RA11：无控件也要清挂起
+        _pw_del_flush()   # RA11/RA14
+        _tabs = None      # RB8：装配引用清空（flush 已完成，重复调用走
+                          # _closing 短路 + 无控件分支，幂等）
     except Exception as e:
         _log("WARN", "shutdown: %r" % e)
 
