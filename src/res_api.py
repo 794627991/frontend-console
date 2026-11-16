@@ -152,16 +152,21 @@ def res_install_api():
     """后台装资源包。body: {path, kinds?, force?, mode?: 'online'}
 
     a322 批2：mode='online' 走在线安装（有网直接装，不要求 path/离线包）；
+    在线安装不碰 .fcpk——a595 起它不要求 pycryptodome（res_install 已把
+    fcpk 改惰性导入），缺 Crypto 的源码机器靠这条路径装 pydeps 自愈。
     默认（无 mode 或 'offline'）维持原离线包流程不变。两者共用同一任务槽
     与 poll 通道——正在跑时任一模式再点都 409。
     """
-    try:
-        from src import fcpk, res_install
-    except ImportError:
-        return _deps_err()
     d = request.get_json(force=True, silent=True) or {}
     path = str(d.get("path") or "").strip()
     online = str(d.get("mode") or "offline") == "online"
+    try:
+        if online:
+            from src import res_install
+        else:
+            from src import fcpk, res_install
+    except ImportError:
+        return _deps_err()
     # 全审 N4：kinds 的语义必须区分「没传/传 null」和「传了空数组」。
     # `d.get("kinds") or None` 会把 [] 归成 None → 装全部六项，任何误传
     # 空数组的调用方都会得到「全量覆盖」这个最重后果。
@@ -295,21 +300,77 @@ def res_install_api():
 
 @res_bp.route("/api/resources/net_check")
 def res_net_check():
-    """a322 批2：在线安装预检（各官方直链连通性）——前端禁用态依据。
-    缓存 60s（每次点开设置页不重复探）。"""
+    """a322 批2：在线安装预检——前端禁用态依据。缓存 60s。
+
+    a595R（审计 #4）：镜像感知后探测面变宽（6 kind × 候选首尾），全断
+    网络最坏 ~2 分钟——不能再在 Flask handler 里同步跑。改 singleflight：
+    首个请求起后台线程探测，并发请求等同一轮（≤25s）；没跑完回 pending
+    空表（autoInstall 据此跳过本次、下次打开再试）。世代号防旧档结果
+    覆盖改档后的缓存（mirror POST 递增）。
+    """
     import time as _t
     with _lock:
         cached = _state.get("net_check")
         if cached and _t.time() - cached[0] < 60:
             return jsonify({"ok": True, "net": cached[1], "cached": True})
+        th = _state.get("net_check_th")
+        if not (th and th.is_alive()):
+            th = threading.Thread(target=_net_check_worker, daemon=True)
+            _state["net_check_th"] = th
+            th.start()
+    th.join(timeout=25)
+    with _lock:
+        cached = _state.get("net_check")
+    if cached:
+        return jsonify({"ok": True, "net": cached[1], "cached": False})
+    return jsonify({"ok": True, "net": {}, "pending": True, "cached": False})
+
+
+def _net_check_worker():
+    """后台探测一轮 net_check（singleflight 专用）。世代号不匹配（探测
+    途中镜像档被改）则丢弃结果，防旧档口径污染新档缓存。"""
+    import time as _t
     try:
         from src.res_install import net_check as _nc
     except ImportError:
-        return _deps_err()
+        return
+    with _lock:
+        gen = _state.get("net_check_gen", 0)
     net = _nc()
     with _lock:
-        _state["net_check"] = (_t.time(), net)
-    return jsonify({"ok": True, "net": net, "cached": False})
+        if _state.get("net_check_gen", 0) == gen:
+            _state["net_check"] = (_t.time(), net)
+
+
+@res_bp.route("/api/resources/mirror", methods=["GET"])
+def res_mirror_get():
+    """当前镜像档位 + 可选清单（设置页「镜像加速」下拉的数据源）。"""
+    from src import mirrors
+    return jsonify({"ok": True, "mode": mirrors.mode(),
+                    "desc": mirrors.describe(), "options": mirrors.options()})
+
+
+@res_bp.route("/api/resources/mirror", methods=["POST"])
+def res_mirror_set():
+    """切换镜像档位（用户自选镜像加速）。body: {mode}
+    保存进 config.json 的 online_mirror 键，在线安装/net_check 下一次调用
+    即按新档解析（无需重启）；net_check 的 60s 缓存当场作废。"""
+    from src import mirrors
+    from src.app_state import _load_config, _save_config
+    d = request.get_json(force=True, silent=True) or {}
+    m = str(d.get("mode") or "").strip()
+    if m not in mirrors.mode_ids():
+        return jsonify({"ok": False,
+                        "err": "未知镜像档位：%s" % (m or "(空)")}), 400
+    try:
+        _save_config({**_load_config(), "online_mirror": m})
+    except Exception as e:
+        return jsonify({"ok": False, "err": "保存配置失败：%s" % e}), 500
+    with _lock:
+        _state.pop("net_check", None)
+        # 世代号递增：在跑的旧档探测线程收尾时自检不匹配 → 丢弃结果
+        _state["net_check_gen"] = _state.get("net_check_gen", 0) + 1
+    return jsonify({"ok": True, "mode": m, "desc": mirrors.describe()})
 
 
 @res_bp.route("/api/resources/latest")

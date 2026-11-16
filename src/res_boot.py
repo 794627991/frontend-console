@@ -42,12 +42,12 @@ _WV2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 # 统一资源清单（唯一真源：后端探测、前端呈现、离线包表三者同口径）
 MANIFEST = [
     {"kind": "webview2", "name": "WebView2 运行时", "hard": True,
-     "fix": "离线资源包内解出（无需管理员）"},
+     "fix": "启动引导选「联网在线安装」（Evergreen，需管理员），或离线资源包内解出（无需管理员）"},
     # C3（全审）：阈值取 528372（.NET 4.8）而不是 533320（4.8.1）——4.8 已足够
     # 跑 pythonnet，且 Win10 21H2+ 自带 4.8 可免装。名称随之写 4.8+，不叫
     # 「4.8.1」以免与阈值口径打架。
     {"kind": "dotnet", "name": ".NET Framework 4.8+", "hard": True,
-     "fix": "离线资源包内安装器（需管理员，装完可能要重启）"},
+     "fix": "启动引导选「联网在线安装」或离线资源包内安装器（需管理员，装完可能要重启）"},
     {"kind": "node", "name": "Node.js / npm", "hard": False,
      "fix": "离线资源包内静默安装"},
     {"kind": "git", "name": "Git", "hard": False,
@@ -55,7 +55,7 @@ MANIFEST = [
     {"kind": "claude", "name": "Claude Code CLI", "hard": False,
      "fix": "离线资源包内复制安装"},
     {"kind": "pydeps", "name": "工具 Python 依赖", "hard": False,
-     "fix": "离线资源包内 wheel 补装"},
+     "fix": "在线安装（pip）或离线资源包内 wheel 补装"},
     # a309R：OnlyOffice DS（word/excel/ppt 全功能编辑，可选）——探测 80 口
     {"kind": "onlyoffice", "name": "OnlyOffice 全功能编辑", "hard": False,
      "fix": "离线资源包内静默安装（约 10 分钟，弹 UAC 确认）"},
@@ -275,8 +275,11 @@ def probe_onlyoffice():
 
 
 def probe_pydeps():
-    """工具自身 pip 依赖：只测发布包里也可能缺的那几个（exe 分发恒 ok）。"""
-    need = [("paramiko", "SSH"), ("winpty", "内嵌终端")]
+    """工具自身 pip 依赖：只测发布包里也可能缺的那几个（exe 分发恒 ok）。
+    a595 增 pycryptodome（Crypto）——fcpk 资源包解密真依赖，缺了资源包
+    功能 503；早前不测导致状态恒绿、在线装 pydeps 也不补它。"""
+    need = [("paramiko", "SSH"), ("winpty", "内嵌终端"),
+            ("Crypto", "资源包功能")]
     miss = []
     for mod, _desc in need:
         try:
@@ -504,13 +507,53 @@ def preflight_gate(force=False):
 
 
 def _guide_install(res):
-    """缺硬性资源 → 原生引导：说明 → 选包 → 进度 → 重启。"""
+    """缺硬性资源 → 原生引导三选一：离线包 / 在线安装 / 退出。
+
+    a595（用户定调「有网一定装得上」，打开即用形态）：早前只有「选离线包」
+    一条路——干净机器 + 有网 + 手头没 .fcpk 包 = 死路（WebView2/.NET 缺失
+    连窗口都建不出来，用户连工具都进不去）。在线装 dotnet/webview2 不需要
+    任何已建窗口，Win32 原生进度条即可承载，放在闸门这里正好。
+    """
     from src import res_ui
 
     names = "、".join(it["name"] for it in res["items"]
                      if it["kind"] in res["hard_missing"])
     txt = ("缺少运行环境：%s\n\n"
-           "工具无法启动。请准备好离线资源包（.fcpk 文件），点「确定」选择它，"
+           "工具无法启动。请选择处理方式：\n\n"
+           "「是」— 使用离线资源包安装（.fcpk 文件，无需联网）\n"
+           "「否」— 联网在线安装（自动下载官方安装器，约 2~5 分钟）\n"
+           "「取消」— 退出"
+           % names)
+    rc = res_ui.msgbox(txt, "前端控制台 · 缺少运行环境",
+                       res_ui.MB_YESNOCANCEL | res_ui.MB_ICONWARNING
+                       | res_ui.MB_SETFOREGROUND | res_ui.MB_TOPMOST)
+    if rc == res_ui.IDYES:
+        return _guide_offline(res)
+    if rc == res_ui.IDNO:
+        return _guide_online(res)
+    return False        # 取消 / 关闭 / msgbox 自身故障（返回 0）都退出
+
+
+def _guide_offline(res):
+    """原离线包引导：说明 → 选包 → 进度 → 重启。"""
+    from src import res_ui
+
+    try:
+        from src import fcpk
+    except ImportError:
+        # a595：缺 pycryptodome 的源码机读不了加密包——给人话后**回到三选
+        # 一**（审计 #5：早前文案承诺「返回改选在线安装」却直接退进程）
+        res_ui.msgbox("离线资源包功能需要 pycryptodome 模块。请在工具所用 "
+                      "Python 环境执行：pip install pycryptodome\n\n"
+                      "装完无需重启工具。现在回到处理方式选择，可改选"
+                      "「联网在线安装」。",
+                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
+        return _guide_install(res)
+
+    names = "、".join(it["name"] for it in res["items"]
+                     if it["kind"] in res["hard_missing"])
+    txt = ("缺少运行环境：%s\n\n"
+           "请准备好离线资源包（.fcpk 文件），点「确定」选择它，"
            "工具会自动安装后重启。\n\n"
            "点「取消」退出。" % names)
     if res_ui.msgbox(txt, "前端控制台 · 缺少运行环境",
@@ -532,7 +575,6 @@ def _guide_install(res):
                          ) != res_ui.IDYES:
             return False
 
-    from src import fcpk
     if not fcpk.is_fcpk(path):
         res_ui.msgbox("选中的不是资源包（%s）。\n\n请选择 .fcpk 文件。"
                       % os.path.basename(path),
@@ -551,6 +593,107 @@ def _guide_install(res):
                   res_ui.MB_OK | res_ui.MB_ICONINFORMATION)
     _restart_self()
     return False        # 本进程退出
+
+
+def _guide_online(res):
+    """a595：闸门在线安装（下载官方安装器 → 静默装 → 复验 → 重启）。
+
+    只覆盖 webview2/dotnet（闸门拦的硬资源本就只有它们）；装完复验仍缺
+    时区分「装了要重启 Windows」（.NET 3010）与真失败，前者提示重启电脑
+    而不是把用户按在重试循环里。"""
+    from src import res_ui
+    from src import res_install
+
+    kinds = [k for k in (res.get("hard_missing") or [])
+             if k in ("dotnet", "webview2")]
+    if not kinds:
+        res_ui.msgbox("在线安装不覆盖当前缺失项（%s）——请使用离线资源包。"
+                      % "、".join(res.get("hard_missing") or []),
+                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
+        return False
+
+    log_lines = []
+    state = {"done": False, "err": ""}
+
+    def log(msg):
+        log_lines.append(str(msg))
+
+    def work():
+        pg = None
+        try:
+            # IProgressDialog 必须在使用的线程内创建（STA）——work 线程内
+            # 建 prog/should_cancel 并由 install_online 在同线程回调，与
+            # _run_install_with_ui 同款。没有它，2~5 分钟下载静默无反馈
+            pg = res_ui.progress("前端控制台 · 在线安装运行环境")
+
+            def prog(done, total, label):
+                if pg:
+                    # done=None 是「不确定进度」段（跑外部安装器）——置 0
+                    # 保持对话框活动即可，别 None 传穿
+                    pg.set_progress(done if done is not None else 0,
+                                    total or 1)
+                    if label:
+                        pg.set_line("正在安装：" + label, 1)
+
+            def should_cancel():
+                return bool(pg and pg.cancelled())
+
+            res_install.install_online(kinds, log=log, progress=prog,
+                                       should_cancel=should_cancel)
+        except res_install.InstallCancelled:
+            # a595R（审计 #3）：取消不是失败——单独成态，别落进「未完全
+            # 成功」错误框（离线闸门路径 _run_install_with_ui 同款语义）
+            state["err"] = "已取消安装"
+            state["cancelled"] = True
+            log("用户取消安装")
+        except Exception as e:
+            state["err"] = str(e)[:400]
+            log("失败：%s" % e)
+        finally:
+            if pg:
+                pg.stop()
+            state["done"] = True
+
+    import threading
+    th = threading.Thread(target=work, daemon=False)
+    th.start()
+    while th.is_alive():
+        th.join(0.3)
+
+    log_path = os.path.join(os.environ.get("TEMP", "."),
+                            "fcpk_install_online.log")
+    try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(log_lines))
+    except OSError:
+        pass
+
+    # 复验：装没装成以探测为准，不以安装器的自报为准
+    if state.get("cancelled"):
+        res_ui.msgbox("已取消安装。\n\n工具缺少必需运行环境，无法启动。\n"
+                      "重新打开工具即可再次选择（离线包或在线安装）。",
+                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONWARNING)
+        return False
+    re_probe = probe_all(use_cache=False)
+    if not re_probe["hard_missing"]:
+        res_ui.msgbox("运行环境在线安装完成，正在重新启动工具…", "前端控制台",
+                      res_ui.MB_OK | res_ui.MB_ICONINFORMATION)
+        _restart_self()
+        return False
+    joined = "\n".join(log_lines)
+    if "需重启 Windows" in joined or "需重启 Windows 后生效" in joined:
+        # .NET 3010 = 装成功但注册表要重启后才更新——复验必不过，别让
+        # 用户在「重试」里死循环
+        res_ui.msgbox("运行环境已安装成功，但需要重启 Windows 后生效。\n\n"
+                      "请重启电脑后再打开本工具。", "前端控制台",
+                      res_ui.MB_OK | res_ui.MB_ICONINFORMATION)
+        return False
+    res_ui.msgbox("在线安装未完全成功：%s\n\n详细日志：%s\n\n"
+                  "可重启工具改选离线资源包，或以管理员身份运行工具重试在线"
+                  "安装（WebView2/.NET 安装器需要提权）。"
+                  % (state["err"] or "部分组件安装失败", log_path),
+                  "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
+    return False
 
 
 def _run_install_with_ui(path):

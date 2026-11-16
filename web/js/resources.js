@@ -421,8 +421,71 @@
         if (!st) return;
         // 装完后可能恢复——每 3 分钟复查一次（用户装了系统级 Git 也能消红条）
         setInterval(resRefresh, 180000);
+        autoInstall(st);
       });
     }, 1200);
+  }
+
+  // a595（用户定调「打开即用」）：打开工具时缺什么、有网能装的，自动在线
+  // 装上——不再只挂红条等用户手点。范围=核心四项（node/git/claude/pydeps，
+  // 即「必备清单」里界面起来后还能缺的项）；codegraph（265MB 平台包）、
+  // onlyoffice/bili（无稳定直链）仍走设置页手动或离线包，避免首次打开
+  // 静默拉走几百 MB。用户点过「忽略」的不再自动装；本会话只发起一次。
+  var AUTO_KINDS = ['node', 'git', 'claude', 'pydeps'];
+  function autoInstall(st) {
+    try {
+      if (sessionStorage.getItem('fc_auto_res_install')) return;
+      var ignored = st.ignored || [];
+      var miss = (st.items || []).filter(function (it) {
+        return !it.ok && it.state !== 'unknown' &&
+          AUTO_KINDS.indexOf(it.kind) >= 0 && ignored.indexOf(it.kind) < 0;
+      });
+      if (!miss.length) return;
+      // 已有任务在跑（用户手点的）不抢；net_check 探各官方源连通性
+      _resFetch('/api/resources/poll').then(function (s) {
+        if (s && s.running) return;
+        return _resFetch('/api/resources/net_check').then(function (j) {
+          if (!j || !j.ok) return;
+          var net = j.net || {};
+          // a595 二批：net_check 已镜像感知，npm/pip 独立键（旧后端回退 node）
+          function face(key) {
+            var v = net[key] || net.node;
+            return !!(v && v.ok);
+          }
+          var kinds = [];
+          miss.forEach(function (it) {
+            if (it.kind === 'node') { if (face('node')) kinds.push(it.kind); return; }
+            if (it.kind === 'git') { if (face('git')) kinds.push(it.kind); return; }
+            if (it.kind === 'pydeps') {
+              // a595R（审计 #2）：pip 键存在但 false = pip 面真断，如实跳过；
+              // 仅旧后端无 pip 键时才退回 node 面
+              var pipOk = (net.pip !== undefined)
+                ? !!(net.pip && net.pip.ok) : face('node');
+              if (pipOk) kinds.push(it.kind);
+              return;
+            }
+            // claude（npm 包，走 npm registry 面）
+            if (face('npm')) kinds.push(it.kind);
+          });
+          if (!kinds.length) return;
+          sessionStorage.setItem('fc_auto_res_install', '1');
+          if (typeof notifyPop === 'function')
+            notifyPop('检测到缺少 ' + kinds.join('/') +
+              '，已开始自动在线安装…（设置 → 外部依赖安装可查看进度）', 6000);
+          _resRun({
+            mode: 'online', kinds: kinds,
+            onDone: function (r) {
+              resRefresh();
+              if (typeof notifyPop === 'function')
+                notifyPop(r.ok
+                  ? ('缺失组件自动安装完成：' + kinds.join('/'))
+                  : ('自动安装未完全成功：' + String(r.err || '').slice(0, 100)),
+                  r.ok ? 5000 : 8000);
+            }
+          });
+        });
+      }).catch(function () {});
+    } catch (_) { /* 自动装是增强路径，任何异常都不能影响工具本身 */ }
   }
 
   if (document.readyState === 'loading') {

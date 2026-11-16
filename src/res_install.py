@@ -23,7 +23,10 @@ import tempfile
 import threading
 import time
 
-from src import fcpk
+# a595：fcpk 不再顶层导入——它带 pycryptodome（Crypto）依赖，顶层 import
+# 会让「缺 Crypto 的源码机器」连在线安装都起不来（在线安装根本不碰 .fcpk，
+# pydeps 在线装完 Crypto 后离线包功能自愈）。fcpk 改在真正用它读包的
+# read_manifest / install_from 内惰性导入。
 
 # 各 kind 在包内的目录前缀（与打包侧一致）
 # 对抗审 a206B P3：_KIND_DIRS 全仓无消费（死配置）——包内前缀与释放路径
@@ -58,6 +61,7 @@ def read_manifest(path):
 
     返回 fcpk.FcpkReader.table 的 resources 段；打不开则抛 FcpkError。
     """
+    from src import fcpk
     r = fcpk.FcpkReader(path)
     try:
         return {"entries": [e["path"] for e in r.entries],
@@ -91,6 +95,7 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
     不该把已经装好的 Node 也回滚。
     """
     say = log or (lambda _m: None)
+    from src import fcpk
     # a32x（对抗审 P1）：cs._log 的旧读者（/api/claude/setup_poll）已随 zip
     # 通道退役删除，但 _install_node_from/_install_git_from/_install_pydeps/
     # _download 里 27 处排障日志仍在走 _log。把 say 灌进它的 sink，这些
@@ -368,8 +373,17 @@ def _install_dotnet(staging, say, force=False):
         raise InstallError("包内无 .NET 安装器（ndp481*.exe）")
     say("安装 .NET Framework 4.8.1（1-2 分钟，可能需要管理员）…")
     import subprocess
-    r = subprocess.run([exe, "/q", "/norestart"], timeout=1200,
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    try:
+        r = subprocess.run([exe, "/q", "/norestart"], timeout=1200,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError as e:
+        # WinError 740 = 安装器清单要求提权，CreateProcess 拒起（非 1603 的
+        # 另一种「没管理员」形态）——给人话，别让用户看到裸 WinError
+        if getattr(e, "winerror", None) == 740:
+            raise InstallError(
+                ".NET 安装器需要管理员权限——请以管理员身份运行工具后重试，"
+                "或手动安装 .NET Framework 4.8.1")
+        raise
     say("安装器退出码 %d" % r.returncode)
     # 3010 = 成功但需重启（对抗审 P2：早前 3010 也立即复验——重启前注册表
     # 必然未更新必报失败，把用户锁进重试循环；现 3010 直接判成功并明说）
@@ -771,60 +785,116 @@ ONLINE_UNSUPPORTED = {"bili", "onlyoffice"}
 
 
 def net_check(kinds=None):
-    """在线安装预检：各 URL 小超时 HEAD（部分 CDN 拒 HEAD 时小 GET 兜底）。
-    返回 {kind: {"ok": bool, "code": int, "err": str}}。给前端禁用态用。"""
+    """在线安装预检：**镜像感知**（a595 二批）。
+
+    每个 kind 探「实际会用的候选源」：解析后的首位源（镜像档位决定）+
+    官方直链，任一可达即 ok——镜像通、官方被墙的机器不再被误报「源不可
+    达」。npm/pip 作为独立键返回（claude/codegraph/pydeps 的真实网络面，
+    前端 netOk 据此映射）。缓存 60s，改镜像档时由 mirror 端点清缓存。
+    返回 {kind: {"ok": bool, "code": int, "err": str, "via": url}}。
+    """
     import urllib.request
-    want = list(kinds) if kinds else ["node", "git", "dotnet", "webview2"]
+    want = list(kinds) if kinds else ["node", "git", "dotnet", "webview2",
+                                      "npm", "pip"]
     out = {}
     for k in want:
         if k in ONLINE_UNSUPPORTED:
-            out[k] = {"ok": False, "code": 0,
+            out[k] = {"ok": False, "code": 0, "via": "",
                       "err": "无官方稳定直链——请用离线包安装"}
             continue
-        if k == "claude":   # npm registry（走 install 时的 node）；预检含 node
-            out[k] = net_check(["node"]).get("node", {"ok": False, "code": 0,
-                                                      "err": "?"})
+        if k == "claude":   # npm registry（走 install 时的 node/npm）
+            sub = out.get("npm") or net_check(["npm"]).get("npm", {})
+            out[k] = dict(sub)
             continue
-        url = ONLINE_URLS.get(k)
-        if not url:
-            out[k] = {"ok": False, "code": 0, "err": "未知资源"}
-            continue
-        code, err = 0, ""
-        try:
-            req = urllib.request.Request(url, method="HEAD",
-                                         headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                code = resp.status
-        except Exception as e:
-            # 有些 CDN 拒 HEAD（400/405）——range 小 GET 再判
+        if k == "npm":
+            regs = _mirrors().npm_registry_list()
+            urls = _dedup([regs[0], regs[-1]])   # 首选源 + 官方兜底
+        elif k == "pip":
+            urls = _dedup([_mirrors().pip_index_list()[0],
+                           _mirrors().pip_index_list()[-1]])
+        elif k == "node":
+            c = cs_node_candidates()
+            urls = _dedup([c[0], c[-1]])
+        elif k == "git":
+            c = cs_git_candidates()
+            urls = _dedup([c[0], c[-1]])
+        else:
+            url = ONLINE_URLS.get(k)
+            urls = [url] if url else []
+            if not url:
+                out[k] = {"ok": False, "code": 0, "via": "",
+                          "err": "未知资源"}
+                continue
+        ok, code, err, via = False, 0, "", ""
+        for u in urls:
+            code, err = 0, ""
             try:
                 req = urllib.request.Request(
-                    url, headers={"Range": "bytes=0-0",
-                                  "User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                    u, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=8) as resp:
                     code = resp.status
-            except Exception as e2:
-                err = str(getattr(e2, "reason", e2) or e2)[:120]
-        out[k] = {"ok": code in (200, 206), "code": code, "err": err}
+            except Exception as e:
+                # 有些 CDN 拒 HEAD（400/405）——range 小 GET 再判
+                try:
+                    req = urllib.request.Request(
+                        u, headers={"Range": "bytes=0-0",
+                                    "User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        code = resp.status
+                except Exception as e2:
+                    err = str(getattr(e2, "reason", e2) or e2)[:120]
+            if code in (200, 206, 302, 301):
+                ok, via = True, u
+                break
+        out[k] = {"ok": ok, "code": code, "err": err, "via": via}
     return out
+
+
+def _dedup(seq):
+    seen, out = set(), []
+    for x in seq:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def cs_node_candidates():
+    """node 安装器候选 URL（镜像档位序）——claude_setup 单一真源。"""
+    from src import claude_setup as cs
+    return cs._node_msi_candidates()
+
+
+def cs_git_candidates():
+    from src import claude_setup as cs
+    return cs._git_exe_candidates()
+
+
+def _mirrors():
+    """src/mirrors 注册表访问（惰性；档位实时读 config，改档即时生效）。"""
+    from src import mirrors
+    return mirrors
 
 
 def install_online(kinds, log=None, progress=None, should_cancel=None,
                    force=False):
-    """在线安装依赖（有网直接装）。镜像 install_from 的约定：
+    """在线安装依赖（有网直接装）。镜像源按 src/mirrors.py 档位
+    （默认智能镜像优先），下载失败自动逐源重试。镜像 install_from 的约定：
     log/progress/should_cancel/单 kind 容错/返回结构。
 
     - node/git：cs._install_*_if_missing（本地 offline_assets 资源优先，
-      缺则官方直链下载；MSI 提权失败自动 zip 兜底）
-    - claude：确保 node → npm install -g @anthropic-ai/claude-code（免提权
-      prefix）→ 运行验证
-    - dotnet：下载 ndp481 → 复用 _install_dotnet 静默装
-    - webview2：下载 Evergreen standalone → /silent /install
-    - pydeps：源码形态 pip 在线装；exe 形态不支持（引导离线包）
+      缺则镜像/官方直链下载；MSI 提权失败自动 zip 兜底）
+    - claude/codegraph：确保 node → npm 逐源重试 → 运行/探测验证
+    - dotnet：下载 ndp481 → 复用 _install_dotnet 静默装（微软 fwlink 官方直链）
+    - webview2：下载 Evergreen standalone → /silent /install（同上）
+    - pydeps：源码形态 pip 逐源装；exe 形态不支持（引导离线包）
     - bili/onlyoffice：无稳定直链，skipped 指路离线包
     """
     from src import claude_setup as cs
     say = log or (lambda _m: None)
+    # 镜像计划先说清楚（用户定调「优先镜像加速，给出提示」）——安装面板
+    # 日志首行即当前下载源策略，改档后这里跟着变
+    say(_mirrors().describe())
     cur = [0]
 
     def prog(done, total, label=""):
@@ -862,11 +932,26 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                 elif k == "pydeps":
                     if getattr(__import__("sys"), "frozen", False):
                         raise InstallError("exe 形态不支持在线装 pydeps——请用离线包")
-                    say("pip 在线安装工具依赖 %s …" % cs._TOOL_DEPS)
+                    # a595 二批：装 _TOOL_DEPS_ONLINE（含 pycryptodome，装完
+                    # 资源包功能自愈）；index 候选按用户镜像档位排出
+                    # （默认清华优先）逐个重试，全部失败才判失败
                     import sys as _sys
-                    r = _sp.run([_sys.executable, "-m", "pip", "install",
-                                 *cs._TOOL_DEPS],
-                                capture_output=True, text=True, timeout=900)
+                    _pip_base = [_sys.executable, "-m", "pip", "install",
+                                 "--no-input", "--timeout", "30"]
+                    indexes = _mirrors().pip_index_list()
+                    r = None
+                    for i, idx in enumerate(indexes):
+                        say("pip 安装工具依赖 %s（源 %d/%d：%s）…"
+                            % (", ".join(cs._TOOL_DEPS_ONLINE),
+                               i + 1, len(indexes), idx))
+                        r = _sp.run(_pip_base + ["-i", idx]
+                                    + list(cs._TOOL_DEPS_ONLINE),
+                                    capture_output=True, text=True, timeout=900)
+                        if r.returncode == 0:
+                            break
+                        say("  该源失败（退出码 %s）%s"
+                            % (r.returncode,
+                               "，换下一源…" if i < len(indexes) - 1 else "，无更多源"))
                     for line in (r.stdout or "").splitlines()[-5:]:
                         say("  " + line)
                     if r.returncode != 0:
@@ -886,7 +971,8 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                         if not (_msi and os.path.isfile(_msi)):
                             _msi = os.path.join(dl_dir, "node-v24.19.0-x64.msi")
                             if not os.path.isfile(_msi):
-                                cs._download(ONLINE_URLS["node"], _msi)
+                                cs._download(cs._NODE_URL, _msi,
+                                             mirrors=cs._node_msi_candidates())
                         cs._install_node_from(_msi)
                         ok = bool(shutil.which("node.exe") or shutil.which("node"))
                     else:
@@ -900,7 +986,8 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                         if not (_gx and os.path.isfile(_gx)):
                             _gx = os.path.join(dl_dir, "Git-64-bit.exe")
                             if not os.path.isfile(_gx):
-                                cs._download(ONLINE_URLS["git"], _gx)
+                                cs._download(cs._GIT_URL, _gx,
+                                             mirrors=cs._git_exe_candidates())
                         cs._install_git_from(_gx)
                         ok = bool(cs._git_ok())
                     else:
@@ -957,10 +1044,22 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                     env = dict(os.environ)
                     env["npm_config_prefix"] = os.path.join(appdata, "npm")
                     env["npm_config_cache"] = os.path.join(appdata, "npm-cache")
-                    r = _sp.run([npm, "install", "-g",
-                                 "@colbymchenry/codegraph-win32-x64"],
-                                capture_output=True, text=True, timeout=900,
-                                env=env, creationflags=0x08000000)
+                    # a595 二批：registry 候选按用户镜像档位（默认 npmmirror
+                    # 优先）逐个重试；列表循环外定死一次防中途改档漂移
+                    regs = _mirrors().npm_registry_list()
+                    r = None
+                    for i, reg in enumerate(regs):
+                        r = _sp.run([npm, "install", "-g",
+                                     "@colbymchenry/codegraph-win32-x64",
+                                     "--registry=" + reg],
+                                    capture_output=True, text=True,
+                                    timeout=900, env=env,
+                                    creationflags=0x08000000)
+                        if r.returncode == 0:
+                            break
+                        say("  registry %s 失败（退出码 %s）%s"
+                            % (reg, r.returncode,
+                               "，换下一源…" if i < len(regs) - 1 else "，无更多源"))
                     for line in (r.stdout or "").splitlines()[-3:]:
                         say("  " + line)
                     if r.returncode != 0:
@@ -979,8 +1078,18 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                     exe = os.path.join(dl_dir, "MicrosoftEdgeWebview2Setup.exe")
                     cs._download(ONLINE_URLS["webview2"], exe)
                     say("静默安装 WebView2 Evergreen …")
-                    rc = _sp.call([exe, "/silent", "/install"],
-                                  creationflags=0x08000000, timeout=600)
+                    try:
+                        rc = _sp.call([exe, "/silent", "/install"],
+                                      creationflags=0x08000000, timeout=600)
+                    except OSError as e:
+                        # WinError 740 = 安装器要求提权（Evergreen 是 per-machine
+                        # 安装），CreateProcess 直接拒起——给人话而非裸 WinError
+                        if getattr(e, "winerror", None) == 740:
+                            raise InstallError(
+                                "WebView2 安装器需要管理员权限——请以管理员身份"
+                                "运行工具后重试，或改用离线资源包（Fixed Version "
+                                "免提权）")
+                        raise
                     from src.res_boot import probe_webview2
                     st, v, _m = probe_webview2()
                     if st != "ok" and rc != 0:

@@ -864,6 +864,14 @@ async function _stRenderResourcesPane(pane) {
       </div>
 
       <div class="dd-cur" style="margin-top:14px;">
+        <div class="dd-label">镜像加速（在线安装下载源）</div>
+        <div class="dd-row" style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <select id="rsMirror" class="dd-input" style="flex:1;" autocomplete="off"></select>
+        </div>
+        <div class="dd-sub" id="rsMirrorHint" style="margin-top:6px;">读取镜像配置…</div>
+      </div>
+
+      <div class="dd-cur" style="margin-top:14px;">
         <div class="dd-label">安装</div>
         <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:12px;cursor:pointer;">
           <input type="checkbox" id="rsForce" style="margin-top:3px;">
@@ -1024,6 +1032,14 @@ async function _stRenderResourcesPane(pane) {
     try {
       const j = await (await fetch('/api/resources/net_check')).json();
       if (!j.ok) return;
+      // a595R（审计 #4）：后端改后台探测，pending = 首轮还没跑完——提示并
+      // 稍后自动重探一次，不拿空表当「全不可达」吓用户
+      if (j.pending) {
+        const el0 = $q('#rsNetInfo');
+        if (el0) { el0.style.display = ''; el0.textContent = '在线源探测中…（后台进行，稍后自动刷新）'; }
+        setTimeout(function () { if ($q('#rsNetInfo')) loadNet(); }, 8000);
+        return;
+      }
       _net = j.net || {};
       const el = $q('#rsNetInfo');
       if (!el) return;
@@ -1038,13 +1054,57 @@ async function _stRenderResourcesPane(pane) {
     } catch (_) { /* 静默——离线机器不该被报错刷屏 */ }
   }
   function netOk(k) {
-    if (k === 'claude') return !!(_net && _net.node && _net.node.ok);
-    if (k === 'pydeps') return !!(_net && _net.node && _net.node.ok);   // pip 走 pypi，与 node 探测同网络面
-    // a595（实锤）：codegraph 在线装=npm 平台包，走 node 同网络面。原来落
-    // 到兜底查 _net['codegraph']——后端 net_check 恒只回 node/git/dotnet/
-    // webview2 四键，undefined→恒 false → 无论网络好坏都弹「源不可达」。
-    if (k === 'codegraph') return !!(_net && _net.node && _net.node.ok);
+    // a595 二批：后端 net_check 已镜像感知，npm/pip 成独立键（claude/
+    // codegraph/pydeps 的真实网络面），旧键保留兜底
+    if (k === 'claude' || k === 'codegraph') {
+      const npm = _net && (_net.npm || _net.node);
+      return !!(npm && npm.ok);
+    }
+    if (k === 'pydeps') {
+      // a595R（审计 #2）：pip 键**存在但 false**（pip 面两源全断）时如实回
+      // false——只有旧后端「无 pip 键」才退回 node 面，否则 node 面通 pip 面
+      // 断的机器会被误判可装，白跑 7 个 pip 源
+      if (_net && _net.pip !== undefined) return !!(_net.pip && _net.pip.ok);
+      const n = _net && _net.node;        // 旧后端无 pip 键时退回 node 面
+      return !!(n && n.ok);
+    }
     return !!(_net && _net[k] && _net[k].ok);
+  }
+
+  // ---- 镜像加速（a595 二批：多源可选，默认镜像优先，保存即时生效）----
+  let _mirrorBusy = false;
+  async function loadMirror() {
+    const sel = $q('#rsMirror'), hint = $q('#rsMirrorHint');
+    if (!sel || !hint) return;
+    try {
+      const j = await (await fetch('/api/resources/mirror')).json();
+      if (!j.ok) { hint.textContent = '镜像配置读取失败'; return; }
+      sel.innerHTML = (j.options || []).map(function (o) {
+        return '<option value="' + esc(o.id) + '"' +
+          (o.id === j.mode ? ' selected' : '') + '>' + esc(o.name) + '</option>';
+      }).join('');
+      hint.textContent = j.desc +
+        '。下载失败自动逐源重试（官方恒在候选列表内兜底）；改选即保存、即时生效，无需重启。';
+      sel.onchange = async function () {
+        if (_mirrorBusy) return;
+        _mirrorBusy = true;
+        sel.disabled = true;    // a595R（审计 #7）：在途期间禁选，防「显示已改、后端未存」的假档位
+        try {
+          const r = await (await fetch('/api/resources/mirror', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: sel.value })
+          })).json();
+          if (r.ok) {
+            hint.textContent = r.desc + '。已保存并即时生效。';
+            loadNet();    // 服务端已清 net_check 缓存——重探刷新连通性行
+          } else {
+            hint.textContent = '保存失败：' + (r.err || '') ;
+          }
+        } catch (e) { hint.textContent = '保存失败：' + e; }
+        sel.disabled = false;
+        _mirrorBusy = false;
+      };
+    } catch (e) { hint.textContent = '镜像配置读取失败：' + e; }
   }
 
   // ---- 安装 ----
@@ -1213,6 +1273,7 @@ async function _stRenderResourcesPane(pane) {
   await loadStatus(true);
   if (pathBox.value.trim()) loadPkg();
   loadNet();
+  loadMirror();
   loadClaudeLatest();
 
   // ---- claude 在线升级（a322 批3）：已装 vs npm registry 最新 ----

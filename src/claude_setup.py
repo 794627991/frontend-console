@@ -160,6 +160,13 @@ def _node_ok():
     return (node, npm)
 
 
+def _mirrors():
+    """src/mirrors 注册表访问（惰性导入——本模块在 preflight_gate 早期链路
+    被 res_install 引用，镜像档位每次调用实时读 config，改档即时生效）。"""
+    from src import mirrors
+    return mirrors
+
+
 def _git_ok():
     return shutil.which("git.exe") or shutil.which("git")
 
@@ -170,45 +177,94 @@ def _git_ok():
 # 解包后按 --no-index --find-links 离线补装
 _TOOL_DEPS = ["flask", "pyserial", "pywebview", "paramiko", "pywinpty",
               "pyelftools"]
+# 在线安装 pydeps 用：比离线表多 pycryptodome（fcpk 资源包解密，a356 铁律
+# 不进启动自举表，但在线装 pydeps 本就是联网动作——顺手装齐，装完资源包
+# 功能自愈，不再 503）。离线 _install_pydeps 对它做「包内 wheel 有就装、
+# 没有跳过」的尽力尝试，老包不带也不炸。
+_TOOL_DEPS_ONLINE = _TOOL_DEPS + ["pycryptodome"]
 
-# 官方下载位（在线安装通道：本地资源目录没安装器时才走；版本与 D:\AI\安装环境 对齐）
-_NODE_URL = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi"
-# 免安装 zip（MSI 提权失败 1603 的兜底，零权限解压即用）
-_NODE_ZIP_URL = "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip"
+# 官方下载位（在线安装通道：本地资源目录没安装器时才走）。
+# a595 二批：版本/文件名常量单一真源，镜像候选由 src/mirrors.py 按用户档位
+# 动态排出（默认智能镜像优先）——不再写死单一镜像。
+_NODE_VER_DIR = "v24.19.0"
+_NODE_MSI_F = "node-v24.19.0-x64.msi"
+_NODE_ZIP_F = "node-v24.19.0-win-x64.zip"
+_GIT_TAG = "v2.55.0.windows.5"
+_GIT_EXE_F = "Git-2.55.0.5-64-bit.exe"
 # Git for Windows 实测可用地址（tag 命名规则：v主.次.修订.windows.N，资产名 Git-主.次.修订.N）
 # 之前写的 v2.55.0.4.windows.1 不存在 → 404。改地址前务必 curl 实测 200。
-_GIT_URL = ("https://github.com/git-for-windows/git/releases/download/"
-            "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe")
+_NODE_URL = f"https://nodejs.org/dist/{_NODE_VER_DIR}/{_NODE_MSI_F}"
+# 免安装 zip（MSI 提权失败 1603 的兜底，零权限解压即用）
+_NODE_ZIP_URL = f"https://nodejs.org/dist/{_NODE_VER_DIR}/{_NODE_ZIP_F}"
+_GIT_URL = f"https://github.com/git-for-windows/git/releases/download/{_GIT_TAG}/{_GIT_EXE_F}"
 
 
-def _download(url, dst):
-    """流式下载安装器到 dst，按 MB 打日志。失败给人话（小白定位问题）。"""
-    import urllib.request
+def _node_msi_candidates():
+    """Node msi 下载候选（有序，按用户镜像档位）。"""
+    from .mirrors import node_bin_urls
+    return node_bin_urls(_NODE_VER_DIR, _NODE_MSI_F)
+
+
+def _node_zip_candidates():
+    from .mirrors import node_bin_urls
+    return node_bin_urls(_NODE_VER_DIR, _NODE_ZIP_F)
+
+
+def _git_exe_candidates():
+    from .mirrors import git_bin_urls
+    return git_bin_urls(_GIT_TAG, _GIT_EXE_F)
+
+
+def _download(url, dst, mirrors=()):
+    """流式下载安装器到 dst，按 MB 打日志。失败按候选序换源重试，全部失败
+    给人话（小白定位问题）。
+
+    a595R（对抗审 #1 修正）：候选序（镜像档位排出的 mirrors）优先，
+    url 恒作**末位**兜底——早前 `urls = [url] + mirrors` 把官方直链钉在
+    首位，「镜像优先」在 node/git 全部 5 个下载点被整列架空（官方域被墙
+    时每次先白等超时，被劫持网络对官方回 200 垃圾还会短路镜像自救）。"""
     os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-    _log(f"下载 {url}")
-    try:
-        with urllib.request.urlopen(url, timeout=60) as resp, open(dst, "wb") as f:
-            total = int(resp.headers.get("Content-Length") or 0)
-            got = 0
-            while True:
-                chunk = resp.read(1 << 20)
-                if not chunk:
-                    break
-                f.write(chunk)
-                got += len(chunk)
-                if total:
-                    _log(f"  已下载 {got // 1024 // 1024}/{total // 1024 // 1024} MB")
-    except Exception as e:
-        # 下载一半的残片清掉，避免下次误当完整安装器
+    urls = [m for m in (mirrors or ()) if m]
+    if url not in urls:
+        urls.append(url)    # 兜底：候选列表漏了官方也要试；空 mirrors → [url]
+    last = None
+    for i, u in enumerate(urls):
         try:
-            if os.path.isfile(dst):
-                os.remove(dst)
-        except OSError:
-            pass
-        raise RuntimeError(
-            f"下载失败（{e}）——请检查网络。无网环境请让发布者在资源包内"
-            f"附带对应安装器（node 的 .msi 或 node-v*-win-x64.zip / Git-*.exe）"
-            f"后重新制作 .fcpk 包") from e
+            return _download_one(u, dst)
+        except Exception as e:
+            last = e
+            _log(f"下载失败（{e}）" +
+                 ("，换镜像源重试…" if i < len(urls) - 1 else "，无更多镜像"))
+    # 下载一半的残片清掉，避免下次误当完整安装器
+    try:
+        if os.path.isfile(dst):
+            os.remove(dst)
+    except OSError:
+        pass
+    raise RuntimeError(
+        f"下载失败（{last}）——请检查网络。无网环境请让发布者在资源包内"
+        f"附带对应安装器（node 的 .msi 或 node-v*-win-x64.zip / Git-*.exe）"
+        f"后重新制作 .fcpk 包") from last
+
+
+def _download_one(url, dst):
+    """单源流式下载。带 User-Agent——裸 urllib（Python-urllib/x）会被部分
+    CDN/企业代理 403，与 net_check 的 Mozilla 口径对齐（a595 前 _download
+    没带 UA，预检通、下载 403 的分裂就是这么来的）。"""
+    import urllib.request
+    _log(f"下载 {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp, open(dst, "wb") as f:
+        total = int(resp.headers.get("Content-Length") or 0)
+        got = 0
+        while True:
+            chunk = resp.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+            got += len(chunk)
+            if total:
+                _log(f"  已下载 {got // 1024 // 1024}/{total // 1024 // 1024} MB")
     return dst
 
 
@@ -222,7 +278,7 @@ def _install_node_if_missing(dl_dir):
     if not (msi and os.path.isfile(msi)):
         msi = os.path.join(dl_dir, "node.msi")
         if not os.path.isfile(msi):
-            _download(_NODE_URL, msi)
+            _download(_NODE_URL, msi, mirrors=_node_msi_candidates())
     _install_node_from(msi)
     return bool(shutil.which("node.exe") or shutil.which("node"))
 
@@ -294,7 +350,7 @@ def _install_node_from(msi):
         if not zpath:
             # 离线包没带 zip 也无本地资源 → 下载（离线机器会失败，报错说明白）
             zpath = os.path.join(os.path.dirname(msi), "node-win-x64.zip")
-            _download(_NODE_ZIP_URL, zpath)
+            _download(_NODE_ZIP_URL, zpath, mirrors=_node_zip_candidates())
         _install_node_zip(zpath)
 
 
@@ -307,7 +363,7 @@ def _install_git_if_missing(dl_dir):
     if not (exe and os.path.isfile(exe)):
         exe = os.path.join(dl_dir, "Git.exe")
         if not os.path.isfile(exe):
-            _download(_GIT_URL, exe)
+            _download(_GIT_URL, exe, mirrors=_git_exe_candidates())
     return _install_git_from(exe)
 
 
@@ -368,19 +424,39 @@ def _npm_install_global(force=False):
                  % real)
     if not force and _claude_installed(npm_dir):
         _log("已安装 claude-code，改为 npm update -g（只拉版本差异）…")
-        r = subprocess.run(["cmd", "/c", npm, "update", "-g", pkg],
-                           capture_output=True, text=True, timeout=900, env=env)
+        # a595 二批：registry 不再"官方失败换 npmmirror 一次"——按用户镜像
+        # 档位排出候选列表（默认镜像优先）逐个重试；全部失败才保留现有安装
+        # （能用比新更重要）。列表在循环外定死一次，防中途改档漂移。
+        regs = _mirrors().npm_registry_list()
+        r = None
+        for i, reg in enumerate(regs):
+            r = subprocess.run(["cmd", "/c", npm, "update", "-g", pkg,
+                                "--registry=" + reg],
+                               capture_output=True, text=True, timeout=900,
+                               env=env)
+            if r.returncode == 0:
+                break
+            _log("npm update 失败（registry=%s 退出码 %d）%s"
+                 % (reg, r.returncode,
+                    "，换下一源重试…" if i < len(regs) - 1 else "，无更多源"))
         for line in ((r.stdout or "") + (r.stderr or "")).splitlines():
             _log(line)
         if r.returncode != 0:
-            # 更新失败不动现有安装：能用比新更重要
-            _log("npm update 失败（退出码 %d）——保留现有安装，可改用"
-                 "「强制重装」" % r.returncode)
+            _log("npm update 全部源失败——保留现有安装，可改用「强制重装」")
         _ensure_npm_path(npm_dir)
         return
     _log("npm install -g %s（prefix → 用户目录，免提权）…" % pkg)
-    r = subprocess.run(["cmd", "/c", npm, "install", "-g", pkg],
-                       capture_output=True, text=True, timeout=900, env=env)
+    regs = _mirrors().npm_registry_list()
+    r = None
+    for i, reg in enumerate(regs):
+        r = subprocess.run(["cmd", "/c", npm, "install", "-g", pkg,
+                            "--registry=" + reg],
+                           capture_output=True, text=True, timeout=900, env=env)
+        if r.returncode == 0:
+            break
+        _log("npm install 失败（registry=%s 退出码 %d）%s"
+             % (reg, r.returncode,
+                "，换下一源重试…" if i < len(regs) - 1 else "，无更多源"))
     for line in ((r.stdout or "") + (r.stderr or "")).splitlines():
         _log(line)
     if r.returncode != 0:
@@ -562,6 +638,20 @@ def _install_pydeps(pydeps_dir):
     for line in tail[-5:]:
         _log("  " + line)
     _log("工具依赖补装" + ("完成" if ok else "失败（不影响 claude 安装）"))
+    # pycryptodome 尽力尝试（a595）：fcpk 资源包解密要用，但老包的 pydeps/
+    # 未必打了它的 wheel——单独补装一次，包内没有就跳过（绝不让它把整个
+    # pydeps 安装判成失败）。联网机器后续可用在线装 pydeps 补齐。
+    if ok:
+        rc = subprocess.run(
+            [_sys.executable, "-m", "pip", "install", "--no-index",
+             "--find-links", pydeps_dir, "--no-input", "pycryptodome"],
+            capture_output=True, text=True, timeout=600,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        if rc.returncode == 0:
+            _log("  pycryptodome 已补装（资源包功能可用）")
+        else:
+            _log("  包内无 pycryptodome wheel，跳过（联网机器可用"
+                 "「在线安装」补齐）")
     if ok:
         # 补装成功：写自检通过标记——后续启动不再测/不再弹提醒（用户要求）
         try:
