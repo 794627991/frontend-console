@@ -593,12 +593,12 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-row" style="margin-top:6px;">
           <button class="btn ghost" id="tkCdpToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
         </div>
-        <div class="dd-sub">开启后 Claude 可用 devtools_* 工具操作内嵌浏览器（读页面/点击/填表/截图）。</div></div>
+        <div class="dd-sub">开启后 Claude 可用 devtools_* 工具操作内嵌浏览器（读页面/点击/填表/截图）。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
         <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:flex-start;" id="stNavKeysRow"></div>
-        <div class="dd-sub">转到定义 / 查找引用 / 符号搜索（跨文件找函数）。点输入框按新键即生效。
+        <div class="dd-sub">转到定义 / 查找引用 / 符号搜索（跨文件找函数）。点输入框按新键即生效。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">Claude 打开方式</div>
