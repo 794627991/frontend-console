@@ -334,8 +334,10 @@ def test_hide_all_suspends_everything(stub_clr):
     assert t._ctl['a'].cvw.IsSuspended is True
 
 
-def test_anti_autosignin_injected(stub_clr):
-    """a556：show(false) 只藏目标——后台 tab 休眠不得藏掉活动 tab。"""
+def test_show_hide_one_semantics(stub_clr):
+    """a556：show(false) 只藏目标——后台 tab 休眠不得藏掉活动 tab。
+    RD1（红队D）：原误改名 test_anti_autosignin_injected 与 a557 注入测试
+    同名——后定义覆盖前定义，本钉测静默死亡数轮。改名复活。"""
     t = _mk('sync')
     t.layout(0, 0, 800, 600)
     t.create('a', 'https://a/')
@@ -446,7 +448,9 @@ def test_route_chain_complete(stub_clr):
                     "on": True, "sq": 1, "all": False,
                     "x": 0, "y": 0, "w": 100, "h": 100, "epoch": "",
                     "origin": "https://a/", "user": ""}   # pw_* 需带 origin
-            r = client.post("/api/web/tabs", json=body)
+            # RA1：pw_* 强鉴权要求同源 Origin——test_client 默认无 Origin
+            r = client.post("/api/web/tabs", json=body,
+                            headers={"Origin": "http://localhost"})
             j = r.get_json()
             assert r.status_code == 200, (act, r.status_code, j)
             assert j.get("err") != "bad act", (act, j)

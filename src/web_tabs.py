@@ -17,6 +17,7 @@ document.domain/防盗链等 iframe 时代的一切限制结构性消失。
   设 Bounds；切 tab = 显示/隐藏控件
 """
 import json
+import threading
 
 _tabs = None            # WebTabs 单例（main._patched_ready 装配）
 _HIDE_ALL = "__all__"    # R6 审计 W32：全隐哨兵（切回阅读态 tab）——前端 tab id
@@ -152,8 +153,13 @@ def _pw_entries():
             "ORDER BY origin_url").fetchall()
         con.close()
         return [{"origin": r[0], "user": r[1] or ""} for r in rows if r[0]]
-    except Exception:
-        return []
+    finally:
+        # RA3（红队）：库副本含全部用户名/足迹——不留 %TEMP%
+        import os as _os
+        try:
+            _os.remove(db)
+        except Exception:
+            pass
 
 
 def _pw_pending_file():
@@ -162,32 +168,50 @@ def _pw_pending_file():
     return os.path.join(DATA_DIR, "pw_pending_del.json")
 
 
-def _pw_del_defer(origin):
+_pw_del_lock = threading.Lock()
+
+
+def _pw_del_defer(origin, user):
     """运行中库被锁（Chromium 常驻）→ 挂 pending，退出流程（浏览器已停）
-    统一执行。立即尝试写入，成功则当场生效。"""
-    import json, os, sqlite3, time
+    统一执行。立即尝试写入，成功则当场生效。
+    RA4：user=None 删全部（兼容），否则按 origin+user 精确。
+    RA5：挂起文件读-改-写全程持锁 + 临时文件原子替换。"""
+    import json, os, sqlite3, tempfile
     try:
         con = sqlite3.connect(_pwdb_path(), timeout=0.3)
-        con.execute("DELETE FROM logins WHERE origin_url=?", (origin,))
+        if user is None:
+            con.execute("DELETE FROM logins WHERE origin_url=?", (origin,))
+        else:
+            con.execute("DELETE FROM logins WHERE origin_url=? AND "
+                        "username_value=?", (origin, user))
         con.commit()
         con.close()
         return True     # 库恰好空闲（无网页 tab）——立即生效
     except Exception:
         pass
-    try:
-        p = _pw_pending_file()
-        lst = []
-        if os.path.exists(p):
-            try:
-                lst = json.load(open(p, encoding="utf-8")) or []
-            except Exception:
-                lst = []
-        if origin not in lst:
-            lst.append(origin)
-        json.dump(lst, open(p, "w", encoding="utf-8"), ensure_ascii=False)
-        return False    # 已挂起，退出后生效
-    except Exception:
-        return False
+    with _pw_del_lock:
+        try:
+            p = _pw_pending_file()
+            lst = []
+            if os.path.exists(p):
+                try:
+                    lst = json.load(open(p, encoding="utf-8")) or []
+                except Exception:
+                    # RA6（红队）：损坏的挂起文件不再静默吞——清空重建并告警
+                    lst = []
+                    _log("WARN", "pw_pending_del.json 损坏，已重建")
+            item = [origin, user]
+            if item not in lst:
+                lst.append(item)
+            # RA5：原子写（临时文件 + os.replace），防截断丢全部记录
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(lst, f, ensure_ascii=False)
+            os.replace(tmp, p)
+            return False    # 已挂起，退出后生效
+        except Exception as e:
+            _log("WARN", "pw_del_defer: %r" % e)
+            return False
 
 
 def _pw_del_flush():
@@ -202,9 +226,18 @@ def _pw_del_flush():
         return
     try:
         con = sqlite3.connect(_pwdb_path())
-        for o in lst:
+        for it in lst:
+            # RA4：二元组 [origin, user] 精确删；旧格式字符串按全 origin（兼容）
+            if isinstance(it, list) and len(it) == 2:
+                o, u = it
+            else:
+                o, u = it, None
             try:
-                con.execute("DELETE FROM logins WHERE origin_url=?", (o,))
+                if u is None:
+                    con.execute("DELETE FROM logins WHERE origin_url=?", (o,))
+                else:
+                    con.execute("DELETE FROM logins WHERE origin_url=? AND "
+                                "username_value=?", (o, u))
             except Exception:
                 pass
         con.commit()
@@ -246,6 +279,7 @@ class WebTabs:
         self._cancel = set()                 # R1 审计 W5：create 在途中被 dispose（弃建标记）
         self._epochs = {}                    # R4 审计 D1（W3）：tab → 页面纪元（dispose_all 按纪元回收）
         self._env_failed = False             # a555：env 永久失败 → 快速失败
+        self._closing = False                # RB6：退出落盘中（create 拒绝）
         self._ensure_env()
 
     # ---------- 环境（一次） ----------
@@ -339,6 +373,10 @@ class WebTabs:
         if self._env_failed:
             # a555：env 已判死——快速失败，别进下面的重试白等 5s
             return {"ok": False, "err": "WebView2 环境初始化失败"}
+        if self._env is None and self._closing:
+            # RB6（红队）：退出落盘期间（_env 已置空）create 快速失败——
+            # 原路径 50×100ms 重试钉死 Flask 线程 ~5s
+            return {"ok": False, "err": "正在退出"}
         if not self._env:
             # env 竞态（启动初期）：100ms 重试 ×50
             import time
@@ -714,8 +752,16 @@ class WebTabs:
                     diag.append("empty-frame")
 
                 def _after():
+                    # RB5（红队）：抓帧窗口（100-300ms）内用户可能已切回本
+                    # tab——迟到回调按当前意图判定，无条件 False 会把新
+                    # show 藏掉（100/100 复现）。意图指向本 tab 可见→保持
+                    # 可见（帧照推，被活页盖住无碍）。
                     try:
-                        ctl.Visible = False
+                        w = self._want
+                        if w is not None and w[0] == tab_id and w[1]:
+                            ctl.Visible = True
+                        else:
+                            ctl.Visible = False
                     except Exception:
                         pass
                     m = self._main_cvw
@@ -737,8 +783,9 @@ class WebTabs:
                         if diag:
                             try:
                                 m.ExecuteScriptAsync(
-                                    "console.warn('[web-tabs] suspend: %s')"
-                                    % json.dumps(";".join(diag)))
+                                    "console.warn(%s)"
+                                    % json.dumps('[web-tabs] suspend: '
+                                                 + ";".join(diag)))
                             except Exception:
                                 pass
                 self._ui(_after)
@@ -766,8 +813,8 @@ class WebTabs:
         def _push():
             try:
                 m.ExecuteScriptAsync(
-                    "console.warn('[web-tabs] suspend: %s')"
-                    % json.dumps(";".join(diag)))
+                    "console.warn(%s)"
+                    % json.dumps('[web-tabs] suspend: ' + ";".join(diag)))
             except Exception:
                 pass
         if m:
@@ -839,7 +886,7 @@ class WebTabs:
             if c:
                 c.Visible = False
                 _suspend_ctl(c)
-    def show(self, tab_id, visible, sq=0, hide_all=False):
+    def show(self, tab_id, visible, sq=0, hide_all=False, epoch=None):
         """切 tab：显示目标控件（排他），或只藏目标。hide_all=True=全隐
         （R6 审计 W32：_want 记哨兵，防陈旧排他意图经 layout 弹出他 tab）。
 
@@ -851,6 +898,13 @@ class WebTabs:
         浏览器多连接下到达顺序无保证；乱序迟到的旧意图直接丢弃，否则
         「切走时隐藏」被「休眠前显示」后到覆盖 → 控件压在其他 tab 上
         （用户实锤「网页没进抽屉」）。"""
+        # RB4（红队·P1）：纪元标签——新页面（新 epoch）到达即重置 seq 水位。
+        # 修刷新三变体：beacon 丢失/recycle=0 跳过 reset/旧页迟到 sq 抬水位
+        # → 新页 show 被丢 20-74s 死 UI。误重置由前端 2s 重发（R9.14 恒发）
+        # 自愈（≤2s）。epoch=None（无标签）保持旧行为，兼容。
+        if epoch is not None and epoch != getattr(self, "_want_epoch", None):
+            self._want_epoch = epoch
+            self._want_seq = 0
         if sq:
             if sq <= self._want_seq:
                 return {"ok": True}       # 乱序迟到的旧令
@@ -951,6 +1005,7 @@ class WebTabs:
                 self._form.BeginInvoke(System.Action(_close_all))
             except Exception:
                 _close_all()   # 无 UI Dispatcher 时降级直执行
+            self._closing = True   # RB6：退出中——后续 create 快速失败
             self._env = None
             _t.sleep(max(0.0, grace_ms / 1000.0))
             _log("INFO", "flush_on_exit done (grace=%dms, ctls=%d)"
@@ -968,8 +1023,11 @@ class WebTabs:
         全部归零，刷新后的新页面从干净状态开始（旧 beacon 迟到不回踩）。"""
         self._want_seq = 0
         self._want = None
+        self._want_epoch = None   # RB4：会话重置连纪元一起
         self._pend_nav.clear()
-        self._cancel.clear()
+        # RB2（红队·P1）：_cancel 不能在此清——dispose_all 的 pending 分支
+        # 先写 _cancel 再调本函数，清掉=在途 _build 复活为永不 Dispose 的
+        # 隐形孤儿（300/300 确定性复现）。_cancel 由 _build 消费自清。
 
     # ---------- 布局（前端上报） ----------
     def layout(self, x, y, w, h):
@@ -1060,10 +1118,27 @@ def register(app):
             return jsonify(t.go_forward(tid))
         if act == "reload":
             return jsonify(t.reload(tid))
+        def _pw_guard():
+            # RA1/RA2（红队）：全局守卫放行无-Origin 请求（MCP/urllib 语义），
+            # 密码端点必须更严——仅 UI 同源 fetch（Origin == http://<本次host>）
+            # 放行。本机其他进程（两次调用导出全库明文的攻击）与异端口/
+            # 无端口 Origin（盲 CSRF 删除）全部 403。
+            from flask import request as _rq
+            org = (_rq.headers.get("Origin") or "").strip().rstrip("/")
+            if org != ("http://" + (_rq.host or "")):
+                return jsonify({"ok": False, "err": "forbidden"}), 403
+            return None
+
         if act == "pw_list":
+            _g = _pw_guard()
+            if _g is not None:
+                return _g
             # a583 密码管理器：已存站点列表（不含明文）
             return jsonify({"ok": True, "items": _pw_entries()})
         if act == "pw_reveal":
+            _g = _pw_guard()
+            if _g is not None:
+                return _g
             # 单条明文（loopback+origin 守卫内；按 origin+user 定位）
             import sqlite3
             _o = str(d.get("origin") or "")
@@ -1071,21 +1146,39 @@ def register(app):
             db = _pwdb_copy()
             if not db:
                 return jsonify({"ok": False, "err": "密码库不可读"})
-            con = sqlite3.connect(db)
-            row = con.execute(
-                "SELECT password_value FROM logins WHERE origin_url=? "
-                "AND username_value=? LIMIT 1", (_o, _u)).fetchone()
-            con.close()
+            # RA7（红队）：畸形库时 execute 抛出须关连接+删副本+500→400
+            import os as _os
+            try:
+                con = sqlite3.connect(db)
+                row = con.execute(
+                    "SELECT password_value FROM logins WHERE origin_url=? "
+                    "AND username_value=? ORDER BY date_created DESC "
+                    "LIMIT 1", (_o, _u)).fetchone()   # RA8：多条取最新
+                con.close()
+            except Exception as e:
+                return jsonify({"ok": False, "err": "库读取失败：%r" % e})
+            # RA3：副本即删
+            import os as _os
+            try:
+                _os.remove(db)
+            except Exception:
+                pass
             if not row:
                 return jsonify({"ok": False, "err": "not-found"})
             ok, text = _pw_decrypt(row[0])
             return jsonify({"ok": ok, "pw": text if ok else "",
                             "err": "" if ok else text})
         if act == "pw_del":
+            _g = _pw_guard()
+            if _g is not None:
+                return _g
             _o = str(d.get("origin") or "")
+            # RA4（红队）：按 origin+user 精确删——原全 origin 删除会把同站
+            # 多账号一次清光；空 user 显式标记（None=全部，UI 不再使用）
+            _u = d.get("user", None)
             if not _o:
                 return jsonify({"ok": False, "err": "bad origin"}), 400
-            now = _pw_del_defer(_o)
+            now = _pw_del_defer(_o, _u)
             return jsonify({"ok": True, "immediate": now})
         if act == "suspend":
             # R-外泄根治·静止帧：抓帧→隐藏→回推（前端 reconcile 调用）
@@ -1101,7 +1194,8 @@ def register(app):
                 else str(_on).strip().lower() in ("true", "1", "yes", "on"),
                 _num("sq"),
                 _all if isinstance(_all, bool)
-                else str(_all).strip().lower() in ("true", "1", "yes", "on")))
+                else str(_all).strip().lower() in ("true", "1", "yes", "on"),
+                str(d.get("epoch") or "") or None))
         if act == "dispose":
             return jsonify(t.dispose(tid))
         if act == "dispose_all":
@@ -1118,13 +1212,17 @@ def register(app):
 
 
 def shutdown(grace_ms=1200):
+    # RA11（红队）：即使 _tabs 未装配（env 失败），挂起删除也须执行
     """a582：退出前优雅关闭 WebView2（main._do_real_cleanup 在 taskkill
     树杀之前调用）。fail-safe：任何异常吞掉，绝不阻塞退出主流程。"""
     global _tabs
     if _tabs is None:
         return
     try:
-        _tabs.flush_on_exit(grace_ms)
+        if _tabs is not None:
+            _tabs.flush_on_exit(grace_ms)
+        else:
+            _pw_del_flush()   # RA11：无控件也要清挂起
     except Exception as e:
         _log("WARN", "shutdown: %r" % e)
 

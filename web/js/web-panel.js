@@ -436,8 +436,9 @@ function _webCtlVisible(on, all, target) {
   // a556：带序号——show:true/false 是两个独立 fetch，浏览器多连接下到达
   // Python 的顺序无保证；乱序时后发的隐藏被先发的显示覆盖 → 控件压在
   // 其他 tab 上（用户实锤「网页没进抽屉」）。Python 侧按 seq 丢弃迟到旧令
-  const d = { act: 'show', on: !!on, sq: ++_webCtlSeq };
+  const d = { act: 'show', on: !!on, sq: ++_webCtlSeq, epoch: _webPageEpoch };
   if (all) d.all = true;   // R6 审计 W32：全隐语义（后端 _want=(HIDE_ALL,False)）
+  // RB4：epoch 随行——新页面首个 show 让后端重置 seq 水位（防刷新死 UI）
   _webCtl(c, d);
   if (on && c._ctlPush) setTimeout(c._ctlPush, 30);   // 显示后重对齐
 }
@@ -627,9 +628,10 @@ window.__webTabHist = function (tid, back, fwd) {
 };
 window.__webTabTitle = function (tid, title) {
   const c = _webByTabId(tid);
-  // R-命名统一：页面真实标题优先写入（tab DOM + meta.label 同步——
-  // 抽屉/悬浮组/侧栏由此可分辨；短网址仅在标题未到时占位）
-  if (c && title) _webSetLabel(c, title);
+  // 用户令：后台回收（休眠→about:blank）不得把网页名刷成空白——
+  // 空/空白标题（about:blank 阶段推送）直接忽略，保留最后真实标题
+  var t = String(title || '').trim();
+  if (c && t && t !== 'about:blank' && t !== 'about:blank') _webSetLabel(c, title);
 };
 // 控件内 window.open / target=_blank → 本面板内导航
 // 控件导航开始/完成 → 加载指示（刷新转圈+地址栏呼吸，a553 找回）
@@ -1289,7 +1291,10 @@ function _webFavMenu(anchor) {
     if (item) {
       if (item.dataset.favEditing) return;   // 编辑态：行内点击不触发打开
       const f = _webFavs()[+item.dataset.favI];
-      if (f) buildWebPanelTab(f.url, { newTab: true });
+      // RC2（红队）：消费端 scheme 白名单——历史/种子回填的 file:// 收藏
+      // 点击即拦（服务端清洗只管新写入，存量数据在此兜底）
+      if (f && /^https?:\/\//i.test(f.url)) buildWebPanelTab(f.url, { newTab: true });
+      else if (f) showBanner('该收藏协议不允许在内嵌浏览器打开', 2500, true);
       list.remove();
     }
   });

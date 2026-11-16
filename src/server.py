@@ -1398,7 +1398,10 @@ def api_logs():
 
 def _web_favs_clean(items):
     """网页收藏清洗（R-命名统一批次）：url/title 字符串白名单 + 截断
-    （url≤2048 / title≤200）+ 上限 100，与前端 _webFavsSave 同口径。"""
+    （url≤2048 / title≤200）+ 上限 100，与前端 _webFavsSave 同口径。
+    RC2（红队）：url 加 scheme 白名单——原仅查长度，file:// 收藏全链
+    存活（服务端往返→种子回填→一次点击内嵌浏览器打开本地文件）。
+    RC3（红队）：ts 非数值不再裸 int() 500。"""
     out = []
     if not isinstance(items, list):
         return out
@@ -1406,14 +1409,21 @@ def _web_favs_clean(items):
         if not isinstance(it, dict):
             continue
         url = str(it.get("url") or "").strip()
+        # RC2：scheme 白名单（与前端 _webNormUrl 放行集一致）
         if not url or len(url) > 2048:
             continue
+        if not url.startswith(("http://", "https://")):
+            continue
+        try:
+            ts = int(it.get("ts") or 0)
+        except (TypeError, ValueError):
+            ts = 0   # RC3：畸形 ts 落 0，不再 500
         entry = {"url": url,
                  "title": str(it.get("title") or "").strip()[:200],
-                 "ts": int(it.get("ts") or 0)}
+                 "ts": ts}
         note = str(it.get("note") or "").strip()[:100]
         if note:
-            entry["note"] = note   # R-命名统一·备注（用户令）——否则往返即丢
+            entry["note"] = note
         out.append(entry)
     return out[:100]
 
