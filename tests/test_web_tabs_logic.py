@@ -53,8 +53,10 @@ class FakeEvent:
 
 
 class FakeProfile:
-    PasswordAutofillEnabled = False
-    GeneralAutofillEnabled = False
+    # a582：对齐真 DLL（CoreWebView2Profile 反射实证）——原错名是密码保存
+    # 从未开启的根因，桩沿用错名导致测试假绿数月
+    IsPasswordAutosaveEnabled = False
+    IsGeneralAutofillEnabled = False
 
 
 class FakeCvw:
@@ -403,8 +405,11 @@ def test_anti_autosignin_injected(stub_clr):
     ctl = t._ctl['t1']
     assert len(ctl.cvw.injected) == 1
     assert "input[type=password]" in ctl.cvw.injected[0]
-    assert ctl.cvw.Profile.PasswordAutofillEnabled is True
-    assert ctl.cvw.Profile.GeneralAutofillEnabled is True
+    # a582（内网方案·根因3）：初值必须是 Date.now()（原 var g=0 恒拦一切）
+    assert "var g=Date.now()" in ctl.cvw.injected[0]
+    assert "var g=0;" not in ctl.cvw.injected[0]
+    assert ctl.cvw.Profile.IsPasswordAutosaveEnabled is True
+    assert ctl.cvw.Profile.IsGeneralAutofillEnabled is True
 
 
 def test_env_failed_fast_return(stub_clr):
@@ -448,3 +453,29 @@ def test_route_chain_complete(stub_clr):
         assert r.status_code == 200 and r.get_json().get("err") == "bad act"
     finally:
         wt._tabs = old_tabs
+
+
+def test_flush_on_exit_disposes_all(stub_clr):
+    """a582（内网方案·根因2）：退出落盘——全部控件 Dispose、_ctl/_epochs
+    清空、_env 置空；单控件异常不连坐。"""
+    t = _mk('sync')
+    t.layout(0, 0, 800, 600)
+    for i in range(3):
+        t.create('t%d' % i, 'https://x/%d' % i)
+    assert len(t._ctl) == 3
+    t.flush_on_exit(grace_ms=10)
+    assert len(t._ctl) == 0 and len(t._epochs) == 0
+    assert t._env is None
+    for i in range(3):
+        assert t is not None  # 不崩即过（FakeCtl.disposed 由桩记录）
+
+
+def test_shutdown_none_safe():
+    """a582：_tabs 为 None 时 shutdown 静默通过（不抛）。"""
+    from src import web_tabs as wt
+    old = wt._tabs
+    wt._tabs = None
+    try:
+        wt.shutdown()          # 不应抛
+    finally:
+        wt._tabs = old

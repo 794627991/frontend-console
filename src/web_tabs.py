@@ -34,7 +34,10 @@ WEB_TAB_PASSWORD_AUTOFILL = True
 # keydown）则拦截。浏览器 auto sign-in 无手势必被拦；用户真实点击/回车
 # 天然带手势不受影响。注入每个控件的所有后续文档（含跨域页，浏览器级）。
 _ANTI_AUTOSIGNIN_JS = (
-    "(function(){var g=0;"
+    "// a582（内网方案·根因3）：原 var g=0 使 Date.now()-0 恒>3000 →"
+    "// 所有提交（含 cookie 自动登录）全被拦 = 登录态记忆失效。"
+    "// 语义=最近 3 秒内无手势才拦（自动签到防护不变）"
+    "(function(){var g=Date.now();"
     "addEventListener('pointerdown',function(){g=Date.now()},true);"
     "addEventListener('keydown',function(){g=Date.now()},true);"
     "addEventListener('submit',function(e){try{"
@@ -117,7 +120,10 @@ class WebTabs:
             args = ("--disable-backgrounding-occluded-windows "
                     "--disable-renderer-backgrounding "
                     "--disable-background-timer-throttling "
-                    "--disable-features=CalculateNativeWinOcclusion")
+                    "--disable-features=CalculateNativeWinOcclusion,"
+                    # a582（内网方案·根因4）：关密码泄露检测——内网访问
+                    # 不到泄露库端点，同步等超时=点「保存」卡顿。落库不受影响
+                    "AutofillServerCommunication")
             if self._cdp:
                 args += " --remote-debugging-port=9223"
             opts.AdditionalBrowserArguments = args
@@ -261,12 +267,29 @@ class WebTabs:
                     # Chromium 自动签到会把会话过期变成自动提交的登录尝试
                     # （多 tab × 新开/唤醒/刷新 = 频繁登录 → SSO 锁号，
                     # 用户实锤）。改 WEB_TAB_PASSWORD_AUTOFILL 开回。
-                    try:
-                        cvw.Profile.PasswordAutofillEnabled = \
-                            WEB_TAB_PASSWORD_AUTOFILL
-                        cvw.Profile.GeneralAutofillEnabled = True
-                    except Exception as e:
-                        _log("WARN", "autofill: %r" % e)
+                    # a582（内网方案合入·根因1）：.NET CoreWebView2Profile 真实
+                    # 属性是 IsPasswordAutosaveEnabled / IsGeneralAutofillEnabled
+                    # ——原 PasswordAutofillEnabled/GeneralAutofillEnabled 两个名
+                    # 都不存在，赋值 AttributeError 被吞 → 密码保存从未开启
+                    # （Login Data 表 0 行实证）。独立 try + 回读日志。
+                    def _set_autofill(tag):
+                        for _attr, _val in (
+                            ("IsPasswordAutosaveEnabled",
+                             WEB_TAB_PASSWORD_AUTOFILL),
+                            ("IsGeneralAutofillEnabled", True),
+                        ):
+                            try:
+                                setattr(cvw.Profile, _attr, _val)
+                            except Exception as e:
+                                _log("WARN", "autofill(%s).%s=%r: %r"
+                                     % (tag, _attr, _val, e))
+                        try:
+                            _log("INFO", "autofill(%s) now: pwd=%r form=%r"
+                                 % (tag, cvw.Profile.IsPasswordAutosaveEnabled,
+                                    cvw.Profile.IsGeneralAutofillEnabled))
+                        except Exception:
+                            pass
+                    _set_autofill(tab_id)
                     # a557：防自动签到脚本——先注册后首航，覆盖首个文档。
                     # R9.17：两条注入各自独立 try（一条失败不再连坐另一条），
                     # 且成败都写日志（此前静默——注入失败无从得知，用户实锤
@@ -729,6 +752,46 @@ class WebTabs:
             self.reset_session()
         return {"ok": True, "recycled": n}
 
+    # ---------- 退出前落盘（a582 内网方案·根因2） ----------
+    def flush_on_exit(self, grace_ms=1200):
+        """给 WebView2 有序关闭的机会，让 Chromium 把 cookie/密码库写盘。
+        步骤：① UI 线程逐个 Dispose 控件 ② 环境引用置空 ③ sleep 等浏览器
+        进程自行 flush 退出。全程 fail-safe（单控件异常不连坐；无
+        Dispatcher 降级直执行）；由 shutdown() 在非 UI 线程调用。"""
+        import time as _t
+        try:
+            ctls = list(self._ctl.values())
+            self._ctl.clear()
+            self._epochs.clear()
+
+            def _close_all():
+                for c in ctls:
+                    try:
+                        _cvw = getattr(c, "CoreWebView2", None)
+                        if _cvw is not None:
+                            try:
+                                _cvw.Stop()
+                            except Exception:
+                                pass
+                        self._form.Controls.Remove(c)
+                    except Exception:
+                        pass
+                    try:
+                        c.Dispose()
+                    except Exception:
+                        pass
+            try:
+                import System
+                self._form.BeginInvoke(System.Action(_close_all))
+            except Exception:
+                _close_all()   # 无 UI Dispatcher 时降级直执行
+            self._env = None
+            _t.sleep(max(0.0, grace_ms / 1000.0))
+            _log("INFO", "flush_on_exit done (grace=%dms, ctls=%d)"
+                 % (grace_ms, len(ctls)))
+        except Exception as e:
+            _log("WARN", "flush_on_exit: %r" % e)
+
     def reset_session(self):
         """R4 审计 D1（W3）：页面会话重置——seq 水位/显隐意图/在途导航
         全部归零，刷新后的新页面从干净状态开始（旧 beacon 迟到不回踩）。"""
@@ -854,6 +917,18 @@ def register(app):
         return jsonify({"ok": False, "err": "bad act"})
 
     app.register_blueprint(bp)
+
+
+def shutdown(grace_ms=1200):
+    """a582：退出前优雅关闭 WebView2（main._do_real_cleanup 在 taskkill
+    树杀之前调用）。fail-safe：任何异常吞掉，绝不阻塞退出主流程。"""
+    global _tabs
+    if _tabs is None:
+        return
+    try:
+        _tabs.flush_on_exit(grace_ms)
+    except Exception as e:
+        _log("WARN", "shutdown: %r" % e)
 
 
 def install(form):

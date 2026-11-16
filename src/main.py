@@ -1242,6 +1242,15 @@ def main():
     main._real_quit = _real_quit
 
     def _do_real_cleanup():
+        # a582（内网方案·根因2）：网页 tab 的 WebView2 环境必须在后续
+        # taskkill /T /F 树杀**之前**优雅关闭——Chromium cookie/密码库是
+        # 延迟批量写盘，被强杀则未落盘数据全丢（用户实锤：每次重开工具
+        # 所有网页登录态全丢）。内部 sleep ~1.2s 等浏览器进程 flush。
+        try:
+            from src import web_tabs as _wt
+            _wt.shutdown()
+        except Exception:
+            pass
         from src.server import close_all_ports
         close_all_ports()
         clear_endpoint()
