@@ -2463,7 +2463,12 @@ html {
 .hg-flowwrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .hg-flowwrap > .hg-flow { flex: 1; }
 .hg-flow { overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
-  flex-direction: column; gap: 12px; align-items: flex-start; }
+  flex-direction: column; gap: 12px; align-items: flex-start;
+  /* R9.19：禁浏览器滚动锚定——发消息后视口上方历史区的 CV 估高修正
+     （600px/组占位→真高）触发锚定机制自动挪 scrollTop 跟随上方锚元素
+     = 「弹到上面某轮会话的位置」（用户实锤，与近期提交无关，a120P 估高
+     机制起就有）。贴底由 harness 自己的 stickBtm 机制管，无需浏览器锚定 */
+  overflow-anchor: none; }
 /* v3.4.16（用户终裁「最后一次」）：全部布局实验（居中/视差/镜像/自动切宽）
    整体退回——恢复原始形态：AI 内容靠左 820 列、用户消息贴右缘、输入卡居中。
    实验期规则全部清除（含一处误插到规则外的顶层声明，CSS 解析器从此处开始
