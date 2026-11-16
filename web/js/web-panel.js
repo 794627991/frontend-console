@@ -273,6 +273,7 @@ function buildWebPanelTab(url, opts) {
         <input class="web-url" data-web-input spellcheck="false" autocomplete="off"
                placeholder="输入网址，回车打开">
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">${ICO16.star}</button>
+        <button class="btn ghost icon-btn" data-web="pw" title="密码管理：查看 / 显示 / 删除已保存的站点密码">${ICO16.key}</button>
         <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">${ICO16.book} 阅读</button>
         <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框——需登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
         <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">${ICO16.openExt} 浏览器</button>
@@ -1011,6 +1012,7 @@ function _webAct(act, wrap) {
     _webSyncUI(c);
     return;
   }
+  if (act === 'pw') { _webPwMgr(); return; }
   if (act === 'claude' && url) {
     const btn = c.wrap.querySelector('[data-web="claude"]');
     btn.disabled = true;
@@ -1115,6 +1117,83 @@ document.addEventListener('keydown', (e) => {
   const fav = document.getElementById('tabFavBtn');
   if (fav) fav.onclick = (e) => { e.stopPropagation(); _webFavMenu(fav); };
 })();
+
+// ---- a583 密码管理器：列出原生密码库（Chromium Login Data）已存站点，
+// 支持显示明文（后端三层解密）与删除（库锁定时挂起、退出后生效） ----
+function _webPwMgr() {
+  const old = document.getElementById('webPwMenu');
+  if (old) { old.remove(); return; }
+  const anchor = document.querySelector('[data-web="pw"]');
+  const menu = document.createElement('div');
+  menu.id = 'webPwMenu';
+  menu.className = 'web-fav-menu';
+  menu.innerHTML = '<div class="web-fav-title">密码管理 · 读取中…</div>';
+  document.body.appendChild(menu);
+  const pos = () => {
+    const r = anchor.getBoundingClientRect();
+    menu.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
+    const topUp = r.top - menu.offsetHeight - 6;
+    menu.style.top = (topUp >= 8 ? topUp : Math.min(r.bottom + 6,
+      Math.max(8, window.innerHeight - menu.offsetHeight - 8))) + 'px';
+  };
+  pos();
+  const close = (ev) => {
+    if (!menu.contains(ev.target) && !(anchor && anchor.contains(ev.target))) {
+      menu.remove();
+      document.removeEventListener('click', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close, true), 0);
+  const api = (body) => fetch('/api/web/tabs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(r => r.json()).catch(() => ({ ok: false }));
+  const render = (items) => {
+    menu.innerHTML = '<div class="web-fav-title">密码管理' +
+      (items.length ? ' · ' + items.length + ' 个站点' : '') + '</div>' +
+      (items.length ? items.map((it, i) =>
+        '<div class="web-fav-item" data-pwi="' + i + '" title="' + esc(it.origin) + '">' +
+        '<span class="web-fav-name">' + esc((it.user || '（无用户名）') + ' @ ' +
+          (it.origin || '').replace(/^https?:\/\//, '')) + '</span>' +
+        '<span class="web-fav-x" data-pw-show="' + i + '" title="显示密码">' + ICO16.eye + '</span>' +
+        '<span class="web-fav-x" data-pw-del="' + i + '" title="删除">✕</span></div>'
+      ).join('')
+      : '<div class="web-fav-empty">原生密码库还没有保存过密码——在网页 tab 登录时点保存条即可</div>');
+    pos();
+    let cur = items;
+    menu.onclick = (e) => {
+      const sh = e.target.closest('[data-pw-show]');
+      if (sh) {
+        e.stopPropagation();
+        const it = cur[+sh.dataset.pwShow];
+        const row = sh.closest('.web-fav-item');
+        const nm = row.querySelector('.web-fav-name');
+        if (nm.dataset.shown) { nm.textContent = nm.dataset.orig; delete nm.dataset.shown; return; }
+        nm.dataset.orig = nm.textContent; nm.dataset.shown = '1';
+        nm.textContent = '解密中…';
+        api({ act: 'pw_reveal', origin: it.origin, user: it.user }).then(j => {
+          nm.textContent = (j && j.ok) ? (it.user || '(无用户名)') + ' | ' + (j.pw || '(空)')
+            : '❌ ' + ((j && j.err) || '解密失败');
+        });
+        return;
+      }
+      const dl = e.target.closest('[data-pw-del]');
+      if (dl) {
+        e.stopPropagation();
+        const it = cur[+dl.dataset.pwDel];
+        if (!confirm('删除 ' + (it.origin || '') + ' 的已存密码？')) return;
+        api({ act: 'pw_del', origin: it.origin }).then(j => {
+          if (j && j.ok) {
+            showBanner(j.immediate ? '已删除' : '已标记删除——完全退出工具后生效（密码库运行中被浏览器锁定）', 3500, !j.immediate);
+            if (j.immediate) render(cur.filter(x => x !== it), true);
+          } else showBanner('删除失败', 2500, true);
+        });
+        return;
+      }
+    };
+  };
+  api({ act: 'pw_list' }).then(j => render((j && j.ok && j.items) || []));
+}
 
 function _webFavMenu(anchor) {
   const old = document.getElementById('webFavMenu');

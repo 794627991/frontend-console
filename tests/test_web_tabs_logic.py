@@ -439,11 +439,13 @@ def test_route_chain_complete(stub_clr):
         wt.register(app)
         client = app.test_client()
         acts = ["create", "nav", "back", "fwd", "reload", "suspend", "show",
-                "dispose", "dispose_all", "layout"]
+                "dispose", "dispose_all", "layout",
+                "pw_list", "pw_reveal", "pw_del"]   # a583 密码管理器
         for act in acts:
             body = {"act": act, "tab": "t1", "url": "https://a/",
                     "on": True, "sq": 1, "all": False,
-                    "x": 0, "y": 0, "w": 100, "h": 100, "epoch": ""}
+                    "x": 0, "y": 0, "w": 100, "h": 100, "epoch": "",
+                    "origin": "https://a/", "user": ""}   # pw_* 需带 origin
             r = client.post("/api/web/tabs", json=body)
             j = r.get_json()
             assert r.status_code == 200, (act, r.status_code, j)
@@ -479,3 +481,35 @@ def test_shutdown_none_safe():
         wt.shutdown()          # 不应抛
     finally:
         wt._tabs = old
+
+
+def test_pw_decrypt_roundtrip():
+    """a583：解密三层——DPAPI 真往返 + 构造 v10 密文真解。"""
+    import sys, os
+    sys.path.insert(0, ".")
+    from src.web_tabs import _pw_decrypt, _pw_v10_key
+    # 层1：DPAPI 前缀
+    import ctypes, base64
+    from ctypes import wintypes
+
+    class _B(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char))]
+    plain = b"pw-888888"
+    cin = _B(len(plain), ctypes.cast(ctypes.create_string_buffer(plain),
+                                     ctypes.POINTER(ctypes.c_char)))
+    cout = _B()
+    assert ctypes.windll.crypt32.CryptProtectData(
+        ctypes.byref(cin), None, None, None, None, 1, ctypes.byref(cout))
+    blob = b"DPAPI" + ctypes.string_at(cout.pbData, cout.cbData)
+    ok, text = _pw_decrypt(blob)
+    assert ok and text == "pw-888888", (ok, text)
+    # 层2：v10 构造密文（真 AES-GCM + 真 v10 密钥）
+    key = _pw_v10_key()
+    if key:   # 无 Local State 的环境跳过
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        import os as _os
+        nonce = _os.urandom(12)
+        ct = AESGCM(key).encrypt(nonce, b"secret-v10", None)
+        ok2, text2 = _pw_decrypt(b"v10" + nonce + ct)
+        assert ok2 and text2 == "secret-v10", (ok2, text2)

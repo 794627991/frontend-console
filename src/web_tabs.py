@@ -49,6 +49,172 @@ _ANTI_AUTOSIGNIN_JS = (
 # a557：SSO 页面命中日志——控制台直接可见「谁在频繁打 SSO」（诊断锁号）
 _SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 
+
+# ---------- 原生密码库管理器（a583，用户令：🔑 显示/删改已存密码） ----------
+def _pwdb_path():
+    import os
+    return os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                        "fc_webview_tabs", "EBWebView", "Default", "Login Data")
+
+
+def _pwdb_copy():
+    """运行中的库被 Chromium 锁定——复制到临时文件读（共享读实测可行）。"""
+    import os, shutil, tempfile
+    src = _pwdb_path()
+    if not os.path.exists(src):
+        return None
+    dst = os.path.join(tempfile.mkdtemp(), "LD.db")
+    try:
+        shutil.copyfile(src, dst)
+        return dst
+    except Exception:
+        return None
+
+
+def _pw_v10_key():
+    """v10 密钥：Local State os_crypt.encrypted_key（DPAPI 前缀 → 32B AES）。
+    实测本机 WebView2 未启用 App-Bound（经典 v10，同用户可解）。"""
+    import os, json, base64, ctypes
+    from ctypes import wintypes
+
+    class _B(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD),
+                    ("pbData", ctypes.POINTER(ctypes.c_char))]
+    ls = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                      "fc_webview_tabs", "EBWebView", "Local State")
+    try:
+        ek = json.load(open(ls, encoding="utf-8"))["os_crypt"]["encrypted_key"]
+        raw = base64.b64decode(ek)
+        if raw[:5] != b"DPAPI":
+            return None      # app-bound v20 形态（本机实测不是）
+        cin = _B(len(raw) - 5,
+                 ctypes.cast(ctypes.create_string_buffer(raw[5:]),
+                             ctypes.POINTER(ctypes.c_char)))
+        cout = _B()
+        if not ctypes.windll.crypt32.CryptUnprotectData(
+                ctypes.byref(cin), None, None, None, None, 1,
+                ctypes.byref(cout)):
+            return None
+        out = ctypes.string_at(cout.pbData, cout.cbData)
+        ctypes.windll.kernel32.LocalFree(cout.pbData)
+        return out
+    except Exception:
+        return None
+
+
+def _pw_decrypt(blob):
+    """三层：DPAPI 前缀（最老）/ v10·v11（AES-GCM）/ v20（app-bound，
+    本机 WebView2 实测不启用——留降级提示）。返回 (ok, text)。"""
+    import ctypes
+    from ctypes import wintypes
+    if not blob:
+        return False, ""
+    if blob[:5] == b"DPAPI":
+        class _B(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD),
+                        ("pbData", ctypes.POINTER(ctypes.c_char))]
+        cin = _B(len(blob) - 5,
+                 ctypes.cast(ctypes.create_string_buffer(blob[5:]),
+                             ctypes.POINTER(ctypes.c_char)))
+        cout = _B()
+        if ctypes.windll.crypt32.CryptUnprotectData(
+                ctypes.byref(cin), None, None, None, None, 1,
+                ctypes.byref(cout)):
+            out = ctypes.string_at(cout.pbData, cout.cbData)
+            ctypes.windll.kernel32.LocalFree(cout.pbData)
+            return True, out.decode("utf-8", "replace")
+        return False, "DPAPI 解密失败"
+    if blob[:3] in (b"v10", b"v11"):
+        key = _pw_v10_key()
+        if not key:
+            return False, "v10 密钥不可用"
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            pt = AESGCM(key).decrypt(blob[3:15], blob[15:], None)
+            return True, pt.decode("utf-8", "replace")
+        except ImportError:
+            return False, "缺 cryptography 库"
+        except Exception as e:
+            return False, "AES-GCM: %r" % e
+    return False, "app-bound v20 密文（暂不支持明文显示）"
+
+
+def _pw_entries():
+    """读全部条目：[{origin, user}]（不携带密文/明文出后端边界）。"""
+    import sqlite3
+    db = _pwdb_copy()
+    if not db:
+        return []
+    try:
+        con = sqlite3.connect(db)
+        rows = con.execute(
+            "SELECT origin_url, username_value FROM logins "
+            "ORDER BY origin_url").fetchall()
+        con.close()
+        return [{"origin": r[0], "user": r[1] or ""} for r in rows if r[0]]
+    except Exception:
+        return []
+
+
+def _pw_pending_file():
+    import os
+    from src.app_state import DATA_DIR
+    return os.path.join(DATA_DIR, "pw_pending_del.json")
+
+
+def _pw_del_defer(origin):
+    """运行中库被锁（Chromium 常驻）→ 挂 pending，退出流程（浏览器已停）
+    统一执行。立即尝试写入，成功则当场生效。"""
+    import json, os, sqlite3, time
+    try:
+        con = sqlite3.connect(_pwdb_path(), timeout=0.3)
+        con.execute("DELETE FROM logins WHERE origin_url=?", (origin,))
+        con.commit()
+        con.close()
+        return True     # 库恰好空闲（无网页 tab）——立即生效
+    except Exception:
+        pass
+    try:
+        p = _pw_pending_file()
+        lst = []
+        if os.path.exists(p):
+            try:
+                lst = json.load(open(p, encoding="utf-8")) or []
+            except Exception:
+                lst = []
+        if origin not in lst:
+            lst.append(origin)
+        json.dump(lst, open(p, "w", encoding="utf-8"), ensure_ascii=False)
+        return False    # 已挂起，退出后生效
+    except Exception:
+        return False
+
+
+def _pw_del_flush():
+    """退出流程调用（浏览器进程已停、库解锁）：执行挂起的删除。"""
+    import json, os, sqlite3
+    p = _pw_pending_file()
+    if not os.path.exists(p):
+        return
+    try:
+        lst = json.load(open(p, encoding="utf-8")) or []
+    except Exception:
+        return
+    try:
+        con = sqlite3.connect(_pwdb_path())
+        for o in lst:
+            try:
+                con.execute("DELETE FROM logins WHERE origin_url=?", (o,))
+            except Exception:
+                pass
+        con.commit()
+        con.close()
+        os.remove(p)
+        _log("INFO", "pw_del_flush: %d 条已删" % len(lst))
+    except Exception as e:
+        _log("WARN", "pw_del_flush: %r" % e)
+
+
 def get_tabs():
     return _tabs
 
@@ -789,6 +955,11 @@ class WebTabs:
             _t.sleep(max(0.0, grace_ms / 1000.0))
             _log("INFO", "flush_on_exit done (grace=%dms, ctls=%d)"
                  % (grace_ms, len(ctls)))
+            # a583：浏览器进程已停 → Login Data 解锁，执行挂起的密码删除
+            try:
+                _pw_del_flush()
+            except Exception:
+                pass
         except Exception as e:
             _log("WARN", "flush_on_exit: %r" % e)
 
@@ -889,6 +1060,33 @@ def register(app):
             return jsonify(t.go_forward(tid))
         if act == "reload":
             return jsonify(t.reload(tid))
+        if act == "pw_list":
+            # a583 密码管理器：已存站点列表（不含明文）
+            return jsonify({"ok": True, "items": _pw_entries()})
+        if act == "pw_reveal":
+            # 单条明文（loopback+origin 守卫内；按 origin+user 定位）
+            import sqlite3
+            _o = str(d.get("origin") or "")
+            _u = str(d.get("user") or "")
+            db = _pwdb_copy()
+            if not db:
+                return jsonify({"ok": False, "err": "密码库不可读"})
+            con = sqlite3.connect(db)
+            row = con.execute(
+                "SELECT password_value FROM logins WHERE origin_url=? "
+                "AND username_value=? LIMIT 1", (_o, _u)).fetchone()
+            con.close()
+            if not row:
+                return jsonify({"ok": False, "err": "not-found"})
+            ok, text = _pw_decrypt(row[0])
+            return jsonify({"ok": ok, "pw": text if ok else "",
+                            "err": "" if ok else text})
+        if act == "pw_del":
+            _o = str(d.get("origin") or "")
+            if not _o:
+                return jsonify({"ok": False, "err": "bad origin"}), 400
+            now = _pw_del_defer(_o)
+            return jsonify({"ok": True, "immediate": now})
         if act == "suspend":
             # R-外泄根治·静止帧：抓帧→隐藏→回推（前端 reconcile 调用）
             return jsonify(t.suspend(tid))
