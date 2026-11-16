@@ -154,7 +154,19 @@ def _pw_entries():
         rows = con.execute(
             "SELECT origin_url, username_value FROM logins "
             "ORDER BY origin_url").fetchall()
-        return [{"origin": r[0], "user": r[1] or ""} for r in rows if r[0]]
+        # a594（对抗审计）：按 (origin, user) 去重——同 origin+user 多行时
+        # 原来会列出多条一模一样的项，而 reveal/edit 都取最新那一行（LIMIT 1）。
+        # 用户点第 2、3 条时改的仍是同一条，界面却在骗人。只展示最新的。
+        seen, out = set(), []
+        for r in rows:
+            if not r[0]:
+                continue
+            key = (r[0], r[1] or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"origin": r[0], "user": r[1] or ""})
+        return out
     except Exception:
         return []   # RW5（终审）：畸形库不再裸 500（回归 a584 修复）
     finally:
@@ -175,6 +187,24 @@ def _pw_pending_file():
     import os
     from src.app_state import DATA_DIR
     return os.path.join(DATA_DIR, "pw_pending_del.json")
+
+
+def _pw_pending_readable(p):
+    """文件不存在或能正常解析为 JSON 数组 → True；损坏 → False。
+
+    a594：所有「读-改-写」消费方写回前必须先过这一关，否则 load 返回 []
+    之后的 append+save 会把原内容整份摧毁（a592/a593 的 del 挂起就这么
+    丢过）。
+    """
+    import json, os
+    if not os.path.exists(p):
+        return True
+    try:
+        with open(p, encoding="utf-8") as _f:
+            json.load(_f)
+        return True
+    except Exception:
+        return False
 
 
 def _pw_pending_load(p, rebuild_on_error=True):
@@ -252,6 +282,33 @@ def _now_web_time():
 _pw_del_lock = threading.Lock()
 
 
+def _pw_edit_sql(cur, origin, user, blob, ts):
+    """就地改密码的 UPDATE，**只改一条**（与 reveal 的 LIMIT 1 同口径）。
+
+    a594（对抗审计）：reveal 用 `ORDER BY date_created DESC LIMIT 1` 只展示
+    最新一条，而 UPDATE 原来没有 LIMIT——同 origin+user 若有多行（Chromium
+    的 logins 表没有 UNIQUE 约束），点一次「修改」会静默改掉全部历史行，
+    用户看到的和改掉的不是同一批数据。用 rowid 子查询精确命中与 reveal
+    相同的那一行。
+
+    返回受影响行数（SQLite 的 UPDATE 不支持 LIMIT，只能用子查询）。
+    """
+    if user is None or user == "":
+        cur.execute(
+            "UPDATE logins SET password_value=?, date_password_modified=? "
+            "WHERE rowid = (SELECT rowid FROM logins WHERE origin_url=? AND "
+            "(username_value IS NULL OR username_value='') "
+            "ORDER BY date_created DESC LIMIT 1)",
+            (blob, ts, origin))
+    else:
+        cur.execute(
+            "UPDATE logins SET password_value=?, date_password_modified=? "
+            "WHERE rowid = (SELECT rowid FROM logins WHERE origin_url=? AND "
+            "username_value=? ORDER BY date_created DESC LIMIT 1)",
+            (blob, ts, origin, user))
+    return cur.rowcount
+
+
 def _pw_edit_apply(origin, user, newpw):
     """a592：手动改密码。库空闲→立即写回并返回 (True, "")；被 Chromium
     占用→挂起返回 (False, "")（退出工具时 _pw_edit_flush 落盘）；
@@ -264,21 +321,11 @@ def _pw_edit_apply(origin, user, newpw):
     try:
         con = sqlite3.connect(_pwdb_path(), timeout=0.3)
         # a594（审计 #6）：user 为空串时匹配 NULL≡''——与 reveal/del 同口径。
-        # 原来即时路径也是严格 username_value=?，NULL 行永远「没有匹配的条目」，
-        # 而同一行的 👁 能看（a591 修的）、✕ 能删。三颗按钮三种 NULL 宇宙观。
-        if user is None or user == "":
-            cur = con.execute(
-                "UPDATE logins SET password_value=?, date_password_modified=? "
-                "WHERE origin_url=? AND "
-                "(username_value IS NULL OR username_value='')",
-                (blob, _now_web_time(), origin))
-        else:
-            cur = con.execute(
-                "UPDATE logins SET password_value=?, date_password_modified=? "
-                "WHERE origin_url=? AND username_value=?",
-                (blob, _now_web_time(), origin, user))
+        # 只改一行（与 reveal 的 LIMIT 1 对齐，见 _pw_edit_sql）。
+        cur = con.cursor()
+        rc = _pw_edit_sql(cur, origin, user, blob, _now_web_time())
         con.commit()
-        return (True, "") if cur.rowcount else (False, "没有匹配的条目")
+        return (True, "") if rc else (False, "没有匹配的条目")
     except Exception:
         pass
     finally:
@@ -291,7 +338,14 @@ def _pw_edit_apply(origin, user, newpw):
         try:
             import base64
             p = _pw_pending_file()
-            lst = [x for x in _pw_pending_load(p)
+            # a594（审计复验）：损坏的挂起文件**不许覆盖**。原实现无论
+            # rebuild_on_error 取什么，load 返回 [] 之后 append+save 就把
+            # 原文件内容（可能含若干 del 挂起）整份摧毁。这里先判断能否
+            # 解析：不能就拒绝挂起并回报（让用户知道这次没记下）。
+            if not _pw_pending_readable(p):
+                _log("WARN", "pw_edit_apply: 挂起文件损坏，拒绝覆盖")
+                return False, "挂起文件损坏，本次修改未记录（请重启工具后重试）"
+            lst = [x for x in _pw_pending_load(p, rebuild_on_error=False)
                    if not (isinstance(x, dict) and x.get("act") == "edit"
                            and x.get("origin") == origin
                            and x.get("user") == user)]
@@ -346,9 +400,13 @@ def _pw_del_defer(origin, user):
     with _pw_del_lock:
         try:
             p = _pw_pending_file()
+            # a594（审计复验）：同 _pw_edit_apply——损坏文件不许被空列表覆盖
+            if not _pw_pending_readable(p):
+                _log("WARN", "pw_del_defer: 挂起文件损坏，拒绝覆盖")
+                return False
             # a592：统一走 dict 归一（兼容旧 [origin, user] 二元组），
             # 否则本函数写入 list、edit 写入 dict，flush 端要分两套判据
-            lst = _pw_pending_load(p)
+            lst = _pw_pending_load(p, rebuild_on_error=False)
             item = {"act": "del", "origin": origin, "user": user}
             if item not in lst:
                 lst.append(item)
@@ -390,7 +448,23 @@ def _pw_del_flush():
     dbp = _pwdb_path()
     if not os.path.exists(dbp) or os.path.getsize(dbp) == 0:
         # RA15：库缺失/0字节（上次异常退出造出的假库）——保留挂起，不造假
-        _log("WARN", "pw_del_flush: 密码库缺失或空——挂起保留待下次退出重试")
+        # a594（对抗审计）：同 _pw_edit_flush——必须累加 attempts，否则库
+        # 永久损坏时 del 挂起也永远滞留。达上限即摘账。
+        MAX_ATTEMPTS = 3
+        for it in lst:
+            if isinstance(it, dict) and it.get("act") == "del":
+                _bump_attempt(it)
+        keep = [it for it in lst
+                if not (isinstance(it, dict) and it.get("act") == "del"
+                        and (it.get("attempts") or 0) >= MAX_ATTEMPTS)]
+        try:
+            if keep:
+                _pw_pending_save(p, keep)
+            else:
+                os.remove(p)
+        except Exception:
+            pass
+        _log("WARN", "pw_del_flush: 密码库缺失或空——挂起保留待下次（已记重试次数）")
         return
     # a591：删除阶段连接必关入 finally——RA18 自己写「滞留句柄锁真实库」，
     # 但这一段原来 con.close() 是裸语句，中途抛异常（含上面 for 里的意外）
@@ -450,10 +524,41 @@ def _pw_del_flush():
             except Exception:
                 pass
         if remain > 0:
-            _log("WARN", "pw_del_flush: %d 条未删净——挂起保留" % remain)
+            # a594（对抗审计）：复核见行还在——数次数，达上限摘账，
+            # 否则永久滞留（原来这里直接 return，attempts 永不增长）。
+            MAX_ATTEMPTS = 3
+            for it in del_rows:
+                _bump_attempt(it)
+            keep = [it for it in lst
+                    if not (isinstance(it, dict) and it.get("act") == "del"
+                            and (it.get("attempts") or 0) >= MAX_ATTEMPTS)]
+            try:
+                if keep:
+                    _pw_pending_save(p, keep)
+                else:
+                    os.remove(p)
+            except Exception:
+                pass
+            _log("WARN", "pw_del_flush: %d 条未删净——挂起保留（已记重试次数）"
+                 % remain)
             return
         if remain == -1:
-            _log("WARN", "pw_del_flush: 复核失败——挂起保留待重试")
+            # a594：复核自身失败（锁库/连接失败）也计数——否则每次都失败时
+            # 永远滞留。区分于「未删净」，但收敛策略相同。
+            MAX_ATTEMPTS = 3
+            for it in del_rows:
+                _bump_attempt(it)
+            keep = [it for it in lst
+                    if not (isinstance(it, dict) and it.get("act") == "del"
+                            and (it.get("attempts") or 0) >= MAX_ATTEMPTS)]
+            try:
+                if keep:
+                    _pw_pending_save(p, keep)
+                else:
+                    os.remove(p)
+            except Exception:
+                pass
+            _log("WARN", "pw_del_flush: 复核失败——挂起保留待重试（已记重试次数）")
             return
         # a592：只移除已完成的 del 条目，保留 edit 条目给 _pw_edit_flush
         left = [it for it in lst
@@ -504,7 +609,22 @@ def _pw_edit_flush():
         return
     dbp = _pwdb_path()
     if not os.path.exists(dbp) or os.path.getsize(dbp) == 0:
-        _log("WARN", "pw_edit_flush: 密码库缺失或空——挂起保留")
+        # RA15：库缺失/0字节（上次异常退出造出的假库）——保留挂起，不造假
+        # a594（对抗审计）：但**必须**累加 attempts——否则库永久损坏时
+        # 这些条目永远滞留（与 #5 的 bailout 精神冲突）。达上限即摘账。
+        for it in edits:
+            _bump_attempt(it)
+        keep = [it for it in lst
+                if not (isinstance(it, dict) and it.get("act") == "edit"
+                        and (it.get("attempts") or 0) >= MAX_ATTEMPTS)]
+        try:
+            if keep:
+                _pw_pending_save(p, keep)
+            else:
+                os.remove(p)
+        except Exception:
+            pass
+        _log("WARN", "pw_edit_flush: 密码库缺失或空——挂起保留（已记重试次数）")
         return
     con = None
     try:
@@ -514,7 +634,19 @@ def _pw_edit_flush():
         for it in edits:
             # 老格式明文键 → 就地加密成 blob（本次就写完，下轮不再有明文）
             if it.get("blob"):
-                blob = base64.b64decode(it["blob"])
+                try:
+                    blob = base64.b64decode(it["blob"], validate=True)
+                except Exception as e:
+                    # a594（审计复验）：无效 base64 原来在这里抛出，整批
+                    # 中断且该条目 attempts 不增——永久滞留（livelock 复辟）。
+                    # 数次数，达上限摘账。
+                    _log("WARN", "pw_edit_flush: blob 无效 %r" % e)
+                    _bump_attempt(it)
+                    if (it.get("attempts") or 0) >= MAX_ATTEMPTS:
+                        _log("WARN", "pw_edit_flush: blob 持续无效，放弃 %r"
+                             % (it.get("origin"),))
+                        resolved.append(it)
+                    continue
             elif isinstance(it.get("pw"), str):
                 ok_e, blob = _pw_encrypt(it["pw"])
                 if not ok_e:
@@ -530,19 +662,8 @@ def _pw_edit_flush():
                 continue
             o, u = it.get("origin"), it.get("user")
             try:
-                if u is None or u == "":
-                    # #6：与 reveal/del 同口径——NULL 与 '' 都算命中
-                    cur.execute(
-                        "UPDATE logins SET password_value=?, "
-                        "date_password_modified=? WHERE origin_url=? AND "
-                        "(username_value IS NULL OR username_value='')",
-                        (blob, _now_web_time(), o))
-                else:
-                    cur.execute(
-                        "UPDATE logins SET password_value=?, "
-                        "date_password_modified=? WHERE origin_url=? AND "
-                        "username_value=?", (blob, _now_web_time(), o, u))
-                if cur.rowcount:
+                rc = _pw_edit_sql(cur, o, u, blob, _now_web_time())
+                if rc:
                     resolved.append(it)
                 else:
                     # 没有匹配行（条目已被删/browser 侧改过用户名）→ 数次数。
@@ -578,18 +699,34 @@ def _pw_edit_flush():
             if not it.get("blob"):
                 verified.append(it)     # 无效条目/已放弃：直接摘账
                 continue
-            want = base64.b64decode(it["blob"])
+            try:
+                want = base64.b64decode(it["blob"], validate=True)
+            except Exception:
+                # a594：无效 blob 在 UPDATE 阶段已计数，这里直接摘账（不再
+                # 让它以「复核失败」的名义拖住整批）
+                verified.append(it)
+                continue
             o, u = it.get("origin"), it.get("user")
-            if u is None or u == "":
-                row = con2.execute(
-                    "SELECT password_value FROM logins WHERE origin_url=? AND "
-                    "(username_value IS NULL OR username_value='') "
-                    "ORDER BY date_created DESC LIMIT 1", (o,)).fetchone()
-            else:
-                row = con2.execute(
-                    "SELECT password_value FROM logins WHERE origin_url=? AND "
-                    "username_value=? ORDER BY date_created DESC LIMIT 1",
-                    (o, u)).fetchone()
+            try:
+                if u is None or u == "":
+                    row = con2.execute(
+                        "SELECT password_value FROM logins WHERE origin_url=? "
+                        "AND (username_value IS NULL OR username_value='') "
+                        "ORDER BY date_created DESC LIMIT 1", (o,)).fetchone()
+                else:
+                    row = con2.execute(
+                        "SELECT password_value FROM logins WHERE origin_url=? "
+                        "AND username_value=? ORDER BY date_created DESC "
+                        "LIMIT 1", (o, u)).fetchone()
+            except Exception as e:
+                # a594：单条复核失败只影响这一条（原来外层 except 会把
+                # 已经 verified 的全部丢掉 → 整批滞留）。但**已达上限的
+                # 必须摘账**，否则畸形数据（如 user 是 list）会让条目
+                # 永久滞留（实测 attempts=4 仍不摘）。
+                _log("WARN", "pw_edit_flush: 复核查询失败 %r" % e)
+                if (it.get("attempts") or 0) >= MAX_ATTEMPTS:
+                    verified.append(it)
+                continue
             if row and row[0] == want:
                 verified.append(it)
             else:
@@ -601,8 +738,9 @@ def _pw_edit_flush():
                 # 未达上限的留待下轮——UPDATE 已重试过，这里不再叠加。
                 if (it.get("attempts") or 0) >= MAX_ATTEMPTS:
                     verified.append(it)
-    except Exception:
-        pass          # 复核失败：什么都不摘（保持原行为，下轮重试）
+    except Exception as e:
+        # a594：连不上库时逐条都没摘——保持原行为（下轮重试）
+        _log("WARN", "pw_edit_flush: 复核连接失败 %r" % e)
     finally:
         try:
             if con2 is not None:
@@ -1706,7 +1844,14 @@ def shutdown(grace_ms=1200):
     try:
         # RA14（红队复验）：挂起删除无论有无控件都执行
         if _tabs is not None:
-            _tabs.flush_on_exit(grace_ms)
+            try:
+                _tabs.flush_on_exit(grace_ms)
+            except Exception as e:
+                # a594（对抗审计）：flush_on_exit 是关 WebView2 控件，
+                # 它失败不该连坐密码挂起——原来同一 try 里，控件关闭一抛，
+                # _pw_del_flush/_pw_edit_flush 全被跳过，用户的改密码/删密码
+                # 挂起记录静默丢失（实测：条目还在但退出已发生）。
+                _log("WARN", "shutdown: flush_on_exit 失败 %r（继续执行密码挂起）" % e)
         _pw_del_flush()   # RA11/RA14
         _pw_edit_flush()  # a592：挂起的手动改密码
         _tabs = None      # RB8：装配引用清空（flush 已完成，重复调用走
