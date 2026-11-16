@@ -756,9 +756,12 @@ ONLINE_URLS = {
     "node_zip": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip",
     "git": ("https://github.com/git-for-windows/git/releases/download/"
             "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe"),
-    "dotnet": ("https://download.visualstudio.microsoft.com/download/pr/"
-               "6a893f45-0810-4b11-9051-3b9ef0d1cf0e/4d6923c759e4cc4d34438f2b"
-               "57f4c06/ndp481-x86-x64-allos-enu.exe"),
+    # a595（用户定调「在线安装必须可靠」）：dotnet 换 fwlink 稳定跳转。
+    # 原来写死 download.visualstudio.microsoft.com/pr/<guid>/<hash>/ 直链——
+    # 微软会轮换 PR 路径令牌，链接死了（实测直连+代理都 400，非用户网络
+    # 问题，winget-pkgs#278129 同款）。fwlink 是微软永久重定向，实测
+    # 200 → download.microsoft.com 稳定路径。
+    "dotnet": "https://go.microsoft.com/fwlink/?linkid=2203305",
     # WebView2 Evergreen standalone 引导器（微软官方稳定 fwlink；Fixed 版
     # 直链 2025-01 起下架，在线场景 Evergreen 由系统自更新维护）
     "webview2": "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
@@ -934,10 +937,43 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                     else:
                         ok = True
                 elif k == "dotnet":
-                    say("下载 .NET 4.8.1 安装器（约 74MB，内网代理可能拦微软 CDN）…")
+                    say("下载 .NET 4.8.1 安装器（微软 fwlink 稳定直链，约 74MB）…")
                     exe = os.path.join(dl_dir, "ndp481-online.exe")
                     cs._download(ONLINE_URLS["dotnet"], exe)
                     ok = bool(_install_dotnet(dl_dir, say, force))
+                elif k == "codegraph":
+                    # a595（用户定调「在线安装必须可靠，无条件能装」）：
+                    # codegraph=npm 平台包 @colbymchenry/codegraph-win32-x64
+                    # （自带 node.exe 的 bundle），npm 全局装即 nav_codegraph
+                    # ._cg_argv 命中①位（%APPDATA%\npm\node_modules）。
+                    # 此前 install_online 无此分支——勾选后被静默 skip（实锤）。
+                    # 免提权同 claude 分支：npm_config_prefix 钉到用户目录。
+                    say("在线安装 codegraph：确保 Node → npm install -g 平台包 …")
+                    cs._install_node_if_missing(dl_dir)
+                    _, npm = cs._node_ok()
+                    if not npm:
+                        raise InstallError("node/npm 不可用——先装 Node")
+                    appdata = os.environ.get("APPDATA", "")
+                    env = dict(os.environ)
+                    env["npm_config_prefix"] = os.path.join(appdata, "npm")
+                    env["npm_config_cache"] = os.path.join(appdata, "npm-cache")
+                    r = _sp.run([npm, "install", "-g",
+                                 "@colbymchenry/codegraph-win32-x64"],
+                                capture_output=True, text=True, timeout=900,
+                                env=env, creationflags=0x08000000)
+                    for line in (r.stdout or "").splitlines()[-3:]:
+                        say("  " + line)
+                    if r.returncode != 0:
+                        raise InstallError(
+                            "npm 退出码 %s：%s" % (r.returncode,
+                            (r.stderr or r.stdout or "")[-160:]))
+                    from src.res_boot import _PROBES as _PB
+                    st, v, _m = _PB["codegraph"]()
+                    if st != "ok":
+                        raise InstallError("npm 装完但 codegraph 探测未通过（%s）"
+                                           % (_m or v or "未知"))
+                    say("✓ codegraph %s" % (v or "安装完成"))
+                    ok = True
                 elif k == "webview2":
                     say("下载 WebView2 Evergreen 引导器（微软 fwlink）…")
                     exe = os.path.join(dl_dir, "MicrosoftEdgeWebview2Setup.exe")

@@ -23,7 +23,19 @@
   }
 
   function _resFetch(url, opt) {
-    return fetch(url, opt).then(function (r) { return r.json(); });
+    // 同 settings.js 性能模式防线：接口被旧版后端（404/405 回 Werkzeug
+    // HTML）或内网代理/安全软件（200+HTML 错误页）劫走时，裸 r.json() 抛
+    // 天书 SyntaxError——先验 content-type，换可定位的人话
+    return fetch(url, opt).then(function (r) {
+      var ct = (r.headers.get('content-type') || '');
+      if (ct.indexOf('json') >= 0) return r.json();
+      return r.text().then(function (t) {
+        throw new Error('HTTP ' + r.status + (r.ok
+          ? '，返回的是网页而非接口数据（内网代理/安全软件拦截？）'
+          : '，接口不可用（exe 版本过旧？升级后再试）')
+          + '：' + t.slice(0, 60));
+      });
+    });
   }
 
   // ---- 状态 ----

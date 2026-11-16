@@ -27,6 +27,17 @@ _state = {"running": False, "phase": "", "log": [], "done": False,
 _pkg_cache = {}
 
 
+def _deps_err():
+    """源码模式缺 pycryptodome（Crypto）时的人话降级。fcpk/res_install 靠它
+    做包解密；exe 版 PyInstaller 已打包永不进这里。源码分发按 deps_bootstrap
+    a356 定调不进自举表（非命脉库——内网无外网机不能卡首启页），缺了在调用
+    点给人话，而不是裸 500 让前端 r.json() 炸天书 SyntaxError（用户实锤）。"""
+    return jsonify({"ok": False,
+                    "err": "本机 Python 缺 pycryptodome 模块，资源包功能不可用。"
+                           "请在工具所用 Python 环境执行：pip install pycryptodome"
+                           "（装完无需重启，直接重试）"}), 503
+
+
 def _log(msg):
     # a325R（第2轮对抗审 P2）：原来只截到 400 条，前端用**数组下标**做游标
     # （`for (; seen < lg.length; seen++)`）——一旦超过 400 行，数组长度恒为
@@ -80,7 +91,10 @@ def res_package():
     前端据此把包内没有的 kind 行置灰（选了也装不上）。
     """
     import os as _os
-    from src import fcpk
+    try:
+        from src import fcpk
+    except ImportError:
+        return _deps_err()
     path = (request.args.get("path") or "").strip()
     if not path:
         return jsonify({"ok": False, "err": "缺少 path 参数"}), 400
@@ -141,7 +155,10 @@ def res_install_api():
     默认（无 mode 或 'offline'）维持原离线包流程不变。两者共用同一任务槽
     与 poll 通道——正在跑时任一模式再点都 409。
     """
-    from src import fcpk, res_install
+    try:
+        from src import fcpk, res_install
+    except ImportError:
+        return _deps_err()
     d = request.get_json(force=True, silent=True) or {}
     path = str(d.get("path") or "").strip()
     online = str(d.get("mode") or "offline") == "online"
@@ -285,7 +302,10 @@ def res_net_check():
         cached = _state.get("net_check")
         if cached and _t.time() - cached[0] < 60:
             return jsonify({"ok": True, "net": cached[1], "cached": True})
-    from src.res_install import net_check as _nc
+    try:
+        from src.res_install import net_check as _nc
+    except ImportError:
+        return _deps_err()
     net = _nc()
     with _lock:
         _state["net_check"] = (_t.time(), net)

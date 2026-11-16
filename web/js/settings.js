@@ -1040,6 +1040,10 @@ async function _stRenderResourcesPane(pane) {
   function netOk(k) {
     if (k === 'claude') return !!(_net && _net.node && _net.node.ok);
     if (k === 'pydeps') return !!(_net && _net.node && _net.node.ok);   // pip 走 pypi，与 node 探测同网络面
+    // a595（实锤）：codegraph 在线装=npm 平台包，走 node 同网络面。原来落
+    // 到兜底查 _net['codegraph']——后端 net_check 恒只回 node/git/dotnet/
+    // webview2 四键，undefined→恒 false → 无论网络好坏都弹「源不可达」。
+    if (k === 'codegraph') return !!(_net && _net.node && _net.node.ok);
     return !!(_net && _net[k] && _net[k].ok);
   }
 
