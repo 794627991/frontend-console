@@ -47,26 +47,28 @@
   function _hgCtxKey(sid) { return 'hg-ctx:' + sid; }
   // 记忆落账唯一出口。侧栏胶囊（panel.js）与容量卡详情直接读 hg-ctx，只重画
   // 圆环不落账会出现「圆环 0% / 侧栏旧值」同屏矛盾，且坏值刷新即复活
-  function _hgCtxSave(sid, used, max, badMax, model) {
+  function _hgCtxSave(sid, used, max, badMax, model, src) {
     if (!sid) return;
     const rec = {used: used, max: max};
+    // v4.2R（审计 P2-4）：记录读数来源——jsonl 是权威真值，可以合法超过
+    // 当前窗口（大窗会话切小窗）；lastResult 兜底值超窗则按坏数据判。
+    // 恢复时据此避免把合法超窗误清 0。
+    let _old = null;
+    try { _old = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {}
+    let s = src;
+    if (!s && _old && _old.src) s = _old.src;
+    if (s) rec.src = s;
     // 无权威阈值时沿用记忆里已有的 badMax，绝不降级成 undefined——
     // 降级会让下次恢复的 authBadKnown 变 false，退回「用猜测值判坏」
     let bm = badMax;
     if (!(bm > 0)) {
-      try {
-        const old = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null');
-        if (old && old.badMax > 0) bm = old.badMax;
-      } catch(_) {}
+      if (_old && _old.badMax > 0) bm = _old.badMax;
     }
     if (bm > 0) rec.badMax = bm;
     // model 同理：传空时保留旧归属，否则归属信息被抹掉、下次判不出切过模型
     let md = model;
     if (!md) {
-      try {
-        const old = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null');
-        if (old && old.model) md = old.model;
-      } catch(_) {}
+      if (_old && _old.model) md = _old.model;
     }
     rec.model = md || '';
     try { localStorage.setItem(_hgCtxKey(sid), JSON.stringify(rec)); } catch(_) {}
@@ -145,10 +147,13 @@
     // 三处口径不会再漂移
     const denomAuth = _hgCtxDenomOk(v, sid);
     // 判坏 / 归属不符 → 该清；仅仅「分母未知」不算坏，值本身可能是好的
+    // v4.2R（审计 P2-4）：来源为 jsonl 的读数是权威真值——跨方案后它可以
+    // 合法超过当前窗口（大窗会话切小窗），只按归属判坏，不按阈值判坏。
+    const srcJsonl = !!(v && v.src === 'jsonl');
     const badIsh = !!(v && v.used > 0 &&
-      (mismatch || v.used > restoreBad));
-    const canUse = !!(v && v.used > 0 && v.used <= restoreBad && !mismatch
-                      && denomAuth);
+      (mismatch || (!srcJsonl && v.used > restoreBad)));
+    const canUse = !!(v && v.used > 0 && (srcJsonl || v.used <= restoreBad)
+                      && !mismatch && denomAuth);
     const showUsed = canUse ? v.used : 0;
     // 分母优先用 authWin（权威窗口），其次才是记忆里带 badMax 印证的值。
     // 分母已知就传出去（哪怕没有用量）：_hgDrawCtxRing 对 used<=0 只画底轨、
@@ -295,7 +300,11 @@
     // 若按 500K 判会被整帧丢弃 → 环冻结在旧读数
     const guardMax = (typeof o.badMax === 'number' && o.badMax > 0)
       ? o.badMax : ctxMax;
-    if (used > guardMax) return;
+    // v4.2R（审计 P2-4）：来源是 jsonl 真值时**不做坏数据丢弃**——跨方案后
+    // used 可能合法超过当前窗口（大窗会话切小窗），这是必须显示的状态
+    // （用户要知道自己已被拦）。a255 的累计口径坏数据来源是 result usage，
+    // 由 v4bridge 的 ctxLive 守卫与后端 !found 分支继续拦住。
+    if (used > guardMax && o.usedSource !== 'jsonl') return;
     _hgDrawCtxRing(used, ctxMax);
     // 只把真权威 o.badMax 落进记忆：guardMax 在缺 o.badMax 时回落到显示
     // 分母（可能是兜底 256K 或按名字猜的 1M），写进去会被下次恢复当权威
@@ -306,7 +315,8 @@
     // （session.py 已实锤 flash 名义 inline、实跑 glm-5.3）。拿实报名落账会让
     // 同一模型的记忆在切回时被判 mismatch 清 0。归属只由 /ctx 的 j.model 写
     _hgCtxSave(_HG.sid, used, ctxMax,
-               (typeof o.badMax === 'number' && o.badMax > 0 ? o.badMax : 0), '');
+               (typeof o.badMax === 'number' && o.badMax > 0 ? o.badMax : 0), '',
+               o.usedSource || '');
   }
   function _hgCtxPoll() {
     if (!_HG.sid) return;
@@ -390,7 +400,8 @@
             _HG.ctxRing.used = j.used;
           }
           _hgCtxSave(sid, _HG.ctxRing.used, win || _HG.ctxRing.max,
-                     j.badMax > 0 ? j.badMax : 0, j.model || '');
+                     j.badMax > 0 ? j.badMax : 0, j.model || '',
+                     j.usedSource || '');
           // a452（审计 P1）：busy 期也要把圆环重画到新真值上。原来这里只改
           // _HG.ctxRing 就 return，DOM 要等下一拍 v4bridge 的 tps 帧才更新
           // ——容量卡/胶囊每拍读内存值已是新数，圆环还停在旧值，同屏矛盾。
@@ -400,6 +411,7 @@
         }
         renderCtxRing({ usage: { input_tokens: j.used },
                         badMax: j.badMax,
+                        usedSource: j.usedSource || '',
                         modelUsage: win ? { _w: { contextWindow: win } } : null });
       }).catch(() => {})
       .finally(() => {

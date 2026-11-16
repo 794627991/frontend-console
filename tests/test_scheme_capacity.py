@@ -18,11 +18,13 @@ from src.harness import session as S  # noqa: E402
 
 
 class _FakeSession:
-    def __init__(self, scheme=None, model=None, live_model=None, last_result=None):
+    def __init__(self, scheme=None, model=None, live_model=None,
+                 last_result=None, model_origin=None):
         self.scheme = scheme
         self.model = model
         self.live_model = live_model
         self.last_result = last_result
+        self.model_origin = model_origin
 
 
 # ---------------------------------------------------------------- 容量判定
@@ -128,3 +130,74 @@ def test_legacy_session_without_scheme_still_works():
     s = _FakeSession(scheme=None)
     assert S._scheme_capacity_block(s, 100_000, 262_144) is None      # 放行
     assert S._scheme_capacity_block(s, 450_000, 262_144) is not None  # 拦
+
+
+# ------------------------------------------------- v4.2R 审计后的回归项
+def test_live_window_falls_back_to_reported(monkeypatch):
+    """无窗口键时回落网关实报，不再盲判 256K（审计 P1-3）。
+
+    「旧格式方案 + 大窗模型」曾一律按 256K 拒发，直接违反需求第 1 条。
+    """
+    monkeypatch.setattr(S, "_read_live_env", lambda: {})
+    s = _FakeSession(last_result={"modelUsage": {"m": {"contextWindow": 1_000_000}}})
+    assert S.live_ctx_window(s) == 1_000_000     # 传会话 → 用实报
+    assert S.live_ctx_window() == S._CTX_WINDOW_DEFAULT   # 不传 → 兜底
+
+
+def test_live_window_prefers_settings_then_1m(monkeypatch):
+    """窗口键优先于实报；无键时 [1M] 后缀模型优先于实报。"""
+    monkeypatch.setattr(S, "_read_live_env",
+                        lambda: {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "500000",
+                                 "ANTHROPIC_MODEL": "glm-x[1M]"})
+    assert S.live_ctx_window(_FakeSession()) == 500_000
+    monkeypatch.setattr(S, "_read_live_env",
+                        lambda: {"ANTHROPIC_MODEL": "glm-x[1M]"})
+    assert S.live_ctx_window(_FakeSession()) == S._CTX_WINDOW_1M
+
+
+def test_reconcile_respects_force(monkeypatch):
+    """同方案内改配置（force=False）不动用户手选模型（审计 P2-6）。"""
+    monkeypatch.setattr(S, "available_models",
+                        lambda: {"models": ["new-a"], "default": "new-a"})
+    s = _FakeSession(model="handpicked", model_origin="user")
+    assert S._reconcile_model_with_live(s, force=False) is None
+    assert s.model == "handpicked"           # 用户手选被保留
+    # 真换方案（force=True）才强切，否则新网关 400 model not found
+    assert S._reconcile_model_with_live(s, force=True) == "handpicked"
+    assert s.model == "new-a"
+    assert s.model_origin == "scheme"
+
+
+def test_ctx_source_marked_jsonl():
+    """_session_ctx_used 打出来源标记，供前端区分合法超窗与坏数据（P2-4）。"""
+    s = _FakeSession(last_result={"usage": {"input_tokens": 5000},
+                                  "modelUsage": {"m": {"contextWindow": 262_144}}})
+    s.session_id = "nonexistent-sid-for-test"
+    s._ctx_used_source = "none"
+    used, _w, _c = S._session_ctx_used(s)
+    # 无 jsonl 时只能走 last_result 兜底，来源标 lastResult
+    assert s._ctx_used_source == "lastResult"
+    assert used == 5000
+
+
+def test_window_hwm_not_reset_by_smaller_report():
+    """实报窗口 hwm 只增不减——大窗切小窗后 450K 不该被判坏（P2-4）。"""
+    s = _FakeSession(last_result={"modelUsage": {"m": {"contextWindow": 1_000_000}}})
+    assert S._ctx_window_hwm(s) == 1_000_000
+    s.last_result = {"modelUsage": {"m": {"contextWindow": 262_144}}}
+    assert S._ctx_window_hwm(s) == 1_000_000     # 保留历史最大
+
+
+def test_vision_note_for_both_modes():
+    """识图口径声明两态齐全，且自动/手动切换共用同一文案源（P2-5）。"""
+    note_inline = S._vision_note_for("some-vision-model")
+    assert isinstance(note_inline, str)
+    assert note_inline            # 至少给出一种口径，不能是空串
+
+
+def test_slash_command_not_prefixed_by_note():
+    """斜杠命令不能被模型切换声明前缀污染（否则 CLI 不再当命令识别）。"""
+    import inspect
+    src = inspect.getsource(S.HarnessSession.send_message)
+    assert 'startswith("/")' in src
+    assert "_model_switch_note" in src

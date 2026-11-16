@@ -574,7 +574,10 @@ def harness_rescue():
         if not s.alive and not s.revive_if_dead():
             err2 = "进程复活失败"
         else:
-            ok2, err2 = s.send_message(last_turn_text)
+            # v4.2R（审计 P1）：裁剪不会改变 _session_ctx_used 的读数（它取
+            # jsonl 尾部最后一条 assistant usage）——不跳过容量判定的话，
+            # 越需要救援的爆死态越救不回来。此处转写已按 target_ratio 裁过。
+            ok2, err2 = s.send_message(last_turn_text, skip_capacity=True)
             resent = bool(ok2)
     summary = ("已丢 %d 个中部回合（估算 %dK→%dK，安全线 %dK）"
                % (len(dropset), plan["est_before"] // 1024,
@@ -730,7 +733,8 @@ def harness_ctx():
     if not s:
         return jsonify({"ok": False, "err": "会话不存在"}), 404
     if not s.session_id:
-        return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid})
+        return jsonify({"ok": True, "used": 0, "window": 0, "sid": s.sid,
+                        "usedSource": "none", "overWindow": False})
     used, window, compacted = _session_ctx_used(s)
     # v4.1：window 走完整判定链（_session_ctx_window：settings.json 的
     # CLAUDE_CODE_MAX_CONTEXT_TOKENS → 网关实报 → 模型名 → 兜底）。
@@ -753,8 +757,15 @@ def harness_ctx():
     except Exception:
         bad_max = window
     # a264（用户定调）：窗口选择器退役——窗口只走自动链，不回传覆盖值
+    # v4.2R（审计 P2-4）：usedSource 区分「jsonl 真值」与「last_result 兜底」
+    # ——跨方案后 used 可能合法超过当前窗口（大窗切小窗），前端据此不再
+    # 把合法超窗当坏数据整帧丢弃；overWindow 给出与容量拦截同口径的预警线。
+    _src = getattr(s, "_ctx_used_source", "none")
+    _over = bool(used and window and used >= int(window * 0.97))
     return jsonify({"ok": True, "used": used, "window": window, "sid": s.sid,
                     "badMax": bad_max,
+                    "usedSource": _src,
+                    "overWindow": _over,
                     "compacted": compacted,
                     "model": s.model or available_models().get("default") or "",
                     "sysTok": max(1, round(sys_chars / 3)) if sys_chars else 0,
@@ -803,6 +814,9 @@ def harness_set_model():
     if model == s.model:
         return jsonify({"ok": True, "model": s.model})
     s.model = model
+    # v4.2R（审计 P2-6）：记来源——用户手选。同方案内改窗口等配置导致指纹
+    # 变化时，_reconcile_model_with_live 不会把手选模型静默改回默认。
+    s.model_origin = "user"
     s.live_model = None   # v2.27.21：旧实报随模型切换作废，start 按新 model 注入
     # 旧模型的 modelUsage.contextWindow 必须一起作废：否则坏数据阈值
     # （max(settings, 实报)）与「settings 未配时的显示分母」都沿用旧模型
@@ -817,24 +831,19 @@ def harness_set_model():
     # 切换即把新模型的识图口径显性写进对话流（进转写=进上下文）——盖掉
     # 历史里旧模型时代的 analyze_image 调用惯性（resume 保留的历史会让
     # 新模型模仿旧工具调用，实测连环触发不存在的工具）
+    # v4.2R：文案与 session.py 的自动切换共用 _vision_note_for（两处各写
+    # 一份迟早漂移，导致模型收到的口径与工具列表不符）
     try:
-        from .vision import _model_vision_mode_dual
-        _mm = _model_vision_mode_dual(model, model)
-        _way = ("多模态直读：看图一律用 Read 工具直读图片路径；当前工具列表"
-                "中没有 analyze_image 类识图工具，历史里出现过的此类调用属于"
-                "旧模型时代，禁止模仿"
-                if _mm == "inline" else
-                "MCP 识图通道：看图必须调用 mcp__vision__analyze_image（传"
-                "图片路径/链接）；对话历史里出现过的 Read 直读图片记录属于"
-                "旧多模态模型时代——你无法通过 Read 获得图片内容（只会拿到"
-                "无意义的二进制/编码文本），禁止模仿，看图一律走识图工具")
+        from .session import _vision_note_for
+        _way = _vision_note_for(model)
         # v3.5.286：真注入标记——emit 只进前端事件流（模型看不到），首条
         # 消息前置声明才进 CLI jsonl 上下文；两路并存（前端即时可见+模型
         # 首条消息起知情）
-        s._model_switch_note = _way
-        s.emit({"kind": "sysnote",
-                "text": "[模型切换] 已切换到 %s。识图方式：%s。"
-                        % (model or "默认模型", _way)})
+        if _way:
+            s._model_switch_note = _way
+            s.emit({"kind": "sysnote",
+                    "text": "[模型切换] 已切换到 %s。识图方式：%s。"
+                            % (model or "默认模型", _way)})
     except Exception:
         pass
     s.emit({"kind": "model_switched", "text": model or "默认模型"})

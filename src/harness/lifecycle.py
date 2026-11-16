@@ -37,6 +37,8 @@ def _get_or_create(sid):
         # 重建出来的进程揣旧 token 打新网关）。值=16 位 sha256 摘要字符串；
         # 旧版本元数据里可能存过 list（早期实现），一并兼容为 None 重算
         s._env_fp = m.get("env_fp") if isinstance(m.get("env_fp"), str) else None
+        # v4.2R：模型来源随元数据恢复（"user" = 用户手选，同方案改配置时不强切）
+        s.model_origin = m.get("model_origin") or None
         # v2.35.2：事件序号续号；v3.0 连代际一起续——GC 重建不是日志重写，
         # epoch 不变，前端旧 base 仍可 resume；无 epoch 的旧 meta（升级前
         # 落盘）→ restore 内部换新代，前端旧水位作废走一次 snapshot 重建
