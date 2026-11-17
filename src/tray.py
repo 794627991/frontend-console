@@ -447,7 +447,8 @@ def _make_menu_provider(window, on_quit):
     def provider():
         items = [
             ("item", "显示主窗口",
-             lambda: (window.show(), window.restore(), window.focus()),
+             lambda: (window.show(), window.restore(),
+                      _win_set_foreground(window)),
              {"default": True}),
             ("sep",),
         ]
@@ -500,6 +501,21 @@ def alive():
     return _tray is not None and _tray.alive()
 
 
+def _win_set_foreground(window):
+    """pywebview 6.x 的 window.focus 是 bool 属性不是方法（调用即
+    TypeError 'bool' object is not callable，托盘「显示主窗口」实锤）——
+    置前走 Win32 SetForegroundWindow（最小化先恢复）。"""
+    try:
+        hwnd = int(window.native.Handle.ToInt64())
+        import ctypes as _ct
+        u = _ct.windll.user32
+        if u.IsIconic(hwnd):
+            u.ShowWindow(hwnd, 9)
+        u.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
 def hide_to_tray(window, on_quit):
     """隐藏主窗口到托盘（首次调用建原生托盘，之后只 hide）。"""
     global _tray, _window, _on_quit, _watchdog
@@ -511,7 +527,7 @@ def hide_to_tray(window, on_quit):
             _tray = _NativeTray(
                 ico, "前端控制台", _make_menu_provider(window, on_quit),
                 on_default=lambda: (window.show(), window.restore(),
-                                    window.focus()),
+                                    _win_set_foreground(window)),
                 on_quit=on_quit)
             _tray.start()
         if _watchdog is None:
@@ -551,7 +567,8 @@ def _watchdog_loop():
                         ico, "前端控制台",
                         _make_menu_provider(_window, _on_quit),
                         on_default=lambda w=_window: (
-                            w.show(), w.restore(), w.focus()),
+                            w.show(), w.restore(),
+                            _win_set_foreground(w)),
                         on_quit=_on_quit)
                     _tray.start()
                 else:

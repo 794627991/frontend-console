@@ -409,6 +409,22 @@ def _subclass_ncclient(win):
         _orig_wndproc["fn"] = None   # 失败回原生态：残留黑条但不炸窗
 
 
+def _win_set_foreground(win):
+    """pywebview 6.x 的 window.focus 是 bool 属性不是方法（window.py:134
+    self.focus=focus，调用即 TypeError 'bool' object is not callable，托盘
+    「显示主窗口」实锤）——置前走 Win32 SetForegroundWindow（最小化先恢复）。"""
+    try:
+        hwnd = _win_hwnd(win)
+        if hwnd:
+            import ctypes as _ct
+            u = _ct.windll.user32
+            if u.IsIconic(hwnd):
+                u.ShowWindow(hwnd, 9)   # SW_RESTORE
+            u.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
 def _win_hwnd(win):
     """pywebview 窗 → Win32 HWND（native 即 WinForms Form，见 winforms.py:194）。
     未 shown/已销毁返回 0。"""
@@ -1471,7 +1487,7 @@ def main():
                     w.show()
                     w.restore()
                     w.maximize()
-                    w.focus()
+                    _win_set_foreground(w)
                 except Exception:
                     pass
             threading.Thread(target=_do, daemon=True).start()
@@ -1496,7 +1512,7 @@ def main():
                         import time as _t
                         _t.sleep(0.15)          # 等全屏退出布局完成再拉最大化
                         w.maximize()
-                    w.focus()
+                    _win_set_foreground(w)
                 except Exception:
                     pass
             threading.Thread(target=_do, daemon=True).start()
@@ -1813,7 +1829,7 @@ def main():
                 w = webview.windows[0]
                 w.show()
                 w.restore()
-                w.focus()
+                _win_set_foreground(w)
             except Exception:
                 pass
         threading.Thread(target=_do, daemon=True).start()
@@ -2283,7 +2299,7 @@ def main():
         # 前台，用户打开工具就是为了敲命令——不等先点一下
         try:
             window.show()
-            window.focus()
+            _win_set_foreground(window)
         except Exception:
             pass
         # a483/a489：右键设置已移至启动段的 on_webview_ready 包装

@@ -122,12 +122,15 @@
     // 窗缘露出的 Form 区域底色跟随主题（后端 Padding 让 WebView2 缩进 resize
     // 带，露出的 Form.BackColor 用页面 body 同色 → 视觉无缝；NCCALCSIZE 清
     // 非客户区后亮暗主题都不露黑边）
+    var _lastBg = '';
     function _syncBg() {
       try {
         // 取侧栏渲染色（--bg-panel，与顶栏/侧栏同色）——边缘带贴着顶栏/侧栏，
         // 用它们同色才无缝；body 底色（--bg-deep）比面板色深会显细框
         var el = document.querySelector('.sidebar') || document.body;
         var c = getComputedStyle(el).backgroundColor;
+        if (c === _lastBg) return;   // focus/resize 风暴去抖：同色不重复 POST
+        _lastBg = c;
         fetch('/api/window/bg', { method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ color: c }) }).catch(function () {});
