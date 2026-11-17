@@ -227,43 +227,10 @@ function buildClaudeHarnessTab(opts = {}) {
     window._HG_VER = 'v' + j.harness;
     window._APP_VER = j.app || '';
   }).catch(() => {});
-  try {
-    const dgBtn = document.createElement('button');
-    dgBtn.textContent = 'ⓘ';
-    dgBtn.title = '诊断日志（重建/重渲/自愈事件流水）';
-    dgBtn.style.cssText = 'flex:none;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:0 4px';
-    dgBtn.onclick = () => {
-      try {
-        // v3.4.74（用户定调）：4 秒启动徽标撤除——版本固定随诊断弹窗首行显示
-        // a203：性能水位实时快照（弹的瞬间现采）——DOM 总量 + 会话流/侧栏
-        // 分账 + JS 堆。长会话/文件树大展开后点 ⓘ 即看膨胀（健康参照：
-        // 空闲 2-3 千；数万级才需要治理）
-        let perf = '';
-        try {
-          const _n = (sel) => { const el = document.querySelector(sel); return el ? el.getElementsByTagName('*').length : 0; };
-          let terms = 0;
-          document.querySelectorAll('.term-area').forEach(e => { terms += e.getElementsByTagName('*').length; });
-          perf = '<br>DOM ' + document.getElementsByTagName('*').length
-            + '（会话流 ' + _n('[data-hg-flow]') + ' · 侧栏 ' + _n('.sidebar') + ' · 终端 ' + terms + '）'
-            + (performance.memory
-              ? ' · JS堆 ' + Math.round(performance.memory.usedJSHeapSize / 1048576) + 'MB' : '');
-        } catch (_) {}
-        const lines = (_HG.diag || []).slice().reverse();
-        const _v = 'harness ' + (window._HG_VER || '?')
-          + (window._APP_VER ? ' · 工具 v' + window._APP_VER : '');
-        // a226：ⓘ 独占——上次 ⓘ 通知还在栈就先撤（连点只保持一条，不再
-        // 叠成通知墙盖住右下功能区）；驻留 12s→8s
-        const stack = (typeof _notifyStack === 'function' && _notifyStack()) || null;
-        if (stack) [...stack.children].forEach(n => {
-          if ((n.querySelector('.n-title') || {}).textContent.startsWith('版本 harness')) _notifyDismiss(n);
-        });
-        showBanner('版本 ' + _v + ' · 诊断日志（最新在前）：' + perf + '\n' + (lines.length
-          ? lines.slice(0, 14).map(esc).join('\n') : '（空）'), 8000);
-      } catch (e) { try { showBanner('诊断日志读取失败：' + e, 4000, true); } catch (_) {} }
-    };
-    const topEl = _hgQ('.hg-top');
-    if (topEl) topEl.insertBefore(dgBtn, topEl.querySelector('.hg-vis-ind') || topEl.lastElementChild);
-  } catch (_) {}
+  // a627（用户令「harness 的这个完全由 log 系统取代，ⓘ 标记可以删了」）：
+  // 顶栏 ⓘ 诊断按钮删除——职能由后端 log 系统取代（启动行打 harness+工具
+  // 双版本，流水经 console hook/worker 回传进 backend_log）。_hgDiag 环形
+  // 缓冲与版本 fetch 保留（其余埋点/_HG_VER 消费者仍依赖）。
   // a271（性能追踪实锤：滚动 handler 同步读 scrollHeight/scrollTop → 419 次
   // Layout 中 262 次被滚动事件强制同步触发 = 翻页一卡一卡真身）。rAF 合帧：
   // 读几何挪进 requestAnimationFrame（与渲染同帧合并，多次 scroll 一帧只算一次）
