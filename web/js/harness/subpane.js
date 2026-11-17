@@ -3,6 +3,11 @@
   // a605：sid → 上次激活的子代理 tab。切会话会 _subReset 清空 tabs，用户
   // 要求「切回来保持上次打开的那个子代理」，重建时按它认领而非从头轮换。
   let _subActiveBySid = {};
+  // a609：会话删除时回收该 sid 的 tab 记忆（原来只写不删，随会话数单调增长）
+  function _subActiveBySidForget(sid) {
+    if (!sid || !_subActiveBySid) return;
+    try { delete _subActiveBySid[sid]; } catch (_) {}
+  }
   window._sub = _sub;   // a65：v4bridge 子引擎按 tid 查 tab——const 不上 window，显式挂
   const _subTailBusy = {};   // 复审#1：转写喂数防重入锁（批1 重写时随 _subTailDead 声明块误删致通道整体 ReferenceError）
   // ==================== v3.2：子智能体目录（ZCode SubagentDirectorySidePane 移植）====================
@@ -780,6 +785,10 @@
         const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN);
         if (old != null) {
           const otb = _sub.tabs[old];
+          // a609（审计 D5）：被逐出的正好是当前 active 时清空，否则 active
+          // 悬空——silent 分支只隐藏新 sc，残留的旧 sc 无人隐藏，窗格在
+          // 下一次 restore 前会堆叠多份内容。
+          if (_sub.active === old) _sub.active = null;
           // a64：被逐出 tab 的 v4 子 store 同步关（el 随 sc.remove 脱离 DOM，
           // 此后无人能按 el 匹配到它——不关=EventSource 永久泄漏连接）
           try {
@@ -818,23 +827,48 @@
     if (!silent) {
       _subShow(tid); _subTabsPaint(); _subActivate(tid);
     } else {
-      // a605：后台补建**一律不激活**。原来这里的 `if (!_sub.active)` 认领
-      // 会踩时序坑——`_subEnsure` 按 order 逐个补建，第一次补建时用户上次
-      // 打开的那个 tab 可能还没建出来，于是错误地认领了 order[0]。改为
-      // 补建完由 _subRestoreActive 统一认领（见 _subThinkPollTick 尾部）。
-      _subTabsPaint();
+      // a605：后台补建不切 tab（原来每个补建都 _subActivate，界面被推着
+      // 1←2←3←4 轮换）。a609：但也不能只调 _subTabsPaint——那会漏掉
+      // 「隐藏其它 sc / 按档位写宽度 / V4 store 焦点」三件事，审计实测出
+      // 窗格内容多份堆叠、可见 tab 的 store 被 pause 等 6 条缺陷。
+      // 新 tab 先隐藏，界面状态交给 _subRestoreActive 统一同步（幂等；
+      // active 悬空时它也会重新认领，覆盖 D5 逐出）。
+      const scc = _sub.tabs[tid] && _sub.tabs[tid].sc;
+      if (scc && _sub.active && _sub.active !== tid) scc.style.display = 'none';
+      _subRestoreActive();
     }
   }
 
-  /** a605：自愈补建完成后统一恢复 active（优先本会话上次打开的那个）。 */
+  /** a605/a609：自愈补建完成后统一恢复界面状态。
+
+      两个职责，缺一不可：
+        ① active 无效（null / 指向已逐出的 tab）时重新认领——优先本会话
+           上次打开的那个（用户要求「切会话保持上次打开的子代理」），
+           否则 order 里第一个**真实代理** tab（不能认领伪 tab，否则窗格
+           停在「会话动态」且宽度错档——审计 D4）。
+        ② active 本来有效时**也要同步 chrome**：silent 补建期间 V4Main
+           的 subOpen 会把焦点抢走、新 sc 也没被隐藏（审计 D1/D2）。这里
+           补一次 _subSyncChrome，幂等。
+  */
   function _subRestoreActive() {
-    if (_sub.active && _sub.tabs[_sub.active]) return;   // 已有有效 active
-    let want = null;
-    try { want = (_subActiveBySid || {})[_HG.sid] || null; } catch (_) {}
-    const target = (want && _sub.tabs[want]) ? want : (_sub.order[0] || null);
-    if (!target) return;
-    _subShow(target);
-    _subActivate(target);
+    if (!_sub.active || !_sub.tabs[_sub.active]) {
+      let want = null;
+      try { want = (_subActiveBySid || {})[_HG.sid] || null; } catch (_) {}
+      const real = _sub.order.find(t => t !== _SUB_DYN && t !== _SUB_DIR
+                                       && _sub.tabs[t]);
+      const target = (want && _sub.tabs[want]) ? want : (real || _sub.order[0] || null);
+      if (!target) return;
+      // a609（审计 D3）：a75 契约是「派发即开窗」。但有历史 active（用户
+      // 上次看的就是它）时无条件恢复——这也覆盖了用户收起窗格后切走再
+      // 切回的情况。只有在既没历史 active、又是用户手动收起的状态下，
+      // 才尊重用户意图不弹窗。
+      const paneHidden = _subPaneEl && _subPaneEl.style.display === 'none';
+      if (!paneHidden || (want && _sub.tabs[want])) _subShow(target);
+      _subActivate(target);
+      return;
+    }
+    // active 有效：只同步界面状态，不动 active、不滚到底、不重绘目录
+    _subSyncChrome(_sub.active);
     _subTabsPaint();
   }
   // ===== 404 窗格数据管道唯一入口（ZCode subscribe 对位）=====
@@ -939,22 +973,37 @@
       return;
     }
   }
+  /** a609：把「激活一个 tab 时必须同步的界面状态」抽出来。
+
+      a605 的 silent 实现只做了「不调 _subActivate」，漏了它顺带承担的三件
+      事，审计实测出 6 条缺陷：
+        ① 隐藏其它 sc（原来其余 .hg-sub-msgs 的 display 是 undefined，
+           CSS 的 display:flex 让它们全部可见 → 多份内容在窗格里堆叠）；
+        ② 按激活 tab 的档位写宽度（伪 tab 窄档 / 实代理宽档）；
+        ③ V4Main.subFocus（新 tab 的 store 起流，其余 pause——漏了会让
+           可见 tab 的 store 被 v4bridge 的 subOpen 副作用 pause 且永不恢复，
+           窗格再也收不到新内容）。
+      silent 补建后调用它一次即可，不需要切 tab、不需要滚动、不需要重绘目录。
+  */
+  function _subSyncChrome(tid) {
+    if (!tid || !_sub.tabs[tid]) return;
+    _subBodyEl.querySelectorAll('.hg-sub-msgs').forEach(x =>
+      x.style.display = x.dataset.tid === tid ? '' : 'none');
+    _hgSubPctApply(_hgSubPctGet());
+    if (typeof V4Main !== 'undefined' && V4Main.on && V4Main.on()
+        && V4Main.subFocus) { try { V4Main.subFocus(tid); } catch (_) {} }
+  }
+
   function _subActivate(tid) {
     if (!_sub.tabs[tid]) return;
     _sub.active = tid;
-    _subBodyEl.querySelectorAll('.hg-sub-msgs').forEach(x =>
-      x.style.display = x.dataset.tid === tid ? '' : 'none');
+    _subSyncChrome(tid);
     _subTabsPaint();
-    _hgSubPctApply(_hgSubPctGet());   // v3.4.22：宽度按激活 tab 分档（窄/宽过渡）
     // v3.2R1(P2)：目录不贴底滚动——_subScroll 为聊天流贴底设计，目录的主
     // 内容（正在运行）在顶部，贴底会直接落到已结束长列表尾
     // v3.3：动态页同豁免——状态总览主内容也在顶部（会话状态卡）
     if (tid !== _SUB_DIR && tid !== _SUB_DYN) _subScroll(tid);
     if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
-    // a122（连接预算）：激活 tab 的 v4 子 store 起流，其余后台 tab pause
-    //（同源 6 连接上限——见 v4main.subFocus 注释；伪 tab 激活=全部 pause）
-    if (typeof V4Main !== 'undefined' && V4Main.on && V4Main.on()
-        && V4Main.subFocus) { try { V4Main.subFocus(tid); } catch (_) {} }
   }
   function _subTabsPaint() {
     if (!_subTabsEl) return;
