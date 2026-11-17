@@ -1984,6 +1984,32 @@ _wt.register(app)
 
 
 # ---- 升级功能（v2.1.0）：客户端检查/应用 + 发布端分发服务控制 ----
+@app.route("/api/backend_log")
+def api_backend_log():
+    """后端日志快照（2.4.4，用户需求）：点标题栏版本号查看。
+
+    日志只驻内存（src/backend_log.py 环形缓冲），不写盘——所以这里每次
+    读的都是本进程启动至今的输出。since/limit 支持前端增量拉取（轮询时
+    只拿新行），首次打开传 since=0 即取最近的若干行。
+    """
+    from src import backend_log
+    try:
+        since = int(request.args.get("since") or 0)
+        limit = int(request.args.get("limit") or 500)
+    except (TypeError, ValueError):
+        since, limit = 0, 500
+    limit = max(1, min(limit, 2000))
+    return jsonify({"ok": True, **backend_log.snapshot(since=since, limit=limit)})
+
+
+@app.route("/api/backend_log/clear", methods=["POST"])
+def api_backend_log_clear():
+    """清空日志缓冲（只影响内存，不影响任何磁盘文件）。"""
+    from src import backend_log
+    backend_log.clear()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/update/state")
 def api_update_state():
     """当前版本 + 升级服务器地址（设置页显示与预填）。

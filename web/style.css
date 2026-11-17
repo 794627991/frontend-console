@@ -6030,3 +6030,38 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
   .edge-hot[data-edge="se"] { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; }
   .edge-hot[data-edge="sw"] { bottom: 0; left: 0; width: 14px; height: 14px; cursor: nesw-resize; }
   body.is-max .edge-hot { display: none; }
+
+/* ---- 后端日志面板（2.4.4，用户需求）：点标题栏版本号查看 ----
+   日志只驻内存不写盘（src/backend_log.py），这里只负责展示。
+   固定在标题栏版本徽标下方，等宽字体便于对齐排障输出。 */
+.logo .ver { cursor: pointer; user-select: none; }
+.logo .ver:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.logo .ver:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.bl-panel {
+  position: fixed; top: 46px; left: 14px; z-index: 9500;
+  width: min(760px, calc(100vw - 40px)); height: min(460px, calc(100vh - 90px));
+  display: none; flex-direction: column;
+  background: var(--bg-card); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+.bl-head { display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.bl-title { font-size: 12.5px; font-weight: 600; }
+.bl-meta { font-size: 11px; color: var(--muted); }
+.bl-spacer { flex: 1; }
+.bl-btn { font-size: 11.5px; color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 5px; padding: 2px 9px; cursor: pointer; }
+.bl-btn:hover { color: var(--fg); border-color: var(--accent); }
+.bl-body { flex: 1; overflow-y: auto; padding: 6px 10px;
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px; line-height: 1.55; }
+.bl-row { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-all; }
+.bl-ts { color: var(--muted); flex-shrink: 0; opacity: 0.75; }
+.bl-txt { flex: 1; min-width: 0; }
+.bl-warn .bl-txt { color: #d9a227; }
+.bl-error .bl-txt { color: var(--neon-red, #e5484d); }
+.bl-src-err .bl-ts { color: var(--neon-red, #e5484d); opacity: 0.85; }
+.bl-empty { color: var(--muted); font-size: 12px; padding: 14px 4px; }
+.bl-foot { padding: 5px 10px; border-top: 1px solid var(--border);
+  font-size: 10.5px; color: var(--muted); flex-shrink: 0; }

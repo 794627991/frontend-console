@@ -1158,6 +1158,19 @@ def _kill_child_processes():
 
 
 def main():
+    # 用户需求（2.4.4）：启动不再弹 cmd 黑框——日志由进程内环形缓冲接管
+    # （src/backend_log.py，只驻内存不写盘），界面点标题栏版本号即可查看。
+    # 必须在任何 print 之前装（此处之前只有 import，无输出）。子模式
+    # （--mcp-ask/--audit-hook 等）是短命子进程且走 stdio 协议，绝不能接管
+    # 它们的 stdout/stderr——真实用户看日志只会用主实例。
+    if not any(a in sys.argv for a in (
+            '--claude-worker', '--mcp-ask', '--mcp-vision', '--audit-hook',
+            '--snip-grab', '--snip-window', '--selftest')):
+        try:
+            from src import backend_log
+            backend_log.install()
+        except Exception:
+            pass          # 日志缓冲装不上不该挡启动
     # 用户实锤（内网）：程序退出后主进程残留+rg.exe 占用——Job Object 绑杀
     # 全部子进程（rg/ctags/codegraph/worker 等）：主进程一退（含强杀），
     # Windows 内核自动 TERMINATE 全部子进程，零孤儿
