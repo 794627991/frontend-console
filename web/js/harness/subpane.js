@@ -1,5 +1,8 @@
 // harness subpane.js (v3.0 自 buildClaudeHarnessTab 拆出;v3.2.6 窗格时间线重写——ZCode 子智能体模式)
   const _sub = { tabs: {}, order: [], active: null, manual: false };
+  // a605：sid → 上次激活的子代理 tab。切会话会 _subReset 清空 tabs，用户
+  // 要求「切回来保持上次打开的那个子代理」，重建时按它认领而非从头轮换。
+  let _subActiveBySid = {};
   window._sub = _sub;   // a65：v4bridge 子引擎按 tid 查 tab——const 不上 window，显式挂
   const _subTailBusy = {};   // 复审#1：转写喂数防重入锁（批1 重写时随 _subTailDead 声明块误删致通道整体 ReferenceError）
   // ==================== v3.2：子智能体目录（ZCode SubagentDirectorySidePane 移植）====================
@@ -303,6 +306,12 @@
     _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '', true);
   }
   function _subReset() {
+    // a605（用户要求「切会话保持上次打开的子代理界面」）：先把本会话的
+    // active tab 记下来，重建后自愈补建时优先认领它，不要从头轮换。
+    try {
+      if (_HG.sid && _sub.active && String(_sub.active).indexOf('__') !== 0)
+        (_subActiveBySid || (_subActiveBySid = {}))[_HG.sid] = _sub.active;
+    } catch (_) {}
     // a64：v4 子 store 全量随清场关闭（切会话/删会话路径）——EventSource 不
     // 关=同域连接永久泄漏（6 条上限），几次切换后全前端请求排队发不出去
     try {
@@ -745,7 +754,7 @@
     if (!tb) return;
     _subTlFinalizeT(tb, tb.t, opt);
   }
-  function _subOpen(tid, type, desc, replay) {
+  function _subOpen(tid, type, desc, replay, silent) {
     if (!_subPaneEl) return;
     tid = _subTid(tid);   // v3.4：续派包装 id 归一——命中原 tab 直接激活，绝不另开
     if (!_sub.tabs[tid]) {
@@ -801,7 +810,32 @@
         _subTlHeadPaint(_sub.tabs[tid].t);
       }
     }
-    _subShow(tid); _subTabsPaint(); _subActivate(tid);
+    // a605（用户实锤「切回 A 会话后子代理面板每秒自动从左往右轮换」）：
+    // 后台自愈路径（_subEnsure/_subThinkPollTick 的补建）不能抢焦点——
+    // 原来无条件 _subActivate，自愈循环里按 _sub.order 逐个补建 tab 时，
+    // 界面就被推着 1←2←3←4 地切。silent=true 只建不激活，补建完毕后由
+    // _subRestoreActive 统一认领一次（用户要求「切会话保持上次打开的子代理」）。
+    if (!silent) {
+      _subShow(tid); _subTabsPaint(); _subActivate(tid);
+    } else {
+      // a605：后台补建**一律不激活**。原来这里的 `if (!_sub.active)` 认领
+      // 会踩时序坑——`_subEnsure` 按 order 逐个补建，第一次补建时用户上次
+      // 打开的那个 tab 可能还没建出来，于是错误地认领了 order[0]。改为
+      // 补建完由 _subRestoreActive 统一认领（见 _subThinkPollTick 尾部）。
+      _subTabsPaint();
+    }
+  }
+
+  /** a605：自愈补建完成后统一恢复 active（优先本会话上次打开的那个）。 */
+  function _subRestoreActive() {
+    if (_sub.active && _sub.tabs[_sub.active]) return;   // 已有有效 active
+    let want = null;
+    try { want = (_subActiveBySid || {})[_HG.sid] || null; } catch (_) {}
+    const target = (want && _sub.tabs[want]) ? want : (_sub.order[0] || null);
+    if (!target) return;
+    _subShow(target);
+    _subActivate(target);
+    _subTabsPaint();
   }
   // ===== 404 窗格数据管道唯一入口（ZCode subscribe 对位）=====
   // 「开 tab→铺底→续流→定稿」一条管道全链通。此前五个触发点各管一段的
@@ -817,7 +851,9 @@
     const a = (typeof _hgAg === 'function' ? _hgAg(tid) : null) || (_HG.agents || {})[k] || (_HG.agents || {})[tid];
     let tb = _sub.tabs[k];
     if (!tb) {
-      _subOpen(k, (a && a.type) || 'Task', (a && a.desc) || '');
+      // silent：后台自愈补建不能抢焦点（用户实锤「切回会话后子代理面板
+      // 每 2-5 秒从左往右自动轮换」，根因就是这里逐个 _subOpen 时切界面）
+      _subOpen(k, (a && a.type) || 'Task', (a && a.desc) || '', undefined, true);
       tb = _sub.tabs[k];
       if (!tb) return null;
     }
@@ -826,10 +862,11 @@
     if (!aid) return tb;     // agentId 未得：挂起等 task_started 重入
     if (tb._ensAt && Date.now() - tb._ensAt < 3000) return tb;   // 铺底在途防重入
     tb._ensAt = Date.now();
-    _subReplay(k, (a && a.type) || 'Task', (a && a.desc) || '', aid, true, true);
+    _subReplay(k, (a && a.type) || 'Task', (a && a.desc) || '', aid, true, true,
+               true /* silent：自愈补建不抢焦点 */);
     return tb;
   }
-  function _subReplay(tid, type, desc, agentId, force, alive) {
+  function _subReplay(tid, type, desc, agentId, force, alive, silent) {
     if (!_subPaneEl) return;
     const tid0 = tid;     // v3.5.191r1：归一前键留存——解析漏斗回填档案落在
                           // 包装键，归一键可能无档案，双查防活代理误判死
@@ -845,7 +882,7 @@
     // ——不再走「过程不可回看」占位（过时判定，用户实锤途中关闭再开啥也没有）；
     // 无 taskId（连真实 id 都没反查到）才维持占位
     if (a.collab && !a.taskId && !agentId) {
-      _subOpen(tid, type, desc, true);
+      _subOpen(tid, type, desc, true, silent);
       const tb0 = _sub.tabs[tid];
       if (tb0 && tb0.t && !tb0.t.sc.dataset.collabNote) {
         tb0.t.sc.dataset.collabNote = '1';
@@ -881,7 +918,7 @@
     const _a2 = a.done === undefined ? (_hgAg(tid0) || {}) : a;
     const _alive = (alive === true)
       || (alive !== false && (_a2 && !_a2.done));
-    _subOpen(tid, type, desc, !_alive);
+    _subOpen(tid, type, desc, !_alive, silent);
     const sc = _sub.tabs[tid] && _sub.tabs[tid].sc;
     if (!sc) return;
     // v4 归一管线（批E→a65 重构）：数据=子投影（快照铺底+delta 实时续流），
@@ -1086,6 +1123,9 @@
         if (aF && st !== 'final') _subEnsure(t);
       } catch (_) {}
     }
+    // a605：自愈补建可能新建了 tab 但（silent）没有激活——补完统一认领一次，
+    // 优先本会话上次打开的那个子代理。已有效 active 时直接返回，不打扰用户。
+    _subRestoreActive();
     if (!_HG.busy && !_hgAgentsRunning()) return;
     const ag = _HG.agents || {};
     for (const k in ag) {
