@@ -268,6 +268,13 @@ class BaseConnection:
                     self._reconn_first = False
                     self.append_line(f"[reader] 连接异常: {e}，开始自动重连...")
                     self._emit_conn_state("down", str(e))
+                    # 2.4.4：断连原因进调试日志（排障第一现场）
+                    try:
+                        from src import backend_log
+                        backend_log.warn("conn", "%s 连接异常：%s: %s" % (
+                            self.port_id, e.__class__.__name__, e))
+                    except Exception:
+                        pass
                 # 可中断等待（kick 置位立即醒）
                 self._reconn_kick.wait(2)
                 self._reconn_kick.clear()
@@ -391,6 +398,14 @@ class BaseConnection:
 
     def close(self):
         self.alive = False
+        # 2.4.4：连接生命周期进调试日志（点版本号查看）——断连时刻/端口是
+        # 排障最常问的两个信息，此前只散在各自模块的 print 里。
+        try:
+            from src import backend_log
+            backend_log.log("conn", "关闭连接 %s（kind=%s）"
+                            % (self.port_id, getattr(self, "kind", "?")), "info")
+        except Exception:
+            pass
         # 唤醒滞留在退避等待的 reader（kick.wait 立即返回，alive=False 让它退出）
         self._reconn_kick.set()
         time.sleep(0.1)

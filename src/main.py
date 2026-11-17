@@ -1169,6 +1169,11 @@ def main():
         try:
             from src import backend_log
             backend_log.install()
+            # 用户定调「任何报错/警告/有用信息都往这里放，后续就是指定的
+            # 调试手段」——三道收口全开：流接管 + logging 桥 + 未捕获异常钩子
+            backend_log.install_logging_bridge()
+            backend_log.install_excepthooks()
+            backend_log.log("main", "后端日志缓冲已启用（10MB 内存，不写盘）")
         except Exception:
             pass          # 日志缓冲装不上不该挡启动
     # 用户实锤（内网）：程序退出后主进程残留+rg.exe 占用——Job Object 绑杀

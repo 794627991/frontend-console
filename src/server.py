@@ -189,6 +189,30 @@ def _api_not_found(e):
         return jsonify({"ok": False, "err": "%s %s" % (e.code, e.name)}), e.code
     return e
 
+
+# 2.4.4（用户定调「任何报错都往日志缓冲里放，这是指定的调试手段」）：
+# 未捕获异常兜底——此前 500 只回 Werkzeug 的 HTML，traceback 只进 stderr，
+# 而 GUI 版没有控制台，等于永远看不到。现在逐条落进内存缓冲（点版本号
+# 查看），同时保留原来的 HTML/JSON 响应形态（不影响既有调用方）。
+@app.errorhandler(Exception)
+def _api_unhandled(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        # 正常的分支信号（404/405/400 等）不记 error，交给上面的 handler
+        return e
+    try:
+        from src import backend_log
+        backend_log.exception("server",
+                              "未捕获异常 %s %s" % (request.method, request.path))
+    except Exception:
+        pass
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False,
+                        "err": "服务器内部错误：%s" % (e.__class__.__name__)
+                        }), 500
+    return ("<h1>服务器内部错误</h1><p>%s</p>"
+            % e.__class__.__name__), 500
+
 # ---- 单实例唤醒通道 ----
 # 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
 # （pywebview WinForms 宿主从自身线程 show 才稳，跨进程 SetForegroundWindow
@@ -904,6 +928,64 @@ def _ssh_last_disconnect(max_age=3.0):
         if now - ts <= max_age:
             best = "Disconnect (code %d): %s" % (code, desc)   # deque 时间序，取最新
     return best
+
+
+# 2.4.4（用户定调「任何报错、警告、有用信息都往缓冲里放」）：API 结果
+# 统一埋点。只记「有信息量」的请求：
+#   · 所有非 2xx 响应（含 4xx 参数错——这是排障最需要的）
+#   · 所有 POST 写操作（连接/发送/断开/升级等，行为可追溯）
+# 不记 2xx 的 GET（轮询/状态查询每秒都有，会把缓冲刷满）。werkzeug 的逐
+# 请求访问日志本来就不进缓冲，这里补的是「结果 + 耗时 + 失败原因」。
+_LOGGED_PREFIX_SKIP = ("/api/backend_log", "/api/status", "/api/busy")
+
+
+@app.after_request
+def _log_api_outcome(resp):
+    try:
+        from src import backend_log
+        if not backend_log.installed():
+            return resp
+        path = request.path or ""
+        if path.startswith(_LOGGED_PREFIX_SKIP):
+            return resp
+        code = resp.status_code
+        method = request.method
+        # 只记非 2xx，或写操作
+        if code < 300 and method == "GET":
+            return resp
+        if code < 300 and method in ("POST", "PUT", "DELETE", "PATCH"):
+            # 写操作成功：只记精简结果（body 太大不记）
+            lvl = "info"
+            detail = ""
+            try:
+                if resp.is_json:
+                    j = resp.get_json()
+                    if isinstance(j, dict):
+                        if j.get("ok") is False:
+                            lvl = "warn"
+                        detail = str(j.get("err") or j.get("msg") or "")[:200]
+            except Exception:
+                pass
+            backend_log.log("api", "%s %s → %d%s" % (
+                method, path, code, ("  " + detail) if detail else ""), lvl)
+        else:
+            # 非 2xx：一定记，且带原因
+            lvl = "error" if code >= 500 else "warn"
+            detail = ""
+            try:
+                if resp.is_json:
+                    j = resp.get_json()
+                    if isinstance(j, dict):
+                        detail = str(j.get("err") or "")[:300]
+            except Exception:
+                pass
+            backend_log.log("api", "%s %s → %d %s%s" % (
+                method, path, code,
+                getattr(resp, "status", "") or "",
+                ("  " + detail) if detail else ""), lvl)
+    except Exception:
+        pass          # 日志失败绝不影响响应
+    return resp
 
 
 @app.route("/api/connect", methods=["POST"])

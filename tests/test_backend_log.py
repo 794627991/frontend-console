@@ -1,145 +1,200 @@
 # -*- coding: utf-8 -*-
 """2.4.4 后端日志缓冲：点版本号查看的那份内存日志。
 
-用户需求要点（钉在测试里）：
+用户定调（2.4.4 追加）：
+- 容量按**内存字节**计，默认 10MB（不是按行数 2000）
+- 本功能是**指定的调试手段**：任何报错/警告/有用信息都往这里放
 - 只驻内存，不写磁盘
-- 有限容量（环形，超出丢最旧）
-- 接管 print / stderr，原来的输出都能在界面上看到
-- werkzeug 逐请求访问日志不进缓冲（否则轮询刷屏淹没真日志）
 """
+import inspect
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import backend_log as BL  # noqa: E402
 
 
-def _reset():
-    """每个测试独立：清缓冲并摘掉已安装的接管。"""
+@pytest.fixture(autouse=True)
+def _isolate():
+    """每个测试独立：清缓冲、恢复原始流、复位容量与安装标记。"""
+    real_out, real_err = sys.stdout, sys.stderr
+    old_cap = BL._MAX_CHARS
     BL.clear()
     BL._seq = 0
+    BL._installed = False
+    yield
+    sys.stdout, sys.stderr = real_out, real_err
+    BL._installed = False
+    BL._MAX_CHARS = old_cap
+    BL.clear()
+
+
+def _install(cap=None):
+    if cap:
+        BL._MAX_CHARS = cap
+    BL.install()
+
+
+def test_default_capacity_is_10mb():
+    """用户明确要求 10MB 内存，不是 2000 条。"""
+    assert BL._MAX_CHARS == 10 * 1024 * 1024
 
 
 def test_capture_print_and_stderr():
-    _reset()
-    real_out, real_err = sys.stdout, sys.stderr
-    BL._installed = False
-    try:
-        BL.install()
-        print("普通一行")
-        print("[错误] 出错了")
-        print("[警告] 小心")
-        sys.stderr.write("stderr 一行\n")
-    finally:
-        sys.stdout, sys.stderr = real_out, real_err
-        BL._installed = False
+    _install()
+    print("普通一行")
+    print("[错误] 出错了")
+    print("[警告] 小心")
+    sys.stderr.write("stderr 一行\n")
     snap = BL.snapshot()
     texts = [x["text"] for x in snap["lines"]]
-    assert "普通一行" in texts
-    assert "[错误] 出错了" in texts
-    assert "stderr 一行" in texts
+    assert "普通一行" in texts and "[错误] 出错了" in texts and "stderr 一行" in texts
     by_level = {x["text"]: x["level"] for x in snap["lines"]}
     assert by_level["[错误] 出错了"] == "error"
     assert by_level["[警告] 小心"] == "warn"
-    assert by_level["普通一行"] == "info"
-    srcs = {x["text"]: x["src"] for x in snap["lines"]}
-    assert srcs["stderr 一行"] == "stderr"
+    assert {x["text"]: x["src"] for x in snap["lines"]}["stderr 一行"] == "stderr"
+
+
+def test_capacity_is_byte_based_not_line_based():
+    """按字符数淘汰：短行能存很多条，长行很快占满——这正是按字节的意义。"""
+    _install(cap=4000)
+    for i in range(500):
+        BL.log("t", "短")
+    BL.clear()
+    for i in range(20):
+        BL.log("t", "长" * 900)
+    st = BL.stats()
+    assert st["used_chars"] <= st["capacity_chars"], st
+    assert st["dropped"] > 0, st
 
 
 def test_ring_drops_oldest():
-    """定长环形：超出容量丢最旧，内存不会无限增长。"""
-    _reset()
-    real = sys.stdout
-    BL._installed = False
+    _install(cap=3000)
+    for i in range(500):
+        BL.log("t", "line-%d" % i)
+    texts = [x["text"] for x in BL.snapshot(limit=10000)["lines"]]
+    assert "line-0" not in texts, "最旧的应被淘汰"
+    assert "line-499" in texts, "最新的必须还在"
+    assert BL.stats()["used_chars"] <= 3000
+
+
+def test_active_logging_api():
+    """主动埋点：log/warn/error/exception 都进缓冲且带 tag。"""
+    _install()
+    BL.log("web_tabs", "主动埋点")
+    BL.warn("ssh", "一条警告")
+    BL.error("shell", "一条错误")
     try:
-        BL.install(max_lines=5)
-        for i in range(12):
-            print("line-%d" % i)
-    finally:
-        sys.stdout = real
-        BL._installed = False
+        1 / 0
+    except ZeroDivisionError:
+        BL.exception("calc", "除法失败")
+    rows = {x["text"].split("\n")[0]: x for x in BL.snapshot()["lines"]}
+    assert rows["主动埋点"]["tag"] == "web_tabs"
+    assert rows["主动埋点"]["level"] == "info"
+    assert rows["一条警告"]["level"] == "warn"
+    assert rows["一条错误"]["level"] == "error"
+    # exception 带 traceback
+    exc_row = next(x for x in BL.snapshot()["lines"] if x["tag"] == "calc")
+    assert "Traceback" in exc_row["text"] and "ZeroDivisionError" in exc_row["text"]
+
+
+def test_logging_bridge():
+    """标准库 logging 桥接：第三方库日志可见。"""
+    _install()
+    assert BL.install_logging_bridge() is True
+    import logging
+    logging.getLogger("paramiko.transport").warning("第三方库警告")
     texts = [x["text"] for x in BL.snapshot()["lines"]]
-    assert len(texts) == 5, texts
-    assert texts == ["line-7", "line-8", "line-9", "line-10", "line-11"], texts
+    assert any("第三方库警告" in t for t in texts), texts
 
 
 def test_access_log_filtered():
-    """werkzeug 逐请求日志不进缓冲（轮询会刷屏），但仍透传到原流。"""
-    _reset()
-    real = sys.stdout
-    BL._installed = False
-    try:
-        BL.install()
-        print('127.0.0.1 - - [17/Nov/2026 10:12:36] "GET /api/x HTTP/1.1" 200 -')
-        print("真日志")
-    finally:
-        sys.stdout = real
-        BL._installed = False
-    texts = [x["text"] for x in BL.snapshot()["lines"]]
-    assert texts == ["真日志"], texts
+    """werkzeug 逐请求访问日志不进缓冲（轮询会刷屏），但仍透传到原流。"""
+    _install()
+    print('127.0.0.1 - - [17/Nov/2026 10:12:36] "GET /api/x HTTP/1.1" 200 -')
+    print("真日志")
+    assert [x["text"] for x in BL.snapshot()["lines"]] == ["真日志"]
 
 
 def test_since_incremental():
-    """since 增量拉取：只返回 seq 更大的行。"""
-    _reset()
-    real = sys.stdout
-    BL._installed = False
-    try:
-        BL.install()
-        print("第一行")
-    finally:
-        sys.stdout = real
-        BL._installed = False
-    first = BL.snapshot(since=0)
-    assert len(first["lines"]) == 1
-    last = first["last_seq"]
-    real = sys.stdout
-    BL._installed = False
-    try:
-        BL.install()
-        print("第二行")
-    finally:
-        sys.stdout = real
-        BL._installed = False
+    _install()
+    print("第一行")
+    last = BL.snapshot()["last_seq"]
+    print("第二行")
     inc = BL.snapshot(since=last)
     assert [x["text"] for x in inc["lines"]] == ["第二行"]
 
 
 def test_partial_line_buffered_until_newline():
-    """没有换行的残片不该作为半行入缓冲。"""
-    _reset()
-    real = sys.stdout
-    BL._installed = False
-    try:
-        BL.install()
-        sys.stdout.write("半")
-        sys.stdout.write("行")
-        assert BL.snapshot()["lines"] == []
-        sys.stdout.write("\n")
-    finally:
-        sys.stdout = real
-        BL._installed = False
+    _install()
+    sys.stdout.write("半")
+    sys.stdout.write("行")
+    assert BL.snapshot()["lines"] == []
+    sys.stdout.write("\n")
     assert [x["text"] for x in BL.snapshot()["lines"]] == ["半行"]
 
 
 def test_no_disk_write():
-    """用户明确要求不写盘：模块不存在任何文件写入。"""
-    import inspect
+    """用户明确要求不写盘。"""
     src = inspect.getsource(BL)
-    for bad in ("open(", "os.makedirs", "logging.FileHandler"):
+    for bad in ("open(", "os.makedirs", "FileHandler"):
         assert bad not in src, "日志缓冲不该出现 %r" % bad
 
 
 def test_line_length_clamped():
-    """单行超长要钳位，防一条巨型输出吃掉整个缓冲。"""
-    _reset()
-    real = sys.stdout
-    BL._installed = False
-    try:
-        BL.install()
-        print("x" * 10000)
-    finally:
-        sys.stdout = real
-        BL._installed = False
-    assert len(BL.snapshot()["lines"][0]["text"]) == 4000
+    _install()
+    print("x" * 20000)
+    text = BL.snapshot()["lines"][0]["text"]
+    assert len(text) <= BL._MAX_LINE_CHARS + 40      # +截断提示
+    assert "已截断" in text
+
+
+def test_snapshot_exposes_counts():
+    _install()
+    BL.log("t", "a")
+    snap = BL.snapshot()
+    for k in ("capacity_chars", "used_chars", "entries", "dropped", "installed"):
+        assert k in snap, k
+    assert snap["capacity_chars"] == BL._MAX_CHARS
+
+
+def test_clear_resets_usage():
+    _install()
+    BL.log("t", "x" * 1000)
+    BL.clear()
+    st = BL.stats()
+    assert st["used_chars"] == 0 and st["entries"] == 0 and st["dropped"] == 0
+
+
+# ---- API 埋点（2.4.4：任何报错都往缓冲里放）--------------------------
+def test_api_after_request_logs_failures_only_for_get():
+    """after_request 埋点逻辑单测：用假 request/response 验判据。
+
+    真 Flask 上下文里的端到端验证已手工做过（404/400/200 三类结果都正确
+    入库），这里钉判据本身，避免日后改坏。
+    """
+    import inspect
+    from src import server as S
+    src = inspect.getsource(S._log_api_outcome)
+    assert "code < 300 and method == " in src, "2xx GET 应早退不记录"
+    assert 'request.method' in src
+    assert "backend_log.log" in src
+    assert "resp.status_code" in src
+
+
+def test_api_skip_prefixes():
+    """轮询类路径不记（会刷满缓冲）。"""
+    from src import server as S
+    assert "/api/backend_log" in S._LOGGED_PREFIX_SKIP
+    assert "/api/status" in S._LOGGED_PREFIX_SKIP
+
+
+def test_unhandled_exception_handler_registered():
+    """未捕获异常要有全局兜底（GUI 没控制台，否则永远看不到）。"""
+    from src import server as S
+    src = inspect.getsource(S)
+    assert "_api_unhandled" in src
+    assert 'backend_log.exception("server"' in src

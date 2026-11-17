@@ -6051,6 +6051,14 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .bl-title { font-size: 12.5px; font-weight: 600; }
 .bl-meta { font-size: 11px; color: var(--muted); }
 .bl-spacer { flex: 1; }
+.bl-sel { font-size: 11px; color: var(--fg); background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 5px; padding: 2px 4px;
+  max-width: 130px; cursor: pointer; }
+.bl-sel:hover { border-color: var(--accent); }
+.bl-tag { flex-shrink: 0; color: var(--accent); opacity: 0.85;
+  font-size: 10.5px; min-width: 0; max-width: 90px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.bl-hint { opacity: 0.6; float: right; }
 .bl-btn { font-size: 11.5px; color: var(--muted); background: transparent;
   border: 1px solid var(--border); border-radius: 5px; padding: 2px 9px; cursor: pointer; }
 .bl-btn:hover { color: var(--fg); border-color: var(--accent); }
