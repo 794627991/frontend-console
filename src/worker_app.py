@@ -329,11 +329,23 @@ def main():
     # 日志落 data_dir（worker 无控制台；stdout 只走就绪协议，防污染解析）
     from src.app_state import DATA_DIR
     os.makedirs(DATA_DIR, exist_ok=True)
+    _fmt = "%(asctime)s %(levelname)s %(name)s %(message)s"
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        format=_fmt,
         filename=os.path.join(DATA_DIR, "claude_worker.log"),
         filemode="a", encoding="utf-8")
+    # a627（用户令「harness 的错误/调试信息也放 log 系统，性能必须保障」）：
+    # harness 全模块走标准 logging（session/routes/v4hub/bridges...），但此前
+    # 只有文件通道——主进程日志面板看不到。加 stderr 流 handler：worker 的
+    # stderr=PARENT 管道（stderr=STDOUT）→ 主进程排空线程（worker_app.py
+    # manage 侧逐行 logging 回传）→ logging 桥 → 主进程 backend_log 面板。
+    # 性能：①频次审计过——harness 无 per-token/per-tool 日志点（session.py
+    # 1 处/routes.py 1 处，事件级）；②管道 write 是 µs 级 syscall 且排空在
+    # 独立线程异步消化，不阻塞 worker 主流程；③同格式双 handler（文件+回传）。
+    _stream_h = logging.StreamHandler(sys.stderr)
+    _stream_h.setFormatter(logging.Formatter(_fmt))
+    logging.getLogger().addHandler(_stream_h)
     # werkzeug 访问日志降噪（SSE 心跳每 15s 一条，量大无信息）
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
