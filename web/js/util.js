@@ -991,10 +991,11 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
-const _HG_FADE_SB_VER = 9;   // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+const _HG_FADE_SB_VER = 10;  // 挂载实例版本：行为变更时递增——旧实例自动拆重建
                              // v7：补横向条（用户实锤「文件树横向滚动条没有」）
                              // v8：修鼠标上条抽搐（宿主/条互相触发 enter/leave 死循环）
                              // v9：修 v8 引入的「渐隐消失」——lastPt 陈旧坐标致条永不隐藏
+                             // v10：纵向条按宿主右缘定位（原来贴锚点右缘，窄宿主时飞走）
 function _hgFadeSb(el) {
   if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
     // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
@@ -1052,6 +1053,13 @@ function _hgFadeSb(el) {
       sb.style.top = top + 'px';
       sb.style.bottom = 'auto';
       sb.style.height = trackH + 'px';
+      // a614（用户实锤「这个滚动条位置了」）：纵向条也必须按**宿主**右缘
+      // 定位。原来只靠 CSS right:2px = 贴锚点右缘——宿主比锚点窄时条就飞
+      // 到锚点边上。典型：@ 提及下拉（.hg-mention-drop，300px）挂在整张
+      // 输入卡宽的 .hg-input-stack 里，条跑到了输入卡最右侧，跟下拉隔了
+      // 几百 px。横向条一直是显式按 er 算的，纵向此前漏了。
+      sb.style.right = Math.max(0, ar.right - er.right + 2) + 'px';
+      sb.style.left = 'auto';
       const thH = Math.max(32, Math.round(ch / sh * trackH));
       const maxTop = trackH - thH;
       th.style.height = thH + 'px';
