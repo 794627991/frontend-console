@@ -231,8 +231,24 @@ function buildTerminal(portId, meta) {
       conn._webgl = webgl;
     }
   } catch(e) {}
-  conn._fitTerm = () => { try { conn.fit.fit(); } catch(e) {} };   // 字号热调后重排（theme.js applyFontSettings 用）
-  try { conn.fit.fit(); } catch(e) {}
+  conn._fitTerm = () => { if (conn._safeFit) conn._safeFit(); else { try { conn.fit.fit(); } catch(e) {} } };   // 字号热调后重排（theme.js applyFontSettings 用）
+  // 安全 fit：FitAddon 的 proposeDimensions 只在 cell 宽高为 0 时跳过；窗口
+  // 最小化把容器压到极小但非 0 时会算出 rows=1/cols=1，终端就此停在一行。
+  // 这里统一走带守卫的版本：容器尺寸不可信时直接跳过，等 _refitSettled 在
+  // 恢复后再算。
+  conn._safeFit = () => {
+    try {
+      const el = conn.term && conn.term.element;
+      const host = el && el.parentElement;
+      if (!host) return;
+      const w = host.clientWidth, h = host.clientHeight;
+      if (w < 80 || h < 40) return;       // 明显不是有效布局（最小化/隐藏中）
+      conn.fit.fit();
+    } catch (e) {}
+  };
+  conn._safeFit();
+  // 初次 open 时布局可能尚未结算（面板刚插入 DOM），一帧后补一次。
+  requestAnimationFrame(() => { conn._safeFit(); });
 
   // ---- PTY 尺寸同步（claude 终端）：xterm onResize → /api/resize → ConPTY setwinsize。
   // debounce 200ms（拖拽窗口 fit 高频触发）；尺寸未变短路。初始 fit 也会触发一次——
@@ -248,6 +264,10 @@ function buildTerminal(portId, meta) {
     clearTimeout(conn._resizeTimer);
     conn._resizeTimer = setTimeout(() => {
       if (connections[portId] !== conn) return;
+      // 最小化期间容器被压扁 → fit 算出 rows/cols 极小值。把这个垃圾尺寸
+      // 同步给 PTY 会让远端按 1 行宽度回绕，恢复后整屏内容都是错的。
+      // 小于合理下限一律不推（恢复时 _refitSettled 会用真实尺寸再推一次）。
+      if (rows < 3 || cols < 20) return;
       if (conn._lastCols === cols && conn._lastRows === rows) return;
       conn._lastCols = cols; conn._lastRows = rows;
       fetch('/api/resize', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -544,7 +564,7 @@ function switchTab(portId, auto) {
       });
     } else {
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        try { conn.fit.fit(); } catch(e){}
+        try { conn._safeFit ? conn._safeFit() : conn.fit.fit(); } catch(e){}
         try { conn.term.focus(); } catch(e){}
       }));
     }
@@ -578,9 +598,54 @@ window.addEventListener('resize', () => {
       const ls = conn.logState;
       if (ls && ls.searchTotal) { ls.resRenderStart = -1; ls.resRenderEnd = -1; renderLogResults(conn); }
     }
-    else { try { conn.fit.fit(); } catch(e){} }
+    else { try { conn._safeFit ? conn._safeFit() : conn.fit.fit(); } catch(e){} }
   }
 });
+
+// ---- 最小化 → 恢复后终端只剩一行（用户实锤的必现问题）------------------
+// 现象：窗口最小化后重新点开，串口终端只显示左上角一行被截断的数据；随便
+// 切一个 tab 再切回来就恢复正常。
+// 根因：窗口最小化期间 Chromium 把布局尺寸压到极小/为 0，FitAddon 按这个
+// 尺寸算出 rows≈1（xterm 的 proposeDimensions 只在 offsetHeight==0 时跳过，
+// 非零极小值照算），而**最小化/恢复不一定产生 window resize 事件**——恢复
+// 后没有任何东西触发重新 fit，终端就停在 1 行。切 tab 会走 activatePane 里
+// 的 requestAnimationFrame→fit，所以能"自己好"。
+// 修：可见性恢复 / 重新获得焦点时补一次 fit + 重绘。恢复动画期间布局尺寸
+// 可能还没结算，所以按 0/80/240/600ms 打四枪（幂等，fit 会短路同尺寸）。
+let _refitTimers = [];
+function _refitActiveTerminal() {
+  if (document.hidden) return;
+  const conn = connections[activePortId];
+  if (!conn) return;
+  if (conn.meta.kind === 'log') {
+    // 最小化期间 clientHeight 被压到极小，渲染范围也随之缩成几行；恢复后
+    // 范围变大但 renderLogSlice 的相等性短路可能因旧值比较而漏渲染。
+    // 复位渲染游标强制重算（与 resize 分支同一手法）。
+    try {
+      const ls = conn.logState;
+      if (ls) { ls.renderedStart = -1; ls.renderedEnd = -1; }
+      renderLogSlice(conn);
+      if (ls && ls.searchTotal) { ls.resRenderStart = -1; ls.resRenderEnd = -1; renderLogResults(conn); }
+    } catch (e) {}
+    return;
+  }
+  if (!conn.term || !conn.fit) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    try { conn._safeFit ? conn._safeFit() : conn.fit.fit(); } catch (e) {}
+    try { conn.term.refresh(0, conn.term.rows - 1); } catch (e) {}
+  }));
+}
+function _refitSettled() {
+  _refitTimers.forEach(clearTimeout);
+  _refitTimers = [0, 80, 240, 600].map(ms => setTimeout(_refitActiveTerminal, ms));
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) _refitSettled();
+});
+window.addEventListener('focus', _refitSettled);
+// WebView2 部分版本最小化恢复既不派 resize 也不改 visibility，pageshow 兜底
+window.addEventListener('pageshow', _refitSettled);
+
 
 // SSE 收到 raw 字节流 → 写入 xterm；screenctl → 切换提示条
 function appendRaw(portId, text) {

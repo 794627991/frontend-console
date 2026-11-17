@@ -171,8 +171,8 @@ function toggleTermSearchPane(conn, show) {
   // 注意：分栏 35% 高度此刻是同步生效的（display 直接改，布局立刻收缩），
   // fit 拿到的已是收缩后高度。但 WebGL canvas 的 style 高度更新是异步的
   // （xterm resize 链内部走 addRefreshCallback），保险起见 fit 后再补一次。
-  try { conn.fit.fit(); } catch(e){}
-  requestAnimationFrame(() => { try { conn.fit.fit(); } catch(e){} });
+  try { conn._safeFit ? conn._safeFit() : conn.fit.fit(); } catch(e){}
+  requestAnimationFrame(() => { try { conn._safeFit ? conn._safeFit() : conn.fit.fit(); } catch(e){} });
   if (show) conn.termSearchInput.focus();
 }
 async function doTermSearch(conn) {
@@ -286,7 +286,7 @@ function initTermSplitter(conn) {
     pane.style.height = newH + 'px';
   };
   conn.termSplitUp = () => {
-    if (dragging) { dragging = false; document.body.style.cursor = ''; try { conn.fit.fit(); } catch(e){} }
+    if (dragging) { dragging = false; document.body.style.cursor = ''; try { conn._safeFit ? conn._safeFit() : conn.fit.fit(); } catch(e){} }
   };
   document.addEventListener('mousemove', conn.termSplitMove);
   document.addEventListener('mouseup', conn.termSplitUp);
