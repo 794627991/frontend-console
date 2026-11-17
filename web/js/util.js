@@ -855,8 +855,19 @@ function _notifyMount(d, ms) {
   // 同步循环里定时器不派发、live HTMLCollection 长度不变 → 无限循环整页冻结
   // （第 5 条并发通知必触发）。同步摘除；DOM 首位才是最旧（column-reverse
   // 只反转视觉不反转 DOM 序——旧注释判错，原代码丢的是最新通知）
+  // a608：强制摘除（栈满 FIFO）必须走完整收口——原来直接 remove()，
+  // 被挤掉的常驻任务/倒计时通知不会经过 _notifyDismiss：它的 interval 会
+  // 一直跑到 120s 到点，还会对被挤掉的任务再发一次取消请求（审计实测：
+  // 并发 5 条倒计时通知 → 5 个 interval 存活、第 0 条 1.5s 后仍触发）。
   while (stack.children.length >= 4) {
-    stack.children[0].remove();
+    const victim = stack.children[0];
+    if (victim._stopCountdown) {
+      try { victim._stopCountdown(); } catch (_) {}
+      victim._stopCountdown = null;
+    }
+    if (victim._timer) { clearTimeout(victim._timer); victim._timer = null; }
+    victim._closed = true;
+    victim.remove();
   }
   stack.appendChild(d);
   // 入场动画（CSS .notify 定义）后自动消失（ms=0 常驻，由任务完成时关闭）

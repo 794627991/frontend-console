@@ -24,13 +24,25 @@ def test_tcp_probe_reports_timeout_as_connection_error(monkeypatch):
 
 
 def test_tcp_probe_reports_refused(monkeypatch):
+    """端口拒绝要给出「端口未开放」，不是笼统的 TCP 失败（a608 文案分流）。"""
     def fake_create(addr, timeout=None):
         raise ConnectionRefusedError("refused")
 
     monkeypatch.setattr(socket, "create_connection", fake_create)
     with pytest.raises(ConnectionError) as ei:
         _tcp_probe("10.0.0.1", 22, 3)
-    assert "失败" in str(ei.value)
+    assert "端口未开放" in str(ei.value)
+
+
+def test_tcp_probe_reports_dns_failure(monkeypatch):
+    """DNS 解析失败要明确说「无法解析主机」（原来被兜底文案吃掉）。"""
+    def fake_create(addr, timeout=None):
+        raise socket.gaierror(11001, "getaddrinfo failed")
+
+    monkeypatch.setattr(socket, "create_connection", fake_create)
+    with pytest.raises(ConnectionError) as ei:
+        _tcp_probe("no-such-host.invalid", 22, 3)
+    assert "无法解析主机" in str(ei.value)
 
 
 def test_tcp_probe_ok_and_closes(monkeypatch):
@@ -88,22 +100,22 @@ def test_ssh_connect_allows_slow_banner(monkeypatch):
     assert got.get("auth_timeout", 0) >= 120
 
 
-# ---- a606：连接过程倒计时 + 取消 -------------------------------------
-def test_connect_cancel_marks_and_clears():
-    """取消接口必须留下标记（后端建连线程靠它自查）。"""
+# ---- a608：逐次令牌取消（审计修订）----------------------------------
+def test_cancel_uses_conn_token():
+    """取消按 conn_token 打标记，不再按 port_id（避免误杀同目标其它实例）。"""
     from src import server as S
-    pid = "ssh:1.1.1.1:22"
+    tok = "ct-test-1"
     try:
         j = S.app.test_client().post(
-            "/api/connect/cancel", json={"port_id": pid}).get_json()
+            "/api/connect/cancel", json={"conn_token": tok}).get_json()
         assert j["ok"] is True
-        assert S._was_cancelled(pid) is True
+        assert S._was_cancelled(tok) is True
     finally:
-        S._clear_cancelled(pid)
-    assert S._was_cancelled(pid) is False
+        S._clear_cancelled(tok)
+    assert S._was_cancelled(tok) is False
 
 
-def test_connect_cancel_requires_port_id():
+def test_connect_cancel_requires_token():
     from src import server as S
     r = S.app.test_client().post("/api/connect/cancel", json={})
     assert r.status_code == 400
@@ -122,17 +134,75 @@ def test_cancelled_connect_closes_session(monkeypatch):
         def close(self):
             self.closed = True
 
-    pid = "ssh:9.9.9.9:22"
+    tok = "ct-test-2"
     monkeypatch.setattr(S, "SSHConnection", FakeConn)
     monkeypatch.setattr(S, "_get_paramiko", lambda: object())
     monkeypatch.setattr(S, "_ssh_disc_patch", lambda: None)
-    S._mark_cancelled(pid)
+    S._mark_cancelled(tok)
     try:
         r = S.app.test_client().post("/api/connect", json={
             "kind": "ssh", "host": "9.9.9.9", "port": 22,
-            "username": "u", "password": "p"})
+            "username": "u", "password": "p", "conn_token": tok})
         assert r.status_code == 499
         assert created and created[0].closed is True
-        assert S._was_cancelled(pid) is False     # 标记已消费
+        assert S._was_cancelled(tok) is False     # 标记已消费
     finally:
-        S._clear_cancelled(pid)
+        S._clear_cancelled(tok)
+
+
+def test_cancel_mark_cleared_even_when_connect_fails(monkeypatch):
+    """审计缺陷 1（P0）：取消 + 连接失败，标记必须被清，否则下次连接受累。"""
+    from src import server as S
+    tok = "ct-fail"
+
+    class Boom:
+        def __init__(self, *a, **k):
+            raise RuntimeError("auth fail")
+
+    monkeypatch.setattr(S, "SSHConnection", Boom)
+    monkeypatch.setattr(S, "_get_paramiko", lambda: object())
+    monkeypatch.setattr(S, "_ssh_disc_patch", lambda: None)
+    S._mark_cancelled(tok)
+    try:
+        r = S.app.test_client().post("/api/connect", json={
+            "kind": "ssh", "host": "7.7.7.7", "port": 22,
+            "username": "u", "password": "p", "conn_token": tok})
+        assert r.status_code == 500
+        assert S._was_cancelled(tok) is False
+    finally:
+        S._clear_cancelled(tok)
+
+
+def test_cancel_does_not_kill_other_sessions():
+    """审计缺陷 2（P0）：取消某次连接不能关掉同目标已建立的其它会话。
+
+    审计指出原版是**假测试**：它只断言「会话没被关」，而 a607 的取消路由
+    只读 port_id，收到 conn_token 直接 400 返回，根本没走到关闭分支——
+    所以缺陷代码上这条也绿。现在补上「路由必须正常接受本次请求」的断言：
+    a607 会返回 400，本用例即 FAIL；a608 返回 200 才继续验证不误杀。
+    """
+    from src import server as S
+
+    class FakeConn:
+        def __init__(self, *a, **k):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    pid = "ssh:7.7.7.7:22"
+    p = FakeConn()
+    with S._ports_lock:
+        S._ports[pid] = p
+    try:
+        r = S.app.test_client().post("/api/connect/cancel",
+                                     json={"conn_token": "ct-other"})
+        assert r.status_code == 200, "取消接口必须按 conn_token 受理"
+        assert r.get_json()["ok"] is True
+        # 已建立的会话不受影响
+        assert p.closed is False
+        with S._ports_lock:
+            assert pid in S._ports
+    finally:
+        with S._ports_lock:
+            S._ports.pop(pid, None)

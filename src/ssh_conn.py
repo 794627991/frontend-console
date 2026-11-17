@@ -12,13 +12,23 @@ def _tcp_probe(host, port, timeout):
     """快速 TCP 连通性探测（不读不写）。失败立即抛 ConnectionError。
 
     a606：用来把「主机不可达」和「主机可达但 banner 慢」区分开——前者
-    10 秒内报错，后者给足 60 秒等 dropbear 吐 banner。
+    10 秒内快速报错，后者给足 120 秒等 dropbear 吐 banner。
+
+    a608（审计）：报错文案按原因分流。原来一律包成「TCP 连接失败：…」，
+    把 api_connect 里原有的「无法解析主机」「端口未开放」分支全截胡了，
+    DNS 解析失败的用户看到的是 `[Errno 11001] getaddrinfo failed`。
     """
     s = None
     try:
         s = socket.create_connection((host, port), timeout=timeout)
+    except socket.gaierror as e:
+        raise ConnectionError("无法解析主机 %s：%s" % (host, e))
+    except ConnectionRefusedError:
+        raise ConnectionError(
+            "无法连接到 %s:%s（端口未开放或服务未启动）" % (host, port))
     except socket.timeout:
-        raise ConnectionError("TCP 连接超时（%.0fs）：%s:%s" % (timeout, host, port))
+        raise ConnectionError(
+            "连接 %s:%s 超时（网络不可达或端口被防火墙拦截）" % (host, port))
     except OSError as e:
         raise ConnectionError("TCP 连接失败：%s:%s（%s）" % (host, port, e))
     finally:

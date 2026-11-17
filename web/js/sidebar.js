@@ -62,21 +62,29 @@ async function connectPort(port, baud, quiet) {
 }
 
 async function connectSSH(host, port, username, password, key_path, quiet) {
-  // a606：嵌入式设备的 dropbear 可能要 15~20 秒才发 SSH banner（实测
-  // 10.20.115.193 要 20.2s）。上限放到 120s，并把等待过程做成倒计时 +
-  // 「取消」按钮——用户随时可以中止，不用盯着不确定的转圈。
+  // a606/a607：嵌入式设备的 dropbear 可能 15~20 秒才发 SSH banner（实测
+  // 10.20.115.193 要 20.2s）。上限 120s，等待过程做成倒计时 + 取消。
+  // a608：取消改用**逐次令牌**——后端按 token 打标记，本次连接结束即作废。
+  // 原来按 port_id 打裸标记，审计实测导致「旧标记杀新连接」「误杀双开的
+  // 另一条会话」。
   const CONNECT_TIMEOUT = 120;
+  const connToken = 'ct-' + Date.now().toString(36) + '-' +
+                    Math.random().toString(36).slice(2, 10);
   const ctl = new AbortController();
-  // 取消：放弃等待 + 通知后端（后端建连线程仍在跑，成功后会自查标记并
-  // 立即关闭，否则设备上会残留一条没人用的会话占 Max connections 名额）
+  let aborted = false;
   const onAbort = () => {
-    ctl.abort();
+    if (aborted) return;            // 幂等：倒计时到点与点取消可能各触发一次
+    aborted = true;
+    clearTimeout(to);
+    try { ctl.abort(); } catch (_) {}
     fetch('/api/connect/cancel', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ port_id: `ssh:${host}:${port}` }),
+      body: JSON.stringify({ conn_token: connToken }),
     }).catch(() => {});
   };
-  const nid = quiet ? null : notifyTask({
+  // quiet（连接弹窗确认框）也要有倒计时和取消——审计指出原来只有快捷
+  // 打开有，手工填表那条路径卡 120 秒毫无反馈。
+  const nid = notifyTask({
     type: 'ssh',
     title: `正在连接 ${username}@${host}:${port}`,
     detail: 'SSH 握手',
@@ -87,7 +95,8 @@ async function connectSSH(host, port, username, password, key_path, quiet) {
   try {
     const r = await fetch('/api/connect', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'ssh', host, port, username, password, key_path }),
+      body: JSON.stringify({ kind: 'ssh', host, port, username, password, key_path,
+                             conn_token: connToken }),
       signal: ctl.signal,
     });
     clearTimeout(to);

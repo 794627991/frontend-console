@@ -276,26 +276,40 @@ def close_all_ports():
 # 表现为「点其他快捷打开整个 UI 卡死」（铁律①流畅性事故）。
 _connecting_locks = {}          # port_id -> Lock（连接期间占位）
 _connecting_locks_guard = threading.Lock()
-# a606：连接中取消。前端倒计时里的「取消」会 POST 到 /api/connect/cancel，
-# 这里记下 port_id；正在进行的连接在建立成功后立刻自查，命中就关掉不留残会话。
-# 同步 Flask 视图感知不到客户端 abort（连接还在跑），所以必须显式取消。
-_cancelled_connects = set()
+# a608（a607 审计修订）：连接中取消。
+# 原实现按 port_id 打裸标记，审计实测出三个 P0/P1 缺陷：
+#   ① 标记只在成功路径清除，任何「取消 + 连接失败」都会留下永久标记，
+#      下一次同目标连接被 499 误杀（用户明明没取消）；
+#   ② cancel 路由遍历 _ports 关闭同前缀会话，双开时会把用户正在用的
+#      旧终端一起杀掉；
+#   ③ _was_cancelled 检查在 _ports_lock 之外，与 put 之间有竞态窗口，
+#      取消发生在窗口内时新会话照样泄漏。
+# 改为**逐次令牌**：前端每次连接生成一个 conn_token，取消只针对该 token；
+# 连接结束（无论成败/是否取消）在 finally 里无条件清除本次 token。
+# 这样天然没有「旧标记杀新连接」「误杀其它实例」的可能。
+_cancelled_tokens = set()
 _cancel_guard = threading.Lock()
 
 
-def _mark_cancelled(port_id):
+def _mark_cancelled(token):
+    if not token:
+        return
     with _cancel_guard:
-        _cancelled_connects.add(port_id)
+        _cancelled_tokens.add(token)
 
 
-def _was_cancelled(port_id):
+def _was_cancelled(token):
+    if not token:
+        return False
     with _cancel_guard:
-        return port_id in _cancelled_connects
+        return token in _cancelled_tokens
 
 
-def _clear_cancelled(port_id):
+def _clear_cancelled(token):
+    if not token:
+        return
     with _cancel_guard:
-        _cancelled_connects.discard(port_id)
+        _cancelled_tokens.discard(token)
 
 def _acquire_connecting(port_id):
     """登记连接占位。返回 False 表示同目标已在连接中（或已连接表已有）。"""
@@ -1062,6 +1076,9 @@ def api_connect():
         host = (data.get("host") or "").strip()
         port = data.get("port") or 22
         username = (data.get("username") or "").strip()
+        # a608：本次连接的取消令牌（前端生成，取消接口按它打标记）。
+        # 老客户端不传 = 空串 = 永不取消，行为与 a606 之前一致。
+        _ctok = (data.get("conn_token") or "").strip()
         password = data.get("password")
         key_path = (data.get("key_path") or "").strip() or None
         if not host or not username:
@@ -1151,25 +1168,33 @@ def api_connect():
                     pass
                 return jsonify({"ok": False, "err": msg}), 500
             # a267：close 移出 _ports_lock（同串口分支）
-            # a606：连接期间用户可能已点「取消」（前端 abort 只是放弃等待，
-            # 后端这条建连仍在跑）。成功后发现取消标记 → 立刻关掉，别让设备
-            # 上留一条没人用的会话占着 Max connections 名额。
-            if _was_cancelled(port_id):
-                _clear_cancelled(port_id)
-                try: p.close()
-                except Exception: pass
-                return jsonify({"ok": False, "err": "已取消"}), 499
+            # a608：取消检查与注册放在**同一个 _ports_lock 临界区**里。
+            # a607 的实现把 `_was_cancelled` 放在锁外，与 `_ports[pid]=p`
+            # 之间有一个竞态窗口（审计实测复现：取消恰好落在窗口内时，
+            # 前端已放弃的会话照样被 put 进 _ports，永久泄漏）。同锁内
+            # 「检查→决定→落地」消除窗口。
             _dup = None
+            _cancelled_now = False
             with _ports_lock:
-                if port_id in _ports:   # 极端并发：两次同目标连接都成功了，后到者关掉
+                if _was_cancelled(_ctok):
+                    _cancelled_now = True
+                elif port_id in _ports:   # 极端并发：两次同目标连接都成功了，后到者关掉
                     _dup = p
                 else:
                     _ports[port_id] = p
+            if _cancelled_now:
+                try: p.close()
+                except Exception: pass
+                return jsonify({"ok": False, "err": "已取消"}), 499
             if _dup is not None:
                 try: _dup.close()
                 except Exception: pass
                 return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
         finally:
+            # a608：无论成败/是否取消，本次令牌一律作废。a607 只在成功且
+            # 命中取消时清理，导致「取消 + 连接失败」留下永久标记，
+            # 下次同目标连接被 499 误杀（审计实测：连点两次都返回 499）。
+            _clear_cancelled(_ctok)
             _drop_connecting(port_id)
         # SSH invoke_shell 自带 shell，不主动 send \r
         return jsonify({"ok": True, "port_id": port_id, "kind": "ssh",
@@ -1374,38 +1399,23 @@ def api_connect():
 
 @app.route("/api/connect/cancel", methods=["POST"])
 def api_connect_cancel():
-    """取消正在进行的连接（a606：SSH 倒计时里的「取消」按钮）。
+    """取消正在进行的连接（a607 倒计时里的「取消」按钮）。
 
     前端 abort 只放弃等待，后端建连仍在跑（同步 Flask 视图感知不到断开）。
-    这里打上取消标记，连接成功后会自查并立即关闭——否则设备上会残留一条
-    没人用的会话，占着 dropbear 的 Max connections 名额。
+    这里按 **conn_token** 打取消标记；连接建好后自查，命中就立刻关闭——
+    否则设备上会残留一条没人用的会话，占着 dropbear 的 Max connections。
 
-    按 base port_id 匹配：真实 port_id 可能带 "#2"/"#3" 双开后缀，
-    前端只知道 base 形态。
+    a608 修订：只认 token，**不再**按 port_id 遍历关闭已建立的会话。
+    原实现会连用户正在用的旧实例（base / base#2 …）一起杀掉，双开场景下
+    等于「取消新连接 = 杀掉正在干活的终端」。已建立的会话由前端在拿到
+    port_id 后自行决定要不要断，或用户点终端上的 ✕。
     """
     data = request.get_json(silent=True) or {}
-    base = (data.get("port_id") or "").strip()
-    if not base:
-        return jsonify({"ok": False, "err": "need port_id"}), 400
-    _mark_cancelled(base)
-    # 也标记带后缀的（连接中但尚未出现在 _ports 里的那些）
-    with _ports_lock:
-        live = [pid for pid in _ports if pid == base or pid.startswith(base + "#")]
-    for pid in live:
-        _mark_cancelled(pid)
-    # 已建立好的连接：直接关
-    closed = []
-    with _ports_lock:
-        for pid in list(_ports):
-            if pid == base or pid.startswith(base + "#"):
-                closed.append(pid)
-    for pid in closed:
-        with _ports_lock:
-            p = _ports.pop(pid, None)
-        if p is not None:
-            try: p.close()
-            except Exception: pass
-    return jsonify({"ok": True, "cancelled": base, "closed": closed})
+    token = (data.get("conn_token") or "").strip()
+    if not token:
+        return jsonify({"ok": False, "err": "need conn_token"}), 400
+    _mark_cancelled(token)
+    return jsonify({"ok": True, "cancelled": token})
 
 
 @app.route("/api/disconnect", methods=["POST"])
