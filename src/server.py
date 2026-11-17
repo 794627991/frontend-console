@@ -207,11 +207,19 @@ def _api_unhandled(e):
     except Exception:
         pass
     if request.path.startswith("/api/"):
-        return jsonify({"ok": False,
-                        "err": "服务器内部错误：%s" % (e.__class__.__name__)
-                        }), 500
-    return ("<h1>服务器内部错误</h1><p>%s</p>"
-            % e.__class__.__name__), 500
+        body, status = jsonify({
+            "ok": False,
+            "err": "服务器内部错误：%s" % e.__class__.__name__}), 500
+    else:
+        body, status = ("<h1>服务器内部错误</h1><p>%s</p>"
+                        % e.__class__.__name__), 500
+    # a600 对抗审计：上面已经带完整 traceback 记了一条，after_request 若再
+    # 记一条「→ 500」就是同一事件两份。打个标记让 after_request 跳过。
+    try:
+        body.headers["X-BL-Logged"] = "1"
+    except Exception:
+        pass
+    return body, status
 
 # ---- 单实例唤醒通道 ----
 # 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
@@ -948,6 +956,9 @@ def _log_api_outcome(resp):
         path = request.path or ""
         if path.startswith(_LOGGED_PREFIX_SKIP):
             return resp
+        # errorhandler 已带 traceback 记过（见 _api_unhandled），不再重复
+        if resp.headers.get("X-BL-Logged"):
+            return resp
         code = resp.status_code
         method = request.method
         # 只记非 2xx，或写操作
@@ -979,9 +990,8 @@ def _log_api_outcome(resp):
                         detail = str(j.get("err") or "")[:300]
             except Exception:
                 pass
-            backend_log.log("api", "%s %s → %d %s%s" % (
+            backend_log.log("api", "%s %s → %d%s" % (
                 method, path, code,
-                getattr(resp, "status", "") or "",
                 ("  " + detail) if detail else ""), lvl)
     except Exception:
         pass          # 日志失败绝不影响响应
@@ -2077,12 +2087,18 @@ def api_backend_log():
     from src import backend_log
     try:
         since = int(request.args.get("since") or 0)
-        limit = int(request.args.get("limit") or 500)
+        raw_limit = request.args.get("limit")
+        limit = int(raw_limit) if raw_limit not in (None, "") else 500
     except (TypeError, ValueError):
         since, limit = 0, 500
     # 2.4.4：上限从 2000 放宽到 50000——缓冲已是 10MB，面板首屏与导出都
     # 需要一次取全（2000 行对 10MB 缓冲是残缺的，用户明确说要「很多信息」）。
-    limit = max(1, min(limit, 50000))
+    # a600 对抗审计：limit<=0 表示「不限量」（前端首屏用），不能被钳成 1，
+    # 否则首屏只能拿到 1 行、lastSeq 又跳到最新，中间日志永久丢失。
+    if limit > 0:
+        limit = min(limit, 50000)
+    else:
+        limit = 0
     return jsonify({"ok": True, **backend_log.snapshot(since=since, limit=limit)})
 
 
@@ -2096,7 +2112,11 @@ def api_backend_log_export():
     import platform
     from src import backend_log
     from src.version import APP_VERSION
-    snap = backend_log.snapshot(since=0, limit=50000)
+    # a600 对抗审计：导出必须取**全部**条目。原来写死 limit=50000，而 10MB
+    # 缓冲在短行场景下能装更多条（实测 5000 条短行只占 20 万字符），
+    # 超出的部分会被静默截断——用户导出一份残缺日志却看不出少了什么。
+    # limit=0 表示不限制（snapshot 里 `if limit and ...` 判空即全量）。
+    snap = backend_log.snapshot(since=0, limit=0)
     lines = []
     lines.append("=" * 70)
     lines.append("前端控制台 v%s 后端日志导出" % APP_VERSION)

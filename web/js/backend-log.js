@@ -18,8 +18,9 @@
   let levelFilter = 'all';        // all | err | warn
   let tagFilter = '';
   let allRows = [];               // 本地全量（最多保留一个上限，防 DOM/内存无界）
+  let droppedLocal = false;       // 本地因上限截断过（界面提示用）
 
-  const LOCAL_MAX = 20000;        // 前端本地保留行数上限（后端 10MB 一般买不到这么多行）
+  const LOCAL_MAX = 50000;        // 前端本地保留行数上限（导出/复制用，超大时提示导出）
   const LEVEL_CLASS = { error: 'bl-error', warn: 'bl-warn', info: '' };
   const POS_KEY = 'fcBackendLogPos';
 
@@ -61,7 +62,8 @@
     panel.querySelector('[data-bl="export"]').onclick = doExport;
     panel.querySelector('[data-bl="clear"]').onclick = () => {
       fetch('/api/backend_log/clear', { method: 'POST' })
-        .then(() => { allRows = []; lastSeq = 0; render(); refresh(); })
+        .then(() => { allRows = []; lastSeq = 0; droppedLocal = false;
+                      render(); refresh(); })
         .catch(() => {});
     };
     panel.querySelector('[data-bl="level"]').onchange = (e) => {
@@ -106,6 +108,12 @@
     // 头部同样带版本号，粘到聊天/工单里能直接追溯。
     const rows = allRows.filter(passes);
     if (!rows.length) { showBanner('当前没有可复制的日志', 2500, true); return; }
+    // 超大文本（>4MB）剪贴板写入在 WebView2 里会失败或卡住，先提示走导出
+    const approx = rows.reduce((n, x) => n + (x.text ? x.text.length : 0), 0);
+    if (approx > 4 * 1024 * 1024) {
+      showBanner('内容约 ' + fmtBytes(approx) + '，请用「导出」保存完整日志', 4000, true);
+      return;
+    }
     const ver = (panel.querySelector('.bl-ver') || {}).textContent || '';
     const head = [
       '='.repeat(60),
@@ -202,22 +210,33 @@
   }
 
   // ---- 渲染 ----
+  // 统一「来源标签」口径：主动埋点用 tag，流输出用 src（stdout 不带标签）。
+  // a600 对抗审计：原来 passes() 用 `(x.tag||x.src||'')`，而 syncTagOptions()
+  // 和 rowHtml() 用 `x.tag || (x.src!=='stdout' ? x.src : '')`——两者对
+  // stdout 行判定不同，导致选「全部来源以外的某项」时 stdout 行显示标签却
+  // 永远筛不出来。收敛到这一个函数。
+  function labelOf(x) {
+    return x.tag || (x.src && x.src !== 'stdout' && x.src !== 'log' ? x.src : '');
+  }
+
   function passes(x) {
     if (levelFilter === 'err' && x.level !== 'error') return false;
     if (levelFilter === 'warn' && x.level === 'info') return false;
-    if (tagFilter && (x.tag || x.src || '') !== tagFilter) return false;
+    if (tagFilter && labelOf(x) !== tagFilter) return false;
     return true;
   }
 
   function rowHtml(x) {
     const cls = LEVEL_CLASS[x.level] || '';
     const srcCls = x.src === 'stderr' ? ' bl-src-err' : '';
-    const label = x.tag || (x.src !== 'stdout' ? x.src : '');
+    const label = labelOf(x);
     return '<div class="bl-row ' + cls + srcCls + '">' +
       '<span class="bl-ts">' + esc(x.ts) + '</span>' +
       (label ? '<span class="bl-tag">' + esc(label) + '</span>' : '') +
       '<span class="bl-txt">' + esc(x.text) + '</span></div>';
   }
+
+  const DOM_MAX = 2000;           // 面板一次最多渲染的行数（超出只显示尾部）
 
   function render() {
     if (!panel) return;
@@ -229,7 +248,16 @@
         (allRows.length ? '当前过滤条件下没有匹配的日志' : '还没有日志输出') + '</div>';
       return;
     }
-    body.innerHTML = rows.slice(-2000).map(rowHtml).join('');
+    // 超出 DOM_MAX 时只渲染尾部，但必须**明确提示**——否则用户以为日志
+    // 就这么多（a600 对抗审计）。完整内容请用「导出」。
+    const hidden = rows.length - DOM_MAX;
+    const tail = hidden > 0 ? rows.slice(-DOM_MAX) : rows;
+    body.innerHTML =
+      (hidden > 0
+        ? '<div class="bl-empty">仅显示最近 ' + DOM_MAX + ' 行，'
+          + '更早的 ' + hidden + ' 行请用「导出」查看</div>'
+        : '') +
+      tail.map(rowHtml).join('');
     if (autoScroll || atBottom) body.scrollTop = body.scrollHeight;
   }
 
@@ -237,7 +265,7 @@
     const sel = panel.querySelector('[data-bl="tag"]');
     const tags = new Set();
     for (const x of allRows) {
-      const t = x.tag || (x.src !== 'stdout' ? x.src : '');
+      const t = labelOf(x);
       if (t) tags.add(t);
     }
     const cur = sel.value;
@@ -250,14 +278,22 @@
 
   function refresh() {
     if (!panel || panel.style.display === 'none') return;
-    fetch('/api/backend_log?since=' + lastSeq + '&limit=20000')
+    // a600 对抗审计：首屏原来是 limit=20000。10MB 缓冲在短行场景能装
+    // 远多于 2 万条（5000 条短行仅 20 万字符），首批只取 2 万条后 lastSeq
+    // 直接跳到最新，中间那些行**永远不会再拉**（面板看着有数据，实则丢了一段）。
+    // 改为首屏不限量（0=后端不截断），之后的增量仍按 since 拉。
+    const lim = lastSeq === 0 ? 0 : 20000;
+    fetch('/api/backend_log?since=' + lastSeq + '&limit=' + lim)
       .then(r => r.json())
       .then(j => {
         if (!j || !j.ok) return;
         const incoming = j.lines || [];
         if (incoming.length) {
           allRows = allRows.concat(incoming);
-          if (allRows.length > LOCAL_MAX) allRows = allRows.slice(-LOCAL_MAX);
+          if (allRows.length > LOCAL_MAX) {
+            allRows = allRows.slice(-LOCAL_MAX);
+            droppedLocal = true;        // 提示用户本地只保留最近部分
+          }
           syncTagOptions();
           render();
         } else if (!allRows.length) {
@@ -268,7 +304,13 @@
         panel.querySelector('.bl-meta').textContent =
           fmtBytes(j.used_chars) + ' / ' + fmtBytes(j.capacity_chars) +
           ' · ' + (j.entries || 0) + ' 条' + drop +
+          (j.truncated ? ' · 继续加载中' : '') +
+          (droppedLocal ? ' · 本地仅保留最近 ' + LOCAL_MAX + ' 行' : '') +
           (j.installed === false ? ' · 缓冲未启用（子模式）' : '');
+        // 后端一次没给完（新行数超过 limit）：snapshot 已把 last_seq 停在
+        // 本次实际返回的最后一条，这里立即再拉一轮把剩下的追上，否则要
+        // 等下一个 2s 周期才继续（面板会短暂少一段）。
+        if (j.truncated) setTimeout(refresh, 0);
       })
       .catch(() => {});
   }
@@ -278,6 +320,7 @@
     panel.style.display = 'flex';
     lastSeq = 0;
     allRows = [];
+    droppedLocal = false;
     autoScroll = true;
     // 版本号显示在面板标题旁（用户令「启动时必须带上版本号，好追溯」）——
     // 与标题栏徽标同源（/api/update/state），保证与导出文件里的一致

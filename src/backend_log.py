@@ -46,6 +46,7 @@ _dropped = 0                      # 因超容量被丢弃的行数（界面提�
 #   写 3.4 vs 0.5 µs/行（+2.9µs/行）。逐行慢的原因是每行一次取锁，但
 #   真实终端输出是成批到达的，走 _emit_many 一次持锁，实测 +8%。
 _enabled = True
+_excepthooks_installed = False
 
 # 级别粗判：不用正则（每条日志都跑，正则是毫秒级热点）。只在行首 32 字符
 # 里找前缀，够覆盖所有实际形态（[错误] / ERROR / Traceback / WARN / ⚠）。
@@ -60,20 +61,93 @@ _ACCESS_HINT = "127.0.0.1 - - ["
 _ACCESS_RE = re.compile(r"^\s*\d+\.\d+\.\d+\.\d+ - - \[[^\]]*\] \"(GET|POST|PUT|"
                         r"DELETE|HEAD|OPTIONS|PATCH) ")
 
+# 敏感信息脱敏（a600 对抗审计）：日志面板会满屏展示、还能一键复制/导出成
+# 文件发给同事或贴进工单——明文密码/令牌/密钥带出去是真实的信息外泄。
+# 只在命中可疑关键字时才跑正则（绝大多数行不含这些词，热路径零成本）。
+_SECRET_HINTS = ("password", "passwd", "pwd=", "token", "secret", "api_key",
+                 "apikey", "access_key", "private_key", "authorization",
+                 "cookie", "session_id=", "密码", "口令", "密钥",
+                 # 首字母大写是常见写法（Password: / Token= / Authorization:），
+                 # 大小写敏感的 `in` 判断必须把它们单独列出（实测 any(gen)
+                 # 是最快的粗筛：1.18µs/行，对比 lower()+22 次扫描 1.26µs、
+                 # 编译正则 6.58µs、Python 循环 7.57µs）
+                 "Password", "Token", "Secret", "Authorization", "Cookie")
+_SECRET_RE = re.compile(
+    r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key|authorization|cookie)(\s*[:=]\s*)"
+    r"(\"[^\"]*\"|'[^']*'|\S+)")
+_CN_SECRET_RE = re.compile(r"(密码|口令|密钥)(\s*[:=：]\s*)(\S+)")
+# HTTP 认证头：`Authorization: Bearer xxx` / `Bearer xxx` / `Basic xxx`
+_BEARER_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
+_HINT_RE = None      # 已弃用（正则粗筛实测更慢，改用 _has_secret_hint 的 any）
+
+
+def _redact(text):
+    """把 `password=xxx` / `token: xxx` / `密码：xxx` 之类的值抹成 ***。
+
+    性能：`text.lower()` 是整串副本，不能每行都做（20 万字符/秒时纯浪费）。
+    先用无副本的 `_has_secret_hint()` 粗筛，绝大多数普通日志一次就返回。
+    """
+    try:
+        if not _has_secret_hint(text):
+            return text
+        # 先抹令牌本体（`Bearer xxx` 整段），再做 key=value 替换——
+        # 否则 `Authorization: Bearer xxx` 里的 `Authorization:` 先被替换掉，
+        # 后面的令牌本体反而留下来了。
+        text = _BEARER_RE.sub("***", text)
+        text = _SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + "***", text)
+        text = _CN_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + "***", text)
+        return text
+    except Exception:
+        return text
+
+
+def _has_secret_hint(text):
+    """粗筛：是否可能含敏感关键字。`any(gen)` 实测最快（1.18µs/行）。"""
+    return any(h in text for h in _SECRET_HINTS)
+
 
 def _classify(line):
-    """行首关键词判级别。热路径——只切前 32 字符，不做全行正则。"""
+    """行首关键词判级别。热路径——只切前 32 字符，不做全行正则。
+
+    性能要点（用户铁律）：每行都要跑，所以
+    - 前缀匹配用 `str.startswith(tuple)` 一次调用（C 层扫完 12 个前缀），
+      而不是 Python 循环逐个 startswith（cProfile 里那圈占了 _classify
+      一半时间）
+    - 行首不是空白时不做 lstrip（绝大多数日志行不以空白开头）
+    """
     head = line[:32] if len(line) > 32 else line
-    hs = head.lstrip()
-    for p in _ERR_PREFIXES:
-        if hs.startswith(p):
-            return "error"
-    for p in _WARN_PREFIXES:
-        if hs.startswith(p):
-            return "warn"
-    # 兜底形态：`ValueError: xxx` / `socket.timeout: ...`（首词以 Error 收尾）
-    first = hs.split(" ", 1)[0] if hs else ""
-    if first.endswith(("Error", "Error:", "Exception", "Exception:")):
+    if not head:
+        return "info"
+    c = head[0]
+    hs = head.lstrip() if (c == " " or c == "\t" or c == "\n" or c == "\r") \
+        else head
+    if hs.startswith(_ERR_PREFIXES):
+        return "error"
+    if hs.startswith(_WARN_PREFIXES):
+        return "warn"
+    # 兜底形态：`ValueError: xxx` / `socket.timeout: ...` / `KeyError:'a'`
+    # （首词以 Error/Exception 收尾）。a600 对抗审计：原来只判
+    # `first.endswith(("Error","Error:"))`，而 `first = hs.split(" ",1)[0]`
+    # 遇到无空格形态（`KeyError:'a'`、`ValueError:bad`）会把整串当首词，
+    # 于是这类最典型的异常行被判成 info，在「仅错误」过滤下彻底隐形。
+    # 现在先按冒号切出 `KeyError` 再看。
+    #
+    # 性能：这条兜底是**普通信息行**（占绝大多数）唯一会走到的分支，不能
+    # 每行都 split+lower。先做一次 C 层扫：首词里既没有 ':' 也不含
+    # 'rror'/'xception' 等子串的，必然不是异常，直接返回（一次 `in` 比
+    # split+lower+endswith 便宜一个数量级）。
+    sp = hs.find(" ")
+    word = hs if sp < 0 else hs[:sp]
+    if ":" not in word and "rror" not in word and "xception" not in word \
+            and "nterrupt" not in word and "ault" not in word \
+            and "imeout" not in word and "verflow" not in word:
+        return "info"
+    first = word.split(":", 1)[0]
+    # 小写化再判：`socket.timeout` / `gaiainfo` 这类模块限定名是小写的
+    fl = first.lower()
+    if fl.endswith(("error", "exception", "interrupt", "fault",
+                    "timeout", "overflow")):
         return "error"
     return "info"
 
@@ -134,7 +208,7 @@ def _emit_many(lines, stream):
         c0 = t[0]
         if (c0 == "1" or c0 == " ") and _ACCESS_RE.match(t):
             continue
-        staged.append((ts, _classify(t), stream, "", t))
+        staged.append((ts, _classify(t), stream, "", _redact(t)))
     if not staged:
         return
     global _seq
@@ -163,6 +237,7 @@ def _emit(line, stream):
     # 锁外把这条记录算完整（_classify/_ts 是纯函数，无共享状态）
     level = _classify(text)
     ts = _ts()
+    text = _redact(text)
     global _seq
     with _lock:
         _seq += 1
@@ -185,9 +260,11 @@ def log(tag, msg, level="info"):
         text = "<unprintable>"
     lv = level if level in ("info", "warn", "error") else "info"
     try:
+        ts = _ts()                 # 锁外算（与其他热路径一致）
+        text = _redact(text)       # 锁外脱敏（导出/复制会把日志带出机器）
         with _lock:
             _seq += 1
-            _append((_seq, _ts(), lv, "log", str(tag or "")[:40], text, 0))
+            _append((_seq, ts, lv, "log", str(tag or "")[:40], text, 0))
     except Exception:
         pass
 
@@ -234,18 +311,28 @@ class _TeeStream(io.TextIOBase):
         # 性能：原来 `while "\n" in partial: split(...,1)` 每次重新扫描整个
         # partial，长输出（如一次性 write 一大段）会退化成 O(n²)。改一次
         # splitlines 切完——实测把「一次写 1MB、含上万行」从秒级拉回毫秒级。
-        if "\n" in s:
-            self._partial += s
-            parts = self._partial.split("\n")
-            self._partial = parts.pop()          # 最后一段无换行 = 残片
-            if parts:
-                _emit_many(parts, self._stream)
-        else:
-            self._partial += s
-            # 残片也设上限：某些库持续写不带换行的进度条会无限攒
-            if len(self._partial) > 65536:
-                _emit(self._partial, self._stream)
-                self._partial = ""
+        #
+        # 2.4.4 对抗审计（严重）：缓冲侧的**任何**异常都不能外泄——原来
+        # _emit_many 一抛，整条 write 就抛，而 `if self._orig:` 在它后面，
+        # 意味着原流一个字都没写。日志模块的 bug 会让程序输出静默消失，
+        # 直接违反「log 绝不能影响正常使用」。现在整体 try 住，且保证
+        # 原流始终先写（缓冲失败也不影响透传）。
+        try:
+            if "\n" in s:
+                self._partial += s
+                parts = self._partial.split("\n")
+                self._partial = parts.pop()      # 最后一段无换行 = 残片
+                if parts:
+                    _emit_many(parts, self._stream)
+            else:
+                self._partial += s
+                # 残片也设上限：某些库持续写不带换行的进度条会无限攒
+                if len(self._partial) > 65536:
+                    _emit(self._partial, self._stream)
+                    self._partial = ""
+        except Exception:
+            # 缓冲失败：丢弃残片并继续——绝不能因为记账坏了而吞掉真实输出
+            self._partial = ""
         if self._orig is not None:
             try:
                 self._orig.write(s)
@@ -255,14 +342,34 @@ class _TeeStream(io.TextIOBase):
 
     def flush(self):
         # 刷流时把残留残片也落进缓冲（否则最后一行没有换行就永远看不见）
-        if self._partial:
-            _emit(self._partial, self._stream)
+        try:
+            if self._partial:
+                _emit(self._partial, self._stream)
+                self._partial = ""
+        except Exception:
             self._partial = ""
         if self._orig is not None:
             try:
                 self._orig.flush()
             except Exception:
                 pass
+
+    def reconfigure(self, **kwargs):
+        """透传 reconfigure 到原流。
+
+        a600 对抗审计：本工程多个子模块（harness/ask_mcp.py、
+        mcp_server.py 等）都会调 `sys.stdout.reconfigure(encoding="utf-8")`。
+        接管 stdout 后 sys.stdout 是 _TeeStream，而 io.TextIOBase 没有
+        reconfigure —— 这些调用会抛 AttributeError 直接崩掉子进程。
+        原流支持就转发，不支持就静默接受（编码已由 self.encoding 兜底）。
+        """
+        fn = getattr(self._orig, "reconfigure", None)
+        if fn is None:
+            return None
+        try:
+            return fn(**kwargs)
+        except Exception:
+            return None
 
     def fileno(self):
         if self._orig is not None:
@@ -294,6 +401,20 @@ class _TeeStream(io.TextIOBase):
         必须透传，否则 AttributeError。"""
         return getattr(self._orig, "buffer", None)
 
+    def __getattr__(self, name):
+        """其余属性一律透传到原流。
+
+        a600 对抗审计：接管 stdout 后，`sys.stdout.write_through` /
+        `line_buffering` / `name` / `softspace` 这类属性在 _TeeStream 上都
+        不存在，第三方代码（进度条库、colorama、pytest capture 等）一碰就
+        AttributeError。显式定义的（write/flush/fileno/isatty/encoding/
+        errors/buffer/reconfigure）走上面，剩下的都转发给原流。
+        """
+        orig = self.__dict__.get("_orig")
+        if orig is None:
+            raise AttributeError(name)
+        return getattr(orig, name)
+
 
 def install(max_chars=None):
     """接管 stdout/stderr（幂等）。main.py 在最早时机调用一次。"""
@@ -318,16 +439,39 @@ class _LoggingBridge:
             self._logging = logging
         except Exception:
             self._logging = None
+        self._handler = None      # 2.4.4 对抗审计：记住已装的 handler
 
     def install(self, level=None):
+        """幂等安装。重复调用不再叠 handler。
+
+        a600 对抗审计实测缺陷：原来每次调用都 addHandler 一个新的，调 5 次
+        就有 5 个 handler —— 同一条日志被记 5 份，把缓冲填满垃圾。
+        """
         if self._logging is None:
             return False
         try:
             lv = level or self._logging.INFO
             root = self._logging.getLogger()
-            root.addHandler(_make_bridge_handler(self._logging)())
+            # a600 对抗审计：记住的 handler 可能已被外部摘掉（测试/第三方
+            # 重置 root），此时不能再以为「已装」——否则日志静默丢失。
+            if self._handler is not None and self._handler not in root.handlers:
+                self._handler = None
+            if self._handler is None:
+                self._handler = _make_bridge_handler(self._logging)()
+                root.addHandler(self._handler)
             if root.level > lv or root.level == 0:
                 root.setLevel(lv)
+            return True
+        except Exception:
+            return False
+
+    def uninstall(self):
+        """摘掉 handler（供测试或运行期停用）。"""
+        if self._logging is None or self._handler is None:
+            return False
+        try:
+            self._logging.getLogger().removeHandler(self._handler)
+            self._handler = None
             return True
         except Exception:
             return False
@@ -379,29 +523,49 @@ def install_logging_bridge(level=None):
 
 
 def install_excepthooks():
-    """装全局未捕获异常钩子（主线程 + 所有线程）。
+    """装全局未捕获异常钩子（主线程 + 所有线程）。幂等。
 
     用户定调「任何报错都往日志缓冲里放」。GUI 版没有控制台，线程里抛的
     异常原来只进 sys.stderr（= 某个没人看的 pipe），本次让它们一律落进
-    缓冲。保留原钩子的行为（若之前有人装过）——先记日志再交回去。
+    缓冲。保留原钩子的行为——先记日志再交回去。
+
+    a600 对抗审计实测缺陷：原来不幂等，调 3 次同一次崩溃被记 3 份（每次
+    都把上一轮的钩子当 prev 再包一层，形成 N 层链）。现在只装一次。
     """
+    global _excepthooks_installed
+    if _excepthooks_installed:
+        return
+    _excepthooks_installed = True
     try:
         prev = getattr(sys, "excepthook", None)
-        sys.excepthook = lambda t, v, tb: (
-            _hook_record("主线程", t, v, tb),
-            prev(t, v, tb) if prev else None)
+
+        def _main_hook(t, v, tb):
+            _hook_record("主线程", t, v, tb)
+            if prev is not None:
+                prev(t, v, tb)
+        sys.excepthook = _main_hook
     except Exception:
         pass
     try:
         import threading
+        prev_thook = getattr(threading, "excepthook", None)
 
         def _thook(args):
-            if getattr(args, "exc_value", None) is not None and \
-                    args.exc_type is not None:
-                _hook_record("线程 %s" % getattr(args.thread, "name", "?"),
-                             args.exc_type, args.exc_value, args.exc_traceback)
-            # 交回默认（打印到 stderr，同时也会进缓冲，去重靠 _emit 的同一
-            # 逻辑不重复也没关系——这里只保证「一定有一条带 traceback 的」）
+            # a600 对抗审计：原来这里只注释「交回默认」却没真调用，导致
+            # 线程未捕获异常的默认 stderr 输出（含 traceback）被静默吞掉。
+            # 现在记录后再交给上一个钩子；没有上一个就按默认行为打印。
+            try:
+                if getattr(args, "exc_value", None) is not None and \
+                        args.exc_type is not None:
+                    _hook_record("线程 %s" % getattr(args.thread, "name", "?"),
+                                 args.exc_type, args.exc_value,
+                                 args.exc_traceback)
+            except Exception:
+                pass
+            if prev_thook is not None:
+                prev_thook(args)
+            else:
+                threading.__excepthook__(args)
         threading.excepthook = _thook
     except Exception:
         pass
@@ -424,8 +588,15 @@ def snapshot(since=0, limit=2000):
     所以「seq > since」等价于「从尾部倒着找第一条 seq <= since」，可以先
     在锁外切片再逐条判断，避免全量 10MB 扫描 + 全量 dict 复制（实测
     40000 条时原实现 18.5ms/次，每 2s 一次会顶掉一帧）。
+
+    a600 对抗审计（数据丢失）：原来 `last_seq` 恒等于全局 `_seq`。当
+    since>0 且新行数超过 limit 时，尾部倒推只取最近的 limit 条，**中间
+    那段被跳过**，而前端看到 last_seq 已是全局最新，于是那一段永久丢失。
+    现改为：有截断时 `last_seq` 返回**实际返回的最大 seq**、并置
+    `truncated=True`，前端据此继续追赶（下一轮 since 只到已拿到的位置）。
     """
     since = int(since or 0)
+    more = False
     with _lock:
         # 锁内只做廉价操作：切片引用 + 长度记账
         if since <= 0:
@@ -443,15 +614,27 @@ def snapshot(since=0, limit=2000):
                     break
                 tail.append(x)
                 if limit and len(tail) >= limit:
+                    more = True
                     break
             tail.reverse()
+            if more:
+                # 超限：上面取的是「最新 limit 条」，若直接返回，中间那段
+                # (since, 最早那条] 会被前端跳过（前端 last_seq 追到最新）。
+                # 改取「最早 limit 条」，前端下一轮 since 自然推进，不丢。
+                # dropwhile 惰性遍历，锁内成本与倒推同量级（罕见路径）。
+                tail = list(itertools.islice(
+                    itertools.dropwhile(lambda x: x[0] <= since, _buf), limit))
             meta = (_buf_chars, _dropped, _seq, len(_buf))
     total_chars, dropped, last, n = meta
+    if more and tail:
+        # 截断时 last_seq 只推进到本次实际返回的最后一条，前端据此续拉
+        last = tail[-1][0]
     # dict 转换放到锁外（原来在锁内，持有全局锁做 2000 次 dict() 是最糟的）
     items = [{"seq": x[0], "ts": x[1], "level": x[2],
               "src": x[3], "tag": x[4], "text": x[5]}
              for x in tail]
     return {"lines": items, "last_seq": last,
+            "truncated": more,
             "capacity_chars": _MAX_CHARS,
             "used_chars": total_chars,
             "entries": n,

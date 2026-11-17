@@ -29,6 +29,8 @@ def _isolate():
     sys.stdout, sys.stderr = real_out, real_err
     BL._installed = False
     BL._MAX_CHARS = old_cap
+    BL._logging_bridge.uninstall()      # 测试间不残留 logging handler
+    BL._excepthooks_installed = False
     BL.clear()
 
 
@@ -244,3 +246,229 @@ def test_batch_emit_is_single_lock():
     # 一块含 100 行，应产生 100 条记录，且只取一次锁
     BL._emit_many(["第 %d 行" % i for i in range(100)], "stdout")
     assert BL.stats()["entries"] == before + 100
+
+
+# ---- 2.4.4 对抗审计回归（a600 修复项）--------------------------------
+def test_tee_stream_survives_buffer_failure():
+    """缓冲侧炸了，原流仍必须拿到完整输出（否则日志模块的 bug 会吞掉
+    程序真实输出，直接违反「log 绝不能影响正常使用」）。"""
+    class _Rec:
+        def __init__(self):
+            self.got = []
+
+        def write(self, s):
+            self.got.append(s)
+
+        def flush(self):
+            pass
+
+        encoding = "utf-8"
+        errors = "strict"
+
+    rec = _Rec()
+    tee = BL._TeeStream(rec, "stdout")
+    orig = BL._emit_many
+    BL._emit_many = lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        n = tee.write("关键输出\n")
+    finally:
+        BL._emit_many = orig
+    assert n == 5
+    assert rec.got == ["关键输出\n"]
+
+
+def test_logging_bridge_install_is_idempotent():
+    """重复 install 不能叠加 handler（否则同一条日志被记 N 份）。"""
+    import logging
+    BL.clear()
+    root = logging.getLogger()
+    before = list(root.handlers)
+    try:
+        for _ in range(5):
+            assert BL.install_logging_bridge() is True
+        added = [h for h in root.handlers if h not in before]
+        assert len(added) == 1
+        logging.getLogger("idem").info("幂等测试标记")
+        hits = [x for x in BL.snapshot()["lines"] if "幂等测试标记" in x["text"]]
+        assert len(hits) == 1
+    finally:
+        BL._logging_bridge.uninstall()
+
+
+def test_excepthooks_install_is_idempotent():
+    """重复装钩子，一次崩溃只记一条（原来 N 层链会记 N 条）。"""
+    old = sys.excepthook
+    try:
+        for _ in range(3):
+            BL.install_excepthooks()
+        BL.clear()
+        try:
+            raise ValueError("钩子幂等标记")
+        except ValueError:
+            t, v, tb = sys.exc_info()
+        sys.excepthook(t, v, tb)
+        hits = [x for x in BL.snapshot()["lines"] if "钩子幂等标记" in x["text"]]
+        assert len(hits) == 1
+    finally:
+        sys.excepthook = old
+
+
+def test_tee_stream_reconfigure_passthrough():
+    """子模块会调 sys.stdout.reconfigure()——接管后不能 AttributeError。"""
+    import io
+    tee = BL._TeeStream(io.StringIO(), "stdout")
+    assert hasattr(tee, "reconfigure")
+    tee.reconfigure(encoding="utf-8")      # 不抛即通过
+
+    class _NoRc:
+        def write(self, s):
+            pass
+
+        def flush(self):
+            pass
+
+    BL._TeeStream(_NoRc(), "stdout").reconfigure(encoding="utf-8")
+
+
+@pytest.mark.parametrize("line,level", [
+    ("KeyError:'a'", "error"),
+    ("ValueError:bad", "error"),
+    ("socket.timeout: 超时", "error"),
+    ("AttributeError", "error"),
+    ("Traceback (most recent call last):", "error"),
+    ("[警告] 小心", "warn"),
+    ("一切正常", "info"),
+])
+def test_classify_without_space(line, level):
+    """无空格异常形态也要判成错误（否则「仅错误」过滤下隐形）。"""
+    assert BL._classify(line) == level
+
+
+def test_snapshot_limit_zero_means_unbounded():
+    """limit=0 表示取全量（导出/首屏用）。"""
+    _install()
+    BL._MAX_CHARS = 400000
+    try:
+        for i in range(3000):
+            BL.log("t", "短行-%d" % i)
+        n = BL.stats()["entries"]
+        assert len(BL.snapshot(since=0, limit=0)["lines"]) == n
+        # 对比：limit=50000 也够，但 limit=0 语义必须是无上限
+        assert len(BL.snapshot(since=0, limit=50000)["lines"]) == n
+    finally:
+        BL._MAX_CHARS = 10 * 1024 * 1024
+
+
+def test_truncated_snapshot_does_not_skip_lines():
+    """a600 对抗审计（数据丢失）：增量拉取超 limit 时必须能续上，不能跳过中间段。
+
+    原来 last_seq 恒为全局最新，前端一次只拿 limit 条就把游标推到末尾，
+    中间那段永久丢失。现在 truncated=True 且 last_seq 停在实取位置。
+    """
+    _install()
+    BL.clear()
+    BL._seq = 0
+    for i in range(2500):
+        BL.log("t", "行-%d" % i)
+    cur, seen, rounds = 100, [], 0
+    while rounds < 20:
+        s = BL.snapshot(since=cur, limit=400)
+        got = [x["seq"] for x in s["lines"]]
+        if not got:
+            break
+        seen.extend(got)
+        cur = s["last_seq"]
+        rounds += 1
+        if not s["truncated"]:
+            break
+    assert rounds > 1                      # 确实发生了截断多轮
+    assert seen == sorted(seen)
+    assert len(seen) == len(set(seen))     # 无重复
+    assert len(seen) == 2400               # 2500 - 起始游标 100，无丢失
+
+
+def test_tee_stream_proxies_unknown_attributes():
+    """第三方代码会访问 sys.stdout.name / line_buffering 等属性——必须透传。"""
+    import io
+    orig = io.StringIO()
+    tee = BL._TeeStream(orig, "stdout")
+    # StringIO 没有 write_through → 原流也抛 AttributeError（行为一致）
+    with pytest.raises(AttributeError):
+        tee.write_through
+    # 原流有的属性必须能取到
+    orig_custom = io.StringIO()
+    orig_custom.name = "<probe>"
+    assert BL._TeeStream(orig_custom, "stdout").name == "<probe>"
+    # 没有原流时不能崩
+    BL._TeeStream(None, "stdout").write("x\n")
+
+
+def test_classify_stays_fast():
+    """热路径预算：单行分类 < 3µs（每行都跑，回归即失败）。"""
+    import time
+    line = "2026-11-17 12:00:00 [INFO] some ordinary log line here"
+    t0 = time.perf_counter()
+    for _ in range(5000):
+        BL._classify(line)
+    per = (time.perf_counter() - t0) / 5000
+    assert per < 3e-6, "单行分类 %.2fµs 超预算" % (per * 1e6)
+
+
+def test_unhandled_exception_logged_once():
+    """500 只记一条：errorhandler 记了带 traceback 的，after_request 要跳过。
+
+    Flask 首请求后禁止新增路由，所以不注册真实路由，改为直接调用两个钩子
+    函数（它们就是普通函数，行为等价）。
+    """
+    from src import server
+    BL.install()
+    BL.clear()
+    with server.app.test_request_context("/api/_probe_boom", method="GET"):
+        import flask
+        resp = server.app.make_response(
+            server._api_unhandled(RuntimeError("probe")))
+        assert resp.status_code == 500
+        assert resp.headers.get("X-BL-Logged") == "1"
+        # after_request 看到标记后必须跳过
+        server._log_api_outcome(resp)
+    hits = [x for x in BL.snapshot(since=0, limit=0)["lines"]
+            if "_probe_boom" in x["text"]]
+    assert len(hits) == 1, hits
+    assert hits[0]["level"] == "error"
+
+
+# ---- 2.4.4 对抗审计：敏感信息脱敏 ---------------------------------------
+@pytest.mark.parametrize("raw,secret", [
+    ("连接密码 password=hunter2 用户 admin", "hunter2"),
+    ("token: abc123def 已过期", "abc123def"),
+    ("api_key=sk-live-9999 无效", "sk-live-9999"),
+    ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.x", "eyJhbGciOiJIUzI1NiJ9"),
+    ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+    ("密码：mypass123", "mypass123"),
+    ("口令 = 888888", "888888"),
+    ("Password=Secret1", "Secret1"),
+])
+def test_secrets_redacted(raw, secret):
+    """日志会被复制/导出/发给同事——明文口令绝不能带出去。"""
+    out = BL._redact(raw)
+    assert secret not in out, out
+    assert "***" in out
+
+
+@pytest.mark.parametrize("raw", [
+    "普通日志：token 无效",          # 关键字后没有 : 或 =，不是赋值
+    "Processing request took 12ms",
+    "password 长度不足",
+])
+def test_redact_does_not_mangle_ordinary_text(raw):
+    """非赋值形态不能被误伤（否则正常日志被改坏更难排障）。"""
+    assert BL._redact(raw) == raw
+
+
+def test_redact_applies_to_captured_stdout():
+    """脱敏必须作用在流接管路径上，不只是 log() 接口。"""
+    _install()
+    print("password=leaked123 登录失败")
+    texts = [x["text"] for x in BL.snapshot()["lines"]]
+    assert not any("leaked123" in t for t in texts), texts
+    assert any("password=***" in t for t in texts), texts
