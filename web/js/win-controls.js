@@ -148,7 +148,7 @@
     // 主题色上报一次后不再更新，窗体重绘时用旧色）
     try {
       window.addEventListener('resize', function () { setTimeout(_syncBg, 120); });
-      window.addEventListener('focus', _syncBg);
+      window.addEventListener('focus', function () { _syncBg(); _pullState(); });
     } catch (_) {}
 
     // 窗态拉取（后端 resized/moved 推送已摘除——py-spy 实锤 evaluate_js 卡死

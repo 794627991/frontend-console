@@ -272,7 +272,7 @@ _orig_wndproc = {"fn": None, "hwnd": 0}
 # 自管还原 bounds（严重 bug 根修：无题窗 NCCALCSIZE=0 下系统 RestoreBounds
 # 不含边框，max↔restore 循环逐次漂移膨胀——实测第一次 restore client 高
 # 1622>屏 1540，第二次宽 +18；记录 maximize 前真实 bounds 自管写回）
-_fc_restore = {"bounds": None, "pre_min": None}
+_fc_restore = {"bounds": None, "pre_min": None, "from_min": False, "from_max": False, "fixing_max": False}
 _WNDPROC_CB = None
 # 审计 P3：回调每条消息 import ctypes + 重设 argtypes 是千级/秒的纯开销——
 # 模块级预声明一次（消息处理高频路径零 import）
@@ -355,6 +355,12 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
                         _win_hwnd(fnat), ctypes.byref(wp))
                     to_max = bool(wp.flags & 2)   # WPF_RESTORETOMAXIMIZED
                     rb = None
+                    if _fc_restore.get("from_max"):
+                        # 最大化期间的最小化——还原回最大化（from_max 由
+                        # maximized/restored 事件维护）
+                        _fc_restore["from_max"] = False
+                        fnat.WindowState = _FS.Maximized
+                        return 0
                     if fnat.WindowState == _FS.Maximized:
                         rb = _fc_restore["bounds"]
                     else:
@@ -374,6 +380,26 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
                 return 0   # 接管路径任何异常也不落回系统转发
         # SC_MAXIMIZE / 其它 SC 值继续走转发（最大化 bounds 由
         # MaximizedBounds=workarea 钉住，无漂移）
+    if msg == 0x0018 and wparam:   # WM_SHOWWINDOW(TRUE)：还原必发（任务栏
+        # 点击/alt-tab/ShowWindow 全走这里——SC 钩不到 ShowWindow 路径）。
+        # from_max=「最大化期间被最小化」——还原落地时直接切回 Maximized，
+        # 不让系统按「假想有边框」重算 rect（placement.rcNormal 已被
+        # MaximizedBounds 动态设置破坏成乱值，实测 (154,1434,974,0)）。
+        try:
+            if _fc_restore.get("from_max") and not _fc_restore.get("fixing_max"):
+                f2 = _orig_wndproc.get("win")
+                fnat = getattr(f2, "native", None) if f2 is not None else None
+                if fnat is not None:
+                    from System.Windows.Forms import FormWindowState as _FS
+                    _fc_restore["from_max"] = False
+                    _fc_restore["fixing_max"] = True
+                    try:
+                        fnat.WindowState = _FS.Maximized
+                    finally:
+                        _fc_restore["fixing_max"] = False
+                    return 0
+        except Exception:
+            pass
     if msg in (_WM_NCUAHDRAWCAPTION, _WM_NCUAHDRAWFRAME):
         # 白框真凶（NCPAINT 拦截无效的用户复现实锤）：未文档化 legacy NC
         # 绘制消息，激活切换必发，画系统色边框盖住主题色带。Electron
@@ -2381,20 +2407,35 @@ def main():
     # EvaluateJavaScriptAsync 可能挂死（py-spy 实锤）——非阻塞抢闸失败即
     # 跳过，卡死线程堆积上限 1，正确性由前端 state 拉取兜底
     _hg_push_gate = threading.Semaphore(1)
+    _hg_pending = {"dirty": False}
     _hg_last_state = {"max": None, "over": -1.0}
     def _hg_push_win_state(maxed, force=False):
         """最大化态变化推给页面：切 ▢/❐ 字形 + 最大化越界补偿值。
         pywebview 事件回调在后台线程执行（Event.set 开线程），evaluate_js
         内部 marshal 回 GUI——on_closing 注释里的 GUI 线程死锁坑在此不适用；
-        页面未就绪时求值失败静默（冷启最大化场景由 /api/window/state 拉取兜底）。"""
+        页面未就绪时求值失败静默（冷启最大化场景由 /api/window/state 拉取兜底）。
+        闸改「脏标记补推」（2026-11-18 用户实锤：最小化还原时 maximized/
+        restored 事件交替，闸忙 skip 漏推 → 窗体 Maximized 但 UI is-max 没置
+        位/字形错）——闸忙置 dirty，release 前补推真实态；补推重读真实
+        WindowState（minimize→restore 过程 .NET 内部 Normal→Maximized 两次
+        切换，事件交替竞态以真实态为准）。"""
         if not _hg_push_gate.acquire(blocking=False):
-            return   # 已有推送卡在 evaluate_js——跳过（state 拉取兜底）
+            _hg_pending["dirty"] = True
+            return   # 已有推送卡在 evaluate_js——置脏，release 前补推
         try:
             over = _maximize_overhang_css_px(window)
-            # 审计 P1（snap 保险）：Aero snap 半屏贴靠无 maximized/restored 事件
-            # ——resized/moved 也会调进来，值没变就跳过（拖拽时不逐帧刷 JS）
+            # 竞态修正：以真实 WindowState 为准（事件参数可能反映中间态）
+            try:
+                from System.Windows.Forms import FormWindowState as _FS
+                f2 = getattr(window, "native", None)
+                if f2 is not None and f2.WindowState == _FS.Maximized:
+                    maxed = True
+            except Exception:
+                pass
+            # 审计 P1（snap 保险）：值没变就跳过（拖拽时不逐帧刷 JS）
             if not force and _hg_last_state["max"] == maxed \
                     and abs(_hg_last_state["over"] - over) < 0.5:
+                _hg_pending["dirty"] = False
                 return
             _hg_last_state["max"] = maxed
             _hg_last_state["over"] = over
@@ -2404,10 +2445,25 @@ def main():
         except Exception:
             pass
         finally:
+            # 闸持期内置脏的（并发事件被 skip）——补推一轮真实态，推送永不丢
+            if _hg_pending.pop("dirty", False):
+                try:
+                    from System.Windows.Forms import FormWindowState as _FS2
+                    f2 = getattr(window, "native", None)
+                    _cur = f2 is not None and f2.WindowState == _FS2.Maximized
+                    if _hg_last_state["max"] != _cur:
+                        _hg_last_state["max"] = _cur
+                        window.evaluate_js(
+                            "window._hgWinState&&window._hgWinState({max:%s})"
+                            % ("true" if _cur else "false"))
+                except Exception:
+                    pass
             _hg_push_gate.release()
 
-    window.events.maximized += lambda: _hg_push_win_state(True)
-    window.events.restored += lambda: _hg_restore_bounds_fix(window)
+    window.events.maximized += lambda: (_fc_restore.__setitem__(
+        "from_max", True), _hg_push_win_state(True))
+    window.events.restored += lambda: (_fc_restore.__setitem__(
+        "from_max", False), _hg_restore_bounds_fix(window))
     # minimized/restored 自管矫正（用户复现路径实锤：拖边框→任务栏最小化→
     # 还原×N→内容缩块——任务栏还原走 ShowWindow(SW_RESTORE)，不发
     # SYSCOMMAND 钩不到；Windows 对无 CAPTION 窗的 restore 按「假想有边框」
