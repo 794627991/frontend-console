@@ -991,11 +991,18 @@ function showBanner(msg, ms=4000, isErr=false) {
 // 不吃 transition,渐隐只能自绘 DOM 才能做）。面板需 position:relative
 // （CSS 已给六容器配好）。内容不溢出自动隐藏；拖拽锁 sb-drag 防拖出面板
 // 时条闪没；400ms 周期兜底（列表增删不触发 scroll 事件）。返回清理函数
-const _HG_FADE_SB_VER = 10;  // 挂载实例版本：行为变更时递增——旧实例自动拆重建
+const _HG_FADE_SB_VER = 11;  // 挂载实例版本：行为变更时递增——旧实例自动拆重建
                              // v7：补横向条（用户实锤「文件树横向滚动条没有」）
                              // v8：修鼠标上条抽搐（宿主/条互相触发 enter/leave 死循环）
                              // v9：修 v8 引入的「渐隐消失」——lastPt 陈旧坐标致条永不隐藏
                              // v10：纵向条按宿主右缘定位（原来贴锚点右缘，窄宿主时飞走）
+                             // v11：向上弹的宿主（@ 提及下拉 bottom:100%+4px）纵坐标
+                             //   允许为负+条层级跟宿主走。a610~a614 只管了横向，
+                             //   纵向 Math.max(0,…) 钳位把整个在锚点上方的宿主的
+                             //   条钉死在锚点顶部往下延伸（用户实锤截图：条悬在
+                             //   输入卡右缘、跟下拉隔了个卡头）。且条 z-index:5 <
+                             //   下拉 z-index:35（不透明背景），位置修对也会被盖没
+                             //   ——两处必须同改才见效果
 function _hgFadeSb(el) {
   if (el && el._hgFadeSb && el._hgFadeSb.ver !== _HG_FADE_SB_VER) {
     // 旧版本实例在位（页面 JS 缓存半新半旧的第三层：函数实例本身——服务端
@@ -1030,6 +1037,14 @@ function _hgFadeSb(el) {
   thh.className = 'hg-fade-sb-th';
   sbh.appendChild(thh);
   anchor.appendChild(sbh);
+  // v11：条层级跟宿主走。CSS 基础 z-index:5 只够压过普通容器内容；宿主
+  // 自己带数值 z-index 且背景不透明时（@ 提及下拉 z-index:35），条会被
+  // 盖在下面——位置再对也隐形。取宿主 computed z-index，数值则两条各+1
+  // 压过宿主；auto（绝大多数容器）不动，维持 CSS 的 5
+  try {
+    const hz = parseInt(getComputedStyle(el).zIndex, 10);
+    if (!isNaN(hz)) { sb.style.zIndex = hz + 1; sbh.style.zIndex = hz + 1; }
+  } catch (_) {}
   // 自愈：宿主 innerHTML 整体重写不影响（条在锚点上不在宿主里），锚点
   // innerHTML 重写时重插
   const ensureInDom = () => {
@@ -1047,8 +1062,12 @@ function _hgFadeSb(el) {
     if (sh <= ch + 4) { sb.style.display = 'none'; }
     else {
       sb.style.display = '';
-      // 条相对锚点定位：宿主可视区映射（每拍校准,布局变化自适应）
-      const top = Math.max(0, er.top - ar.top + 4);
+      // 条相对锚点定位：宿主可视区映射（每拍校准,布局变化自适应）。
+      // v11：不钳 0——宿主可能整个在锚点上方（@ 提及下拉 bottom:100%+4px
+      // 向上弹，er.top - ar.top ≈ -260），钳了条就钉死在锚点顶部往下延伸，
+      // 跟下拉隔几百 px（用户实锤）。锚点无 overflow 裁剪（.hg-input-card
+      // 只有 border-radius），负坐标照常渲染在锚点外，正对下拉
+      const top = er.top - ar.top + 4;
       const trackH = Math.max(40, er.height - 8);
       sb.style.top = top + 'px';
       sb.style.bottom = 'auto';
