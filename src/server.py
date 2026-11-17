@@ -207,19 +207,22 @@ def _api_unhandled(e):
     except Exception:
         pass
     if request.path.startswith("/api/"):
-        body, status = jsonify({
-            "ok": False,
-            "err": "服务器内部错误：%s" % e.__class__.__name__}), 500
+        body = jsonify({"ok": False,
+                        "err": "服务器内部错误：%s" % e.__class__.__name__})
+        body.status_code = 500
     else:
-        body, status = ("<h1>服务器内部错误</h1><p>%s</p>"
-                        % e.__class__.__name__), 500
+        # a601 对抗审计 D7：原来这里是裸 str，str 没有 .headers，去重标记
+        # 设不上（异常被吞）→ HTML 错误页的 500 仍被 after_request 记第二份。
+        body = Response("<h1>服务器内部错误</h1><p>%s</p>"
+                        % e.__class__.__name__,
+                        status=500, mimetype="text/html")
     # a600 对抗审计：上面已经带完整 traceback 记了一条，after_request 若再
-    # 记一条「→ 500」就是同一事件两份。打个标记让 after_request 跳过。
+    # 记一条「→ 500」就是同一事件两份。打标记让 after_request 跳过。
     try:
         body.headers["X-BL-Logged"] = "1"
     except Exception:
         pass
-    return body, status
+    return body
 
 # ---- 单实例唤醒通道 ----
 # 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
@@ -347,6 +350,15 @@ def start_background():
         _dh_start()
     except Exception:
         pass
+    # a602：凭据小文件镜像到 home（防「先删旧包再解压」把 data/ 连同凭据删掉）。
+    # 先补缺失再起后台线程；此处启动 = main.py 与 server.py 直跑两条路径都覆盖。
+    # FC_APP_BOOT 门：测试/临时实例（pytest、python -c）不得写用户 home。
+    if os.environ.get("FC_APP_BOOT") == "1":
+        try:
+            from src.cred_mirror import start as _cm_start
+            _cm_start()
+        except Exception:
+            pass
 
     def _cleanup():
         while True:
@@ -947,6 +959,21 @@ def _ssh_last_disconnect(max_age=3.0):
 _LOGGED_PREFIX_SKIP = ("/api/backend_log", "/api/status", "/api/busy")
 
 
+def _is_skip_logged(path):
+    """跳过前缀按**路径边界**匹配。
+
+    a601 对抗审计 D5：原来是裸 startswith，`/api/backend_logx`、
+    `/api/status_foo`、`/api/busy_x` 这类不相干的路径也被一起跳过；更糟的是
+    `/api/backend_log/save` 写盘失败返回 500 时一个字都不记——导出的失败
+    恰好是用户最需要看到的那条（这个功能本身就是排障手段）。
+    现在：精确等于前缀，或前缀 + "/" 开头，才算同一族。
+    """
+    for p in _LOGGED_PREFIX_SKIP:
+        if path == p or path.startswith(p + "/"):
+            return True
+    return False
+
+
 @app.after_request
 def _log_api_outcome(resp):
     try:
@@ -954,15 +981,23 @@ def _log_api_outcome(resp):
         if not backend_log.installed():
             return resp
         path = request.path or ""
-        if path.startswith(_LOGGED_PREFIX_SKIP):
-            return resp
         # errorhandler 已带 traceback 记过（见 _api_unhandled），不再重复
         if resp.headers.get("X-BL-Logged"):
             return resp
         code = resp.status_code
         method = request.method
+        # 跳过前缀只屏蔽「成功的常规轮询」；失败（>=400）一定要记——
+        # 否则导出写盘失败、状态查询 500 这类真问题在日志里零痕迹。
+        if _is_skip_logged(path) and code < 400:
+            return resp
         # 只记非 2xx，或写操作
         if code < 300 and method == "GET":
+            return resp
+        if code < 400 and method not in ("POST", "PUT", "DELETE", "PATCH"):
+            # a601 对抗审计 D6：3xx 重定向、HEAD/OPTIONS 探活都是**正常控制
+            # 流**，原来一律落到下面的 else 分支记成 warn。实测 CLAUDE_OFFLOAD
+            # 模式下 /api/harness/* 全走 307 relay、前端每 5s 轮询一次，加上
+            # HEAD/OPTIONS 预检，把「仅警告」过滤刷成一片假警告。不记。
             return resp
         if code < 300 and method in ("POST", "PUT", "DELETE", "PATCH"):
             # 写操作成功：只记精简结果（body 太大不记）
@@ -2085,38 +2120,43 @@ def api_backend_log():
     只拿新行），首次打开传 since=0 即取最近的若干行。
     """
     from src import backend_log
+    # a601 对抗审计 D3：since 与 limit **分开**解析。原来共用一个 try，
+    # 传错 limit（如 `limit=abc`/`1.5`/`0x10`）会把合法的 since 也重置成 0，
+    # 于是游标跳到最新、中间整段永久丢失（实测 6100→7100 丢 500 行，且
+    # truncated=False 让调用方以为追平了）。任一参数非法只重置它自己。
     try:
         since = int(request.args.get("since") or 0)
+    except (TypeError, ValueError):
+        since = 0
+    try:
         raw_limit = request.args.get("limit")
         limit = int(raw_limit) if raw_limit not in (None, "") else 500
     except (TypeError, ValueError):
-        since, limit = 0, 500
+        limit = 500
     # 2.4.4：上限从 2000 放宽到 50000——缓冲已是 10MB，面板首屏与导出都
     # 需要一次取全（2000 行对 10MB 缓冲是残缺的，用户明确说要「很多信息」）。
-    # a600 对抗审计：limit<=0 表示「不限量」（前端首屏用），不能被钳成 1，
-    # 否则首屏只能拿到 1 行、lastSeq 又跳到最新，中间日志永久丢失。
+    # a600：limit<=0 表示「不限量」（前端首屏用），不能被钳成 1，否则首屏
+    # 只能拿到 1 行、lastSeq 又跳到最新，中间日志永久丢失。
+    # a601 对抗审计 D1：但「不限量」本身是个放大器——满缓冲单次响应可达
+    # 117MB/1.4s，同源页面循环触发就能把进程拖死。这里把全量钳到 50000 条
+    # （导出走 /api/backend_log/save 后端落盘，不受此限）。
     if limit > 0:
         limit = min(limit, 50000)
     else:
-        limit = 0
+        limit = 50000
     return jsonify({"ok": True, **backend_log.snapshot(since=since, limit=limit)})
 
 
-@app.route("/api/backend_log/export")
-def api_backend_log_export():
-    """导出全部日志为纯文本（用户需求：增加导出功能）。
-
-    头部带版本号 / 启动时间 / 平台 / 缓冲统计——用户明确要求「日志里要带上
-    版本号，好追溯」。返回 text/plain，前端用 Blob 下载。
-    """
+def _backend_log_export_text():
+    """拼装导出正文（导出下载与「保存到文件」共用同一份内容）。"""
     import platform
     from src import backend_log
     from src.version import APP_VERSION
-    # a600 对抗审计：导出必须取**全部**条目。原来写死 limit=50000，而 10MB
-    # 缓冲在短行场景下能装更多条（实测 5000 条短行只占 20 万字符），
-    # 超出的部分会被静默截断——用户导出一份残缺日志却看不出少了什么。
-    # limit=0 表示不限制（snapshot 里 `if limit and ...` 判空即全量）。
-    snap = backend_log.snapshot(since=0, limit=0)
+    # 导出必须取**全部**条目。原来写死 limit=50000，而 10MB 缓冲在短行场景
+    # 下能装更多条，超出的部分会被静默截断——用户导出一份残缺日志却看不出
+    # 少了什么。a601：改用流式迭代器（iter_entries），不再把全部条目转成
+    # dict 列表——那样 10MB 短行缓冲光中间结构就要额外几十到几百 MB。
+    st = backend_log.stats()
     lines = []
     lines.append("=" * 70)
     lines.append("前端控制台 v%s 后端日志导出" % APP_VERSION)
@@ -2129,24 +2169,134 @@ def api_backend_log_export():
     lines.append("打包形态 : %s" % ("frozen(exe)" if getattr(sys, "frozen", False)
                                     else "源码"))
     lines.append("缓冲统计 : %d 条 / %d 字符（上限 %d）· 已丢弃 %d 条"
-                 % (snap["entries"], snap["used_chars"],
-                    snap["capacity_chars"], snap["dropped"]))
+                 % (st["entries"], st["used_chars"],
+                    st["capacity_chars"], st["dropped"]))
     lines.append("=" * 70)
     lines.append("")
-    for x in snap["lines"]:
-        tag = ("[%s]" % x["tag"]) if x.get("tag") else ""
+    lvmap = {"error": "[ERR]", "warn": "[WRN]"}
+    for seq, ts, level, src, tag, text in backend_log.iter_entries(0):
+        tag_s = ("[%s]" % tag) if tag else ""
         # src 只在不是 "log"（主动埋点）时显示——log 的 tag 已经说明了来源，
         # 再拼一个 "log" 会变成 "[main]log"，读着别扭
-        src = "" if x.get("src") in ("log", "") else x.get("src", "")
-        lv = {"error": "[ERR]", "warn": "[WRN]"}.get(x["level"], "[INF]")
-        parts = [x["ts"], lv, tag, src, x["text"]]
+        src_s = "" if src in ("log", "") else src
+        lv = lvmap.get(level, "[INF]")
+        # a601 对抗审计 D10：日志内容可能夹带外部字符串（设备名、SSH banner、
+        # 串口回显、URL 参数）。原样写出时 `\r` 会让前半行被视觉覆盖——
+        # 任何被记录的内容都能伪造一条看起来合法的日志行；ESC 序列在终端
+        # cat 时会执行清屏；NUL 会让编辑器把文件当二进制。日志是发给同事/
+        # 贴进工单的证据，必须不可被污染。
+        parts = (ts, lv, tag_s, src_s, _escape_ctrl(text))
         lines.append(" ".join(p for p in parts if p))
-    body = "\n".join(lines) + "\n"
-    fn = "backend-log-v%s-%s.txt" % (
-        APP_VERSION, time.strftime("%Y%m%d-%H%M%S"))
-    return Response(body, mimetype="text/plain",
+    return "\n".join(lines) + "\n"
+
+
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _escape_ctrl(text):
+    """把 C0 控制字符转义成可见形式（\\r → \\\\r 等），防伪造/终端控制。"""
+    if not text:
+        return text
+    return _CTRL_RE.sub(lambda m: "\\x%02x" % ord(m.group(0)), text)
+
+
+@app.route("/api/backend_log/export")
+def api_backend_log_export():
+    """导出全部日志为纯文本（用户需求：增加导出功能）。
+
+    头部带版本号 / 启动时间 / 平台 / 缓冲统计——用户明确要求「日志里要带上
+    版本号，好追溯」。返回 text/plain。
+
+    注意：WebView2 里 `<a download>` 被 init.js 的全局链接拦截器
+    preventDefault 掉（该拦截器为防就地导航而拦所有 a[href]），且 pywebview
+    默认 ALLOW_DOWNLOADS=False，浏览器下载路径**走不通**。前端因此改走
+    /api/backend_log/save（原生保存对话框 + 后端写盘）。此接口保留给
+    浏览器/自动化直连使用。
+    """
+    from src.version import APP_VERSION
+    # a601 对抗审计 D9：文件名净化（版本号含中文/特殊字符时 CD 头会非法）
+    fn = _safe_filename("backend-log-v%s-%s.txt" % (
+        APP_VERSION, time.strftime("%Y%m%d-%H%M%S")))
+    return Response(_backend_log_export_text(), mimetype="text/plain",
                     headers={"Content-Disposition":
                              'attachment; filename="%s"' % fn})
+
+
+@app.route("/api/backend_log/save", methods=["POST"])
+def api_backend_log_save():
+    """导出日志到用户选择的文件（WebView2 下唯一可行的导出路径）。
+
+    前端调 JS API 弹的原生保存框在 GUI 线程，路由里拿不到 window 时退回
+    桌面/下载目录直接写——两条路都**真的落盘**了才返回 ok，前端据此提示
+    （原来浏览器下载被拦却无条件弹「已导出」，用户永远拿不到文件）。
+    """
+    import os
+    from src.version import APP_VERSION
+    body = _backend_log_export_text()
+    fn = _safe_filename("backend-log-v%s-%s.txt" % (
+        APP_VERSION, time.strftime("%Y%m%d-%H%M%S")))
+    path = ""
+    # 1) 优先：原生保存对话框（main.py 注入的回调）
+    try:
+        from src import main as _m
+        picker = getattr(_m, "_save_file_dialog", None)
+        if callable(picker):
+            path = picker(fn) or ""
+    except Exception:
+        path = ""
+    # 2) 退回：桌面 → 用户目录（保证一定有落点）
+    if not path:
+        try:
+            home = os.path.expanduser("~")
+            desk = os.path.join(home, "Desktop")
+            base = desk if os.path.isdir(desk) else home
+        except Exception:
+            base = os.getcwd()
+        path = os.path.join(base, fn)
+    try:
+        # a601 对抗审计 D8：原来「os.path.exists 查重 + open 写入」是 TOCTOU，
+        # 8 个并发导出实测只落 4 个不同文件（后写覆盖先写，返回的 path 指向
+        # 被改写的文件）。用 "x" 模式（O_EXCL）原子抢名：抢占失败就递增序号。
+        path = _write_unique(path, body)
+    except Exception as e:
+        return jsonify({"ok": False, "err": "写入失败：%s" % e}), 500
+    return jsonify({"ok": True, "path": path,
+                    "bytes": len(body.encode("utf-8"))})
+
+
+def _safe_filename(name):
+    """文件名白名单净化。
+
+    a601 对抗审计 D9：原来直接拼 APP_VERSION。版本号改成含中文/`|`/`\\`
+    时，save 会写盘 500 或尝试创建子目录；真实 HTTP 下 latin-1 编码失败
+    还会直接断连。这里只保留安全字符，其余替换成下划线。
+    """
+    import re
+    stem = str(name or "log")
+    stem = re.sub(r'[^A-Za-z0-9._-]', '_', stem)
+    return stem or "log.txt"
+
+
+def _write_unique(path, body, tries=200):
+    """以 O_EXCL 抢占文件名写入，冲突则加序号重试。返回实际写入路径。"""
+    import os
+    base, ext = os.path.splitext(path)
+    cand = path
+    for i in range(tries):
+        if i:
+            cand = "%s (%d)%s" % (base, i, ext or ".txt")
+        try:
+            with open(cand, "x", encoding="utf-8", newline="\n") as f:
+                f.write(body)
+            return cand
+        except FileExistsError:
+            continue
+    # 极端情况：仍冲突就用时间戳兜底
+    import time as _t
+    cand = "%s-%d%s" % (base, int(_t.time() * 1000), ext or ".txt")
+    with open(cand, "w", encoding="utf-8", newline="\n") as f:
+        f.write(body)
+    return cand
 
 
 @app.route("/api/backend_log/clear", methods=["POST"])

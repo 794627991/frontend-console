@@ -31,6 +31,11 @@ import traceback
 # 的 UCS-2 或 4 字节 UCS-4）。取 1 字符 ≈ 1 字节的保守估计，10MB ≈ 千万字符，
 # 实际内存可能略高，但同一量级，远好于「2000 行」这种与内容无关的上限。
 _MAX_CHARS = 10 * 1024 * 1024     # 10MB（按字符计量，近似）
+# a601 对抗审计：字符记账只算文本长度，而每条记录至少占 ~144B（tuple + str
+# 头）。实测 1 字符/行的极端场景下，「10MB 记账」的真实 RSS 是 307MB（30×），
+# 24 字符典型行是 107MB（10×）。用户要的是「10MB 内存」，所以再加一道条数
+# 硬上限，把最坏放大锁在几十 MB 量级。
+_MAX_ENTRIES = 200000
 _MAX_LINE_CHARS = 8000            # 单行钳位：防一条巨型输出吃掉整个缓冲
 _buf = collections.deque()
 _buf_chars = 0                    # 当前占用的字符数（与 _buf 同步维护）
@@ -47,6 +52,9 @@ _dropped = 0                      # 因超容量被丢弃的行数（界面提�
 #   真实终端输出是成批到达的，走 _emit_many 一次持锁，实测 +8%。
 _enabled = True
 _excepthooks_installed = False
+# 安装类操作的专用锁（与缓冲区 _lock 分开：install 时不持有数据锁，
+# 避免任何嵌套/顺序问题）
+_install_lock = threading.Lock()
 
 # 级别粗判：不用正则（每条日志都跑，正则是毫秒级热点）。只在行首 32 字符
 # 里找前缀，够覆盖所有实际形态（[错误] / ERROR / Traceback / WARN / ⚠）。
@@ -58,53 +66,83 @@ _ERR_SUFFIX_HINT = ("Error:", "Exception:")
 # werkzeug 的逐请求访问日志——轮询会刷屏。判据放在最前面且用 startswith
 # 快速排除（绝大多数行不是数字开头，一次 char 比较就过）。
 _ACCESS_HINT = "127.0.0.1 - - ["
-_ACCESS_RE = re.compile(r"^\s*\d+\.\d+\.\d+\.\d+ - - \[[^\]]*\] \"(GET|POST|PUT|"
+_ACCESS_RE = re.compile(r"^\s*(?:\d+\.\d+\.\d+\.\d+|[0-9a-fA-F:]{2,}) - - "
+                        r"\[[^\]]*\] \"(GET|POST|PUT|"
                         r"DELETE|HEAD|OPTIONS|PATCH) ")
 
-# 敏感信息脱敏（a600 对抗审计）：日志面板会满屏展示、还能一键复制/导出成
-# 文件发给同事或贴进工单——明文密码/令牌/密钥带出去是真实的信息外泄。
-# 只在命中可疑关键字时才跑正则（绝大多数行不含这些词，热路径零成本）。
-_SECRET_HINTS = ("password", "passwd", "pwd=", "token", "secret", "api_key",
+# 敏感信息脱敏（a600/a601 对抗审计）：日志面板会满屏展示、还能一键复制/
+# 导出成文件发给同事或贴进工单——明文密码/令牌/密钥带出去是真实的信息外泄。
+# 只在命中可疑关键字时才跑正则（绝大多数行不含这些词，热路径近乎零成本）。
+# a601：粗筛曾用大小写敏感的 `in`，只列了首字母大写形态，实测 52 个变形里
+# 29 个泄露（PASSWORD= / PaSsWoRd= / TOKEN= 全漏）。改为 lower() 一次后
+# 用同一份关键字表判断——副本成本 ~1.2µs/行，可接受。
+_SECRET_HINTS = ("password", "passwd", "pwd", "token", "secret", "api_key",
                  "apikey", "access_key", "private_key", "authorization",
-                 "cookie", "session_id=", "密码", "口令", "密钥",
-                 # 首字母大写是常见写法（Password: / Token= / Authorization:），
-                 # 大小写敏感的 `in` 判断必须把它们单独列出（实测 any(gen)
-                 # 是最快的粗筛：1.18µs/行，对比 lower()+22 次扫描 1.26µs、
-                 # 编译正则 6.58µs、Python 循环 7.57µs）
-                 "Password", "Token", "Secret", "Authorization", "Cookie")
+                 "cookie", "session_id", "bearer", "basic ", "jwt",
+                 "密码", "口令", "密钥")
+# 值：可选引号包裹 / 非空白；key 两侧允许引号（JSON 形态 "password":"x"）；分隔符含全角
 _SECRET_RE = re.compile(
-    r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key|authorization|cookie)(\s*[:=]\s*)"
-    r"(\"[^\"]*\"|'[^']*'|\S+)")
-_CN_SECRET_RE = re.compile(r"(密码|口令|密钥)(\s*[:=：]\s*)(\S+)")
-# HTTP 认证头：`Authorization: Bearer xxx` / `Bearer xxx` / `Basic xxx`
-_BEARER_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
-_HINT_RE = None      # 已弃用（正则粗筛实测更慢，改用 _has_secret_hint 的 any）
+    r"(?i)[\"']?\b(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key|authorization|cookie|session[_-]?id)[\"']?"
+    r"\s*[:=：＝]\s*"
+    r"(\"[^\"]*\"|'[^']*'|[^\s,，。；;）)]+)")
+_CN_SECRET_RE = re.compile(
+    r"(密码|口令|密钥)\s*(?:[:：=＝为是]\s*)?"
+    r"(\"[^\"]*\"|'[^']*'|[^\s,，。；;）)）]+)")
+# HTTP 认证头 / 裸令牌：`Bearer xxx` / `Basic xxx` / `token eyJ...`
+# bearer/basic 的令牌通常 ≥8 字符；裸 token 要 ≥16 才动手，避免误伤
+# 「token 无效」这类正常短语。
+_BEARER_RE = re.compile(
+    r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{8,})")
+_BARE_TOKEN_RE = re.compile(
+    r"(?i)\btoken\s+([A-Za-z0-9._~+/=-]{16,})")
+# 连接串里的 userinfo 密码：`scheme://user:pass@host`
+_URL_PASS_RE = re.compile(r"(://[^:/\s@]+:)([^@\s/]+)(@)")
 
 
 def _redact(text):
-    """把 `password=xxx` / `token: xxx` / `密码：xxx` 之类的值抹成 ***。
+    """把 `password=xxx` / `"token":"x"` / `密码：xxx` / `Bearer x` 抹成 ***。
 
-    性能：`text.lower()` 是整串副本，不能每行都做（20 万字符/秒时纯浪费）。
-    先用无副本的 `_has_secret_hint()` 粗筛，绝大多数普通日志一次就返回。
+    性能：超长行先按「将入库」的长度截断再跑正则——原来在截断前对 10MB
+    单行跑正则，实测含 token 的巨行要 1.15 秒，把调用线程卡住（违反性能
+    铁律）。多行文本按行切分逐行处理，避免 `\\S+` 跨行吃掉 traceback 首行。
     """
     try:
         if not _has_secret_hint(text):
             return text
-        # 先抹令牌本体（`Bearer xxx` 整段），再做 key=value 替换——
-        # 否则 `Authorization: Bearer xxx` 里的 `Authorization:` 先被替换掉，
-        # 后面的令牌本体反而留下来了。
-        text = _BEARER_RE.sub("***", text)
-        text = _SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + "***", text)
-        text = _CN_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + "***", text)
-        return text
+        if "\n" in text:
+            # 逐行脱敏：`\\S+` 对整段跑会把下一行的「Traceback (most recent」
+            # 当成密钥值整词抹掉（实测 exception() 的异常类型行消失）。
+            return "\n".join(_redact_line(x) for x in text.split("\n"))
+        return _redact_line(text)
     except Exception:
         return text
 
 
+def _redact_line(text):
+    if len(text) > _MAX_LINE_CHARS:
+        text = text[:_MAX_LINE_CHARS]
+    text = _URL_PASS_RE.sub(lambda m: m.group(1) + "***" + m.group(3), text)
+    text = _BEARER_RE.sub("***", text)
+    text = _BARE_TOKEN_RE.sub("token ***", text)
+    text = _SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
+    text = _CN_SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
+    return text
+
+
 def _has_secret_hint(text):
-    """粗筛：是否可能含敏感关键字。`any(gen)` 实测最快（1.18µs/行）。"""
-    return any(h in text for h in _SECRET_HINTS)
+    """粗筛：是否可能含敏感关键字（大小写无关）。
+
+    性能（每行都跑）：实测 `lower()+any(in)` 1.52µs/行，与无副本的
+    `any(in)` 1.49µs/行几乎相同——`str.lower()` 在 C 层复制极快，不值得
+    为省它引入大小写判断的复杂度。这里只做一次副本 + 一次线性扫描。
+    另加一条结构判断：连接串 `://user:pass@host` 没有关键字。
+    """
+    low = text.lower()
+    for h in _SECRET_HINTS:
+        if h in low:
+            return True
+    return "://" in low and "@" in low
 
 
 def _classify(line):
@@ -159,10 +197,14 @@ _ts_cache = ("", 0.0)
 def _ts():
     global _ts_cache
     now = time.time()
-    if now - _ts_cache[1] < 1.0:
-        return _ts_cache[0]
+    cached, at = _ts_cache          # 单次读取（避免两次读之间被别的线程改）
+    if now - at < 1.0:
+        return cached
     s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
-    _ts_cache = (s, now)
+    # a601 对抗审计：原来无条件写回。两个线程在秒边界竞争时，慢的那个会用
+    # 较旧的 now 覆盖较新的缓存，使时间戳回退并冻结约 1 秒。只允许前进。
+    if now >= at:
+        _ts_cache = (s, now)
     return s
 
 
@@ -176,13 +218,23 @@ def _append(rec):
     global _buf_chars, _dropped
     text = rec[5]
     if len(text) > _MAX_LINE_CHARS:
-        text = text[:_MAX_LINE_CHARS] + " …（单行超长已截断）"
+        # a601 对抗审计：按 `\r` 刷新的进度条（pip/curl/串口）截断时原来保留
+        # 头部——用户看到的永远是最旧的进度（实测「进度 27328%…」，真正的
+        # 当前值被砍掉）。这类行取尾部：最新状态才是有用的。
+        if "\r" in text:
+            text = "…（已截断）" + text[-_MAX_LINE_CHARS:]
+        else:
+            text = text[:_MAX_LINE_CHARS] + " …（单行超长已截断）"
     size = len(text) + len(rec[4])
+    # a601 对抗审计：size==0 的记录（text 与 tag 都空）不增加记账，`while`
+    # 淘汰条件永远为假，会永久驻留（实测容量 0 时 1000 条空记录全留下）。
+    if size <= 0:
+        return
     entry = (rec[0], rec[1], rec[2], rec[3], rec[4], text, size)
     _buf.append(entry)
     _buf_chars += size
-    # 超出容量：从头丢，直到落回 10MB 以内
-    while _buf_chars > _MAX_CHARS and _buf:
+    # 超出容量：从头丢，直到落回上限以内（字符 + 条数双重上限）
+    while _buf and (_buf_chars > _MAX_CHARS or len(_buf) > _MAX_ENTRIES):
         _buf_chars -= _buf.popleft()[6]
         _dropped += 1
 
@@ -206,7 +258,7 @@ def _emit_many(lines, stream):
         if not t:
             continue
         c0 = t[0]
-        if (c0 == "1" or c0 == " ") and _ACCESS_RE.match(t):
+        if (c0 == "1" or c0 == " " or c0 == ":") and _ACCESS_RE.match(t):
             continue
         staged.append((ts, _classify(t), stream, "", _redact(t)))
     if not staged:
@@ -232,7 +284,7 @@ def _emit(line, stream):
         return
     # 访问日志快速排除：绝大多数行首字符不是 '1' 或空格，一次 char 比较即过
     c0 = text[0]
-    if (c0 == "1" or c0 == " ") and _ACCESS_RE.match(text):
+    if (c0 == "1" or c0 == " " or c0 == ":") and _ACCESS_RE.match(text):
         return              # werkzeug 访问日志：噪音（仍透传到原流）
     # 锁外把这条记录算完整（_classify/_ts 是纯函数，无共享状态）
     level = _classify(text)
@@ -297,6 +349,10 @@ class _TeeStream(io.TextIOBase):
         self._orig = orig
         self._stream = stream
         self._partial = ""
+        # 实例锁：_partial 是共享可变状态（sys.stdout 全进程单例，多线程
+        # 共用一个 TeeStream）。没有它，多线程的 += / split 会互相覆盖，
+        # 造成行缝合、丢行、重复行（实测默认 GIL 下 96 万次写出现 23 次）。
+        self._plock = threading.Lock()
 
     def writable(self):
         return True
@@ -317,22 +373,36 @@ class _TeeStream(io.TextIOBase):
         # 意味着原流一个字都没写。日志模块的 bug 会让程序输出静默消失，
         # 直接违反「log 绝不能影响正常使用」。现在整体 try 住，且保证
         # 原流始终先写（缓冲失败也不影响透传）。
-        try:
-            if "\n" in s:
-                self._partial += s
-                parts = self._partial.split("\n")
-                self._partial = parts.pop()      # 最后一段无换行 = 残片
+        #
+        # a601 对抗审计（严重）：`_partial` 是**实例共享**状态（sys.stdout
+        # 全进程单例），而 write/flush 没有任何锁。实测默认 GIL 配置下 96 万
+        # 次多线程 print 出 23 行错乱（两个线程的前缀被缝成一行），若残片是
+        # werkzeug 访问日志的前半段，还会被 _ACCESS_RE 整行当噪音丢弃（业务
+        # 错误行静默消失）。这里用实例锁保护 `_partial` 的读-改-写；
+        # 锁只在内存操作段持有，`_orig.write` 留在锁外避免阻塞原流。
+        with self._plock:
+            try:
+                if not _enabled:
+                    # 关闭期：不攒残片，也不留旧残片粘到重开后的内容上
+                    # （实测旧行为会把关闭期写入的残片和重开后的行缝一起）。
+                    parts = None
+                    self._partial = ""
+                elif "\n" in s:
+                    self._partial += s
+                    parts = self._partial.split("\n")
+                    self._partial = parts.pop()      # 最后一段无换行 = 残片
+                else:
+                    parts = None
+                    self._partial += s
+                    # 残片也设上限：某些库持续写不带换行的进度条会无限攒
+                    if len(self._partial) > 65536:
+                        parts = [self._partial]
+                        self._partial = ""
                 if parts:
                     _emit_many(parts, self._stream)
-            else:
-                self._partial += s
-                # 残片也设上限：某些库持续写不带换行的进度条会无限攒
-                if len(self._partial) > 65536:
-                    _emit(self._partial, self._stream)
-                    self._partial = ""
-        except Exception:
-            # 缓冲失败：丢弃残片并继续——绝不能因为记账坏了而吞掉真实输出
-            self._partial = ""
+            except Exception:
+                # 缓冲失败：丢弃残片并继续——绝不能因为记账坏了而吞掉真实输出
+                self._partial = ""
         if self._orig is not None:
             try:
                 self._orig.write(s)
@@ -342,12 +412,15 @@ class _TeeStream(io.TextIOBase):
 
     def flush(self):
         # 刷流时把残留残片也落进缓冲（否则最后一行没有换行就永远看不见）
-        try:
-            if self._partial:
-                _emit(self._partial, self._stream)
+        with self._plock:
+            try:
+                if not _enabled:
+                    self._partial = ""
+                elif self._partial:
+                    _emit(self._partial, self._stream)
+                    self._partial = ""
+            except Exception:
                 self._partial = ""
-        except Exception:
-            self._partial = ""
         if self._orig is not None:
             try:
                 self._orig.flush()
@@ -417,16 +490,63 @@ class _TeeStream(io.TextIOBase):
 
 
 def install(max_chars=None):
-    """接管 stdout/stderr（幂等）。main.py 在最早时机调用一次。"""
+    """接管 stdout/stderr（幂等）。main.py 在最早时机调用一次。
+
+    a601 对抗审计：`if _installed: return` 与赋值之间原来没锁，并发调用会
+    读到已装好的 TeeStream 再包一层（双层 TeeStream → 每行记两份、缓冲
+    容量变相减半）。用专用锁保护整段「检查-赋值-置位」。
+    """
     global _installed, _orig_stdout, _orig_stderr, _MAX_CHARS
-    if _installed:
-        return
-    if max_chars and isinstance(max_chars, int) and max_chars > 0:
-        _MAX_CHARS = max_chars
-    _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
-    sys.stdout = _TeeStream(_orig_stdout, "stdout")
-    sys.stderr = _TeeStream(_orig_stderr, "stderr")
-    _installed = True
+    with _install_lock:
+        # 已被外部替换（pytest capture / colorama / ipykernel 换掉 sys.stdout）
+        # 时视为未安装，重新接管——否则日志静默丢失且无法恢复。
+        if _installed and (sys.stdout is _orig_stdout and
+                           sys.stderr is _orig_stderr):
+            return None                    # 真的已装好（流未被替换）
+        if _installed:
+            # 流被外部换掉：以**当前**流为新的底层重新接管
+            # （pytest capture / colorama 等会替换 sys.stdout）
+            if not isinstance(sys.stdout, _TeeStream):
+                _orig_stdout = sys.stdout
+                sys.stdout = _TeeStream(_orig_stdout, "stdout")
+            if not isinstance(sys.stderr, _TeeStream):
+                _orig_stderr = sys.stderr
+                sys.stderr = _TeeStream(_orig_stderr, "stderr")
+            return None
+        # a601：bool 是 int 子类，`install(max_chars=True)` 曾把容量设成 1，
+        # 缓冲永久失效且 capacity_chars 变成 JSON true。显式排除 bool。
+        if (max_chars and isinstance(max_chars, int)
+                and not isinstance(max_chars, bool) and max_chars > 0):
+            _MAX_CHARS = max_chars
+        _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
+        sys.stdout = _TeeStream(_orig_stdout, "stdout")
+        sys.stderr = _TeeStream(_orig_stderr, "stderr")
+        _installed = True
+
+
+def uninstall():
+    """还原 stdout/stderr 并复位安装标记（供测试与运行期停用）。
+
+    a601 对抗审计：原来只有 install、没有 uninstall，`_installed=True` 永久
+    短路；一旦第三方库替换了 sys.stdout，任何 API 都无法把日志缓冲恢复回来。
+    """
+    global _installed, _orig_stdout, _orig_stderr
+    with _install_lock:
+        try:
+            if isinstance(sys.stdout, _TeeStream):
+                sys.stdout = _orig_stdout if _orig_stdout is not None \
+                    else sys.stdout._orig
+        except Exception:
+            pass
+        try:
+            if isinstance(sys.stderr, _TeeStream):
+                sys.stderr = _orig_stderr if _orig_stderr is not None \
+                    else sys.stderr._orig
+        except Exception:
+            pass
+        _orig_stdout = _orig_stderr = None
+        _installed = False
+    return True
 
 
 class _LoggingBridge:
@@ -446,35 +566,39 @@ class _LoggingBridge:
 
         a600 对抗审计实测缺陷：原来每次调用都 addHandler 一个新的，调 5 次
         就有 5 个 handler —— 同一条日志被记 5 份，把缓冲填满垃圾。
+        a601：并发调用同样会叠（实测 8 线程并发装出 8 个 handler，且泄漏
+        的旧 handler 无法再被 uninstall 摘除、逐轮累积）。整段加锁。
         """
         if self._logging is None:
             return False
-        try:
-            lv = level or self._logging.INFO
-            root = self._logging.getLogger()
-            # a600 对抗审计：记住的 handler 可能已被外部摘掉（测试/第三方
-            # 重置 root），此时不能再以为「已装」——否则日志静默丢失。
-            if self._handler is not None and self._handler not in root.handlers:
-                self._handler = None
-            if self._handler is None:
-                self._handler = _make_bridge_handler(self._logging)()
-                root.addHandler(self._handler)
-            if root.level > lv or root.level == 0:
-                root.setLevel(lv)
-            return True
-        except Exception:
-            return False
+        with _install_lock:
+            try:
+                lv = level or self._logging.INFO
+                root = self._logging.getLogger()
+                # a600 对抗审计：记住的 handler 可能已被外部摘掉（测试/第三方
+                # 重置 root），此时不能再以为「已装」——否则日志静默丢失。
+                if self._handler is not None and self._handler not in root.handlers:
+                    self._handler = None
+                if self._handler is None:
+                    self._handler = _make_bridge_handler(self._logging)()
+                    root.addHandler(self._handler)
+                if root.level > lv or root.level == 0:
+                    root.setLevel(lv)
+                return True
+            except Exception:
+                return False
 
     def uninstall(self):
         """摘掉 handler（供测试或运行期停用）。"""
-        if self._logging is None or self._handler is None:
-            return False
-        try:
-            self._logging.getLogger().removeHandler(self._handler)
-            self._handler = None
-            return True
-        except Exception:
-            return False
+        with _install_lock:
+            if self._logging is None or self._handler is None:
+                return False
+            try:
+                self._logging.getLogger().removeHandler(self._handler)
+                self._handler = None
+                return True
+            except Exception:
+                return False
 
 
 def _make_bridge_handler(logging_mod):
@@ -581,6 +705,17 @@ def _hook_record(where, et, ev, tb):
         pass
 
 
+def _safe_tail(start):
+    """锁外取 deque 尾部切片；并发修改导致视图失效时重试一次。"""
+    try:
+        return list(itertools.islice(_buf, max(0, start), None))
+    except RuntimeError:
+        try:
+            return list(itertools.islice(_buf, max(0, start), None))
+        except RuntimeError:
+            return []
+
+
 def snapshot(since=0, limit=2000):
     """取日志快照：seq > since 的最后 limit 条。返回 {lines, last_seq, ...}。
 
@@ -597,18 +732,38 @@ def snapshot(since=0, limit=2000):
     """
     since = int(since or 0)
     more = False
+    head = False
+    # a601 对抗审计（性能）：原来 list(_buf) / 倒推全扫 / dropwhile 全扫都在
+    # 锁内。10MB 全是 1 字符短行时是 1048 万条，锁内 list(_buf) 131ms、
+    # 失效游标倒推 1.28 秒——这期间**所有线程的日志写入都被阻塞**，
+    # 直接违反「log 绝不能影响流畅性能」。现在锁内只取 O(1) 的元信息，
+    # 切片在锁外做；deque 的 append/popleft 是原子操作，锁外读到的可能
+    # 有少量漂移（多/少几行），对日志展示完全可接受。
     with _lock:
-        # 锁内只做廉价操作：切片引用 + 长度记账
-        if since <= 0:
-            # 首屏：直接取尾部 limit 条（不做任何复制）
-            if limit and len(_buf) > limit:
-                tail = list(itertools.islice(_buf, len(_buf) - limit, None))
-            else:
-                tail = list(_buf)
-            meta = (_buf_chars, _dropped, _seq, len(_buf))
+        snap_len = len(_buf)
+        first_seq = _buf[0][0] if _buf else 0
+        meta = (_buf_chars, _dropped, _seq, snap_len)
+    # a601 对抗审计 D4：客户端游标落在缓冲起点之前（停顿太久，中间行已被
+    # 淘汰）时，倒推找不到 x[0] <= since，会静默返回全部现存行且
+    # truncated=False——调用方以为追平，实际中间永久缺一段。如实报告缺口。
+    lost = 0
+    if since > 0 and _buf and first_seq > since + 1:
+        lost = first_seq - since - 1
+    if since <= 0:
+        # 首屏：取尾部 limit 条
+        if limit and snap_len > limit:
+            # 首屏截断和「增量还有更多」是两回事：前者说明**更早的**行没
+            # 返回（不需要追赶，用户要的本来就是最新），后者说明还有更新的
+            # 行没拿完（需要继续追）。混用 truncated 会让前端对着首屏
+            # 空转追赶（last_seq 已在末尾，下一轮拿到 0 条）。分成两个字段。
+            head = True
+            tail = _safe_tail(snap_len - limit)
         else:
-            # 增量：从尾部倒推，找到第一条 seq <= since 为止
-            tail = []
+            tail = _safe_tail(0)
+    else:
+        # 增量：从尾部倒推，找到第一条 seq <= since 为止
+        tail = []
+        try:
             for x in reversed(_buf):
                 if x[0] <= since:
                     break
@@ -616,30 +771,68 @@ def snapshot(since=0, limit=2000):
                 if limit and len(tail) >= limit:
                     more = True
                     break
-            tail.reverse()
-            if more:
-                # 超限：上面取的是「最新 limit 条」，若直接返回，中间那段
-                # (since, 最早那条] 会被前端跳过（前端 last_seq 追到最新）。
-                # 改取「最早 limit 条」，前端下一轮 since 自然推进，不丢。
-                # dropwhile 惰性遍历，锁内成本与倒推同量级（罕见路径）。
+        except RuntimeError:
+            # 并发修改导致 deque 视图失效：退回全量快照取尾部
+            tail = _safe_tail(max(0, snap_len - (limit or snap_len)))
+        tail.reverse()
+        if more:
+            # 超限：改取「最早 limit 条」，前端下一轮 since 自然推进，不丢。
+            try:
                 tail = list(itertools.islice(
                     itertools.dropwhile(lambda x: x[0] <= since, _buf), limit))
-            meta = (_buf_chars, _dropped, _seq, len(_buf))
+            except RuntimeError:
+                pass
     total_chars, dropped, last, n = meta
     if more and tail:
         # 截断时 last_seq 只推进到本次实际返回的最后一条，前端据此续拉
         last = tail[-1][0]
-    # dict 转换放到锁外（原来在锁内，持有全局锁做 2000 次 dict() 是最糟的）
-    items = [{"seq": x[0], "ts": x[1], "level": x[2],
-              "src": x[3], "tag": x[4], "text": x[5]}
-             for x in tail]
+    # dict 转换放到锁外（原来在锁内，持有全局锁做 2000 次 dict() 是最糟的）。
+    # 大批量（全量导出/首屏大页）分批让出 GIL：实测 15 万条连续转换会让
+    # 并发写线程单次阻塞 31ms；每 5000 条 sleep(0) 一次可把写线程延迟压到
+    # 毫秒级（sleep(0) 只让出 CPU 时间片，不引入定时器开销）。
+    items = []
+    append = items.append
+    for i, x in enumerate(tail):
+        append({"seq": x[0], "ts": x[1], "level": x[2],
+                "src": x[3], "tag": x[4], "text": x[5]})
+        if i and i % 5000 == 0:
+            time.sleep(0)
     return {"lines": items, "last_seq": last,
             "truncated": more,
+            "head_truncated": head,
+            "lost": lost,
             "capacity_chars": _MAX_CHARS,
             "used_chars": total_chars,
             "entries": n,
             "dropped": dropped,
             "installed": _installed}
+
+
+def iter_entries(since=0):
+    """流式遍历缓冲条目（供导出用），避免一次性建几十万个 dict。
+
+    a601 对抗审计：`snapshot(limit=0)` 会把全部条目转成 dict 再返回，10MB
+    短行缓冲（最多 20 万条 × 272B）仅这一步就多占 ~55MB，条目更多时可达
+    2.7GB。导出只需要顺序读，用生成器逐条产出即可。
+    注意：锁只在取引用时持有，迭代期间缓冲可能被追加（deque 迭代是安全
+    的，append 不会让已有迭代器失效）。
+    """
+    with _lock:
+        start = 0
+        if since > 0:
+            for i, x in enumerate(_buf):
+                if x[0] > since:
+                    start = i
+                    break
+            else:
+                start = len(_buf)
+    try:
+        for i, x in enumerate(_buf):
+            if i < start:
+                continue
+            yield (x[0], x[1], x[2], x[3], x[4], x[5])
+    except RuntimeError:
+        return
 
 
 def clear():

@@ -1143,6 +1143,32 @@ def _setup_job_object():
         pass   # 非 Windows / 权限不足——不阻断启动，走 _kill_child_processes 兜底
 
 
+def _save_file_dialog(default_name):
+    """弹原生保存对话框，返回目标绝对路径（取消/失败返回空串）。
+
+    供 /api/backend_log/save 使用（WebView2 里 `<a download>` 被 init.js 的
+    全局链接拦截器 preventDefault，且 pywebview 默认 ALLOW_DOWNLOADS=False，
+    浏览器下载路径完全走不通）。pywebview 6.x 的 create_file_dialog 可以在
+    非 GUI 线程调用（内部 marshal 回 WinForms 线程），失败时抛异常——路由
+    拿到空串后退回桌面目录落盘，不会卡死。
+    """
+    try:
+        import webview
+        wins = getattr(webview, "windows", None) or []
+        if not wins:
+            return ""
+        result = wins[0].create_file_dialog(
+            webview.SAVE_DIALOG, save_filename=default_name,
+            file_types=("Text Files (*.txt)", "All Files (*.*)"))
+        if isinstance(result, (list, tuple)):
+            return result[0] if result else ""
+        if isinstance(result, str):
+            return result
+    except Exception:
+        return ""
+    return ""
+
+
 def _kill_child_processes():
     """显式杀全部子进程（_do_real_cleanup 调——Job Object 是内核兜底，
     这里是退出链的即时清，防 Job Object 设置失败/子进程逃逸）"""

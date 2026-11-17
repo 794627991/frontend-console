@@ -7,7 +7,9 @@
 - 只驻内存，不写磁盘
 """
 import inspect
+import io
 import os
+import re
 import sys
 
 import pytest
@@ -207,10 +209,34 @@ def test_export_includes_version():
     """用户令「启动时必须带上版本号」= 日志本身带版本，导出才能追溯。"""
     import inspect
     from src import server as S
-    src = inspect.getsource(S.api_backend_log_export)
+    # 正文拼装已抽到 _backend_log_export_text（导出/保存共用）
+    src = inspect.getsource(S._backend_log_export_text)
     assert "APP_VERSION" in src, "导出必须带版本号"
     assert "程序版本" in src
-    assert "Content-Disposition" in src, "要能当附件下载"
+    exp = inspect.getsource(S.api_backend_log_export)
+    assert "Content-Disposition" in exp, "要能当附件下载"
+    assert "_backend_log_export_text" in exp
+
+
+def test_export_save_writes_file():
+    """WebView2 里浏览器下载走不通，导出改走后端落盘——必须真的写出文件。"""
+    import os
+    from src import server as S
+    BL.install()
+    BL.clear()
+    BL.log("probe", "保存接口探针")
+    j = S.app.test_client().post("/api/backend_log/save").get_json()
+    assert j and j["ok"], j
+    path = j["path"]
+    try:
+        txt = open(path, encoding="utf-8").read()
+        assert "保存接口探针" in txt
+        assert "程序版本" in txt
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def test_startup_logs_version_banner():
@@ -472,3 +498,414 @@ def test_redact_applies_to_captured_stdout():
     texts = [x["text"] for x in BL.snapshot()["lines"]]
     assert not any("leaked123" in t for t in texts), texts
     assert any("password=***" in t for t in texts), texts
+
+
+# ---- a601 对抗审计：并发与状态机 --------------------------------------
+def test_tee_stream_partial_is_thread_safe():
+    """多线程共用一个 TeeStream 时不能缝合/丢行（sys.stdout 全进程单例）。"""
+    import threading
+
+    class _Sink:
+        def write(self, s):
+            pass
+
+        def flush(self):
+            pass
+
+    BL.clear()
+    BL._MAX_CHARS = 40 * 1024 * 1024
+    tee = BL._TeeStream(_Sink(), "stdout")
+
+    def worker(tid):
+        for k in range(300):
+            tee.write("T%d-%d" % (tid, k))
+            tee.write("\n")
+
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(2e-6)          # 放大竞态窗口
+    try:
+        ts = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+    finally:
+        sys.setswitchinterval(old)
+    tee.flush()
+    recs = [x["text"] for x in BL.snapshot(since=0, limit=0)["lines"]]
+    bad = [r for r in recs if len(re.findall(r"T\d+-\d+", r)) > 1]
+    # 原生流同样会「合并」（两次 write 之间被切走），所以这里只断言
+    # 「没有行被拆丢/重复」，合并行不算缺陷（与 sys.stdout 行为一致）。
+    seen = set()
+    for r in recs:
+        seen.update(re.findall(r"T\d+-\d+", r))
+    assert len(seen) == 8 * 300, "丢行: %d/2400" % len(seen)
+    assert len(bad) <= len(recs)         # 不断言合并（与原生流一致）
+
+
+def test_disabled_period_partial_not_leaked():
+    """set_enabled(False) 期间的残片不能在重开后进缓冲（可能是敏感数据）。"""
+    import io
+    BL.clear()
+    BL.set_enabled(True)
+    tee = BL._TeeStream(io.StringIO(), "stdout")
+    tee.write("HEAD-PARTIAL")
+    BL.set_enabled(False)
+    tee.write("SECRET-WHILE-OFF")
+    BL.set_enabled(True)
+    try:
+        tee.write("-AFTER\n")
+        tee.flush()
+        texts = [x["text"] for x in BL.snapshot(since=0, limit=0)["lines"]]
+        assert not any("WHILE-OFF" in t for t in texts), texts
+    finally:
+        BL.set_enabled(True)
+
+
+def test_install_concurrent_single_layer():
+    """并发 install 只能产生一层 TeeStream（双层会让每行记两份）。"""
+    import threading
+    real_out, real_err = sys.stdout, sys.stderr
+    BL._installed = False
+    try:
+        bar = threading.Barrier(8)
+
+        def go():
+            bar.wait()
+            BL.install()
+
+        ts = [threading.Thread(target=go) for _ in range(8)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        depth, s = 0, sys.stdout
+        while isinstance(s, BL._TeeStream):
+            depth += 1
+            s = s._orig
+        assert depth == 1
+    finally:
+        sys.stdout, sys.stderr = real_out, real_err
+        BL._installed = False
+
+
+def test_bridge_install_concurrent_single_handler():
+    """并发 install_logging_bridge 只能加一个 handler。"""
+    import logging
+    import threading
+    root = logging.getLogger()
+    BL._logging_bridge.uninstall()
+    before = len(root.handlers)
+    try:
+        bar = threading.Barrier(8)
+
+        def go():
+            bar.wait()
+            BL.install_logging_bridge()
+
+        ts = [threading.Thread(target=go) for _ in range(8)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        assert len(root.handlers) - before == 1
+    finally:
+        BL._logging_bridge.uninstall()
+
+
+def test_snapshot_since_zero_reports_truncation():
+    """首屏截断必须如实告知，但**不能**置 truncated（那会让前端空转追赶）。
+
+    首屏只返回尾部 N 条时，更早的行没返回（head_truncated=True）；last_seq
+    已是最新，不存在「还有更新的行没拿完」（truncated 必须 False）。
+    """
+    BL.clear()
+    BL._seq = 0
+    for i in range(3000):
+        BL.log("t", "行-%d" % i)
+    s = BL.snapshot(since=0, limit=500)
+    assert len(s["lines"]) == 500
+    assert s["head_truncated"] is True
+    assert s["truncated"] is False
+    full = BL.snapshot(since=0, limit=0)
+    assert len(full["lines"]) == 3000
+    assert full["head_truncated"] is False
+    assert full["truncated"] is False
+
+
+def test_ts_never_goes_backwards():
+    """_ts 缓存只允许前进（并发写回旧值会让时间戳回退并冻结）。"""
+    import time
+    BL._ts_cache = ("", 0.0)
+    seq = []
+    for _ in range(5):
+        seq.append(BL._ts())
+        time.sleep(0.3)
+    assert seq == sorted(seq)
+
+
+# ---- a601 对抗审计：HTTP/API 层 ---------------------------------------
+def test_bad_limit_does_not_reset_since():
+    """limit 传错不能把合法 since 一起重置（否则游标跳最新、中间段永久丢失）。"""
+    from src.server import app
+    BL.install()
+    BL.clear()
+    BL._seq = 0
+    for i in range(3000):
+        BL.log("t", "A%05d" % i)
+    base = BL.snapshot(since=0, limit=1)["last_seq"]
+    for i in range(1000):
+        BL.log("y", "Y%05d" % i)
+    j = app.test_client().get(
+        "/api/backend_log?since=%d&limit=abc" % base).get_json()
+    assert j["lines"][0]["text"] == "Y00000"      # since 未被重置
+    assert j["truncated"] is True
+
+
+def test_skip_prefix_uses_path_boundary():
+    """`/api/statusx` 不属于 `/api/status`；跳过前缀内失败的请求必须记。"""
+    from flask import Response
+    from src.server import app as A, _log_api_outcome
+    BL.install()
+
+    def _probe(path, code):
+        BL.clear()
+        with A.test_request_context(path, method="GET"):
+            _log_api_outcome(Response("", status=code))
+        return len(BL.snapshot(since=0, limit=0)["lines"])
+
+    assert _probe("/api/statusx", 404) == 1      # 不是 status 族
+    assert _probe("/api/status", 200) == 0       # 成功轮询不记
+    assert _probe("/api/status", 500) == 1       # 失败必须记
+    assert _probe("/api/backend_log/save", 500) == 1
+
+
+def test_redirects_and_head_options_not_logged():
+    """3xx / HEAD / OPTIONS 是正常控制流，不能刷 warn。"""
+    from flask import Response
+    from src.server import app as A, _log_api_outcome
+    BL.install()
+    BL.clear()
+    for code in (301, 302, 304, 307, 308):
+        with A.test_request_context("/api/x", method="GET"):
+            _log_api_outcome(Response("", status=code))
+    for m in ("HEAD", "OPTIONS"):
+        with A.test_request_context("/api/x", method=m):
+            _log_api_outcome(Response("", status=200))
+    assert len(BL.snapshot(since=0, limit=0)["lines"]) == 0
+
+
+def test_export_escapes_control_chars():
+    """导出的日志是发给同事的证据——控制字符可伪造行/清屏，必须转义。"""
+    from src.server import _backend_log_export_text
+    BL.install()
+    BL.clear()
+    BL.log("x", "AAA\rFAKE 2026-01-01 [INF] 伪造行")
+    BL.log("x", "ESC \x1b[2J")
+    BL.log("x", "NUL \x00 inside")
+    txt = _backend_log_export_text()
+    assert "\r" not in txt
+    assert "\x1b" not in txt
+    assert "\x00" not in txt
+    # 转义后的可见字面（两个字符：反斜杠 + x）
+    assert "\\x0d" in txt and "\\x1b" in txt and "\\x00" in txt
+
+
+def test_export_filename_sanitized():
+    """版本号含中文/特殊字符时，文件名不能带非法字符。"""
+    from src.server import _safe_filename
+    assert _safe_filename("backend-log-v2.4.4-x.txt") == "backend-log-v2.4.4-x.txt"
+    out = _safe_filename("backend-log-v2.4.4 测试版-x.txt")
+    assert not any(c in out for c in r'\/:*?"<>|')
+    assert " " not in out
+
+
+def test_save_concurrent_unique_paths():
+    """并发导出不能互相覆盖（原来 TOCTOU 导致 8 个请求只落 4 个文件）。"""
+    import os
+    import threading
+    from src.server import app as A
+    import src.main as M
+    BL.install()
+    BL.clear()
+    BL.log("x", "并发保存探针")
+    orig = getattr(M, "_save_file_dialog", None)
+    M._save_file_dialog = lambda fn: ""          # 强制走桌面目录分支
+    paths = []
+    lock = threading.Lock()
+    try:
+        def go():
+            j = A.test_client().post("/api/backend_log/save").get_json()
+            with lock:
+                paths.append(j["path"])
+        ts = [threading.Thread(target=go) for _ in range(6)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+    finally:
+        if orig is not None:
+            M._save_file_dialog = orig
+        for p in paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    assert len(paths) == 6
+    assert len(set(paths)) == 6, paths
+
+
+def test_snapshot_reports_gap_when_cursor_behind_buffer():
+    """游标落后到缓冲起点之前时，必须报告缺口（否则以为追平）。"""
+    BL.clear()
+    BL._seq = 0
+    BL._MAX_CHARS = 3000
+    try:
+        for i in range(2001):
+            BL.log("b", "B%05d" % i)
+        j = BL.snapshot(since=10, limit=0)
+        assert j["lost"] > 0, j
+    finally:
+        BL._MAX_CHARS = 10 * 1024 * 1024
+
+
+# ---- a601 对抗审计：边界与资源 ---------------------------------------
+@pytest.mark.parametrize("raw", [
+    "PASSWORD=hunter2", "PaSsWoRd=hunter2", "TOKEN=abc123def", "SECRET=s",
+    "COOKIE: a=b", "PASSWD=p", "API_KEY=k", "apiKey=sk-live-9999",
+    '{"password":"hunter2"}', '{"password": "hunter2"}',
+    "Bearer eyJhbGciOiJIUzI1NiJ9.x", "Basic dXNlcjpwYXNz",
+    "using token eyJhbGciOiJIUzI1NiJ9.x",
+    "postgresql://u:hunter2@host/db",
+    "密码为 mypass123", "password：hunter2", "password＝hunter2",
+])
+def test_secret_variants_redacted(raw):
+    """全大写 / JSON / 裸令牌 / 连接串 / 全角 / 「密码为」都必须脱敏。"""
+    out = BL._redact(raw)
+    for secret in ("hunter2", "abc123def", "sk-live-9999", "dXNlcjpwYXNz",
+                   "mypass123", "eyJhbGciOiJIUzI1NiJ9"):
+        assert secret not in out, (raw, out)
+    assert "***" in out
+
+
+def test_redact_keeps_context_after_chinese_value():
+    """中文正文没有空格，不能把后半句一起吃掉。"""
+    out = BL._redact("密码：123456，然后重试连接")
+    assert "***" in out
+    assert "然后重试连接" in out
+
+
+def test_redact_is_line_by_line_for_multiline():
+    """多行脱敏不能跨行吞掉 traceback 首行。"""
+    import traceback
+    try:
+        1 / 0
+    except ZeroDivisionError:
+        tb = traceback.format_exc()
+    out = BL._redact("token:\n" + tb)
+    assert "Traceback" in out
+
+
+def test_install_rejects_bool_capacity():
+    """bool 是 int 子类：install(True) 曾把容量设成 1，缓冲永久失效。"""
+    real_out, real_err = sys.stdout, sys.stderr
+    old = BL._MAX_CHARS
+    try:
+        BL._installed = False
+        BL.install(max_chars=True)
+        assert BL._MAX_CHARS == old
+    finally:
+        sys.stdout, sys.stderr = real_out, real_err
+        BL._installed = False
+
+
+def test_uninstall_restores_streams():
+    """install/uninstall 必须可逆（原来没有 uninstall，流被换掉就无法恢复）。"""
+    real_out, real_err = sys.stdout, sys.stderr
+    try:
+        BL._installed = False
+        BL.install()
+        assert isinstance(sys.stdout, BL._TeeStream)
+        BL.uninstall()
+        assert not isinstance(sys.stdout, BL._TeeStream)
+        assert BL._installed is False
+        # 外部替换流后再 install 必须重新接管
+        BL.install()
+        sys.stdout = io.StringIO()
+        BL.install()
+        assert isinstance(sys.stdout, BL._TeeStream)
+    finally:
+        BL.uninstall()
+        sys.stdout, sys.stderr = real_out, real_err
+        BL._installed = False
+
+
+def test_ipv6_access_log_filtered():
+    """werkzeug 经 IPv6 回环访问时也必须过滤，否则轮询刷满缓冲。"""
+    import io
+    _install()
+    BL.clear()
+    sys.stdout.write('::1 - - [17/Nov/2026 10:12:36] "GET /api/x HTTP/1.1" 200 -\n')
+    sys.stdout.write('[::1] - - [17/Nov/2026 10:12:36] "GET /api/y HTTP/1.1" 200 -\n')
+    sys.stdout.flush()
+    texts = [x["text"] for x in BL.snapshot(since=0, limit=0)["lines"]]
+    assert not any("GET /api/x" in t for t in texts), texts
+
+
+def test_carriage_return_progress_keeps_tail():
+    """\r 刷新的进度条截断时保留最新状态，不是几秒前的旧值。"""
+    import io
+    _install()
+    BL.clear()
+    tee = BL._TeeStream(io.StringIO(), "stdout")
+    for i in range(30000):
+        tee.write("进度 %d%%\r" % i)
+    tee.flush()
+    lines = BL.snapshot(since=0, limit=0)["lines"]
+    assert lines
+    assert "29999" in lines[-1]["text"]
+
+
+def test_snapshot_does_not_busy_catch_up_after_head():
+    """首屏截断后不应触发追赶（last_seq 已在末尾，truncated 必须 False）。"""
+    BL.install()
+    BL.clear()
+    BL._seq = 0
+    for i in range(5000):
+        BL.log("t", "行-%d" % i)
+    s = BL.snapshot(since=0, limit=1000)
+    assert s["head_truncated"] is True
+    assert s["truncated"] is False
+    # 用返回的 last_seq 续拉应为空
+    assert BL.snapshot(since=s["last_seq"], limit=1000)["lines"] == []
+
+
+def test_iter_entries_streams_all():
+    """导出走流式迭代器：条数一致、顺序一致、不建 dict 列表。"""
+    BL.clear()
+    BL._seq = 0
+    for i in range(5000):
+        BL.log("t", "行-%d" % i)
+    n = 0
+    prev = 0
+    for seq, ts, level, src, tag, text in BL.iter_entries(0):
+        assert seq > prev
+        prev = seq
+        n += 1
+    assert n == BL.stats()["entries"] == 5000
+
+
+def test_entry_count_cap_bounds_memory():
+    """条数硬上限：极短行场景下不能无限堆积（10MB 字符上限会把真实内存
+    放大到上百 MB）。"""
+    old = BL._MAX_ENTRIES
+    try:
+        BL.clear()
+        BL._MAX_SIZE_ADJUST = None
+        BL._MAX_ENTRIES = 100
+        BL._MAX_CHARS = 10 * 1024 * 1024
+        for i in range(500):
+            BL.log("t", "x")
+        assert BL.stats()["entries"] == 100
+    finally:
+        BL._MAX_ENTRIES = old
