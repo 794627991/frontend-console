@@ -62,12 +62,35 @@ async function connectPort(port, baud, quiet) {
 }
 
 async function connectSSH(host, port, username, password, key_path, quiet) {
-  // a606：嵌入式设备的 dropbear 可能 15~20 秒才发 SSH banner（实测
-  // 10.20.115.193 要 20.2s），所以总超时放宽。任务型通知转圈常驻并说明
-  // 预期耗时，避免用户以为卡死。
-  const nid = quiet ? null : notifyTask({type:'ssh', title:`正在连接 ${username}@${host}:${port}`, detail:'SSH · 慢设备可能需要 20 秒（等待 banner）'});
+  // a606：嵌入式设备的 dropbear 可能要 15~20 秒才发 SSH banner（实测
+  // 10.20.115.193 要 20.2s）。上限放到 120s，并把等待过程做成倒计时 +
+  // 「取消」按钮——用户随时可以中止，不用盯着不确定的转圈。
+  const CONNECT_TIMEOUT = 120;
+  const ctl = new AbortController();
+  // 取消：放弃等待 + 通知后端（后端建连线程仍在跑，成功后会自查标记并
+  // 立即关闭，否则设备上会残留一条没人用的会话占 Max connections 名额）
+  const onAbort = () => {
+    ctl.abort();
+    fetch('/api/connect/cancel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port_id: `ssh:${host}:${port}` }),
+    }).catch(() => {});
+  };
+  const nid = quiet ? null : notifyTask({
+    type: 'ssh',
+    title: `正在连接 ${username}@${host}:${port}`,
+    detail: 'SSH 握手',
+    countdown: CONNECT_TIMEOUT,
+    onCancel: onAbort,
+  });
+  const to = setTimeout(onAbort, CONNECT_TIMEOUT * 1000);
   try {
-    const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'ssh', host, port, username, password, key_path})});
+    const r = await fetch('/api/connect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'ssh', host, port, username, password, key_path }),
+      signal: ctl.signal,
+    });
+    clearTimeout(to);
     const j = await r.json();
     if (j.ok) {
       const port_id = j.port_id;
@@ -87,7 +110,14 @@ async function connectSSH(host, port, username, password, key_path, quiet) {
       if (nid) notifyTaskDone(nid, {ok:false, title:`SSH 连接失败 ${host}:${port}`, detail:j.err || '未知错误', ms:8000});
     }
     return j;
-  } catch(e) { if (nid) notifyTaskDone(nid, {ok:false, title:`SSH 连接请求失败 ${host}:${port}`, detail:String(e), ms:8000}); return {ok: false, err: 'SSH 连接请求失败：' + e}; }
+  } catch(e) {
+    clearTimeout(to);
+    // 用户点「取消」或倒计时到点：abort 抛 AbortError，不是连接失败。
+    // 通知已由 notifyTask 的取消/超时路径收口，这里不重复弹。
+    if (e && e.name === 'AbortError') return { ok: false, err: '已取消' };
+    if (nid) notifyTaskDone(nid, {ok:false, title:`SSH 连接请求失败 ${host}:${port}`, detail:String(e), ms:8000});
+    return {ok: false, err: 'SSH 连接请求失败：' + e};
+  }
 }
 
 async function connectTelnet(host, port, quiet) {

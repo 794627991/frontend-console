@@ -89,12 +89,12 @@ class SSHConnection(BaseConnection):
         # "No existing session"。MobaXterm 默认不设 banner 超时（或远大于
         # 10s）所以能连。
         #
-        # 改成两段式，避免"主机根本不通"时也干等 60 秒：
-        #   ① 先单独做 TCP 探测（10s）：连不上立即抛，症状与原来一致
-        #   ② 通过后 banner/auth 给足 60s（设备慢启动/高负载时的常态）
+        # 改成两段式，避免"主机根本不通"时也干等：先单独做 TCP 探测（10s），
+        # 连不上立即抛（症状与原来一致）；通过后 banner/auth 给足 120s——
+        # 与前端倒计时上限一致（超时由前端 abort，后端不再抢跑）。
         _tcp_probe(self.host, self.ssh_port, 10)
         kwargs = dict(hostname=self.host, port=self.ssh_port, username=self.username,
-                       timeout=60, banner_timeout=60, auth_timeout=60,
+                       timeout=120, banner_timeout=120, auth_timeout=120,
                        allow_agent=False, look_for_keys=False)
         if self.key_path:
             kwargs["key_filename"] = self.key_path

@@ -47,7 +47,7 @@ def test_tcp_probe_ok_and_closes(monkeypatch):
 
 
 def test_ssh_connect_allows_slow_banner(monkeypatch):
-    """banner_timeout/timeout/auth_timeout 必须 >= 60s。
+    """banner_timeout/timeout/auth_timeout 必须 >= 120s。
 
     嵌入式 dropbear 实测要 15~20 秒才发 banner（10.20.115.193 实测 20.2s），
     原来 10s 正好把这类设备挡在外面，报 "No existing session"。
@@ -83,6 +83,56 @@ def test_ssh_connect_allows_slow_banner(monkeypatch):
     c._client = c._channel = c._io_handle = c._keepalive = None
     with pytest.raises(RuntimeError):
         c._io_open()
-    assert got.get("banner_timeout", 0) >= 60
-    assert got.get("timeout", 0) >= 60
-    assert got.get("auth_timeout", 0) >= 60
+    assert got.get("banner_timeout", 0) >= 120
+    assert got.get("timeout", 0) >= 120
+    assert got.get("auth_timeout", 0) >= 120
+
+
+# ---- a606：连接过程倒计时 + 取消 -------------------------------------
+def test_connect_cancel_marks_and_clears():
+    """取消接口必须留下标记（后端建连线程靠它自查）。"""
+    from src import server as S
+    pid = "ssh:1.1.1.1:22"
+    try:
+        j = S.app.test_client().post(
+            "/api/connect/cancel", json={"port_id": pid}).get_json()
+        assert j["ok"] is True
+        assert S._was_cancelled(pid) is True
+    finally:
+        S._clear_cancelled(pid)
+    assert S._was_cancelled(pid) is False
+
+
+def test_connect_cancel_requires_port_id():
+    from src import server as S
+    r = S.app.test_client().post("/api/connect/cancel", json={})
+    assert r.status_code == 400
+
+
+def test_cancelled_connect_closes_session(monkeypatch):
+    """取消后连接才成功 —— 必须立刻关掉，不能给设备留残会话。"""
+    from src import server as S
+    created = []
+
+    class FakeConn:
+        def __init__(self, *a, **k):
+            self.closed = False
+            created.append(self)
+
+        def close(self):
+            self.closed = True
+
+    pid = "ssh:9.9.9.9:22"
+    monkeypatch.setattr(S, "SSHConnection", FakeConn)
+    monkeypatch.setattr(S, "_get_paramiko", lambda: object())
+    monkeypatch.setattr(S, "_ssh_disc_patch", lambda: None)
+    S._mark_cancelled(pid)
+    try:
+        r = S.app.test_client().post("/api/connect", json={
+            "kind": "ssh", "host": "9.9.9.9", "port": 22,
+            "username": "u", "password": "p"})
+        assert r.status_code == 499
+        assert created and created[0].closed is True
+        assert S._was_cancelled(pid) is False     # 标记已消费
+    finally:
+        S._clear_cancelled(pid)

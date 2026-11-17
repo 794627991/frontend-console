@@ -867,6 +867,7 @@ function _notifyMount(d, ms) {
 }
 function _notifyDismiss(d) {
   if (d._timer) { clearTimeout(d._timer); d._timer = null; }
+  if (d._stopCountdown) { try { d._stopCountdown(); } catch (_) {} d._stopCountdown = null; }
   if (d._closed) return;
   d._closed = true;
   d.classList.add('out');
@@ -874,18 +875,64 @@ function _notifyDismiss(d) {
 }
 
 // 任务型：发起（进行中，转圈）→ 返回 nid
-function notifyTask({type, icon, title, detail}) {
+// opts.countdown（秒）：显示倒计时「12.3s / 120s」，到点自动判超时；
+// opts.onCancel：用户点「取消」时回调（调用方负责 abort 请求）。
+function notifyTask({type, icon, title, detail, countdown, onCancel}) {
   const d = _notifyBuild({icon, type, title, detail});
   d.querySelector('.n-state').innerHTML = '<span class="n-spin"></span>';
   d.querySelector('.n-close').onclick = () => _notifyDismiss(d);
   d.onclick = (e) => { if (!e.target.closest('.n-close')) _notifyDismiss(d); };   // a233 P2: 点体即关（a226 漏任务型）
   _notifyMount(d, 0);   // 常驻直到 done
+  if (countdown > 0) {
+    // 倒计时：让用户知道还要等多久，而不是无限转圈。带「取消」按钮。
+    let det = d.querySelector('.n-detail');
+    if (!det) {                       // detail 为空时 _notifyBuild 不渲染该节点
+      det = document.createElement('div');
+      det.className = 'n-detail';
+      d.querySelector('.n-body').appendChild(det);
+    }
+    const cd = document.createElement('span');
+    cd.className = 'n-countdown';
+    det.appendChild(cd);
+    const btn = document.createElement('button');
+    btn.className = 'n-cancel';
+    btn.textContent = '取消';
+    det.appendChild(btn);
+    d._cancelled = false;
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      d._cancelled = true;
+      stopCd();
+      if (typeof onCancel === 'function') { try { onCancel(); } catch (_) {} }
+      notifyTaskDone(d, {ok: false, title: '已取消：' + (title || ''), detail: '用户取消', ms: 2500});
+    };
+    const t0 = Date.now();
+    const total = countdown;
+    const paint = () => {
+      const left = Math.max(0, total - (Date.now() - t0) / 1000);
+      cd.textContent = ' · ' + Math.ceil(left) + 's / ' + total + 's';
+      if (left <= 0) {
+        stopCd();
+        if (!d._cancelled) {
+          if (typeof onCancel === 'function') { try { onCancel(); } catch (_) {} }
+          notifyTaskDone(d, {ok: false, title: '连接超时：' + (title || ''),
+                             detail: '超过 ' + total + ' 秒未完成，已中止', ms: 6000});
+        }
+      }
+    };
+    let iv = null;
+    const stopCd = () => { if (iv) { clearInterval(iv); iv = null; } };
+    d._stopCountdown = stopCd;
+    paint();
+    iv = setInterval(paint, 200);
+  }
   return d;
 }
 // 任务型：结束（ok=true ✓ 绿 / false ✗ 红），改状态后自动消失
 function notifyTaskDone(nid, {ok, title, detail, ms=5000}) {
   const d = nid;
   if (!d || d._closed) return;
+  if (d._stopCountdown) { try { d._stopCountdown(); } catch (_) {} d._stopCountdown = null; }
   if (title) d.querySelector('.n-title').textContent = title;
   if (detail !== undefined) {
     const det = d.querySelector('.n-detail');

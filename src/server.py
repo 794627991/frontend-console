@@ -276,6 +276,26 @@ def close_all_ports():
 # 表现为「点其他快捷打开整个 UI 卡死」（铁律①流畅性事故）。
 _connecting_locks = {}          # port_id -> Lock（连接期间占位）
 _connecting_locks_guard = threading.Lock()
+# a606：连接中取消。前端倒计时里的「取消」会 POST 到 /api/connect/cancel，
+# 这里记下 port_id；正在进行的连接在建立成功后立刻自查，命中就关掉不留残会话。
+# 同步 Flask 视图感知不到客户端 abort（连接还在跑），所以必须显式取消。
+_cancelled_connects = set()
+_cancel_guard = threading.Lock()
+
+
+def _mark_cancelled(port_id):
+    with _cancel_guard:
+        _cancelled_connects.add(port_id)
+
+
+def _was_cancelled(port_id):
+    with _cancel_guard:
+        return port_id in _cancelled_connects
+
+
+def _clear_cancelled(port_id):
+    with _cancel_guard:
+        _cancelled_connects.discard(port_id)
 
 def _acquire_connecting(port_id):
     """登记连接占位。返回 False 表示同目标已在连接中（或已连接表已有）。"""
@@ -1131,6 +1151,14 @@ def api_connect():
                     pass
                 return jsonify({"ok": False, "err": msg}), 500
             # a267：close 移出 _ports_lock（同串口分支）
+            # a606：连接期间用户可能已点「取消」（前端 abort 只是放弃等待，
+            # 后端这条建连仍在跑）。成功后发现取消标记 → 立刻关掉，别让设备
+            # 上留一条没人用的会话占着 Max connections 名额。
+            if _was_cancelled(port_id):
+                _clear_cancelled(port_id)
+                try: p.close()
+                except Exception: pass
+                return jsonify({"ok": False, "err": "已取消"}), 499
             _dup = None
             with _ports_lock:
                 if port_id in _ports:   # 极端并发：两次同目标连接都成功了，后到者关掉
@@ -1343,6 +1371,42 @@ def api_connect():
         except Exception:
             pass
         return jsonify({"ok": True, "port_id": port_id, "kind": "serial", "msg": f"已连接 {port}@{baud}"})
+
+@app.route("/api/connect/cancel", methods=["POST"])
+def api_connect_cancel():
+    """取消正在进行的连接（a606：SSH 倒计时里的「取消」按钮）。
+
+    前端 abort 只放弃等待，后端建连仍在跑（同步 Flask 视图感知不到断开）。
+    这里打上取消标记，连接成功后会自查并立即关闭——否则设备上会残留一条
+    没人用的会话，占着 dropbear 的 Max connections 名额。
+
+    按 base port_id 匹配：真实 port_id 可能带 "#2"/"#3" 双开后缀，
+    前端只知道 base 形态。
+    """
+    data = request.get_json(silent=True) or {}
+    base = (data.get("port_id") or "").strip()
+    if not base:
+        return jsonify({"ok": False, "err": "need port_id"}), 400
+    _mark_cancelled(base)
+    # 也标记带后缀的（连接中但尚未出现在 _ports 里的那些）
+    with _ports_lock:
+        live = [pid for pid in _ports if pid == base or pid.startswith(base + "#")]
+    for pid in live:
+        _mark_cancelled(pid)
+    # 已建立好的连接：直接关
+    closed = []
+    with _ports_lock:
+        for pid in list(_ports):
+            if pid == base or pid.startswith(base + "#"):
+                closed.append(pid)
+    for pid in closed:
+        with _ports_lock:
+            p = _ports.pop(pid, None)
+        if p is not None:
+            try: p.close()
+            except Exception: pass
+    return jsonify({"ok": True, "cancelled": base, "closed": closed})
+
 
 @app.route("/api/disconnect", methods=["POST"])
 def api_disconnect():
