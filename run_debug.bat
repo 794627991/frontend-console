@@ -12,25 +12,50 @@ rem NOTE: keep this file ASCII-only. cmd.exe parses .bat in the OEM codepage
 rem (GBK here), so UTF-8 Chinese comments get split mid-byte and the stray
 rem bytes escape the "rem" prefix and run as commands ("'nsole' is not
 rem recognized...").
-cd /d "%~dp0"
+pushd "%~dp0"
+
 set HARNESS_DEBUG_WEB=1
+set "ERRFILE=%~dp0run_debug_last_error.txt"
+
+rem --- silent-failure guard -------------------------------------------------
+rem pythonw/pyw have no console: if src\main.py dies on startup the user sees
+rem a black frame flash and then nothing (no window, no log). Pre-flight an
+rem import in the SAME interpreter before the async launch; on failure write
+rem a breadcrumb and show a native message box (mshta has no console window).
+set "PYEXE="
 where pythonw >nul 2>nul
-if %errorlevel%==0 (
-  start "" pythonw.exe src\main.py
+if %errorlevel%==0 set "PYEXE=pythonw.exe"
+if not defined PYEXE (
+  where pyw >nul 2>nul
+  if %errorlevel%==0 set "PYEXE=pyw.exe"
+)
+
+if defined PYEXE (
+  "%PYEXE%" -c "import sys; sys.path.insert(0, r'%CD%'); import src.main" >nul 2>nul
+  if errorlevel 1 (
+    call :fail "src main.py failed to start (import error). See run_debug_last_error.txt, or run with a console: python src\main.py"
+    popd
+    exit /b 1
+  )
+  start "" "%PYEXE%" src\main.py %*
+  popd
   exit /b
 )
-where pyw >nul 2>nul
-if %errorlevel%==0 (
-  start "" pyw.exe src\main.py
-  exit /b
-)
-rem Neither found: fall back to python.exe (console window shows, but at least runs)
+
 where python >nul 2>nul
 if %errorlevel%==0 (
   echo [warn] pythonw/pyw not found, falling back to python.exe
-  python src\main.py
+  python src\main.py %*
   pause
+  popd
   exit /b
 )
-echo Python not found
-pause
+call :fail "Python not found on PATH."
+popd
+exit /b 1
+
+:fail
+rem Write a breadcrumb (always works), then try a native message box.
+echo [%date% %time%] %~1> "%ERRFILE%"
+start "" mshta "javascript:alert('start failed - see run_debug_last_error.txt');close();" >nul 2>nul
+exit /b 1

@@ -533,14 +533,14 @@ def test_tee_stream_partial_is_thread_safe():
         sys.setswitchinterval(old)
     tee.flush()
     recs = [x["text"] for x in BL.snapshot(since=0, limit=0)["lines"]]
-    bad = [r for r in recs if len(re.findall(r"T\d+-\d+", r)) > 1]
     # 原生流同样会「合并」（两次 write 之间被切走），所以这里只断言
     # 「没有行被拆丢/重复」，合并行不算缺陷（与 sys.stdout 行为一致）。
+    # 注意不能再写 `assert len(bad) <= len(recs)`——bad 是 recs 的子集，
+    # 那条断言恒真，审计指出是噪音（会让人误以为合并行已被验证）。
     seen = set()
     for r in recs:
         seen.update(re.findall(r"T\d+-\d+", r))
     assert len(seen) == 8 * 300, "丢行: %d/2400" % len(seen)
-    assert len(bad) <= len(recs)         # 不断言合并（与原生流一致）
 
 
 def test_disabled_period_partial_not_leaked():
@@ -634,14 +634,41 @@ def test_snapshot_since_zero_reports_truncation():
 
 
 def test_ts_never_goes_backwards():
-    """_ts 缓存只允许前进（并发写回旧值会让时间戳回退并冻结）。"""
+    """_ts 缓存只允许前进。
+
+    审计指出原版是**零检出能力**的测试：串行 5 次 sleep(0.3) 的
+    `assert seq == sorted(seq)` 对「永久返回同一值」甚至「永久返回空串」
+    都恒真，而 a601 修的恰是**并发**写回旧值导致的回退。改为：
+      ① 多线程并发调用，按时间顺序检查不回退（并发才是缺陷场景）
+      ② 显式断言时间戳确实随时间推进（否则冻结实现也能过）
+    """
+    import threading
     import time
+
     BL._ts_cache = ("", 0.0)
-    seq = []
-    for _ in range(5):
-        seq.append(BL._ts())
-        time.sleep(0.3)
-    assert seq == sorted(seq)
+    out = []
+    lock = threading.Lock()
+
+    def worker():
+        for _ in range(200):
+            v = BL._ts()
+            with lock:
+                out.append((time.time(), v))
+
+    ts = [threading.Thread(target=worker) for _ in range(8)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    out.sort(key=lambda x: x[0])
+    values = [v for _, v in out]
+    assert values == sorted(values), "并发下时间戳出现回退"
+    # 必须真的推进：跨过一个秒边界后值要变
+    first = BL._ts()
+    BL._ts_cache = ("", 0.0)
+    time.sleep(1.05)
+    second = BL._ts()
+    assert second > first, "时间戳被冻结（%r -> %r）" % (first, second)
 
 
 # ---- a601 对抗审计：HTTP/API 层 ---------------------------------------
@@ -901,11 +928,11 @@ def test_entry_count_cap_bounds_memory():
     old = BL._MAX_ENTRIES
     try:
         BL.clear()
-        BL._MAX_SIZE_ADJUST = None
         BL._MAX_ENTRIES = 100
         BL._MAX_CHARS = 10 * 1024 * 1024
         for i in range(500):
             BL.log("t", "x")
         assert BL.stats()["entries"] == 100
+        assert BL.stats()["dropped"] > 0     # 超出部分确实被淘汰
     finally:
         BL._MAX_ENTRIES = old
