@@ -294,3 +294,40 @@ def test_skip_capacity_bypasses_verdict_at_call_site():
     # 无会话/无模型：不判定（新会话还没起来）
     assert fn("m", None, False) is False
     assert fn(None, "sid", False) is False
+
+
+# ------------------------------------------------ 方案徽章按窗口大小判定
+def _badge_risky(scheme_window, cur_window):
+    """与 web/js/harness/sessions.js::_hgSchemeBadge 同判据：
+    只在「会话窗口 > 当前方案窗口」时才算风险（切小窗才有超窗可能）。"""
+    sw = int(scheme_window or 0)
+    cw = int(cur_window or 0)
+    return sw > 0 and cw > 0 and sw > cw
+
+
+def test_same_window_schemes_not_flagged():
+    """用户实锤：lanzi 与 lanzi-qiu 都是 500K，互切不该标红。"""
+    assert _badge_risky(500_000, 500_000) is False
+
+
+def test_larger_session_window_flagged():
+    """会话来自 1M 方案、当前是 500K 方案 → 有超窗风险，标红。"""
+    assert _badge_risky(1_000_000, 500_000) is True
+
+
+def test_smaller_session_window_not_flagged():
+    """会话 500K、当前 1M → 容量只增，不该标红。"""
+    assert _badge_risky(500_000, 1_000_000) is False
+
+
+def test_unknown_window_not_flagged():
+    """窗口未知（方案列表读不到）→ 不标红（不制造噪音）。"""
+    assert _badge_risky(0, 500_000) is False
+    assert _badge_risky(500_000, 0) is False
+
+
+def test_profile_ctx_window_reads_snapshot():
+    """profile_ctx_window 从方案快照读窗口键，未知方案返回 0。"""
+    from src.claude_default import profile_ctx_window
+    assert profile_ctx_window("__no_such_profile__") == 0
+    assert isinstance(profile_ctx_window(""), int)

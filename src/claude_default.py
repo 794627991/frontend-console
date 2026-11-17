@@ -840,6 +840,42 @@ def active_scheme_name():
         return ""
 
 
+def profile_ctx_window(name):
+    """按方案名取该方案快照里的上下文窗口（tokens），取不到返回 0。
+
+    v4.2R：会话卡上的「异方案」标注改为按**窗口大小**判定——两个方案窗口
+    一样大时（如 lanzi / lanzi-qiu 都是 500K）切换不影响任何东西，标红纯属
+    噪音（用户实锤）。窗口取值链与 harness.live_ctx_window 一致：
+    MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW → 模型名 [1M] → 0（未知）。"""
+    name = str(name or "").strip()
+    if not name:
+        return 0
+    try:
+        d = _read_profiles()
+        prof = next((p for p in d.get("profiles") or []
+                     if p.get("name") == name), None)
+        if not prof:
+            return 0
+        snap = prof.get("settings")
+        env = (snap or {}).get("env") if isinstance(snap, dict) else prof.get("env")
+        if not isinstance(env, dict):
+            return 0
+        for k in ("CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+                  "CLAUDE_CODE_AUTO_COMPACT_WINDOW"):
+            v = str(env.get(k) or "").strip()
+            if v.isdigit() and int(v) > 0:
+                return int(v)
+        for k in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                  "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                  "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FLASH_MODEL"):
+            n = str(env.get(k) or "").lower()
+            if "[1m]" in n or n.endswith("1m"):
+                return 1048576
+    except Exception:
+        pass
+    return 0
+
+
 @claude_default_bp.route("/api/claude/profiles")
 def claude_profiles_get():
     """方案列表 + 当前激活名（打码显示 token）。"""

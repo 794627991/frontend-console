@@ -219,6 +219,42 @@
   function _hgMm(m) {
     return !!(_HG.models && (_HG.models.mm || []).includes(m));
   }
+  // v4.2R：会话卡上的窗口徽章。
+  // 不再显示 API 方案名（用户定调：方案名对使用者无意义，还容易误读成
+  // 「这个会话属于某个 API」）。改为显示**上下文窗口容量**——那才是唯一
+  // 对用户有决策价值的量：知道本会话按多大窗口在跑，切方案时能判断要不要
+  // 担心超窗。异方案只在「会话窗口大于当前方案窗口」时用橙色 ⇄ 提醒。
+  function _hgWinLabel(n) {
+    n = Number(n) || 0;
+    if (n <= 0) return '';
+    return n >= 1000000 ? (n / 1000000).toFixed(n % 1000000 ? 1 : 0) + 'M'
+                        : Math.round(n / 1000) + 'K';
+  }
+  function _hgSchemeBadge(s) {
+    if (!s) return '';
+    // v4.2R：优先用后端算好的**实际生效**窗口（活对象内存值 → 上次运行
+    // 方案的快照 → 当前方案），它随切方案/切模型动态更新——标签不再冻结
+    // 在创建时的方案。schemeWindow 只作兜底（后端老版本无 ctxWindow 时）。
+    const sw = Number(s.ctxWindow) || Number(s.schemeWindow) || 0;
+    const cw = Number(_HG.schemeWindow) || 0;
+    const cur = _HG.scheme || '';
+    const same = !cur || !s.scheme || s.scheme === cur;
+    const lbl = _hgWinLabel(sw);
+    // 不知道窗口就不画徽章（不制造无依据的标记）
+    if (!lbl) {
+      return same ? '' :
+        `<span class="hg-item-scheme" title="会话创建于另一个 API 方案（窗口未知）"> 上下文 ?</span>`;
+    }
+    const risky = sw > 0 && cw > 0 && sw > cw;
+    const tip = risky
+      ? `本会话按 ${lbl} 上下文窗口创建，当前方案只有 ${_hgWinLabel(cw)}——`
+        + "已用超过当前窗口时会拒发（届时可 /compact、/rescue 或切回大窗方案）"
+      : (same
+         ? `本会话的上下文窗口 ${lbl}（随当前方案动态更新）`
+         : `本会话按 ${lbl} 上下文窗口创建（不小于当前方案，可直接继续）`);
+    return `<span class="hg-item-scheme${risky ? ' diff' : ''}" title="${esc(tip)}">`
+      + `${risky ? ' ⇄' : ' '}${esc(lbl)}</span>`;
+  }
   // v3.5.296b2（全审 G2）：乱序守卫——10s 轮询/SSE/重命名多触发源并发时，
   // 迟到响应用旧数据覆盖新数据（busy/标题短暂回退）。仿 _qSyncSeq 自增序号，
   // 响应到达时序号已过期即丢弃（_sessSeq 由最近的调用持有真值）
@@ -228,7 +264,8 @@
     try {
       const j = await (await fetch('/api/harness/sessions')).json();
       if (seq !== _sessSeq) return;   // 已有更新请求在途/完成——本次作废
-      if (j.ok) { _HG.sessions = j.sessions || []; _HG.scheme = j.scheme || ''; renderList(); }
+      if (j.ok) { _HG.sessions = j.sessions || []; _HG.scheme = j.scheme || '';
+                  _HG.schemeWindow = j.schemeWindow || 0; renderList(); }
     } catch(_) {}
   }
   function setQuote(_hgQ) {

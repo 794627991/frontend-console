@@ -1230,12 +1230,49 @@ def harness_sessions():
                       "scheme": m.get("scheme") or ""})   # 会话**最近一次运行**的方案名（前端标注用；v4.2 起非拦截依据）
     items.sort(key=lambda x: -x["last_active"])
     _cur_scheme = ""
+    _cur_win = 0
     try:
-        from src.claude_default import active_scheme_name
+        from src.claude_default import active_scheme_name, profile_ctx_window
         _cur_scheme = active_scheme_name()
+        _cur_win = profile_ctx_window(_cur_scheme)
     except Exception:
         pass
-    return jsonify({"ok": True, "sessions": items, "scheme": _cur_scheme})
+    # v4.2R：每个会话带**实际生效**的窗口，而不是「创建时方案快照的窗口」。
+    # 二者的区别对用户是可见的：会话 1M 创建、后来切到 500K 方案并成功发送，
+    # 活进程早已按 500K 跑，标签若还写 1M 就是撒谎（用户实锤「现有会话标签
+    # 也得同步/动态改」）。
+    # 优先级：活对象内存窗口（读当前 settings，随切方案实时变）→ 该会话
+    # 上次运行方案的快照窗口 → 当前方案窗口。
+    try:
+        from src.claude_default import profile_ctx_window as _pw
+        from .session import _session_ctx_window as _sw
+        with _sessions_lock:
+            objs = dict(_sessions)
+        for it in items:
+            _sid = it.get("sid")
+            s = objs.get(_sid)
+            win = 0
+            if s is not None:
+                try:
+                    win = int(_sw(s) or 0)
+                except Exception:
+                    win = 0
+            if not win:
+                # 活对象不在（被 GC 回收过）：用该会话**上次运行方案**的窗口。
+                # 元数据里没有窗口字段（从没落过盘），不能读 it["ctxWindow"]
+                # ——v4.2R 审计：原写法读的正是本循环后几行才生成的键，死代码。
+                win = int(_pw(it.get("scheme")) or 0)
+            if not win:
+                # 连方案快照都读不到：退当前方案窗口（它下次就跑在当前方案下）
+                win = int(_cur_win or 0)
+            it["ctxWindow"] = win
+            it["schemeWindow"] = _pw(it.get("scheme"))
+    except Exception:
+        for it in items:
+            it.setdefault("schemeWindow", 0)
+            it.setdefault("ctxWindow", 0)
+    return jsonify({"ok": True, "sessions": items, "scheme": _cur_scheme,
+                    "schemeWindow": _cur_win})
 
 # ---- from claude_harness.py:3018 (harness_transcript) ----
 

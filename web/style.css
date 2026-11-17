@@ -2516,10 +2516,13 @@
 .hg-item-time { font-size: var(--fs-xs); color: var(--muted); flex-shrink: 0; }
 .hg-item-sub { flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* v3.5.98：会话方案徽章——API 方案名标注；.diff=异方案会话（发送会被拦） */
+/* v3.5.98：会话方案徽章——API 方案名标注
+   v4.2R（用户实锤「两个 500K 方案互切也标红，闹心」）：.diff 只在「会话
+   窗口大于当前方案窗口」时出现（切小窗才有超窗风险），窗口相同/更大
+   一律中性色——旧语义「异方案即标红」已废（v4.2 起方案名不再是拦截依据） */
 .hg-item-scheme { margin-left: 4px; padding: 0 4px; border: 1px solid var(--border);
   border-radius: 6px; font-size: 10px; color: var(--muted); vertical-align: 1px; }
-.hg-item-scheme.diff { color: var(--neon-red, #e06c75); border-color: var(--neon-red, #e06c75); }
+.hg-item-scheme.diff { color: var(--neon-orange, #d29922); border-color: var(--neon-orange, #d29922); }
 .hg-item-acts { display: none; align-items: center; gap: 2px; flex-shrink: 0; }
 .hg-item:hover .hg-item-acts, .hg-item.active .hg-item-acts { display: inline-flex; }
 .hg-item-busy { color: var(--accent); font-size: var(--fs-2xs); }
