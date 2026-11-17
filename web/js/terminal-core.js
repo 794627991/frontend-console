@@ -235,16 +235,21 @@ function buildTerminal(portId, meta) {
   // 安全 fit：FitAddon 的 proposeDimensions 只在 cell 宽高为 0 时跳过；窗口
   // 最小化把容器压到极小但非 0 时会算出 rows=1/cols=1，终端就此停在一行。
   // 这里统一走带守卫的版本：容器尺寸不可信时直接跳过，等 _refitSettled 在
-  // 恢复后再算。
+  // 恢复后再算。`_fitRan` 记录本次是否真的执行了 fit——onResize 用它判断
+  // 尺寸是否可信（审计指出原来用 rows<3 拦 PTY 推送，会把「用户把分栏拖到
+  // 最大 + zoom130 + 字号 24」这类合法窄布局一起挡掉，远端 PTY 停在旧尺寸
+  // 导致长命令回显错位；那是新引入的回归）。
+  conn._fitRan = false;
   conn._safeFit = () => {
     try {
       const el = conn.term && conn.term.element;
       const host = el && el.parentElement;
-      if (!host) return;
+      if (!host) { conn._fitRan = false; return; }
       const w = host.clientWidth, h = host.clientHeight;
-      if (w < 80 || h < 40) return;       // 明显不是有效布局（最小化/隐藏中）
+      if (w < 80 || h < 40) { conn._fitRan = false; return; }   // 最小化/隐藏中
       conn.fit.fit();
-    } catch (e) {}
+      conn._fitRan = true;
+    } catch (e) { conn._fitRan = false; }
   };
   conn._safeFit();
   // 初次 open 时布局可能尚未结算（面板刚插入 DOM），一帧后补一次。
@@ -264,10 +269,14 @@ function buildTerminal(portId, meta) {
     clearTimeout(conn._resizeTimer);
     conn._resizeTimer = setTimeout(() => {
       if (connections[portId] !== conn) return;
-      // 最小化期间容器被压扁 → fit 算出 rows/cols 极小值。把这个垃圾尺寸
-      // 同步给 PTY 会让远端按 1 行宽度回绕，恢复后整屏内容都是错的。
-      // 小于合理下限一律不推（恢复时 _refitSettled 会用真实尺寸再推一次）。
-      if (rows < 3 || cols < 20) return;
+      // 最小化期间容器被压扁 → fit 算出垃圾尺寸，同步给 PTY 会让远端按
+      // 1 行宽度回绕，恢复后整屏内容都是错的。用 `_fitRan` 判断：只有
+      // _safeFit 认为布局有效并真的执行了 fit，这个尺寸才可信。
+      // （原来写死 rows<3：审计实测「分栏拉满 + zoom130 + 字号24」这个
+      // 用户可达组合会算出 rows=2，被误挡 → 远端 PTY 停在旧尺寸、长命令
+      // 回显错位。限值下调到 xterm 硬下限，只拦明确不可能的 1x1。）
+      if (!conn._fitRan) return;
+      if (rows < 1 || cols < 2) return;
       if (conn._lastCols === cols && conn._lastRows === rows) return;
       conn._lastCols = cols; conn._lastRows = rows;
       fetch('/api/resize', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -631,8 +640,15 @@ function _refitActiveTerminal() {
   }
   if (!conn.term || !conn.fit) return;
   requestAnimationFrame(() => requestAnimationFrame(() => {
+    const c0 = conn.term.cols, r0 = conn.term.rows;
     try { conn._safeFit ? conn._safeFit() : conn.fit.fit(); } catch (e) {}
-    try { conn.term.refresh(0, conn.term.rows - 1); } catch (e) {}
+    // 只在尺寸真的变了才强制重绘：FitAddon 对同尺寸短路（不触发 resize），
+    // 此时 refresh 纯属冗余——审计实测单次全屏 refresh 33ms，四枪打在每次
+    // 窗口聚焦上就是约 113ms 的主线程阻塞。尺寸变了才需要立刻刷一遍，
+    // 避免恢复瞬间还留着旧尺寸的帧。
+    if (conn.term.cols !== c0 || conn.term.rows !== r0) {
+      try { conn.term.refresh(0, conn.term.rows - 1); } catch (e) {}
+    }
   }));
 }
 function _refitSettled() {
