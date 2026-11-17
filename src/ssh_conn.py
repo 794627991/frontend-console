@@ -14,7 +14,7 @@ def _tcp_probe(host, port, timeout):
     a606：用来把「主机不可达」和「主机可达但 banner 慢」区分开——前者
     10 秒内快速报错，后者给足 120 秒等 dropbear 吐 banner。
 
-    a608（审计）：报错文案按原因分流。原来一律包成「TCP 连接失败：…」，
+    a610（审计）：报错文案按原因分流。原来一律包成「TCP 连接失败：…」，
     把 api_connect 里原有的「无法解析主机」「端口未开放」分支全截胡了，
     DNS 解析失败的用户看到的是 `[Errno 11001] getaddrinfo failed`。
     """

@@ -65,7 +65,7 @@ def write_tiers(haiku="", sonnet="", opus=""):
 
 import src.harness.roles as hr
 
-# a616（疯狗审计 v4 #2 的类问题）：a615 起 resolve_agent_models 会拿「当前
+# a618（疯狗审计 v4 #2 的类问题）：a615 起 resolve_agent_models 会拿「当前
 # 方案模型表」校验显式槽值。available_models() 读的是**真机**
 # ~/.claude/settings.json——本文件在隔离上一直只盖了 CONFIG_FILE /
 # HARNESS_AGENTS_DIR / HARNESS_TIER_SETTINGS 三个，模型表没盖，于是 dm-x /
@@ -710,7 +710,7 @@ try:
           jr5.get("design_max_lines") == 150, str(jr5))
     gr2 = _c.get("/api/harness/roles").get_json()
     rs2 = gr2.get("resolved") or {}
-    # a616：a615 加了「显式槽值必须在当前方案模型表内」的校验（原先因
+    # a618：a615 加了「显式槽值必须在当前方案模型表内」的校验（原先因
     # NameError 空转，从未生效）。e-dm/e-rm 是本文件的占位值，不在任何
     # 真实模型表里，所以 resolved 现在必须**回退重档**（本段把
     # heavy_model 设成了 e-heavy）。落盘值仍原样保留——回退是运行时行为，

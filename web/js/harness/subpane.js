@@ -3,7 +3,7 @@
   // a605：sid → 上次激活的子代理 tab。切会话会 _subReset 清空 tabs，用户
   // 要求「切回来保持上次打开的那个子代理」，重建时按它认领而非从头轮换。
   let _subActiveBySid = {};
-  // a609：会话删除时回收该 sid 的 tab 记忆（原来只写不删，随会话数单调增长）
+  // a612：会话删除时回收该 sid 的 tab 记忆（原来只写不删，随会话数单调增长）
   function _subActiveBySidForget(sid) {
     if (!sid || !_subActiveBySid) return;
     try { delete _subActiveBySid[sid]; } catch (_) {}
@@ -785,7 +785,7 @@
         const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN);
         if (old != null) {
           const otb = _sub.tabs[old];
-          // a609（审计 D5）：被逐出的正好是当前 active 时清空，否则 active
+          // a612（审计 D5）：被逐出的正好是当前 active 时清空，否则 active
           // 悬空——silent 分支只隐藏新 sc，残留的旧 sc 无人隐藏，窗格在
           // 下一次 restore 前会堆叠多份内容。
           if (_sub.active === old) _sub.active = null;
@@ -828,7 +828,7 @@
       _subShow(tid); _subTabsPaint(); _subActivate(tid);
     } else {
       // a605：后台补建不切 tab（原来每个补建都 _subActivate，界面被推着
-      // 1←2←3←4 轮换）。a609：但也不能只调 _subTabsPaint——那会漏掉
+      // 1←2←3←4 轮换）。a612：但也不能只调 _subTabsPaint——那会漏掉
       // 「隐藏其它 sc / 按档位写宽度 / V4 store 焦点」三件事，审计实测出
       // 窗格内容多份堆叠、可见 tab 的 store 被 pause 等 6 条缺陷。
       // 新 tab 先隐藏，界面状态交给 _subRestoreActive 统一同步（幂等；
@@ -839,7 +839,7 @@
     }
   }
 
-  /** a605/a609：自愈补建完成后统一恢复界面状态。
+  /** a605/a612：自愈补建完成后统一恢复界面状态。
 
       两个职责，缺一不可：
         ① active 无效（null / 指向已逐出的 tab）时重新认领——优先本会话
@@ -858,7 +858,7 @@
                                        && _sub.tabs[t]);
       const target = (want && _sub.tabs[want]) ? want : (real || _sub.order[0] || null);
       if (!target) return;
-      // a609（审计 D3）：a75 契约是「派发即开窗」。但有历史 active（用户
+      // a612（审计 D3）：a75 契约是「派发即开窗」。但有历史 active（用户
       // 上次看的就是它）时无条件恢复——这也覆盖了用户收起窗格后切走再
       // 切回的情况。只有在既没历史 active、又是用户手动收起的状态下，
       // 才尊重用户意图不弹窗。
@@ -973,7 +973,7 @@
       return;
     }
   }
-  /** a609：把「激活一个 tab 时必须同步的界面状态」抽出来。
+  /** a612：把「激活一个 tab 时必须同步的界面状态」抽出来。
 
       a605 的 silent 实现只做了「不调 _subActivate」，漏了它顺带承担的三件
       事，审计实测出 6 条缺陷：

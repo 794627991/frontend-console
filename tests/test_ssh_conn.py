@@ -24,7 +24,7 @@ def test_tcp_probe_reports_timeout_as_connection_error(monkeypatch):
 
 
 def test_tcp_probe_reports_refused(monkeypatch):
-    """端口拒绝要给出「端口未开放」，不是笼统的 TCP 失败（a608 文案分流）。"""
+    """端口拒绝要给出「端口未开放」，不是笼统的 TCP 失败（a610 文案分流）。"""
     def fake_create(addr, timeout=None):
         raise ConnectionRefusedError("refused")
 
@@ -100,7 +100,7 @@ def test_ssh_connect_allows_slow_banner(monkeypatch):
     assert got.get("auth_timeout", 0) >= 120
 
 
-# ---- a608：逐次令牌取消（审计修订）----------------------------------
+# ---- a610：逐次令牌取消（审计修订）----------------------------------
 def test_cancel_uses_conn_token():
     """取消按 conn_token 打标记，不再按 port_id（避免误杀同目标其它实例）。"""
     from src import server as S
@@ -179,7 +179,7 @@ def test_cancel_does_not_kill_other_sessions():
     审计指出原版是**假测试**：它只断言「会话没被关」，而 a607 的取消路由
     只读 port_id，收到 conn_token 直接 400 返回，根本没走到关闭分支——
     所以缺陷代码上这条也绿。现在补上「路由必须正常接受本次请求」的断言：
-    a607 会返回 400，本用例即 FAIL；a608 返回 200 才继续验证不误杀。
+    a607 会返回 400，本用例即 FAIL；a610 返回 200 才继续验证不误杀。
     """
     from src import server as S
 
@@ -209,7 +209,7 @@ def test_cancel_does_not_kill_other_sessions():
 
 
 def test_late_cancel_closes_registered_session():
-    """a616（疯狗审计 v3 重炮三）：迟到取消必须真的关掉会话。
+    """a617（疯狗审计 v3 重炮三）：迟到取消必须真的关掉会话。
 
     a610 的时序：连接线程在 _ports_lock 里检查标记（未命中）→ 注册
     _ports[pid]=p → finally _clear_cancelled(token)。取消恰好落在注册之后、

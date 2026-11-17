@@ -276,7 +276,7 @@ def close_all_ports():
 # 表现为「点其他快捷打开整个 UI 卡死」（铁律①流畅性事故）。
 _connecting_locks = {}          # port_id -> Lock（连接期间占位）
 _connecting_locks_guard = threading.Lock()
-# a608（a607 审计修订）：连接中取消。
+# a610（a607 审计修订）：连接中取消。
 # 原实现按 port_id 打裸标记，审计实测出三个 P0/P1 缺陷：
 #   ① 标记只在成功路径清除，任何「取消 + 连接失败」都会留下永久标记，
 #      下一次同目标连接被 499 误杀（用户明明没取消）；
@@ -288,7 +288,7 @@ _connecting_locks_guard = threading.Lock()
 # 连接结束（无论成败/是否取消）在 finally 里无条件清除本次 token。
 # 这样天然没有「旧标记杀新连接」「误杀其它实例」的可能。
 _cancelled_tokens = set()
-# a616（疯狗审计 v3 重炮三）：token → 已注册的 port_id。
+# a617（疯狗审计 v3 重炮三）：token → 已注册的 port_id。
 # a610 仍有「迟到取消被自己擦掉」的窗口：取消恰好落在
 # 「锁内检查标记（未命中）→ 注册 _ports[pid]=p」之后、finally 的
 # _clear_cancelled 之前时，标记被写入又被连接线程无条件擦除，会话照常
@@ -1105,7 +1105,7 @@ def api_connect():
         host = (data.get("host") or "").strip()
         port = data.get("port") or 22
         username = (data.get("username") or "").strip()
-        # a608：本次连接的取消令牌（前端生成，取消接口按它打标记）。
+        # a610：本次连接的取消令牌（前端生成，取消接口按它打标记）。
         # 老客户端不传 = 空串 = 永不取消，行为与 a606 之前一致。
         _ctok = (data.get("conn_token") or "").strip()
         password = data.get("password")
@@ -1197,7 +1197,7 @@ def api_connect():
                     pass
                 return jsonify({"ok": False, "err": msg}), 500
             # a267：close 移出 _ports_lock（同串口分支）
-            # a608：取消检查与注册放在**同一个 _ports_lock 临界区**里。
+            # a610：取消检查与注册放在**同一个 _ports_lock 临界区**里。
             # a607 的实现把 `_was_cancelled` 放在锁外，与 `_ports[pid]=p`
             # 之间有一个竞态窗口（审计实测复现：取消恰好落在窗口内时，
             # 前端已放弃的会话照样被 put 进 _ports，永久泄漏）。同锁内
@@ -1211,7 +1211,7 @@ def api_connect():
                     _dup = p
                 else:
                     _ports[port_id] = p
-                    # a616：同锁登记 token→port_id。cancel 路由据此可以在
+                    # a617：同锁登记 token→port_id。cancel 路由据此可以在
                     # 「本线程 finally 擦标记之前」直接把会话摘掉关闭。
                     _bind_token_port(_ctok, port_id)
             if _cancelled_now:
@@ -1223,10 +1223,10 @@ def api_connect():
                 except Exception: pass
                 return jsonify({"ok": False, "err": f"{port_id} 已连接"}), 400
         finally:
-            # a608：无论成败/是否取消，本次令牌一律作废。a607 只在成功且
+            # a610：无论成败/是否取消，本次令牌一律作废。a607 只在成功且
             # 命中取消时清理，导致「取消 + 连接失败」留下永久标记，
             # 下次同目标连接被 499 误杀（审计实测：连点两次都返回 499）。
-            # a616：映射同刻解除——但取消方可能在 _cancelled_tokens 擦除后
+            # a617：映射同刻解除——但取消方可能在 _cancelled_tokens 擦除后
             # 才走到 _token_ports 查询，所以它自己会再查一次 _ports。
             _clear_cancelled(_ctok)
             _unbind_token_port(_ctok)
@@ -1440,7 +1440,7 @@ def api_connect_cancel():
     这里按 **conn_token** 打取消标记；连接建好后自查，命中就立刻关闭——
     否则设备上会残留一条没人用的会话，占着 dropbear 的 Max connections。
 
-    a608 修订：只认 token，**不再**按 port_id 遍历关闭已建立的会话。
+    a610 修订：只认 token，**不再**按 port_id 遍历关闭已建立的会话。
     原实现会连用户正在用的旧实例（base / base#2 …）一起杀掉，双开场景下
     等于「取消新连接 = 杀掉正在干活的终端」。已建立的会话由前端在拿到
     port_id 后自行决定要不要断，或用户点终端上的 ✕。
@@ -1450,7 +1450,7 @@ def api_connect_cancel():
     if not token:
         return jsonify({"ok": False, "err": "need conn_token"}), 400
     _mark_cancelled(token)
-    # a616（疯狗审计 v3 重炮三）：迟到取消的兜底。a610 里 cancel 只打标记、
+    # a617（疯狗审计 v3 重炮三）：迟到取消的兜底。a610 里 cancel 只打标记、
     # 指望连接线程自查；但若取消恰好落在「锁内检查」之后、「finally 擦
     # 标记」之前，标记被写入又被连接线程自己擦掉，会话照常存活（设备上
     # 留一条没人用的会话）。这里按 token→port_id 映射直接摘掉并关闭，
@@ -4136,7 +4136,7 @@ def cmd_lib_save():
     # 规范化：只保留 name/cmd 字段，cmd 必填
     clean = [{"name": str(c.get("name", "")).strip(), "cmd": str(c.get("cmd", "")).strip()}
              for c in lib if isinstance(c, dict) and str(c.get("cmd", "")).strip()]
-    # a616：保存失败必须如实回给前端（原来无论成败都 ok:true，用户的命令库
+    # a617：保存失败必须如实回给前端（原来无论成败都 ok:true，用户的命令库
     # 改动会无声消失）。
     if not _save_cmd_lib(clean):
         return jsonify({"ok": False, "err": "命令库写入失败（磁盘/权限问题），"

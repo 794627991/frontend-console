@@ -64,7 +64,7 @@ async function connectPort(port, baud, quiet) {
 async function connectSSH(host, port, username, password, key_path, quiet) {
   // a606/a607：嵌入式设备的 dropbear 可能 15~20 秒才发 SSH banner（实测
   // 10.20.115.193 要 20.2s）。上限 120s，等待过程做成倒计时 + 取消。
-  // a608：取消改用**逐次令牌**——后端按 token 打标记，本次连接结束即作废。
+  // a610：取消改用**逐次令牌**——后端按 token 打标记，本次连接结束即作废。
   // 原来按 port_id 打裸标记，审计实测导致「旧标记杀新连接」「误杀双开的
   // 另一条会话」。
   const CONNECT_TIMEOUT = 120;

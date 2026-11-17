@@ -138,7 +138,7 @@ def test_merge_dir_into_removes_empty_src():
         shutil.rmtree(dst, ignore_errors=True)
 
 
-# ---- a616（疯狗审计 v4）：跨卷与永动巡逻 ---------------------------------
+# ---- a619（疯狗审计 v4）：跨卷与永动巡逻 ---------------------------------
 def _xdev(a, b):
     raise OSError(18, "Invalid cross-device link")
 
@@ -228,7 +228,7 @@ def test_merge_log_dir_converges_when_all_names_collide():
 
 
 def test_save_cmd_lib_reports_failure(monkeypatch):
-    """a616：保存失败必须有返回值+日志，不能无声吞掉（用户不知道丢了）。"""
+    """a619：保存失败必须有返回值+日志，不能无声吞掉（用户不知道丢了）。"""
     monkeypatch.setattr(st, "CMD_LIB_FILE",
                         os.path.join(tempfile.mkdtemp(), "cmdlib.json"))
     monkeypatch.setattr(st, "replace_retry",

@@ -90,7 +90,7 @@ _SECRET_RE = re.compile(
 _CN_SECRET_RE = re.compile(
     r"(密码|口令|密钥)\s*(?:[:：=＝为是]\s*)?"
     r"(\"[^\"]*\"|'[^']*'|[^\s,，。；;）)）]+)")
-# a614（疯狗审计 v3 重炮二）：**空格分隔**形态——`--password hunter2`、
+# a616（疯狗审计 v3 重炮二）：**空格分隔**形态——`--password hunter2`、
 # `password mypass`、`--token abc123`。原实现的分隔符类只有 [:=：＝]，空格
 # 形态整行穿透（实测 `--password hunter2 user=admin` 原样入库、原样可导出）。
 # 值限定为 ASCII 可见字符且 ≥6 位：中文词（「password 错误」「token 无效」）

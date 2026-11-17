@@ -251,7 +251,7 @@ def _pw_pending_save(p, lst):
         except Exception:
             pass
         raise
-    # a616（疯狗审计 v3 #5）：挂起队列每次落盘都通知镜像——所有写路径
+    # a619（疯狗审计 v3 #5）：挂起队列每次落盘都通知镜像——所有写路径
     # （del 挂起/摘账/edit 归档）共用这一个出口，不必逐点补通知。不通知
     # 则 home 副本滞留旧队列：窗口期内删包重装，restore_missing 会复活
     # 过期挂起项，下次退出重放旧 edit 覆盖用户后来改过的密码。

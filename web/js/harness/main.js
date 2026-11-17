@@ -1724,7 +1724,7 @@ function buildClaudeHarnessTab(opts = {}) {
         if (_HG.ctxWinBy) delete _HG.ctxWinBy[sid];
         if (_HG.ctxBadMaxBy) delete _HG.ctxBadMaxBy[sid];
         if (_HG.modelBySid) delete _HG.modelBySid[sid];
-        // a609：子代理 tab 记忆也按 sid 存，删除会话时回收（同 ctxWinBy，
+        // a612：子代理 tab 记忆也按 sid 存，删除会话时回收（同 ctxWinBy，
         // 不删会随会话总数单调增长，且同 sid 重建时认领到已删的旧 tab）
         try { _subActiveBySidForget(sid); } catch (_) {}
         // 二轮 P1-2：v4 权威快照垫片键随会话删清（数十~数百 KB/会话，
