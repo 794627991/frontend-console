@@ -4,9 +4,14 @@ rem Any code edit shows on refresh - no cache clearing needed.
 rem First console line prints the served directory.
 rem If port busy: close old app windows, run again.
 rem
-rem 无黑框（用户需求）：优先 pythonw（无控制台窗口），退回 pyw。
-rem 原来用 python.exe，启动即弹一个 cmd 黑框；日志已改由进程内环形缓冲
-rem 接管（src/backend_log.py），界面点版本号即可查看，不再需要黑框。
+rem No console window (user request): prefer pythonw, fall back to pyw.
+rem Was python.exe which popped a cmd box; logs now go to the in-process
+rem ring buffer (src/backend_log.py), click the version badge to view.
+rem
+rem NOTE: keep this file ASCII-only. cmd.exe parses .bat in the OEM codepage
+rem (GBK here), so UTF-8 Chinese comments get split mid-byte and the stray
+rem bytes escape the "rem" prefix and run as commands ("'nsole' is not
+rem recognized...").
 cd /d "%~dp0"
 set HARNESS_DEBUG_WEB=1
 where pythonw >nul 2>nul
@@ -19,10 +24,10 @@ if %errorlevel%==0 (
   start "" pyw.exe src\main.py
   exit /b
 )
-rem 两者都没有才退回 python.exe（会有黑框，但先保证能起来）
+rem Neither found: fall back to python.exe (console window shows, but at least runs)
 where python >nul 2>nul
 if %errorlevel%==0 (
-  echo [warn] pythonw/pyw not found, falling back to python.exe (console window will show)
+  echo [warn] pythonw/pyw not found, falling back to python.exe
   python src\main.py
   pause
   exit /b
