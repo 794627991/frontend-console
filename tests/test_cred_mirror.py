@@ -371,7 +371,7 @@ def test_restore_not_blocked_by_state_files(monkeypatch):
         _write(os.path.join(backup, "lanz_credentials.json"), {"u": "x"})
         # 业务抢先：状态文件先落盘，凭据一个都还没有
         _write(os.path.join(data, "proxy_state.json"), {"on": True})
-        _write(os.path.join(data, "skill_meta.json"), {"s": 1})
+        _write(os.path.join(data, "pw_pending_del.json"), [{"p": 1}])
         rec = cm.restore_missing()
         assert "hiklink_session.json" in rec, rec
         assert "lanz_credentials.json" in rec, rec
@@ -464,23 +464,37 @@ def test_restore_oexcl_real_paths(monkeypatch):
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_skill_meta_write_notifies_mirror(monkeypatch):
-    """审计 #8：skill_meta.json 的写点必须通知镜像。原实现 _meta_set/
-    _meta_del 落盘后从不 notify（proxy/lanz/hiklink 都有，唯独它漏）——
-    运行期装卸技能后 home 副本一直陈旧，「重装后可对账」对的是假账。"""
-    import src.skills_repo as sr
-    root = tempfile.mkdtemp(prefix="fc_sr_")
+def test_skill_meta_no_longer_backed_up(monkeypatch):
+    """a630（用户定调）：skill_meta.json 移出备份白名单——技能清单丢了
+    顶多重装，不是凭据也不在备份范围。写点 notify 直接忽略，不再有副本。"""
+    root, data, backup = _setup(monkeypatch)
     try:
-        meta = os.path.join(root, "skill_meta.json")
-        monkeypatch.setattr(sr, "DATA_DIR", root)
-        monkeypatch.setattr(sr, "_META_FILE", meta)
-        calls = []
-        monkeypatch.setattr(st, "notify_user_file_written",
-                            lambda n: calls.append(n))
-        sr._meta_set("demo-skill", {"installed": True})
-        sr._meta_del("demo-skill")
-        assert calls == ["skill_meta.json", "skill_meta.json"], calls
-        # 顺带核通知真的接到了 app_state 钩子（notify 名在白名单内）
-        assert "skill_meta.json" in cm._MIRROR_FILES
+        _write(os.path.join(data, "skill_meta.json"), {"s": 1})
+        cm.notify("skill_meta.json")
+        assert cm._q.empty(), "非白名单名字不得入队"
+        cm.sync_once()
+        assert not os.path.exists(os.path.join(backup, "skill_meta.json")), \
+            "skill_meta.json 不应再被镜像"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_backup_orphan_cleanup(monkeypatch):
+    """a630：白名单移除 skill_meta.json 后，老机器 home 里已躺着的旧副本
+    要在启动对齐时收掉（备份目录顶层始终只有白名单文件——既有设计约定）；
+    .meta/ 子目录（墓碑/pending）与白名单内文件不碰。"""
+    root, data, backup = _setup(monkeypatch)
+    try:
+        _write(os.path.join(data, "hiklink_session.json"), {"app_id": "A"})
+        _write(os.path.join(backup, "skill_meta.json"), {"old": 1})   # 存量孤儿
+        _write(os.path.join(backup, "pw_pending_del.json"), [{"p": 1}])  # 白名单内
+        os.makedirs(os.path.join(backup, ".meta"), exist_ok=True)
+        _write(os.path.join(backup, ".meta", "tombstones.json"), {})
+        cm.sync_once()
+        assert not os.path.exists(os.path.join(backup, "skill_meta.json")), \
+            "白名单外的存量副本必须被清理"
+        assert os.path.exists(os.path.join(backup, "pw_pending_del.json"))
+        assert os.path.exists(os.path.join(backup, ".meta", "tombstones.json"))
+        assert os.path.exists(os.path.join(backup, "hiklink_session.json"))
     finally:
         shutil.rmtree(root, ignore_errors=True)

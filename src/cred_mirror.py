@@ -27,6 +27,8 @@ import time
 import src.app_state as _st
 
 # 有价值的凭据/配置小文件（全部实测 <2KB）
+# a630（用户定调）：skill_meta.json 移出——技能装了哪些丢了顶重重装，不是
+# 凭据也不在用户要备份的范围内（此前以「重装后可对账」纳入，撤销）
 _MIRROR_FILES = (
     "hiklink_session.json",       # 机器人 app_id/app_secret/robot_uid（最重要）
     "hiklink_session.json.bak",   # 上一版，session 损坏时可回滚
@@ -35,7 +37,6 @@ _MIRROR_FILES = (
     "cmdlib.json",                # 命令库
     "retry_config.json",          # 代理重试配置
     "proxy_state.json",           # 代理开关状态
-    "skill_meta.json",            # 技能安装/翻译元数据（重装后可对账）
     "pw_pending_del.json",        # 网页密码删除/修改挂起队列（加密 blob）
 )
 
@@ -310,7 +311,28 @@ def _mirror_one_impl(name, deleting_ok=True):
 def sync_once():
     """启动时全量对齐一次。**只补拷贝，绝不删除备份、绝不打墓碑**——
     此刻尚未恢复正常，缺席的备份只可能是「本进程还没处理到」，不是用户删的。"""
+    _cleanup_orphans()
     return sum(_mirror_one(n, deleting_ok=False) for n in _MIRROR_FILES)
+
+
+def _cleanup_orphans():
+    """清掉备份目录顶层**白名单外**的存量副本（a630：skill_meta.json 移出
+    白名单，老机器 home 里已躺着的旧副本收掉——备份目录顶层「始终只有
+    白名单文件」是本模块的既有设计约定）。只清顶层文件，.meta/ 子目录
+    （墓碑/pending）不碰；白名单内的照旧。"""
+    try:
+        for entry in os.listdir(BACKUP_DIR):
+            p = os.path.join(BACKUP_DIR, entry)
+            if entry in _MIRROR_FILES or not os.path.isfile(p):
+                continue
+            try:
+                os.remove(p)
+                _last.pop(entry, None)
+                _log.info("凭据镜像清理白名单外存量副本: %s", entry)
+            except OSError as e:
+                _log.warning("凭据镜像清理失败 %s: %s", entry, e)
+    except OSError:
+        pass
 
 
 def notify(name):
@@ -335,8 +357,8 @@ def notify(name):
 
 
 # 真正意义上的「凭据」（a623R 审计 #6）：_any_cred_present 只看它们。
-# 白名单 _MIRROR_FILES 里 proxy_state/retry_config/skill_meta/cmdlib/
-# pw_pending_del 是**状态/配置**文件——新装机上业务线程启动期就会写出
+# 白名单 _MIRROR_FILES 里 proxy_state/retry_config/cmdlib/pw_pending_del
+# 是**状态/配置**文件——新装机上业务线程启动期就会写出
 # （如代理 autostart 一开就写 proxy_state.json），把它们算「在用」会让
 # 删包重装后的凭据恢复整体静默跳过。用户删除凭据的防线是墓碑（notify
 # 已同步落盘），不依赖这个粗判据。
