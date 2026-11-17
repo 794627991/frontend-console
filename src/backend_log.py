@@ -677,6 +677,48 @@ def install_excepthooks():
     if _excepthooks_installed:
         return
     _excepthooks_installed = True
+    # 盲区#1（2026-11-17 日志审计）：GUI 线程（.NET 消息循环）异常原默认
+    # WinForms 弹框/静默——窗体手术全链（_fc_wndproc/_lay/_do_gui/web_tabs
+    # 的 WinForms 事件）跑在 GUI 线程，漏网异常不进任何日志。订阅 .NET 两
+    # 大钩子：Application.ThreadException（UI 线程）+ AppDomain.Unhandled-
+    # Exception（所有 .NET 线程致命）。pythonnet 未加载/非 Windows 静默跳过。
+    try:
+        import clr as _clr
+        _clr.AddReference("System.Windows.Forms")
+        import System
+        from System.Windows.Forms import Application as _App
+    except Exception:
+        try:
+            import clr as _clr
+            _clr.AddReference("System.Windows.Forms")
+            import System
+            from System.Windows.Forms import Application as _App
+        except Exception:
+            _App = None
+    try:
+        if _App is not None:
+            def _on_thread_exception(sender, args):
+                try:
+                    ex = getattr(args, "Exception", None)
+                    log("crash", "GUI线程未捕获异常（WinForms ThreadException）：" + str(ex) + chr(10) + str(getattr(ex, "StackTrace", "") or ""), "error")
+                except Exception:
+                    pass
+            _App.ThreadException += _on_thread_exception
+    except Exception:
+        pass
+    try:
+        import System
+        from System import AppDomain as _Domain
+        def _on_domain_unhandled(sender, args):
+            try:
+                ex = getattr(args, "ExceptionObject", None)
+                term = getattr(args, "IsTerminating", False)
+                log("crash", ".NET未捕获异常（AppDomain，terminating=" + str(term) + "）：" + str(ex) + chr(10) + str(getattr(ex, "StackTrace", "") or ""), "error")
+            except Exception:
+                pass
+        _Domain.CurrentDomain.UnhandledException += _on_domain_unhandled
+    except Exception:
+        pass
     try:
         prev = getattr(sys, "excepthook", None)
 

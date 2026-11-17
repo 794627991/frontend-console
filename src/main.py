@@ -568,8 +568,14 @@ def _set_edge_pad(win, phys_px):
                 holder._fc_cur = cur           # inset 值存 holder 上（重启幂等）
             holder._fc_cur[0] = int(phys_px)
             holder._fc_lay()
-        except Exception:
-            pass
+        except Exception as _e:
+            # 本会话实锤模式：吞点静默失效（edge pad 曾 ImportError 拖拽全失
+            # 效无任何日志）——关键路径吞点必须落日志
+            try:
+                import src.backend_log as _bl
+                _bl.exception("window", "_set_edge_pad 失败 phys=%s" % phys_px)
+            except Exception:
+                pass
     _invoke_gui(win, _do)
 
 
@@ -621,8 +627,12 @@ def _set_form_bg(win, r, g, b):
                         _win_hwnd(win), _attr, _ct.byref(c3), 4)
                 except Exception:
                     pass
-        except Exception:
-            pass
+        except Exception as _e:
+            try:
+                import src.backend_log as _bl
+                _bl.exception("window", "_set_form_bg 失败（边缘带/白框类回归风险）：%r" % _e)
+            except Exception:
+                pass
     _invoke_gui(win, _do)
 
 
@@ -1704,6 +1714,18 @@ def main():
     @app.route("/api/window/resize_end", methods=["POST"])
     def _api_resize_end():
         _fc_resize["active"] = False
+        return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    @app.route("/api/frontend_log", methods=["POST"])
+    def _api_frontend_log():
+        # 日志审计盲区#3：前端 JS 异常上报（index.html rec() error 级别，
+        # 1s/5 条节流）→ backend_log 'frontend' tag，后端日志面板可见
+        from flask import request   # 局部 import（fullscreen 路由 907 行同款教训）
+        d = request.get_json(force=True, silent=True) or {}
+        text = str(d.get("text") or "")[:1200]
+        if text:
+            from src import backend_log as _bl
+            _bl.error("frontend", text)
         return '{"ok": true}', 200, {"Content-Type": "application/json"}
 
     @app.route("/api/window/bg", methods=["POST"])

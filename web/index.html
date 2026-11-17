@@ -20,6 +20,7 @@ if (window.__HG_DBG__) {
    脚本（vendor 报错也收）；cap 200 环形；刷新即重装清空 */
 (function () {
   var buf = [], CAP = 200, inHook = false;
+  var fcErrReport = { times: [] };   // error 上报节流窗
   function rec(lv, args) {
     if (inHook) return;         // guard 覆盖 fmt+rec 全程（T5：toJSON 内再打
     inHook = true;              // console 的理论递归防御）
@@ -32,6 +33,22 @@ if (window.__HG_DBG__) {
       }
       buf.push({ t: Date.now(), lv: lv, text: out.join(' ').slice(0, 400) });
       if (buf.length > CAP) buf.shift();
+      // 日志审计盲区#3：error 级别同步上报后端缓冲（backend_log 'frontend'
+      // tag）——此前只进 DevTools 环形缓冲（MCP 专用），后端日志面板看不到
+      // JS 崩溃。1s 窗口最多 5 条防风暴（页面崩坏时 console.error 可能刷屏）。
+      if (lv === 'error') {
+        var now = Date.now();
+        fcErrReport.times = fcErrReport.times.filter(function (t) { return now - t < 1000; });
+        if (fcErrReport.times.length < 5) {
+          fcErrReport.times.push(now);
+          try {
+            fetch('/api/frontend_log', { method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: out.join(' ').slice(0, 800) }) })
+              .catch(function () {});
+          } catch (_) {}
+        }
+      }
     } finally { inHook = false; }
   }
   ['log', 'info', 'warn', 'error', 'debug'].forEach(function (lv) {

@@ -2270,6 +2270,26 @@ def api_backend_log():
     return jsonify({"ok": True, **backend_log.snapshot(since=since, limit=limit)})
 
 
+@app.errorhandler(Exception)
+def _fc_log_unhandled(e):
+    """Flask 路由未捕获异常显式落 backend_log（双保险：werkzeug 的 stderr
+    traceback 已被流接管，这里再加一层结构化记录，防非 debug 差异导致
+    traceback 不落缓冲）。记完继续 raise 交回 werkzeug 走标准 500。"""
+    import traceback as _tb
+    try:
+        _m = ""
+        try:
+            _m = "%s %s " % (request.method, request.path)
+        except Exception:
+            pass
+        backend_log.error("flask", "路由未捕获异常 " + _m + chr(10) + "".join(
+            _tb.format_exception(type(e), e, e.__traceback__)).rstrip())
+    except Exception:
+        pass
+    raise e
+
+
+
 def _backend_log_export_text():
     """拼装导出正文（导出下载与「保存到文件」共用同一份内容）。"""
     import platform

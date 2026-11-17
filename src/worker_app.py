@@ -337,6 +337,18 @@ def main():
     # werkzeug 访问日志降噪（SSE 心跳每 15s 一条，量大无信息）
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
+    # 日志审计盲区#2（2026-11-17）：worker 未装全局异常钩子——worker 进程
+    # 崩溃只留 data_dir 文件日志且 crash 不回传主进程面板。三件套装上后：
+    # 未捕获异常走 excepthook → logging（basicConfig 文件）+ stdout 排空线
+    # 程回传主进程缓冲双通道可见。
+    try:
+        from src import backend_log as _bl
+        _bl.install_logging_bridge(logging.INFO)
+        _bl.install_excepthooks()
+        _bl.log("worker", "worker 异常钩子已装（excepthook+logging 桥）")
+    except Exception:
+        pass
+
     app = build_app()
     # worker 身份标记：proxy 的托盘 tooltip 线程等主进程专属集成据此跳过
     os.environ["CLAUDE_WORKER"] = "1"
