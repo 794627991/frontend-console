@@ -251,6 +251,31 @@ def _pw_pending_save(p, lst):
         except Exception:
             pass
         raise
+    # a616（疯狗审计 v3 #5）：挂起队列每次落盘都通知镜像——所有写路径
+    # （del 挂起/摘账/edit 归档）共用这一个出口，不必逐点补通知。不通知
+    # 则 home 副本滞留旧队列：窗口期内删包重装，restore_missing 会复活
+    # 过期挂起项，下次退出重放旧 edit 覆盖用户后来改过的密码。
+    _pw_pending_notify(p)
+
+
+def _pw_pending_notify(p):
+    """挂起队列变更通知凭据镜像（cred_mirror 白名单里有 pw_pending_del.json）。"""
+    try:
+        import os
+        import src.app_state as _st
+        _st.notify_user_file_written(os.path.basename(p))
+    except Exception:
+        pass
+
+
+def _pw_pending_remove(p):
+    """删除挂起文件并通知镜像（删除也要同步，否则 home 副本成幽灵）。"""
+    import os
+    try:
+        os.remove(p)
+    except FileNotFoundError:
+        pass                # 已被别的路径删掉：照样通知一次，让镜像对账
+    _pw_pending_notify(p)
 
 
 def _pw_encrypt(text):
@@ -441,7 +466,7 @@ def _pw_del_flush():
             return          # 损坏：保留
         if not _raw:
             try:
-                os.remove(p)
+                _pw_pending_remove(p)
             except Exception:
                 pass
         return
@@ -461,7 +486,7 @@ def _pw_del_flush():
             if keep:
                 _pw_pending_save(p, keep)
             else:
-                os.remove(p)
+                _pw_pending_remove(p)
         except Exception:
             pass
         _log("WARN", "pw_del_flush: 密码库缺失或空——挂起保留待下次（已记重试次数）")
@@ -536,7 +561,7 @@ def _pw_del_flush():
                 if keep:
                     _pw_pending_save(p, keep)
                 else:
-                    os.remove(p)
+                    _pw_pending_remove(p)
             except Exception:
                 pass
             _log("WARN", "pw_del_flush: %d 条未删净——挂起保留（已记重试次数）"
@@ -555,7 +580,7 @@ def _pw_del_flush():
                 if keep:
                     _pw_pending_save(p, keep)
                 else:
-                    os.remove(p)
+                    _pw_pending_remove(p)
             except Exception:
                 pass
             _log("WARN", "pw_del_flush: 复核失败——挂起保留待重试（已记重试次数）")
@@ -566,7 +591,7 @@ def _pw_del_flush():
         if left:
             _pw_pending_save(p, left)
         else:
-            os.remove(p)
+            _pw_pending_remove(p)
         _log("INFO", "pw_del_flush: %d 条已删" % len(del_rows))
     except Exception as e:
         _log("WARN", "pw_del_flush: %r" % e)
@@ -621,7 +646,7 @@ def _pw_edit_flush():
             if keep:
                 _pw_pending_save(p, keep)
             else:
-                os.remove(p)
+                _pw_pending_remove(p)
         except Exception:
             pass
         _log("WARN", "pw_edit_flush: 密码库缺失或空——挂起保留（已记重试次数）")
@@ -761,7 +786,7 @@ def _pw_edit_flush():
         _pw_pending_save(p, left)
     else:
         try:
-            os.remove(p)
+            _pw_pending_remove(p)
         except Exception:
             pass
     _log("INFO", "pw_edit_flush: %d 条已改（另 %d 条达上限放弃）"
