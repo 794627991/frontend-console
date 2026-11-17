@@ -343,9 +343,12 @@ def main():
     # 性能：①频次审计过——harness 无 per-token/per-tool 日志点（session.py
     # 1 处/routes.py 1 处，事件级）；②管道 write 是 µs 级 syscall 且排空在
     # 独立线程异步消化，不阻塞 worker 主流程；③同格式双 handler（文件+回传）。
-    _stream_h = logging.StreamHandler(sys.stderr)
-    _stream_h.setFormatter(logging.Formatter(_fmt))
-    logging.getLogger().addHandler(_stream_h)
+    # 终审 P3（存疑项收口）：打包 windowed 下 sys.stderr 可能为 None——
+    # StreamHandler(None) 每次 emit 静默 AttributeError，回传链无声失效
+    if sys.stderr is not None:
+        _stream_h = logging.StreamHandler(sys.stderr)
+        _stream_h.setFormatter(logging.Formatter(_fmt))
+        logging.getLogger().addHandler(_stream_h)
     # werkzeug 访问日志降噪（SSE 心跳每 15s 一条，量大无信息）
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
@@ -358,6 +361,17 @@ def main():
         _bl.install_logging_bridge(logging.INFO)
         _bl.install_excepthooks()
         _bl.log("worker", "worker 异常钩子已装（excepthook+logging 桥）")
+        # 终审 P2-5：harness 版本落 config（主进程 boot 行不 import harness，
+        # 读此缓存）
+        try:
+            from src.harness import HARNESS_VERSION as _HV
+            from src.app_state import _load_config as _lc, _save_config as _sc
+            _cfg = _lc()
+            if _cfg.get("harness_version") != _HV:
+                _cfg["harness_version"] = _HV
+                _sc(_cfg)
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -512,14 +526,25 @@ def _spawn_once(prefer_port, ready_timeout=25):
             pass
         raise RuntimeError("worker 就绪握手超时（%ss）" % ready_timeout)
     port = got["port"]
-    # 常驻排空线程：不排空 stdout 管道写满会卡死 worker（泄漏面）
+    # 常驻排空线程：不排空 stdout 管道写满会卡死 worker（泄漏面）。
+    # 终审 P2-3：按行内容定级（ERROR/Traceback → error）——worker 的错误行
+    # 回传后在「仅错误」过滤视图可见，不再恒 info 隐形；除重试防静默死亡
+    # （一次异常即 pass=管道满后 worker 所有 logging 写阻塞=假死无日志）
     def _drain():
-        try:
-            for ln in p.stdout:
-                logging.getLogger("claude_worker.stdout").info(
-                    ln.decode("utf-8", "replace").rstrip())
-        except Exception:
-            pass
+        _retry = 0
+        while True:
+            try:
+                for ln in p.stdout:
+                    _txt = ln.decode("utf-8", "replace").rstrip()
+                    logging.getLogger("claude_worker.stdout").log(
+                        40 if ("ERROR" in _txt or "Traceback" in _txt) else 20,
+                        _txt)
+                _retry = 0
+            except Exception as _e:
+                _retry += 1
+                if _retry > 3:
+                    return   # 连续 3 次失败放弃（管道毁——极端兜底）
+            time.sleep(0.2)
     threading.Thread(target=_drain, daemon=True).start()
     return p, port
 

@@ -328,27 +328,50 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
             except Exception:
                 pass
         elif sc == _SC_RESTORE:
+            # 终审 P1-2：不转发、无条件接管——最大化态最小化后还原应回最大化
+            # （读 GetWindowPlacement 的 WPF_RESTORETOMAXIMIZED）；rb 兜底=
+            # placement.rcNormalPosition（系统记的正确还原矩形）。异常也不落
+            # 回转发（系统布局=漂移根源）。
             try:
                 f2 = _orig_wndproc.get("win")
                 fnat = getattr(f2, "native", None) if f2 is not None else None
                 if fnat is not None:
+                    import ctypes as _ct
                     from System.Windows.Forms import FormWindowState as _FS
                     from System.Drawing import Rectangle as _Rect
                     from System.Windows.Forms import Screen as _Screen
+
+                    class _WP(ctypes.Structure):
+                        _fields_ = [("length", ctypes.c_uint),
+                                    ("flags", ctypes.c_uint),
+                                    ("showCmd", ctypes.c_uint),
+                                    ("ptMin", ctypes.c_long * 2),
+                                    ("ptMax", ctypes.c_long * 2),
+                                    ("rcNormal", ctypes.c_long * 4)]
+
+                    wp = _WP()
+                    wp.length = ctypes.sizeof(_WP)
+                    _ct.windll.user32.GetWindowPlacement(
+                        _win_hwnd(fnat), ctypes.byref(wp))
+                    to_max = bool(wp.flags & 2)   # WPF_RESTORETOMAXIMIZED
+                    rb = None
                     if fnat.WindowState == _FS.Maximized:
                         rb = _fc_restore["bounds"]
                     else:
                         rb = _fc_restore["pre_min"]
-                    fnat.WindowState = _FS.Normal
-                    if rb is not None:
+                    if rb is None:
+                        _n = wp.rcNormal
+                        rb = _Rect(_n[0], _n[1], _n[2] - _n[0], _n[3] - _n[1])
+                    fnat.WindowState = _FS.Maximized if to_max else _FS.Normal
+                    if not to_max:
                         wa = _Screen.FromHandle(fnat.Handle).WorkingArea
                         nx = max(wa.Left, min(rb.X, wa.Right - max(rb.Width, 200)))
                         ny = max(wa.Top, min(rb.Y, wa.Bottom - max(rb.Height, 200)))
                         fnat.Bounds = _Rect(nx, ny, min(rb.Width, wa.Width),
                                             min(rb.Height, wa.Height))
-                    return 0   # 已自管，不转发（系统布局=漂移根源）
+                    return 0   # 无条件接管：系统布局=漂移根源，一律不转发
             except Exception:
-                pass
+                return 0   # 接管路径任何异常也不落回系统转发
         # SC_MAXIMIZE / 其它 SC 值继续走转发（最大化 bounds 由
         # MaximizedBounds=workarea 钉住，无漂移）
     if msg in (_WM_NCUAHDRAWCAPTION, _WM_NCUAHDRAWFRAME):
@@ -527,14 +550,23 @@ def _set_edge_pad(win, phys_px):
                 return
             holder = _FC_HOLDER["panel"]
             wv = _FC_HOLDER["wv"]
-            if holder is None or wv is None:
+            # 终审 P1-1：容器化重构曾把创建分支删丢（fc_edge_holder 从不创建
+            # →钩子链/Controller 染色全死码）——恢复：Controls 找不到就创建
+            # Panel 包裹 wv，容器只存引用
+            if wv is None:
                 for c in list(f.Controls):
                     if getattr(c, "Name", "") == "fc_edge_holder":
                         holder = c
-                    elif not wv:
-                        wv = c   # pywebview 只加一个子控件（webview）
-                if holder is None or wv is None:
-                    return
+                    elif holder is None and not getattr(c, "Dock", None):
+                        wv = wv or c   # pywebview 只加一个子控件（webview）
+            if wv is None:
+                return
+            if holder is None:
+                holder = Panel()
+                holder.Name = "fc_edge_holder"
+                f.Controls.Remove(wv)
+                holder.Controls.Add(wv)   # wv 已 Dock=Fill——在 Panel 内继续 Fill
+                f.Controls.Add(holder)
                 _FC_HOLDER["panel"] = holder
                 _FC_HOLDER["wv"] = wv
 
@@ -1277,10 +1309,13 @@ def main():
             # 等价信息由 log 系统启动时同步打印（版本 + harness 形态；
             # worker 端口由 worker 就绪消息自报，经 logging 桥可见）
             _harness_mode = "inline" if os.environ.get("CLAUDE_INLINE") else "v4 worker"
+            # 终审 P2-5：主进程不 import harness（隔离设计——import 拖全家
+            # +_git_harness_version 起子进程最多 5s）——harness 版本读 config
+            # 缓存（worker 进程启动时写入，见 worker_app）
             _hv = ""
             try:
-                from src.harness import HARNESS_VERSION as _HV
-                _hv = " · harness v%s" % _HV
+                from src.app_state import _load_config as _lc2
+                _hv = " · harness v%s" % (_lc2().get("harness_version") or "?")
             except Exception:
                 pass
             backend_log.log("main", "[harness] boot 工具 v%s%s [%s]（worker 端口见后续就绪日志）"
@@ -2102,17 +2137,6 @@ def main():
     # 标题栏/任务栏跟 python.exe 图标走是 pywebview 的能力边界，打包版 exe
     # 内嵌工具 ico 不受影响——除非换 pywebview 或走 Win32 WM_SETICON，否则
     # 此处不能再碰。
-    # 启动底色=上次会话主题色（pywebview 「内容加载前显示的底色」，默认白
-    # ——启动白闪实锤：页面首帧/主题色上报前的空窗露出白底）
-    _start_bg = "#101724"
-    try:
-        from src.app_state import _load_config as _lc
-        _c = _lc()
-        _cand = str(_c.get("theme_color") or "").strip()
-        if len(_cand) == 7 and _cand[0] == "#":
-            _start_bg = _cand
-    except Exception:
-        pass
     window = webview.create_window(
         title="前端控制台 v%s" % APP_VERSION,
         url=f"http://127.0.0.1:{port}/",
@@ -2391,8 +2415,11 @@ def main():
                 return
             def _save():
                 try:
-                    if f.WindowState == FormWindowState.Normal:
+                    from System.Windows.Forms import FormWindowState as _FS
+                    if f.WindowState == _FS.Normal:
                         _fc_restore["pre_min"] = f.Bounds
+                    elif f.WindowState == _FS.Minimized:
+                        _fc_restore["from_min"] = True   # minimized 置位（矫正开关）
                 except Exception:
                     pass
             f.Invoke(MethodInvoker(_save))
@@ -2407,17 +2434,14 @@ def main():
                     f = getattr(win, "native", None)
                     if f is None or f.WindowState != FormWindowState.Normal:
                         return
-                    # 数据源优先级：f.RestoreBounds（.NET 层维护的还原矩形，
-                    # 不受无题窗 NCCALCSIZE 漂移影响）> pre_min（常态跟踪）
-                    rb = None
-                    try:
-                        _rb = f.RestoreBounds
-                        if _rb.Width > 200 and _rb.Height > 200:
-                            rb = _rb
-                    except Exception:
-                        pass
-                    if rb is None:
-                        rb = _fc_restore["pre_min"]
+                    # 终审 P2-4：本矫正只管「来自 minimized 的 restored」
+                    # ——un-maximize（toggle_max/SC_RESTORE 接管）不干预（它们的
+                    # bounds 自管正确）。RestoreBounds 数据源弃用（压测实锤
+                    # 6 循环 +355px：.NET 镜像同样被 NCCALCSIZE 污染）
+                    if not _fc_restore.get("from_min"):
+                        return
+                    _fc_restore["from_min"] = False
+                    rb = _fc_restore["pre_min"]
                     if rb is None:
                         return
                     _fc_restore["pre_min"] = None
@@ -2433,24 +2457,6 @@ def main():
             f = getattr(win, "native", None)
             if f is not None:
                 f.Invoke(MethodInvoker(_fix))
-        except Exception:
-            pass
-
-    def _hg_save_pre_min(win):
-        try:
-            def _save():
-                try:
-                    f = getattr(win, "native", None)
-                    if f is None:
-                        return
-                    _fc_restore["pre_min"] = f.Bounds
-                except Exception:
-                    pass
-            import System
-            from System.Windows.Forms import MethodInvoker
-            f = getattr(win, "native", None)
-            if f is not None:
-                f.Invoke(MethodInvoker(_save))
         except Exception:
             pass
     # resized/moved 高频推送摘除（py-spy 实锤：每事件一线程，evaluate_js 卡死
