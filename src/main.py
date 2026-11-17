@@ -272,7 +272,7 @@ _orig_wndproc = {"fn": None, "hwnd": 0}
 # 自管还原 bounds（严重 bug 根修：无题窗 NCCALCSIZE=0 下系统 RestoreBounds
 # 不含边框，max↔restore 循环逐次漂移膨胀——实测第一次 restore client 高
 # 1622>屏 1540，第二次宽 +18；记录 maximize 前真实 bounds 自管写回）
-_fc_restore = {"bounds": None}
+_fc_restore = {"bounds": None, "pre_min": None}
 _WNDPROC_CB = None
 # 审计 P3：回调每条消息 import ctypes + 重设 argtypes 是千级/秒的纯开销——
 # 模块级预声明一次（消息处理高频路径零 import）
@@ -309,23 +309,48 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
         # 非客户区，默认绘制涂白（用户实锤「切进程切回来必现白框」）。
         # 跳过系统绘制：带内由 Form.BackColor（主题色）呈现，无缝。
         return 0
-    if msg == _WM_SYSCOMMAND and wparam & 0xFFF0 in (_SC_MAXIMIZE, _SC_RESTORE):
-        # 审计 P1：原生最大化/还原（Win+方向键/Alt+Space 菜单）绕过 toggle_max
-        # 批次——不记录则 restore 走系统 RestoreBounds 复现漂移（实测首还原
-        # 高 1622>屏 1540）；漂移 bounds 又反向污染自管记录。同步记录/写回。
-        try:
-            f2 = _orig_wndproc.get("win")
-            if f2 is not None:
-                fnat = getattr(f2, "native", None)
-                if fnat is not None and wparam & 0xFFF0 == _SC_MAXIMIZE:
+    if msg == _WM_SYSCOMMAND:
+        sc = wparam & 0xFFF0
+        # 审计 P1：原生最大化/还原（Win+方向键/Alt+Space/任务栏）绕过
+        # toggle_max 批次——原生 restore 走系统 RestoreBounds 复现漂移
+        # （实测首还原高 1622>屏 1540，6 循环 +355px 累积）。
+        # 【终局】SC_RESTORE 完全接管：不转发系统（系统的 restore 布局按
+        # 「假想有边框」重算 rect=漂移根源），自己 WindowState=Normal +
+        # bounds 写回（maximize 前记录 / minimize 前常态跟踪，钳工作区）。
+        # 本回调即 GUI 线程，直接操作安全。
+        if sc == _SC_MAXIMIZE:
+            try:
+                f2 = _orig_wndproc.get("win")
+                fnat = getattr(f2, "native", None) if f2 is not None else None
+                from System.Windows.Forms import FormWindowState as _FS
+                if fnat is not None and fnat.WindowState != _FS.Minimized:
+                    _fc_restore["bounds"] = fnat.Bounds
+            except Exception:
+                pass
+        elif sc == _SC_RESTORE:
+            try:
+                f2 = _orig_wndproc.get("win")
+                fnat = getattr(f2, "native", None) if f2 is not None else None
+                if fnat is not None:
                     from System.Windows.Forms import FormWindowState as _FS
-                    if fnat.WindowState != _FS.Minimized:
-                        _fc_restore["bounds"] = fnat.Bounds
-                # SC_RESTORE 不处理：Bounds 稍后由 maximized/restore 流程写回，
-                # 此处只保证 maximize 前有干净记录
-        except Exception:
-            pass
-        # 不 return，继续走转发让系统正常执行最大化/还原
+                    from System.Drawing import Rectangle as _Rect
+                    from System.Windows.Forms import Screen as _Screen
+                    if fnat.WindowState == _FS.Maximized:
+                        rb = _fc_restore["bounds"]
+                    else:
+                        rb = _fc_restore["pre_min"]
+                    fnat.WindowState = _FS.Normal
+                    if rb is not None:
+                        wa = _Screen.FromHandle(fnat.Handle).WorkingArea
+                        nx = max(wa.Left, min(rb.X, wa.Right - max(rb.Width, 200)))
+                        ny = max(wa.Top, min(rb.Y, wa.Bottom - max(rb.Height, 200)))
+                        fnat.Bounds = _Rect(nx, ny, min(rb.Width, wa.Width),
+                                            min(rb.Height, wa.Height))
+                    return 0   # 已自管，不转发（系统布局=漂移根源）
+            except Exception:
+                pass
+        # SC_MAXIMIZE / 其它 SC 值继续走转发（最大化 bounds 由
+        # MaximizedBounds=workarea 钉住，无漂移）
     if msg in (_WM_NCUAHDRAWCAPTION, _WM_NCUAHDRAWFRAME):
         # 白框真凶（NCPAINT 拦截无效的用户复现实锤）：未文档化 legacy NC
         # 绘制消息，激活切换必发，画系统色边框盖住主题色带。Electron
@@ -475,6 +500,11 @@ def _invoke_gui(win, fn):
             pass
 
 
+# a596/597 教训实锤：pythonnet 的 .NET 对象不能挂 python 属性（setattr
+# AttributeError——holder._fc_cur 假挂载实锤），状态存模块级 python 容器
+_FC_HOLDER = {"panel": None, "cur": [0], "wv": None}
+
+
 def _set_edge_pad(win, phys_px):
     """WebView2 边缘让位（终版，手动布局）：
     教训链：Form.Padding 对 Dock 子项无效（Form.DisplayRectangle 怪癖）→
@@ -490,29 +520,23 @@ def _set_edge_pad(win, phys_px):
         try:
             import clr as _clr
             _clr.AddReference("System.Drawing")
-            import System
-            import clr as _clr2
-            _clr2.AddReference("System.Drawing")
             from System.Drawing import Point, Size
             from System.Windows.Forms import Panel, FormWindowState
             f = getattr(win, "native", None)
             if f is None:
                 return
-            holder = None
-            wv = None
-            for c in list(f.Controls):
-                if getattr(c, "Name", "") == "fc_edge_holder":
-                    holder = c
-                    break
-                wv = wv or c   # pywebview 只加一个子控件（webview）
-            if holder is None:
-                if wv is None:
+            holder = _FC_HOLDER["panel"]
+            wv = _FC_HOLDER["wv"]
+            if holder is None or wv is None:
+                for c in list(f.Controls):
+                    if getattr(c, "Name", "") == "fc_edge_holder":
+                        holder = c
+                    elif not wv:
+                        wv = c   # pywebview 只加一个子控件（webview）
+                if holder is None or wv is None:
                     return
-                holder = Panel()
-                holder.Name = "fc_edge_holder"
-                f.Controls.Remove(wv)
-                holder.Controls.Add(wv)   # wv 已 Dock=Fill——在 Panel 内继续 Fill
-                f.Controls.Add(holder)
+                _FC_HOLDER["panel"] = holder
+                _FC_HOLDER["wv"] = wv
 
                 # 激活切换白框终修：Controller bounds ±1 重提交逼 Chromium 重画
                 # 呈现面（zcode attachWindowsWindowRepaint 的 WebView2 等价）；
@@ -548,14 +572,9 @@ def _set_edge_pad(win, phys_px):
                             _force_repaint()
                     except Exception:
                         pass
-                wv.CoreWebView2InitializationCompleted += _on_init_done
-                f.Activated += _force_repaint
-                holder._fc_repaint = _force_repaint   # 闭包持引用防 GC
-                holder._fc_init = _on_init_done
-                cur = [int(phys_px)]
                 def _lay(_s=None, _a=None):
                     try:
-                        b = 0 if f.WindowState == FormWindowState.Maximized else cur[0]
+                        b = 0 if f.WindowState == FormWindowState.Maximized                             else _FC_HOLDER["cur"][0]
                         w2 = f.ClientSize.Width - 2 * b
                         h2 = f.ClientSize.Height - 2 * b
                         if w2 > 0 and h2 > 0:
@@ -563,11 +582,21 @@ def _set_edge_pad(win, phys_px):
                             holder.Size = Size(w2, h2)
                     except Exception:
                         pass
-                f.Resize += _lay
-                holder._fc_lay = _lay          # 闭包持引用防 GC
-                holder._fc_cur = cur           # inset 值存 holder 上（重启幂等）
-            holder._fc_cur[0] = int(phys_px)
-            holder._fc_lay()
+                try:
+                    wv.CoreWebView2InitializationCompleted += _on_init_done
+                    f.Activated += _force_repaint
+                    f.Resize += _lay
+                    _FC_HOLDER["repaint"] = _force_repaint   # 闭包持引用防 GC
+                    _FC_HOLDER["init"] = _on_init_done
+                    _FC_HOLDER["lay"] = _lay
+                except Exception as _e2:
+                    try:
+                        import src.backend_log as _bl
+                        _bl.exception("window", "白框钩子挂载失败（不影响布局主链）：%r" % _e2)
+                    except Exception:
+                        pass
+            _FC_HOLDER["cur"][0] = int(phys_px)
+            _FC_HOLDER["lay"]()
         except Exception as _e:
             # 本会话实锤模式：吞点静默失效（edge pad 曾 ImportError 拖拽全失
             # 效无任何日志）——关键路径吞点必须落日志
@@ -590,6 +619,16 @@ def _set_form_bg(win, r, g, b):
             if f is None:
                 return
             f.BackColor = Color.FromArgb(int(r), int(g), int(b))
+            # 主题色持久化：下次启动 create_window(background_color=) 用——
+            # 消除「启动瞬间白闪」（默认 #FFFFFF 在页面/上报前的空窗露出）
+            try:
+                from src.app_state import _load_config as _lc, _save_config as _sc
+                _cfg = _lc()
+                if _cfg.get("theme_color") != "#%02X%02X%02X" % (int(r), int(g), int(b)):
+                    _cfg["theme_color"] = "#%02X%02X%02X" % (int(r), int(g), int(b))
+                    _sc(_cfg)
+            except Exception:
+                pass
             # WebView2 呈现层白底根修（用户实锤「外圈红中间白」）：包装属性
             # DefaultBackgroundColor 只在 CoreWebView2 创建前有效，运行时设置
             # 被 Controller 忽略——反射取内部 CoreWebView2Controller 直接设
@@ -2050,6 +2089,17 @@ def main():
     # 标题栏/任务栏跟 python.exe 图标走是 pywebview 的能力边界，打包版 exe
     # 内嵌工具 ico 不受影响——除非换 pywebview 或走 Win32 WM_SETICON，否则
     # 此处不能再碰。
+    # 启动底色=上次会话主题色（pywebview 「内容加载前显示的底色」，默认白
+    # ——启动白闪实锤：页面首帧/主题色上报前的空窗露出白底）
+    _start_bg = "#101724"
+    try:
+        from src.app_state import _load_config as _lc
+        _c = _lc()
+        _cand = str(_c.get("theme_color") or "").strip()
+        if len(_cand) == 7 and _cand[0] == "#":
+            _start_bg = _cand
+    except Exception:
+        pass
     window = webview.create_window(
         title="前端控制台 v%s" % APP_VERSION,
         url=f"http://127.0.0.1:{port}/",
@@ -2059,6 +2109,10 @@ def main():
         maximized=bool(open_file_path),
         text_select=True,
         js_api=FileBridge(),
+        # background_color 已停用（A/B 实验：白框复现与该参数强相关——
+        # pywebview 在 CoreWebView2InitializationCompleted 时强制
+        # DefaultBackgroundColor=FromArgb(255,bg)，与我们的 Controller
+        # 染色竞争；启动白闪改由主题色持久化+首次 bg 上报前 Form 深色兜底）
     )
     main._win = window   # /api/window/maximize 路由用（--open-file 热路径让活实例最大化）
 
@@ -2304,7 +2358,88 @@ def main():
             _hg_push_gate.release()
 
     window.events.maximized += lambda: _hg_push_win_state(True)
-    window.events.restored += lambda: _hg_push_win_state(False)
+    window.events.restored += lambda: _hg_restore_bounds_fix(window)
+    # minimized/restored 自管矫正（用户复现路径实锤：拖边框→任务栏最小化→
+    # 还原×N→内容缩块——任务栏还原走 ShowWindow(SW_RESTORE)，不发
+    # SYSCOMMAND 钩不到；Windows 对无 CAPTION 窗的 restore 按「假想有边框」
+    # 重算 bounds，每循环累积漂移。minimized 时自记 bounds，restored 时
+    # 强制写回，绕开系统漂移）
+    # pre_min 常态化跟踪（时机修正：minimized 事件时 bounds 已被系统改成
+    # -32000 垃圾值（实测 pre_min=(-32000,-32000)→矫正写回 (0,0)）——改为
+    # Normal 态的 moved/resized 事件持续刷新，最小化发生时自然是最后一次好值
+    window.events.resized += lambda: _hg_track_normal_bounds(window)
+    window.events.moved += lambda: _hg_track_normal_bounds(window)
+
+    def _hg_track_normal_bounds(win):
+        try:
+            from System.Windows.Forms import FormWindowState, MethodInvoker
+            f = getattr(win, "native", None)
+            if f is None:
+                return
+            def _save():
+                try:
+                    if f.WindowState == FormWindowState.Normal:
+                        _fc_restore["pre_min"] = f.Bounds
+                except Exception:
+                    pass
+            f.Invoke(MethodInvoker(_save))
+        except Exception:
+            pass
+
+    def _hg_restore_bounds_fix(win):
+        try:
+            def _fix():
+                try:
+                    from System.Windows.Forms import FormWindowState, Screen as _Screen
+                    f = getattr(win, "native", None)
+                    if f is None or f.WindowState != FormWindowState.Normal:
+                        return
+                    # 数据源优先级：f.RestoreBounds（.NET 层维护的还原矩形，
+                    # 不受无题窗 NCCALCSIZE 漂移影响）> pre_min（常态跟踪）
+                    rb = None
+                    try:
+                        _rb = f.RestoreBounds
+                        if _rb.Width > 200 and _rb.Height > 200:
+                            rb = _rb
+                    except Exception:
+                        pass
+                    if rb is None:
+                        rb = _fc_restore["pre_min"]
+                    if rb is None:
+                        return
+                    _fc_restore["pre_min"] = None
+                    wa = _Screen.FromHandle(f.Handle).WorkingArea
+                    nx = max(wa.Left, min(rb.X, wa.Right - max(rb.Width, 200)))
+                    ny = max(wa.Top, min(rb.Y, wa.Bottom - max(rb.Height, 200)))
+                    f.Bounds = System.Drawing.Rectangle(
+                        nx, ny, min(rb.Width, wa.Width), min(rb.Height, wa.Height))
+                except Exception:
+                    pass
+            import System
+            from System.Windows.Forms import MethodInvoker
+            f = getattr(win, "native", None)
+            if f is not None:
+                f.Invoke(MethodInvoker(_fix))
+        except Exception:
+            pass
+
+    def _hg_save_pre_min(win):
+        try:
+            def _save():
+                try:
+                    f = getattr(win, "native", None)
+                    if f is None:
+                        return
+                    _fc_restore["pre_min"] = f.Bounds
+                except Exception:
+                    pass
+            import System
+            from System.Windows.Forms import MethodInvoker
+            f = getattr(win, "native", None)
+            if f is not None:
+                f.Invoke(MethodInvoker(_save))
+        except Exception:
+            pass
     # resized/moved 高频推送摘除（py-spy 实锤：每事件一线程，evaluate_js 卡死
     # 堆积）——snap/移动场景改由前端 resize 防抖拉取 /api/window/state
     # shown 后摘 WS_CAPTION（GUI 线程 Invoke 封送）；loaded 再补一刀幂等
