@@ -205,6 +205,25 @@ _flight = _BotSingleFlight(
 atexit.register(_flight.release)
 
 
+def flight_holder_note():
+    """a594：本机另一进程是否已持有单飞锁。返回 (held, pid_or_0, note)。
+
+    用途：自启被单飞锁拦下时，本进程**没有** bot 实例，status 便无从得知
+    「机器人其实在别的进程里活着」。UI 需要如实说明，否则用户看到
+    「已保存，未运行」，会误判凭据没生效。
+    只读探测：不抢锁、不写文件，pid 活得通即返回其 PID。"""
+    try:
+        p = _flight.path
+        if not os.path.exists(p):
+            return False, 0, ""
+        pid = _flight._holder_pid(p)
+        if pid > 0 and pid != os.getpid() and _pid_alive(pid):
+            return True, pid, "机器人已在本机另一进程运行（PID %d）" % pid
+    except Exception:
+        pass
+    return False, 0, ""
+
+
 def _reconnect_wait(lived_sec, kick_n, was_authed=True):
     """a559/a561 铁律：重连等待计算（纯函数，tests 直测）。
 
@@ -262,10 +281,30 @@ def _update_session_file(mutate):
             tmp = SESSION_PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, SESSION_PATH)
+            # a602：备份镜像可能正在读本文件（Windows 下会短暂占用），
+            # 用带重试的替换，绝不让业务落盘因备份而失败
+            _st.replace_retry(tmp, SESSION_PATH)
+            # a602：触发式凭据镜像（home 备份副本随写随更新，不轮询）
+            try:
+                _b = os.path.basename(SESSION_PATH)
+                _st.notify_user_file_written(_b)
+                _st.notify_user_file_written(_b + ".bak")
+            except Exception:
+                pass
             return True
         except Exception:
             return False
+
+
+def _notify_session_bak():
+    """a602：session 的 .bak 刚被删除——让 home 镜像副本同步消失
+    （镜像以 DATA_DIR 为准，删除也要跟着同步，否则会复活已清除的凭据）。"""
+    try:
+        _st.notify_user_file_written(os.path.basename(SESSION_PATH) + ".bak")
+    except Exception:
+        pass
+
+
 BOT_NAME = "前端小助手"   # 改名即新建机器人（旧机器人头像定死无法更新）
 # 手填机器人凭据模式：设置页填 app_id/app_secret 后跳过 SSO 登录+在线注册
 # 直连 WS（用户拍板：每人填自己的机器人，互不影响）。会话文件缺归属 uid 时
@@ -816,6 +855,14 @@ class HikLinkBot:
 
     def status(self):
         af = getattr(self, "auth_failed", False)
+        # a594（同事机实锤「机器人能用，但界面报凭据被拒」）：auth_failed 是
+        # 实例级一次性标记，服务端**后续再推一帧 result=false 的认证回包**
+        # （心跳/重放/另一条连接被拒）就会把它重新置 True，而本实例的
+        # authenticated/connected 仍是 True ——两个真值自相矛盾，界面只挑了
+        # auth_failed 显示。以「当前是否已认证」为准：已认证即视为未失败，
+        # 否则同一时刻既是「在线」又是「凭据被拒」。
+        if self.authenticated:
+            af = False
         # _stop 已置位即视为不在运行：join 超时后线程可能仍卡在 reply()
         # 重试里，单看 is_alive() 会让 ensure_started 误报「已在运行」
         return {"running": bool(self._thread and self._thread.is_alive()
@@ -1177,7 +1224,15 @@ class HikLinkBotController:
         return True, "机器人未在运行"
 
     def status(self):
-        return self.bot.status() if self.bot else {"running": False}
+        # a594：未装配 bot（刚启动/单飞锁被拦/自启还没跑到）时也要回全字段。
+        # 原实现只回 {"running": False}，前端 hgLoginRender 取 st.auth_failed /
+        # st.kick_note 全是 undefined → 文案与指示灯全是默认态，把「另一进程
+        # 正在跑」显示成「已保存，未运行」。
+        if not self.bot:
+            return {"running": False, "connected": False,
+                    "authenticated": False, "auth_failed": False,
+                    "kick_note": "", "robot_num": None, "session_id": None}
+        return self.bot.status()
 
     # ---- 指令处理 ----
     def _on_command(self, text, trans_id):
@@ -1557,6 +1612,8 @@ def clear_account():
     try:
         if os.path.exists(SESSION_PATH + ".bak"):
             os.remove(SESSION_PATH + ".bak")
+            # a602：让镜像副本也跟着消失（登出=彻底清除，不复活）
+            _notify_session_bak()
     except OSError:
         pass
     return ok
@@ -1613,6 +1670,7 @@ def set_manual_credentials(app_id, app_secret):
         try:
             if os.path.exists(SESSION_PATH + ".bak"):
                 os.remove(SESSION_PATH + ".bak")
+                _notify_session_bak()
         except OSError:
             pass
     # 半填校验已上移（早于写盘），此处只剩「两项皆空 = 清除」
@@ -1624,6 +1682,7 @@ def set_manual_credentials(app_id, app_secret):
         try:
             if os.path.exists(SESSION_PATH + ".bak"):
                 os.remove(SESSION_PATH + ".bak")
+                _notify_session_bak()
         except OSError:
             pass
         # 机器人方案已收敛为「凭证登录」单一形态：清空凭据即离线，不再
@@ -1652,11 +1711,24 @@ def status_snapshot():
             st = _controller.bot.status()
     d = _load_session_file()
     manual = bool(d.get("app_id") and d.get("app_secret"))
+    # a594：本进程无 bot 但另一进程持有单飞锁 → 机器人在别处活着，如实告知
+    # （否则 UI 看到 running:false 就写「已保存，未运行」，与事实相反）
+    kick_note = st.get("kick_note") or ""
+    holder_pid = 0
+    if manual and not bool(st.get("running")):
+        _held, holder_pid, _note = flight_holder_note()
+        if _held and not kick_note:
+            kick_note = _note
     return {"username": username, "running": bool(st.get("running")),
             "connected": bool(st.get("connected")),
             # 认证被拒（密钥错/机器人被删）：running+connected 都会是真，
             # 单看它们会一直显示「连接中…」，用户分不清慢还是凭据错
             "auth_failed": bool(st.get("auth_failed")),
+            "kick_note": kick_note,
+            # a594：机器人在**另一进程**里运行（本进程自启被单飞锁拦下）——
+            # UI 据此显示「在线（另一进程）」，而不是误报离线
+            "remote_running": bool(holder_pid),
+            "remote_pid": holder_pid,
             "robot_num": st.get("robot_num"),
             "manual": manual,
             "app_id": d.get("app_id") or "",

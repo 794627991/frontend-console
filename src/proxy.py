@@ -36,6 +36,25 @@ from src.app_state import BASE_DIR, DATA_DIR
 
 log = logging.getLogger("claude_proxy")
 
+
+def _notify_mirror(name):
+    """a602：数据目录下的凭据/状态小文件落盘后通知 home 镜像（触发式）。"""
+    try:
+        import src.app_state as _st
+        _st.notify_user_file_written(name)
+    except Exception:
+        pass
+
+
+def _replace_retry(src, dst):
+    """os.replace 带短重试（a602）：备份镜像读文件时 Windows 会短暂占用，
+    不能让备份把正常写盘打挂。"""
+    try:
+        import src.app_state as _st
+        _st.replace_retry(src, dst)
+    except Exception:
+        os.replace(src, dst)
+
 # ---- 常量（GUI:73-233 平移）----
 # v2.26 去写死：直连地址/转发上游不再是常量——真源是用户 API 配置的 BASE_URL
 # （settings.json env.ANTHROPIC_BASE_URL 的非代理值）。切代理前记忆并持久化到
@@ -253,7 +272,8 @@ def _remember_direct(url):
                                  threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"direct_url": url}, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, PROXY_STATE_PATH)
+        _replace_retry(tmp, PROXY_STATE_PATH)
+        _notify_mirror("proxy_state.json")
     except OSError as e:
         log.warning("记忆直连地址失败: %s", e)
 
@@ -1298,14 +1318,25 @@ def _load_marks():
 
 
 def _save_marks(stamps, trip_ts=0.0):
+    tmp = None
     try:
         d = os.path.dirname(_MARKS_PATH)
         if d and not os.path.isdir(d):
             os.makedirs(d, exist_ok=True)
-        with _MARKS_LOCK, open(_MARKS_PATH, "w", encoding="utf-8") as f:
+        # a602：原子写（裸 "w" 直写期间镜像线程会读到半截 JSON）
+        tmp = "%s.%d.%d.tmp" % (_MARKS_PATH, os.getpid(),
+                                threading.get_ident())
+        with _MARKS_LOCK, open(tmp, "w", encoding="utf-8") as f:
             json.dump({"stamps": list(stamps[-4:]), "trip_ts": trip_ts}, f)
+        _replace_retry(tmp, _MARKS_PATH)
+        tmp = None
+        _notify_mirror("lanz_login_marks.json")
     except Exception:
-        pass
+        if tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
 
 _cred_cache = None       # 凭据磁盘缓存（save/clear 时刷新；status 1s 轮询
                          # 不再每秒 load_credentials 读盘+JSON 解析）
@@ -2602,9 +2633,17 @@ def _api_retry():
     try:
         path = core.retry_config_file()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        # a602：原子写（裸 "w" 直写期间镜像线程会读到半截 JSON）
+        tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
+        _replace_retry(tmp, path)
+        _notify_mirror(os.path.basename(path))
     except OSError as e:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
         return jsonify({"ok": False, "msg": "写入失败：%s" % e})
     core.RETRY_CFG.update(cfg)   # 热更（与 reload 等价，少一次盘读）
     log.info("重试策略已更新: %s", cfg)

@@ -348,6 +348,15 @@ def main():
         log.warning("proxy_module_init 失败: %s", e)
     threading.Thread(target=_bot_restore, daemon=True,
                      name="hiklink-bot-restore").start()
+    # a602：凭据镜像也必须在本进程启动——bot / lanz 凭据 / 代理状态都由
+    # worker 写，主进程的钩子表看不到这里的写入（此前镜像永远停在启动快照，
+    # 升级恢复出来的是旧 app_secret）。两进程写同一 home 目录靠唯一 tmp 名
+    # + 内容校验兜住，不会互相踩。
+    try:
+        from src.cred_mirror import start as _cm_start
+        _cm_start()
+    except Exception as e:
+        log.warning("凭据镜像启动失败: %s", e)
     # 子代理 watcher 预热（不预热也能被会话 lifecycle 懒拉起，这里只是
     # 让 worker 一活就具备 sub feed 服务能力）
     try:

@@ -44,21 +44,34 @@ _EXPORT_DIR = os.path.join(DATA_DIR, "skill_exports")    # 离线包导出目录
 def _migrate_legacy_dirs():
     """旧 HOME_DIR 位置的技能缓存一次性搬到数据目录（都存在时以新位置为准
     ——迁移是 best-effort，失败静默留旧位置，下次加载不再重试因为新位置
-    已有内容）。"""
-    for sub in ("skill_cache", "skill_zh", "skill_exports"):
-        old = os.path.join(HOME_DIR, sub)
-        new = os.path.join(DATA_DIR, sub)
-        if os.path.isdir(old) and not os.path.isdir(new):
-            try:
-                shutil.move(old, new)
-            except OSError:
-                pass
+    已有内容）。
+
+    a602 审计 P1：本函数在模块导入期执行，而 skill_cache 实测 49MB——跨盘时
+    shutil.move 是同步全量复制，会卡启动（用户红线）。改为：**只同步搬小的
+    skill_meta.json（几十字节），目录交给后台线程**。"""
+    dirs = [(os.path.join(HOME_DIR, sub), os.path.join(DATA_DIR, sub))
+            for sub in ("skill_cache", "skill_zh", "skill_exports")]
+    dirs = [(o, n) for o, n in dirs
+            if os.path.isdir(o) and not os.path.isdir(n)]
     old_meta = os.path.join(HOME_DIR, "skill_meta.json")
     new_meta = os.path.join(DATA_DIR, "skill_meta.json")
     if os.path.isfile(old_meta) and not os.path.isfile(new_meta):
         try:
             shutil.move(old_meta, new_meta)
         except OSError:
+            pass
+    if dirs:
+        def _bg():
+            for o, n in dirs:
+                try:
+                    if not os.path.isdir(n):
+                        shutil.move(o, n)
+                except OSError:
+                    pass
+        try:
+            threading.Thread(target=_bg, daemon=True,
+                             name="legacy-skill-move").start()
+        except Exception:
             pass
 
 

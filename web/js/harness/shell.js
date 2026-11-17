@@ -161,18 +161,36 @@ async function claudeButtonAction() {
 // 凭据就位后端自动激活机器人（幂等），登出自动停用。未登录机器人不激活。
 // 胶囊点击 → 冒泡弹窗（未登录=登录表单；已登录=状态+登出确认）。
 // 机器人 LED：唯一表达在线/离线的载体（文案里不再重复「在线」）
+// ---- 机器人 LED/文案 ----
+// a594（同事机实锤「机器人能用但显示凭据被拒」）：**在线是最终事实**——
+// 收到过 SERVER_AUTH_REPLY result=true 才会 connected，此时凭据必然已被
+// 服务端接受。而 auth_failed 是实例级的一次性标记（上一次认证失败），
+// 与同一实例后续认证成功之间只有一个赋值，任何重启/换实例的竞态都会让
+// 它残留。原实现把 auth_failed 排在在线之前，于是「在线 + 残留标记」=
+// 界面报错、功能正常。现在一律先判在线。
+function hgBotOnline(st) { return !!(st.running && st.connected); }
+// a594：机器人在**本机另一进程**里跑（本进程自启被单飞锁拦下）。后端在
+// 该情形下持有锁的 PID 探活成功才给 remote_running=true，语义上等价于在线。
+function hgBotRemote(st) { return !!st.remote_running; }
 function hgBotLed(st) {
   if (!st.manual) return 'hg-login-dot off';                  // 未配置凭据
+  if (hgBotOnline(st) || hgBotRemote(st)) return 'hg-login-dot on';   // 在线
   if (st.auth_failed) return 'hg-login-dot err';             // 凭据被拒
   if (!st.running) return 'hg-login-dot idle';               // 已配置未运行
-  return st.connected ? 'hg-login-dot on' : 'hg-login-dot wait';   // 在线/连接中
+  return 'hg-login-dot wait';                                 // 连接中
 }
 // 弹窗内的机器人状态文字（不支持指示灯语义时的一行说明）
 function hgBotPhase(st) {
   if (!st.manual) return '未配置凭据';
+  if (hgBotOnline(st)) return '';
+  if (hgBotRemote(st)) return '在线（本机另一进程 PID ' + st.remote_pid + '）';
   if (st.auth_failed) return '凭据被拒，请检查 App ID/Secret';
-  if (!st.running) return '已保存，未运行';
-  return st.connected ? '在线' : '连接中…';
+  if (!st.running) {
+    // a594：本机另一进程已持有单飞锁时，如实说清楚——否则用户只会看到
+    // 「已保存，未运行」，误以为凭据没生效
+    return st.kick_note || '已保存，未运行';
+  }
+  return '连接中…';
 }
 let _hgLastSt = {};
 // 带超时的 JSON fetch（无超时时 worker 未就绪会永久挂住登录按钮）
@@ -237,12 +255,12 @@ function hgLoginRender(st, keepBaseline) {
     }
     // 状态全由指示灯表达；文字只在不正常时给一句原因（在线不写字）。
     // 「未配置凭据」必须给文字——灰灯 off/idle 肉眼几乎无差别，用户分不清
-    // 是没配还是配了没跑
+    // 是没配还是配了没跑。a594：另一进程在跑时也要给文字（本进程没有
+    // running=true 可依），由 hgBotPhase 统一产出，这里只判「有没有话要说」
     const rdot = pop.querySelector('[data-hg-robot-dot]');
     if (rdot) rdot.className = hgBotLed(st);
     if (rstate) {
-      rstate.textContent = (!st.manual || st.auth_failed || !st.running)
-        ? hgBotPhase(st) : '';
+      rstate.textContent = hgBotPhase(st);
     }
     // 密钥真回显：有已存密钥就填进框（type=password 显示为 ******），
     // 点眼睛立刻能看到明文——不是占位符，用户能确认到底存没存

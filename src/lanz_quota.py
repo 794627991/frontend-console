@@ -532,9 +532,11 @@ def save_credentials(path, username, password):
             fd = None  # 已交给 with，勿重复 close
             json.dump(d, f, indent=2, ensure_ascii=False)
             f.write("\n")
-        os.replace(tmp, path)
+        # a602：备份镜像可能正在读本文件；带重试的替换，别让备份打挂登录
+        _replace_retry(tmp, path)
         tmp = None  # 已 replace，无需清理
         log.info("凭据已保存: %s", path)
+        _notify_mirror(os.path.basename(path))
     except OSError as e:
         log.error("保存凭据失败: %s", e)
         raise
@@ -553,8 +555,29 @@ def delete_credentials(path):
         if os.path.exists(path):
             os.remove(path)
             log.info("凭据已删除: %s", path)
+            _notify_mirror(os.path.basename(path))
     except OSError as e:
         log.warning("删除凭据失败: %s", e)
+
+
+def _notify_mirror(name):
+    """a602：凭据落盘/删除后通知 home 镜像（触发式，不轮询）。"""
+    try:
+        import src.app_state as _st
+        _st.notify_user_file_written(name)
+    except Exception:
+        pass
+
+
+def _replace_retry(src, dst):
+    """os.replace 带短重试（a602）：备份镜像读文件时 Windows 会短暂占用，
+    不能让备份把正常凭据保存打挂。"""
+    try:
+        import src.app_state as _st
+        _st.replace_retry(src, dst)
+    except Exception:
+        import os as _os
+        _os.replace(src, dst)
 
 
 # ---- CLI 单跑（无 UI，便于调试）-------------------------------------
