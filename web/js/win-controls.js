@@ -33,7 +33,10 @@
     document.body.classList.toggle('is-max', !!max);
     // padding 补偿独立类：max 或 snap 等越界态（over>0）都套；MaximizedBounds
     // 钉 workarea 后 max 态 over 恒 0（补偿空转作保险）
-    var ov = (typeof overhang === 'number' && overhang > 0) ? overhang : 0;
+    // 前端合理性钳制（双保险第二道，2026-11-18 用户实锤）：正常越界补偿
+    // 只有几个 px（最大化边框）——超过 100px 必是异常值（最小化 rect
+    // -32000 求差的 25000px 会把全部内容推出屏幕外只剩 body 背景）
+    var ov = (typeof overhang === 'number' && overhang > 0 && overhang <= 100) ? overhang : 0;
     document.body.classList.toggle('hg-overhang', ov > 0);
     document.body.style.setProperty('--wv-overhang', ov + 'px');
   }

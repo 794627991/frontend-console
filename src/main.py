@@ -804,6 +804,18 @@ def _maximize_overhang_css_px(win):
         rc = _tagRECT()
         if not _u.GetWindowRect(hwnd, _ct.byref(rc)):
             return 0.0
+        # 最小化守卫（2026-11-18 用户实锤「快速最小化再打开短时间什么都没有」）：
+        # 最小化窗口 rect=(-32000,-32000)（Windows 标准坐标），与工作区求差
+        # 得 over≈25000 CSS px——页面套上 hg-overhang 四边 25000px padding，
+        # 全部内容被推到屏幕外只剩 body 背景。最小化没有「越界补偿」概念，
+        # 直接 0（还原后下一次拉取自然回正常值）
+        try:
+            f2 = getattr(win, "native", None)
+            from System.Windows.Forms import FormWindowState as _FS
+            if f2 is not None and f2.WindowState == _FS.Minimized:
+                return 0.0
+        except Exception:
+            pass
         mon = _u.MonitorFromWindow(hwnd, 2)   # MONITOR_DEFAULTTONEAREST（审计 P2：1=PRIMARY 副屏补偿错乱）
         if not mon:
             return 0.0
