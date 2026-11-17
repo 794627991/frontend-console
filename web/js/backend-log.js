@@ -84,12 +84,31 @@
     panel.querySelector('[data-bl="clear"]').onclick = () => {
       // 代际递增：在途的旧响应回来后要丢弃，否则会把刚清掉的行「复活」
       // （实测：清空后 DOM 是 0 行，陈旧响应又把它塞回到 20 行）。
+      // a623R（审计 #9）：allRows/lastSeq **必须在这里同步复位**——原来
+      // 放 POST .then 里，窗口期 2s 轮询以旧 lastSeq 发 GET、响应带着新
+      // 代际通过检查、在复位之后处理 → 清空前的行整批塞回。同步复位后
+      // 在途响应要么被旧代际丢弃，要么之后的拉取以 since=0 重来。
       gen++;
       inFlight = false;
       catchUpMs = 0;
+      allRows = [];
+      lastSeq = 0;
+      droppedLocal = false;
+      render();
       fetch('/api/backend_log/clear', { method: 'POST' })
-        .then(() => { allRows = []; lastSeq = 0; droppedLocal = false;
-                      render(); refresh(); })
+        .then(() => {
+          // a623R 复审（审计 #2）：同步复位之外**再断根一次**——同步复位
+          // 与后端 clear 落地之间，truncated 追赶链（无句柄的 setTimeout
+          // refresh）可能以新代际 + since=0 拉到清空前整批（后端还没处理
+          // 完 clear），响应在 .then 之后到达就永久滞留。这里 gen++ 使
+          // 全部在途响应作废，再复位 + 重拉——以 clear 落地为终态。
+          gen++;
+          allRows = [];
+          lastSeq = 0;
+          droppedLocal = false;
+          render();
+          refresh();
+        })
         .catch(() => {});
     };
     panel.querySelector('[data-bl="level"]').onchange = (e) => {
@@ -314,14 +333,41 @@
 
   const DOM_MAX = 2000;           // 面板一次最多渲染的行数（超出只显示尾部）
 
+  // a623R（审计 #11）：追加式快路径的渲染游标——已渲染的最大 seq + 当前
+  // DOM 是否为「本次过滤条件下的全量产物」。每 2s 轮询新行到达时若满足
+  // 快路径条件只 append 增量行，不做 2000 行 innerHTML 全量重建（重解析
+  // 数万节点是面板打开期最大 CPU 项，且全量重建抹掉用户选区）。
+  let renderedTailSeq = 0;
+  let renderedFull = false;
+  let renderedFilterKey = '';
+
   function render() {
     if (!panel) return;
     const body = panel.querySelector('.bl-body');
+    // 过滤条件与上次渲染时不同 → DOM 里是旧口径的行，只能全量
+    const filterKey = levelFilter + '|' + tagFilter;
+    if (filterKey !== renderedFilterKey) { renderedFull = false; renderedFilterKey = filterKey; }
     const rows = allRows.filter(passes);
     const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 30;
     if (!rows.length) {
       body.innerHTML = '<div class="bl-empty">' +
         (allRows.length ? '当前过滤条件下没有匹配的日志' : '还没有日志输出') + '</div>';
+      renderedTailSeq = 0; renderedFull = false;
+      return;
+    }
+    const last = rows[rows.length - 1];
+    const hidden = rows.length - DOM_MAX;
+    // 快路径：贴底 + 无截断 + DOM 尾行与游标吻合 + 确有新行 → 只 append。
+    // 任一不满足（上翻看历史/切过滤/超 DOM_MAX/重渲染）走全量，语义不变。
+    if (atBottom && renderedFull && hidden <= 0 && last.seq > renderedTailSeq &&
+        body.lastElementChild && parseInt(body.lastElementChild.dataset.seq, 10) === renderedTailSeq) {
+      let frag = '';
+      for (const x of rows) {
+        if (x.seq > renderedTailSeq) frag += rowHtml(x);
+      }
+      if (frag) body.insertAdjacentHTML('beforeend', frag);
+      renderedTailSeq = last.seq;
+      body.scrollTop = body.scrollHeight;   // 贴底分支 autoScroll 恒成立
       return;
     }
     // a600 对抗审计（滚动漂移）：原来每次新行到达都整块 innerHTML 重建，
@@ -332,7 +378,6 @@
     const anchor = atBottom ? null : firstVisibleSeq(body);
     // 超出 DOM_MAX 时只渲染尾部，但必须**明确提示**——否则用户以为日志
     // 就这么多。完整内容请用「导出」。
-    const hidden = rows.length - DOM_MAX;
     const tail = hidden > 0 ? rows.slice(-DOM_MAX) : rows;
     body.innerHTML =
       (hidden > 0
@@ -340,6 +385,8 @@
           + '更早的 ' + hidden + ' 行请用「导出」查看</div>'
         : '') +
       tail.map(rowHtml).join('');
+    renderedTailSeq = tail.length ? tail[tail.length - 1].seq : 0;
+    renderedFull = true;
     if (anchor !== null) {
       restoreAnchor(body, anchor);
     } else if (autoScroll || atBottom) {
@@ -492,12 +539,17 @@
   }
 
   function wire() {
-    document.querySelectorAll('[data-ver-badge]').forEach(el => {
+    // a623R（审计 #2）：标题栏 ver 徽标在非最大化下被 a59x 的「纯图标」定调
+    // 藏掉（.logo > span:not(.icon) 整链 display:none）——新增 topbar 图标钮
+    // [data-bl-open] 作恒可见入口，与徽标共用同一 toggle
+    document.querySelectorAll('[data-ver-badge], [data-bl-open]').forEach(el => {
       el.style.cursor = 'pointer';
       el.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-      el.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
-      });
+      if (el.tagName !== 'BUTTON') {
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+        });
+      }
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && panel && panel.style.display !== 'none') hide();
@@ -505,7 +557,7 @@
     document.addEventListener('click', (e) => {
       if (!panel || panel.style.display === 'none') return;
       if (panel.contains(e.target)) return;
-      if (e.target.closest && e.target.closest('[data-ver-badge]')) return;
+      if (e.target.closest && e.target.closest('[data-ver-badge], [data-bl-open]')) return;
       hide();
     }, true);
   }

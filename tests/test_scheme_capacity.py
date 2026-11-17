@@ -326,6 +326,26 @@ def test_unknown_window_not_flagged():
     assert _badge_risky(500_000, 0) is False
 
 
+def test_badge_criteria_contract_with_js():
+    """a623R（审计 #3）：_badge_risky 是 web/js/harness/sessions.js 判据的
+    Python 手抄副本——上面 4 条测试只测副本，JS 改坏测试照绿（同义反复，
+    a613 清过的假断言物种）。这里对 JS 判据源码做**契约断言**：判据行或
+    ctxWindow 取值链被改动时本测试必须红，逼人同步两处。"""
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "web", "js", "harness", "sessions.js")
+    with open(p, encoding="utf-8") as f:
+        src = f.read()
+    # 判据行（改判据必须同步 _badge_risky 与本断言）
+    assert "const risky = sw > 0 && cw > 0 && sw > cw;" in src, \
+        "sessions.js 的 risky 判据变了——同步 web 判据、_badge_risky 和本契约"
+    # 会话窗口取值链：后端算好的实际生效窗口优先，schemeWindow 兜底
+    assert "Number(s.ctxWindow) || Number(s.schemeWindow)" in src, \
+        "sessions.js 的 ctxWindow 取值链变了——同步 _badge_risky 语义与本契约"
+    # 当前方案窗口来源（a623R 复审补钉）：_badge_risky 的 cw 语义锚在这行
+    assert "const cw = Number(_HG.schemeWindow) || 0;" in src, \
+        "sessions.js 的 cw 取值变了——同步 _badge_risky 语义与本契约"
+
+
 def test_profile_ctx_window_reads_snapshot():
     """profile_ctx_window 从方案快照读窗口键，未知方案返回 0。"""
     from src.claude_default import profile_ctx_window

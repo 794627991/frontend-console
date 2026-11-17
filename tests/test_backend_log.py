@@ -262,15 +262,41 @@ def test_set_enabled_short_circuits():
     BL.log("t", "重开后")
     assert BL.stats()["entries"] == n_before + 1
 
-def test_batch_emit_is_single_lock():
-    """批量写走一次持锁（性能手段）：_emit_many 存在，且一次写多行只加一次锁。
+def test_batch_emit_is_single_lock(monkeypatch):
+    """批量写走一次持锁（性能手段，a623R 审计 #4 真身化）。
 
-    用行为验证而不是源码字面匹配（后者在转义/注释上极易碎）。
-    """
+    原测试只断言 entries == before+100——**逐行加锁的实现同样 +100**，
+    测了个空心。现在用计数代理锁数 `with _lock` 的进入次数：100 行一批
+    必须恰好 1 次持锁；逐行加锁的实现会数出 100 → 红。"""
     _install()
-    before = BL.stats()["entries"]
-    # 一块含 100 行，应产生 100 条记录，且只取一次锁
+    real_lock = BL._lock
+
+    class _CountingLock:
+        def __init__(self, inner):
+            self._inner = inner
+            self.count = 0
+
+        def __enter__(self):
+            self.count += 1
+            return self._inner.__enter__()
+
+        def __exit__(self, *a):
+            return self._inner.__exit__(*a)
+
+        # 兼容裸 acquire/release 的调用方（如有）
+        def acquire(self, *a):
+            self.count += 1
+            return self._inner.acquire(*a)
+
+        def release(self):
+            return self._inner.release()
+
+    counting = _CountingLock(real_lock)
+    monkeypatch.setattr(BL, "_lock", counting)
+    before = BL.stats()["entries"]          # stats 也持锁——先取基线
+    counting.count = 0                      # 基线取完清零，只数 emit 这一次
     BL._emit_many(["第 %d 行" % i for i in range(100)], "stdout")
+    assert counting.count == 1, "100 行一批必须只持锁 1 次（数到 %d）" % counting.count
     assert BL.stats()["entries"] == before + 100
 
 
@@ -516,14 +542,95 @@ def test_secrets_redacted_space_and_flag_forms(raw, secret):
     assert "***" in out
 
 
+# ---- a623R（对抗审计 #1 实锤穿透形态）-----------------------------------
+# 疯狗审计拿真实模块实测 4 形态原样穿透：\b 在 client_secret 的下划线处
+# 不成立（hiklink 真实凭据名就叫 app_secret！）；_URL_PASS_RE 要求用户名
+# ≥1 字符漏掉 redis://:pass@；值含空格整行漏。修复后逐一回归。
+@pytest.mark.parametrize("raw,secret", [
+    ("client_secret=AbC123xyz99", "AbC123xyz99"),
+    ("app_secret=wJK8sLm2NpQr", "wJK8sLm2NpQr"),
+    ("redis://:Sup3rSecret@10.0.0.1:6379", "Sup3rSecret"),
+    ("password abc 12345 leakme", "leakme"),
+    ("SECRET_KEY=AbCdEf123456", "AbCdEf123456"),
+    ("mysql://root:s3cr3t@localhost/db", "s3cr3t"),
+    # a623R 复审（N2）：key 以数字/点序号结尾——词尾保护曾整行漏
+    ("token2=AbCdEf123456", "AbCdEf123456"),
+    ("password1=hunter2pass", "hunter2pass"),
+    ("secret.1=AbCdEf123456", "AbCdEf123456"),
+    ("password.1=Sup3rSecret", "Sup3rSecret"),
+    # a623R 第三轮（R1）：小写复合字段——最高频真实凭据命名，
+    # `=` 在场即赋值，前后缀任意放行（creds.token.1 属顺带修的历史缺口）
+    ("secret_key=AbCdEf123456", "AbCdEf123456"),
+    ("access_key_id=AKIAIOSFODNN7123", "AKIAIOSFODNN7123"),
+    ("api_key_id=AKIAIOSFODNN7123", "AKIAIOSFODNN7123"),
+    ("password_hash=s3cr3tvalue", "s3cr3tvalue"),
+    ("token_value=AbCdEf123456", "AbCdEf123456"),
+    ("secret_name=AbCdEf123456", "AbCdEf123456"),
+    ("secret-key=AbCdEf123456", "AbCdEf123456"),
+    ("creds.token.1=eyJhbGciOi", "eyJhbGciOi"),
+    ("auth.token=x9x9x9x9x9", "x9x9x9x9x9"),
+])
+def test_secrets_redacted_audit_bypass_forms(raw, secret):
+    """审计实锤的穿透形态：修复后必须脱敏，绝不能原样可导出。"""
+    out = BL._redact(raw)
+    assert secret not in out, out
+    assert "***" in out
+
+
+# ---- a623R 复审：引号值形态 + 词尾保护（误伤面回归）----------------------
+@pytest.mark.parametrize("raw,secret", [
+    ('password "hunter2pass"', "hunter2pass"),
+    ('--password "hunter2 pass"', "hunter2 pass"),
+    ('token "eyJhbGciOiJIUzI1NiIsInR5"', "eyJhbGciOiJIUzI1NiIsInR5"),
+])
+def test_secrets_redacted_quoted_values(raw, secret):
+    """带引号的空格/旗标形态（复审实锤：a623R 重写时丢了 a616 的引号值
+    分支，基线能挡、改漏——回归钉死）。"""
+    out = BL._redact(raw)
+    assert secret not in out, out
+    assert "***" in out
+
+
+@pytest.mark.parametrize("raw", [
+    'File "C:\\Python314\\Lib\\tokenize.py", line 342, in _tokenize',
+    'File "...src\\token_ring.py" line 9',
+    "MyPassword123456",
+    "loaded /etc/password.txt backup",
+    "token.json updated to v2",
+    "token ok",
+    # a623R 复审（N3）：关键词+_续写的标识符后接正常行文——曾误伤
+    "token_ring reset done",
+    "secret_id is ok",
+    # a623R 第三轮（R2）：数字/大写续写 + 空格 + 正常行文——曾误伤
+    "MyPassword123456 is wrong",
+    "TOKEN12345 expired",
+    "password123 is incorrect",
+    "token123 is fine",
+])
+def test_redact_does_not_mangle_keyword_continuations(raw):
+    """关键词被续写（tokenize/token_ring/token.json/MyPassword…）不是赋值，
+    绝不能抹——traceback 路径被抹坏会直接劣化 a624 的 crash 可诊断性。"""
+    assert BL._redact(raw) == raw
+
+
+def test_space_form_single_token_keeps_trailing_fields():
+    """首段 ≥6 时只抹单段（a616 行为）：--password hunter2 user=admin 的
+    user=admin 字段必须保留——多分词只在首段 <6（旧实现整行漏）时启用。"""
+    assert BL._redact("--password hunter2 user=admin") == "--password *** user=admin"
+
+
 @pytest.mark.parametrize("raw", [
     "password 错误，请重试",         # 中文值不能抹（宁可漏抹不抹坏日志）
     "token 无效",
-    "secret sauce is tasty",        # 值 < 6 位
     "default config loaded",        # 见下方 _classify 用例
 ])
 def test_space_form_does_not_over_redact(raw):
-    """空格形态的值限定 ASCII 可见字符且 ≥6 位——正常日志不能被抹成星号。"""
+    """空格形态的值限定 ASCII 可见字符——正常中文日志不能被抹成星号。
+
+    a623R 口径变更：`secret sauce is tasty` 这类「keyword + 多个英文短词」
+    从本表移除——它与审计漏报样例 `password abc 12345 leakme` 结构同构，
+    无法既堵漏又保留（语义不可分），按「绝不漏」定调选择抹（多分词上限
+    4 段 + 总长 ≥6，见 _SECRET_SPACE_RE）。"""
     assert BL._redact(raw) == raw
 
 
@@ -983,3 +1090,20 @@ def test_entry_count_cap_bounds_memory():
         assert BL.stats()["dropped"] > 0     # 超出部分确实被淘汰
     finally:
         BL._MAX_ENTRIES = old
+
+
+# ---- a623R 已知缺口（文档化，非回归目标）--------------------------------
+@pytest.mark.parametrize("raw", [
+    "password1 hunter2pass",       # 尾缀+空格形态：裸 keyword 口径不认（基线同漏）
+    "secret_key AbCdEf123456",     # 小写复合+空格形态：同上
+    "--password abc.def.ghi",      # 值含点：值字符集排除 .（基线同漏）
+    # a623R 第四轮（G1 补钉）：钉面必须覆盖完整缺口面，防漂移机制才有效
+    ".token hunter2pass",          # 点前缀+空格形态：裸 keyword 口径镜像缺口（基线同漏）
+    "password ab_cd123 leakme",    # 值含 _：值字符集排除 _（基线同漏）
+    'password"hunter2pass"',       # 引号紧贴 keyword 无空格：基线曾挡、现漏（现实罕见）
+])
+def test_redact_known_gaps_documented(raw):
+    """这些形态当前**有意不抹**（裸 keyword + 值字符集取舍，见
+    _SECRET_SPACE_RE 注释「已知取舍（声明）」），基线同样漏、非本批回归。
+    钉住现状：若未来实现变了，这里会红——提醒同步更新声明与口径。"""
+    assert BL._redact(raw) == raw

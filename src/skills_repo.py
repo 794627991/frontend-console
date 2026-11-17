@@ -58,6 +58,11 @@ def _migrate_legacy_dirs():
     if os.path.isfile(old_meta) and not os.path.isfile(new_meta):
         try:
             shutil.move(old_meta, new_meta)
+            # a623R 复审（审计 #7）：迁移是 skill_meta.json 的第 4 个
+            # DATA_DIR 写点（除 _meta_set/_meta_del 外）——不通知则 home
+            # 副本缺失到下次装卸技能。此刻 _write_hooks 可能尚未注册
+            # （模块导入期），notify 为 no-op，无害。
+            _notify_mirror()
         except OSError:
             pass
     if dirs:
@@ -75,7 +80,10 @@ def _migrate_legacy_dirs():
             pass
 
 
-_migrate_legacy_dirs()
+# a623R 复审（严重 N1）：迁移执行点必须在 _notify_mirror 定义**之后**——
+# 原来放这里（模块 83 行）而 _notify_mirror 定义在 ~425 行，老布局升级机
+# 首次导入迁移分支触发即 NameError，import src.skills_repo 整体失败。
+# 执行点挪到模块底部（_notify_mirror/_META_FILE 全部定义完成后）。
 _PACK_TTL = 1800          # 导入暂存 zip 的有效期（秒）
 _PAGE_TTL = 600           # skills.sh 网页内存缓存（秒）
 _LB_CACHE = {}            # path -> (ts, html)；读写仅赋值/取值，GIL 下原子
@@ -417,6 +425,18 @@ def _meta_load():
         return {}
 
 
+def _notify_mirror():
+    """skill_meta.json 落盘后通知凭据镜像（a623R 审计 #8）：白名单里有
+    skill_meta.json（重装后可对账），但本模块此前从不通知——proxy/lanz/
+    hiklink 的写点都调 notify_user_file_written，唯独这里漏了，运行期装卸
+    技能后 home 副本一直陈旧。通知异常吞掉（备份尽力而为）。"""
+    try:
+        from src import app_state as _st
+        _st.notify_user_file_written(os.path.basename(_META_FILE))
+    except Exception:
+        pass
+
+
 def _meta_set(skill, info):
     with _META_LOCK:
         d = _meta_load()
@@ -427,6 +447,7 @@ def _meta_set(skill, info):
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False, indent=1)
             os.replace(tmp, _META_FILE)
+            _notify_mirror()
         except OSError:
             pass
 
@@ -438,6 +459,7 @@ def _meta_del(skill):
             try:
                 with open(_META_FILE, "w", encoding="utf-8") as f:
                     json.dump(d, f, ensure_ascii=False, indent=1)
+                _notify_mirror()
             except OSError:
                 pass
 
@@ -955,3 +977,7 @@ def status():
 
 
 _STAT = {}
+
+# a623R 复审（严重 N1）：迁移执行点挪到模块底部——_notify_mirror/_META_FILE
+# 全部定义完成后（老布局升级机导入期触发迁移不再 NameError）。
+_migrate_legacy_dirs()

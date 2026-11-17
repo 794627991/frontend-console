@@ -2632,6 +2632,10 @@ def _api_retry():
         return jsonify({"ok": False, "msg": "参数非法：%s" % e})
     try:
         path = core.retry_config_file()
+        # a623R（审计 #12）：tmp 提前置 None——原来 makedirs 抛 OSError 时
+        # tmp 还没赋值，except 里 os.remove(tmp) 二次 UnboundLocalError，
+        # 真错误被 500 笼统掩盖（_save_marks 同文件里是现成的正确写法）
+        tmp = None
         os.makedirs(os.path.dirname(path), exist_ok=True)
         # a602：原子写（裸 "w" 直写期间镜像线程会读到半截 JSON）
         tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
@@ -2640,10 +2644,11 @@ def _api_retry():
         _replace_retry(tmp, path)
         _notify_mirror(os.path.basename(path))
     except OSError as e:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
         return jsonify({"ok": False, "msg": "写入失败：%s" % e})
     core.RETRY_CFG.update(cfg)   # 热更（与 reload 等价，少一次盘读）
     log.info("重试策略已更新: %s", cfg)

@@ -723,7 +723,15 @@ try:
           rs2.get("designer") == "e-heavy" and rs2.get("reviewer") == "e-heavy",
           str(rs2))
 except ImportError as e:
-    check("Flask 不可用，跳过端点段（%s）" % e, True)
+    # a623R（P3 假绿陷阱，a141 同款历史真炸过）：只有 **flask 缺失**才允许
+    # 跳过端点段；flask 在场却 ImportError = 本仓代码/蓝图真炸了，必须红。
+    # 原来一律 check(..., True)——import 被罩成假绿。
+    try:
+        import flask  # noqa: F401
+        _flask_ok = True
+    except Exception:
+        _flask_ok = False
+    check("端点段 import 失败（flask 在场=真炸必须修）：%s" % e, not _flask_ok)
 
 print()
 print("=" * 56)

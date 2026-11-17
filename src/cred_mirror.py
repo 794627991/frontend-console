@@ -124,8 +124,9 @@ def _tomb_file():
 def _tomb_load():
     """墓碑：记录「用户主动删除过」的文件名。恢复时跳过。
     a602 审计：只靠「DATA_DIR 里没有凭据」判断会在「登出清空凭据后立刻删包
-    重装」时把已删除的明文密码复活（删除通知还没被镜像线程处理）。墓碑让
-    删除这件事本身持久化，异步窗口不再是问题。"""
+    重装」时把已删除的明文密码复活。墓碑让删除这件事本身持久化——
+    a623R（审计 #7）起删除事件由 notify **同步**落墓碑，异步窗口闭合，
+    本句宣称至此成立。"""
     import json
     try:
         with open(_tomb_file(), encoding="utf-8") as f:
@@ -231,7 +232,20 @@ def _warn_overlap_once(src_dir):
         src_dir, BACKUP_DIR)
 
 
+_m1_lock = threading.Lock()   # _mirror_one 进程内串行（a623R 审计 #6）
+
+
 def _mirror_one(name, deleting_ok=True):
+    """串行外壳：同一进程内 daemon 队列消费与 notify 的同步删除路径可能
+    并发处理**同一个文件**（登出流程先入队 .bak 写通知、紧接着删 .bak 并
+    同步打墓碑）——旧实现单 daemon 串行不可能此交错，同步化后必须显式
+    互斥，否则 stat/写/墓碑三步交错出「墓碑已清+副本是旧凭据」终态，
+    删包重装即复活已登出明文凭据。锁内只有几 KB 读写，无争用零成本。"""
+    with _m1_lock:
+        return _mirror_one_impl(name, deleting_ok=deleting_ok)
+
+
+def _mirror_one_impl(name, deleting_ok=True):
     """镜像单个文件。DATA_DIR 为准：文件在就同步副本，不在就删副本并留墓碑
     （用户主动删凭据后不能让它复活）。返回 1 表示实际拷贝了。
 
@@ -300,16 +314,43 @@ def sync_once():
 
 
 def notify(name):
-    """某个用户文件刚写完（由 app_state.notify_user_file_written 转来）。
-    非白名单文件直接忽略——日志/笔记不归这里管。"""
-    if name in _MIRROR_FILES:
-        _q.put(name)
+    """某个用户文件刚写完/刚被删（由 app_state.notify_user_file_written 转来）。
+    非白名单文件直接忽略——日志/笔记不归这里管。
+
+    a623R（审计 #7）：**删除事件同步处理**。原来删除和写入一样只入队，
+    墓碑要等 daemon 消费才落盘——登出后立刻杀进程，墓碑没落，之后删包
+    重装 restore_missing 会把已登出的明文密码复活（_tomb_load 注释里
+    「异步窗口不再是问题」的宣称过头了）。源头已消失 = 删除：同步跑
+    _mirror_one（一次 stat 定生死，微秒级；墓碑在跨进程锁内原子落盘），
+    不再入队。写路径保持异步（写后状态完整，进程死亡不丢墓碑语义）。"""
+    if name not in _MIRROR_FILES:
+        return
+    if _sig(os.path.join(_st.DATA_DIR, name)) is None:
+        try:
+            _mirror_one(name)
+        except Exception as e:
+            _log.warning("凭据镜像删除同步失败 %s: %s", name, e)
+        return
+    _q.put(name)
+
+
+# 真正意义上的「凭据」（a623R 审计 #6）：_any_cred_present 只看它们。
+# 白名单 _MIRROR_FILES 里 proxy_state/retry_config/skill_meta/cmdlib/
+# pw_pending_del 是**状态/配置**文件——新装机上业务线程启动期就会写出
+# （如代理 autostart 一开就写 proxy_state.json），把它们算「在用」会让
+# 删包重装后的凭据恢复整体静默跳过。用户删除凭据的防线是墓碑（notify
+# 已同步落盘），不依赖这个粗判据。
+_CRED_FILES = (
+    "hiklink_session.json",
+    "hiklink_session.json.bak",
+    "lanz_credentials.json",
+)
 
 
 def _any_cred_present(d):
-    """数据目录里是否还有**有效**白名单凭据（任意一个）。
+    """数据目录里是否还有**有效**凭据（任意一个，只看 _CRED_FILES）。
     0 字节/坏 json 不算——恢复被打断留下的残片不能挡住后续恢复。"""
-    for name in _MIRROR_FILES:
+    for name in _CRED_FILES:
         p = os.path.join(d, name)
         try:
             if os.path.getsize(p) > 0:

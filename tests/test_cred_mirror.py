@@ -127,13 +127,22 @@ def test_data_dir_wins_deletion_syncs(monkeypatch):
 
 
 def test_notify_ignores_non_whitelist(monkeypatch):
-    """触发式：非白名单名字（日志/笔记）直接丢弃，不进队列。"""
+    """触发式：非白名单名字（日志/笔记）直接丢弃，不进队列。
+
+    a623R：白名单名分写/删两路——**写**（文件在）入队走 daemon；**删**
+    （文件不在）同步落墓碑不入队。本测试 data 里没有 hiklink_session.json，
+    notify 它=删除事件 → 不入队（墓碑分支另有专测）。"""
     root, data, backup = _setup(monkeypatch)
     try:
         cm.notify("server_errors.log")
         cm.notify("files")
         cm.notify("proxy_usage.json")
         assert cm._q.empty()
+        # 删除形态：源头不存在 → 同步处理，不入队
+        cm.notify("hiklink_session.json")
+        assert cm._q.empty()
+        # 写形态：文件在 → 入队
+        _write(os.path.join(data, "hiklink_session.json"), {"app_id": "A"})
         cm.notify("hiklink_session.json")
         assert cm._q.get_nowait() == "hiklink_session.json"
     finally:
@@ -348,3 +357,130 @@ def test_truncated_json_not_mirrored(monkeypatch):
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
+
+
+# ---- a623R（对抗审计 #6/#5/#7）：恢复判据与墓碑时序的真身回归 ------------
+
+def test_restore_not_blocked_by_state_files(monkeypatch):
+    """审计 #6：proxy_state.json（状态文件）存在 ≠ 凭据在用。新装机上业务
+    线程启动期就会写状态文件（如代理 autostart），旧判据把它算「在用」→
+    凭据恢复整体静默跳过。修复后 _any_cred_present 只看真凭据。"""
+    root, data, backup = _setup(monkeypatch)
+    try:
+        _write(os.path.join(backup, "hiklink_session.json"), {"app_id": "A"})
+        _write(os.path.join(backup, "lanz_credentials.json"), {"u": "x"})
+        # 业务抢先：状态文件先落盘，凭据一个都还没有
+        _write(os.path.join(data, "proxy_state.json"), {"on": True})
+        _write(os.path.join(data, "skill_meta.json"), {"s": 1})
+        rec = cm.restore_missing()
+        assert "hiklink_session.json" in rec, rec
+        assert "lanz_credentials.json" in rec, rec
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_notify_delete_writes_tombstone_synchronously(monkeypatch):
+    """审计 #7：删除事件 notify 必须同步落墓碑。原实现入队等 daemon——
+    登出后立刻杀进程，墓碑没落，之后删包重装会复活已登出的明文密码。
+    （目录里放一个非白名单文件：_mirror_one 对「删到目录全空」有壳保护，
+    真实 DATA_DIR 恒有其他条目，空壳是迁移残留特例。）"""
+    root, data, backup = _setup(monkeypatch)
+    try:
+        _write(os.path.join(data, "unrelated_notes.json"), {"n": 1})
+        _write(os.path.join(data, "hiklink_session.json"), {"app_id": "A"})
+        _write(os.path.join(backup, "hiklink_session.json"), {"app_id": "A"})
+        os.remove(os.path.join(data, "hiklink_session.json"))
+        cm.notify("hiklink_session.json")      # 不起 worker 线程——必须同步生效
+        assert "hiklink_session.json" in cm._tomb_load(), \
+            "删除通知返回时墓碑必须已落盘（不能等队列消费）"
+        assert not os.path.exists(os.path.join(backup, "hiklink_session.json")), \
+            "副本也要同步清掉"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_notify_write_stays_async(monkeypatch):
+    """写路径保持异步（删除才同步）——queue 收到名字即过，不此刻拷贝。"""
+    import queue as _q
+    root, data, backup = _setup(monkeypatch)
+    try:
+        _write(os.path.join(data, "cmdlib.json"), [{"cmd": "x"}])
+        cm.notify("cmdlib.json")
+        assert cm._q.get_nowait() == "cmdlib.json"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_restore_oexcl_real_paths(monkeypatch):
+    """审计 #5：O_EXCL「只补不盖」的真路径覆盖。原测试预置真凭据走了
+    _any_cred_present 早退，os.link/FileExistsError 分支零执行——实现若
+    退化成 shutil.copy 静默覆盖，测试照样绿。"""
+    root, data, backup = _setup(monkeypatch)
+    try:
+        _write(os.path.join(backup, "hiklink_session.json"), {"app_id": "OLD"})
+        # 场景①：正常恢复——link 必须被调用，内容搬回
+        calls = {"link": 0}
+        real_link = os.link
+        def _counting_link(a, b, **kw):
+            calls["link"] += 1
+            return real_link(a, b, **kw)
+        monkeypatch.setattr(os, "link", _counting_link)
+        assert cm.restore_missing() == ["hiklink_session.json"]
+        assert calls["link"] == 1, "恢复必须走 os.link（O_EXCL 语义），而不是 copy"
+        with open(os.path.join(data, "hiklink_session.json"), encoding="utf-8") as f:
+            assert json.load(f)["app_id"] == "OLD"
+
+        # 场景②：判 exists 与落盘之间业务抢先建了同名文件 → link 抛
+        # FileExistsError → 绝不覆盖，以业务为准
+        os.remove(os.path.join(data, "hiklink_session.json"))
+        _write(os.path.join(data, "hiklink_session.json"), {"app_id": "NEW"})
+        # 目录里现在有凭据 → 走 in_use 早退，测不到 link 分支——
+        # 所以移走其它凭据源：直接把恢复判据指向无凭据状态
+        os.remove(os.path.join(data, "hiklink_session.json"))
+        def _link_exists(a, b, **kw):
+            raise FileExistsError(17, "业务抢先")
+        monkeypatch.setattr(os, "link", _link_exists)
+        assert cm.restore_missing() == []      # FileExistsError → 当轮跳过
+        # 目标此刻被业务重建（模拟抢先者已落盘）——绝不能被覆盖成 OLD
+        _write(os.path.join(data, "hiklink_session.json"), {"app_id": "NEW"})
+        monkeypatch.setattr(os, "link", _link_exists)
+        cm.restore_missing()
+        with open(os.path.join(data, "hiklink_session.json"), encoding="utf-8") as f:
+            assert json.load(f)["app_id"] == "NEW", "O_EXCL：绝不能覆盖业务文件"
+
+        # 场景③（a623R 复审修正）：「目标已存在 → continue」的真分支——
+        # 用**非凭据**白名单文件（cmdlib.json）测：凭据文件在 data 里会让
+        # in_use 早退，根本走不到循环内的 exists(tp) continue。
+        _write(os.path.join(backup, "cmdlib.json"), [{"cmd": "x"}])
+        _write(os.path.join(data, "cmdlib.json"), [{"cmd": "x"}])
+        calls2 = {"link": 0}
+        def _counting2(a, b, **kw):
+            calls2["link"] += 1
+            return real_link(a, b, **kw)
+        monkeypatch.setattr(os, "link", _counting2)
+        assert cm.restore_missing() == []
+        assert calls2["link"] == 0, "目标已存在必须走 exists(tp) continue，不碰 link"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_skill_meta_write_notifies_mirror(monkeypatch):
+    """审计 #8：skill_meta.json 的写点必须通知镜像。原实现 _meta_set/
+    _meta_del 落盘后从不 notify（proxy/lanz/hiklink 都有，唯独它漏）——
+    运行期装卸技能后 home 副本一直陈旧，「重装后可对账」对的是假账。"""
+    import src.skills_repo as sr
+    root = tempfile.mkdtemp(prefix="fc_sr_")
+    try:
+        meta = os.path.join(root, "skill_meta.json")
+        monkeypatch.setattr(sr, "DATA_DIR", root)
+        monkeypatch.setattr(sr, "_META_FILE", meta)
+        calls = []
+        monkeypatch.setattr(st, "notify_user_file_written",
+                            lambda n: calls.append(n))
+        sr._meta_set("demo-skill", {"installed": True})
+        sr._meta_del("demo-skill")
+        assert calls == ["skill_meta.json", "skill_meta.json"], calls
+        # 顺带核通知真的接到了 app_state 钩子（notify 名在白名单内）
+        assert "skill_meta.json" in cm._MIRROR_FILES
+    finally:
+        shutil.rmtree(root, ignore_errors=True)

@@ -82,9 +82,21 @@ _SECRET_HINTS = ("password", "passwd", "pwd", "token", "secret", "api_key",
                  "cookie", "session_id", "bearer", "basic ", "jwt",
                  "密码", "口令", "密钥")
 # 值：可选引号包裹 / 非空白；key 两侧允许引号（JSON 形态 "password":"x"）；分隔符含全角
+# a623R（对抗审计 #1，第三轮 R1/R2 定稿）：key 匹配按分隔符形态**分两条**——
+#   · _SECRET_RE（= 分隔）：key = 任意前后缀 `[\w.-]*(关键词)[\w.-]*`。
+#     `\b` 在 client_secret 的下划线处不成立（_ 和 s 都是词字符）曾致
+#     client_secret= / app_secret=（hiklink 真实凭据名）整行穿透；有 `=`
+#     在场足以判定赋值，前后缀任意放行——secret_key= / access_key_id= /
+#     password_hash= / token_value= / secret-key= / creds.token.1= 全收，
+#     tokenize.py / token.json 无 `=` 天然排除（traceback 不误伤）。
+#   · _SECRET_SPACE_RE（空格分隔）：**裸 keyword**（两侧非词字符/点）+
+#     空白 + 值。token_ring / secret_id / MyPassword123456 / password123
+#     这类「关键词被续写」的文本因 keyword 不裸而天然排除；带任何尾缀
+#     （password1/token2/SECRET_KEY 空格形态）一律不认——是已知漏报
+#     缺口（基线同漏），见文末声明。
 _SECRET_RE = re.compile(
-    r"(?i)[\"']?\b(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key|authorization|cookie|session[_-]?id)[\"']?"
+    r"[\"']?([\w.-]*(?i:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key|authorization|cookie|session[_-]?id)[\w.-]*)[\"']?"
     r"\s*[:=：＝]\s*"
     r"(\"[^\"]*\"|'[^']*'|[^\s,，。；;）)]+)")
 _CN_SECRET_RE = re.compile(
@@ -93,13 +105,22 @@ _CN_SECRET_RE = re.compile(
 # a616（疯狗审计 v3 重炮二）：**空格分隔**形态——`--password hunter2`、
 # `password mypass`、`--token abc123`。原实现的分隔符类只有 [:=：＝]，空格
 # 形态整行穿透（实测 `--password hunter2 user=admin` 原样入库、原样可导出）。
-# 值限定为 ASCII 可见字符且 ≥6 位：中文词（「password 错误」「token 无效」）
-# 一律不碰，宁可漏抹也不把正常日志抹成星号。
+# a623R 三轮定稿：**只认裸 keyword**（`(?<![\w.])…(?![\w.-])`，两侧非词
+# 字符——比 \b 强，下划线/点续写一律不算）；值限定 ASCII 可见字符，中文
+# 词（「password 错误」「token 无效」）一律不碰，宁漏勿误。值允许**最多
+# 4 段空格分词**（`password abc 12345 leakme` 首段 3 字符旧 {6,} 整行漏）；
+# **首段 ≥6 时只抹单段**（--password hunter2 user=admin 保住 user=admin，
+# 同 a616），首段 <6 才启用多分词；总长 ≥6 的闸在 _redact_line._space_sub。
+# 已知取舍（声明）：带引号值按引号内全量抹；值超 4 段时第 5 段起残留；
+# 带尾缀的空格形态漏（`secret_key xxx` / `password1 xxx`——基线同漏）；
+# 无分隔符且值含 `.`/`_` 漏（`--password abc.def`）；含关键字行成本 ~15µs。
 _SECRET_SPACE_RE = re.compile(
-    r"(?i)(?:(?<=[\s\-])|^)(?:--)?"
-    r"(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key)[\"']?\s*(?:[:=：＝]\s*)?"
-    r"(\"[^\"]{6,}\"|'[^']{6,}'|[A-Za-z0-9._~+/=!@#%^&*$\-]{6,})")
+    r"(?i)(?<![\w.])(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key)(?![\w.-])"
+    r"[\"']?\s+"
+    r"(\"[^\"]*\"|'[^']*'"
+    r"|[A-Za-z0-9~+/=!@#%^&*$\-]{6,}"
+    r"|[A-Za-z0-9~+/=!@#%^&*$\-]{2,5}(?:\s+[A-Za-z0-9~+/=!@#%^&*$\-]{2,}){1,3})")
 # HTTP 认证头 / 裸令牌：`Bearer xxx` / `Basic xxx` / `token eyJ...`
 # bearer/basic 的令牌通常 ≥8 字符；裸 token 要 ≥16 才动手，避免误伤
 # 「token 无效」这类正常短语。
@@ -108,7 +129,9 @@ _BEARER_RE = re.compile(
 _BARE_TOKEN_RE = re.compile(
     r"(?i)\btoken\s+([A-Za-z0-9._~+/=-]{16,})")
 # 连接串里的 userinfo 密码：`scheme://user:pass@host`
-_URL_PASS_RE = re.compile(r"(://[^:/\s@]+:)([^@\s/]+)(@)")
+# a623R（审计 #1）：用户名允许为空——`redis://:Sup3rSecret@host`（空用户
+# 形态）原实现要求用户名 ≥1 字符，整行穿透。
+_URL_PASS_RE = re.compile(r"(://[^:/\s@]*:)([^@\s/]+)(@)")
 
 
 def _redact(text):
@@ -138,8 +161,14 @@ def _redact_line(text):
     text = _BARE_TOKEN_RE.sub("token ***", text)
     text = _SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
     text = _CN_SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
-    text = _SECRET_SPACE_RE.sub(lambda m: m.group(1) + " ***", text)
-    return text
+
+    def _space_sub(m):
+        # a616 口径：值（去引号）总长 <6 的短词大概率是正常行文（「token
+        # ok」），宁可漏抹也不误伤；带引号值按引号内内容算长度
+        if len(m.group(2).strip("\"'")) < 6:
+            return m.group(0)
+        return m.group(1) + " ***"
+    return _SECRET_SPACE_RE.sub(_space_sub, text)
 
 
 def _has_secret_hint(text):
