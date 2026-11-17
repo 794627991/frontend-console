@@ -206,3 +206,43 @@ def test_cancel_does_not_kill_other_sessions():
     finally:
         with S._ports_lock:
             S._ports.pop(pid, None)
+
+
+def test_late_cancel_closes_registered_session():
+    """a616（疯狗审计 v3 重炮三）：迟到取消必须真的关掉会话。
+
+    a610 的时序：连接线程在 _ports_lock 里检查标记（未命中）→ 注册
+    _ports[pid]=p → finally _clear_cancelled(token)。取消恰好落在注册之后、
+    清理之前时，标记被写入又被连接线程自己擦掉，会话照样存活——前端早已
+    abort，设备上留一条没人用的会话。
+    修法：注册时同锁登记 token→port_id，cancel 路由按映射直接摘掉关闭。
+    本用例模拟「注册已完成、连接线程还没走到 finally」的状态。
+    """
+    from src import server as S
+
+    class FakeConn:
+        def __init__(self, *a, **k):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    pid = "ssh:8.8.8.8:22"
+    tok = "ct-late"
+    p = FakeConn()
+    with S._ports_lock:
+        S._ports[pid] = p
+        S._bind_token_port(tok, pid)
+    try:
+        r = S.app.test_client().post("/api/connect/cancel",
+                                     json={"conn_token": tok})
+        assert r.status_code == 200
+        assert p.closed is True, "迟到取消必须关闭已注册会话"
+        with S._ports_lock:
+            assert pid not in S._ports, "已关闭的会话必须从 _ports 摘掉"
+        # 映射保留到连接线程 finally 自清；此处手工清，保证用例独立
+    finally:
+        with S._ports_lock:
+            S._ports.pop(pid, None)
+        S._unbind_token_port(tok)
+        S._clear_cancelled(tok)
