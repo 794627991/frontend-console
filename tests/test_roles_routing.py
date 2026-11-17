@@ -65,6 +65,18 @@ def write_tiers(haiku="", sonnet="", opus=""):
 
 import src.harness.roles as hr
 
+# a616（疯狗审计 v4 #2 的类问题）：a615 起 resolve_agent_models 会拿「当前
+# 方案模型表」校验显式槽值。available_models() 读的是**真机**
+# ~/.claude/settings.json——本文件在隔离上一直只盖了 CONFIG_FILE /
+# HARNESS_AGENTS_DIR / HARNESS_TIER_SETTINGS 三个，模型表没盖，于是 dm-x /
+# rm-x / dm-inst 这类占位值在真机上被判「表外」→ 静默回退重档，测例失去
+# 意义（实际上也是这台机器上 4 条用例失败的根因）。这里显式接管模型表。
+import src.harness.models as _hm
+_TEST_MODEL_POOL = ["glm-5.3-flash", "glm-5.3", "dm-x", "rm-x",
+                    "dm-inst", "rm-inst", "e-light", "e-heavy", "e-mid"]
+_hm.available_models = lambda: {"models": list(_TEST_MODEL_POOL),
+                                "default": "glm-5.3"}
+
 LIGHT_MODEL = "glm-5.3-flash"       # 轻档显式值
 HEAVY_MODEL = "glm-5.3"             # 重档显式值
 MID_MODEL = "glm-4.7"               # 中档显式值（v3.5.0 三档）
@@ -698,8 +710,17 @@ try:
           jr5.get("design_max_lines") == 150, str(jr5))
     gr2 = _c.get("/api/harness/roles").get_json()
     rs2 = gr2.get("resolved") or {}
-    check("GET resolved 回显设计者/审计者模型",
-          rs2.get("designer") == "e-dm" and rs2.get("reviewer") == "e-rm",
+    # a616：a615 加了「显式槽值必须在当前方案模型表内」的校验（原先因
+    # NameError 空转，从未生效）。e-dm/e-rm 是本文件的占位值，不在任何
+    # 真实模型表里，所以 resolved 现在必须**回退重档**（本段把
+    # heavy_model 设成了 e-heavy）。落盘值仍原样保留——回退是运行时行为，
+    # 不改写用户配置。
+    check("落盘值原样保留（回退只作用于 resolved）",
+          gr2["roles"].get("designer_model") == "e-dm"
+          and gr2["roles"].get("reviewer_model") == "e-rm",
+          str(gr2["roles"]))
+    check("GET resolved 对模型表外的槽值回退重档",
+          rs2.get("designer") == "e-heavy" and rs2.get("reviewer") == "e-heavy",
           str(rs2))
 except ImportError as e:
     check("Flask 不可用，跳过端点段（%s）" % e, True)

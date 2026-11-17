@@ -369,19 +369,28 @@ def resolve_agent_models(models=None, default=None):
     _tl, _tm, heavy = resolve_tier_models(models, default)
     cd = str(cfg.get("designer_model") or "").split("[")[0].strip()
     cr = str(cfg.get("reviewer_model") or "").split("[")[0].strip()
-    try:
-        pool = list(available_models().get("models") or []) if models is None \
-            else list(models or [])
-    except Exception:
+    # a616（疯狗审计 v3/v4）：原实现直接写 `available_models()`，但本模块
+    # **没有**这个模块级名字（只有 resolve_role_models 里的惰性导入），
+    # 于是必然 NameError → except 吞掉 → pool=[] → fail-open → 校验永远
+    # 空转，a615 声称的「坏模型名回退」从未真正生效。改成同款惰性导入。
+    if models is None:
+        try:
+            from ..harness.models import available_models as _am
+            pool = list(_am().get("models") or [])
+        except Exception:
+            pool = []
+    else:
         pool = list(models or [])
-    if not _agent_model_ok(cd, pool)[0]:
-        log.warning("designer_model 不可用，回退重档：%s",
-                    _agent_model_ok(cd, pool)[1])
-        cd = ""
-    if not _agent_model_ok(cr, pool)[0]:
-        log.warning("reviewer_model 不可用，回退重档：%s",
-                    _agent_model_ok(cr, pool)[1])
-        cr = ""
+    if cd:
+        ok, why = _agent_model_ok(cd, pool)
+        if not ok:
+            log.warning("designer_model 不可用，回退重档：%s", why)
+            cd = ""
+    if cr:
+        ok, why = _agent_model_ok(cr, pool)
+        if not ok:
+            log.warning("reviewer_model 不可用，回退重档：%s", why)
+            cr = ""
     return (cd or heavy, cr or heavy)
 
 
