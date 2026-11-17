@@ -42,6 +42,7 @@ function skRepoOpen() {
         '<button class="sk-back" data-sk-back title="返回会话">←</button>' +
         '<div class="sk-title"><b>技能仓库</b><span id="skSub">发现 · 安装 · 管理 Claude 技能</span></div>' +
         '<span class="sk-status" id="skStatus"></span>' +
+        '<select autocomplete="off" id="skSource" title="技能下载源：失败自动换下一源；源间内容不一致默认拒装" style="background:var(--bg-input);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:12px;max-width:150px;"></select>' +
         '<input autocomplete="off" class="sk-search" id="skSearch" placeholder="搜索技能（支持中文，自动英译）…">' +
         '<button class="sk-btn" data-sk-import title="导入离线包（内网一键安装）"><span style="vertical-align:-2.5px">' + ICO16.package + '</span> 导入离线包</button>' +
         '<input type="file" id="skFile" accept=".zip" style="display:none">' +
@@ -90,6 +91,16 @@ function _skOnClick(e) {
 
 function _skOnChange(e) {
   const t = e.target;
+  if (t.id === 'skSource') {
+    // a632：源档位保存，即时生效（下轮拉取即按新档排序）
+    _skFetch('/api/skills/source', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: t.value }) }).then(r => {
+      showBanner(r.ok ? ('技能源已切换：' + t.value + '（即时生效）')
+                      : ('保存失败：' + (r.err || '')), 3000, !r.ok);
+    });
+    return;
+  }
   if (t.id === 'skFile' && t.files[0]) skPackInspect(t.files[0]);
   else if (t.classList.contains('sk-sel')) {
     // 已安装卡片勾选（导出离线包用）——只更新计数，不整页重渲（避免打断连续勾选）
@@ -114,10 +125,28 @@ function skLoadStatus() {
   const el = SK.root.querySelector('#skStatus');
   _skFetch('/api/skills/status').then(r => {
     if (!r.ok) { el.innerHTML = '<i class="dot bad"></i>状态未知'; return; }
-    const dot = r.skills_sh ? (r.github ? 'ok' : 'mid') : 'bad';
-    const src = r.skills_sh ? 'skills.sh' : (r.github ? 'GitHub 兜底' : '不可达');
-    el.innerHTML = '<i class="dot ' + dot + '"></i>' + _skEsc(src) +
+    // a632：三源可达性（官方 raw / jsDelivr 镜像 / GitHub API）——技能下载
+    // 至少一源可用即可装；skills.sh 只影响发现/榜单（挂了自动切官方精选）
+    const dl = [r.official, r.jsdelivr, r.gh_api].filter(Boolean).length;
+    const dot = r.skills_sh ? (dl ? 'ok' : 'mid') : (dl ? 'mid' : 'bad');
+    const parts = ['skills.sh:' + (r.skills_sh ? '通' : '挂'),
+                   '下载源:' + dl + '/3'];
+    el.innerHTML = '<i class="dot ' + dot + '"></i>' + parts.map(_skEsc).join(' · ') +
       ' · 汉化:' + _skEsc(r.light_model || '未配置');
+  });
+  skLoadSource();
+}
+
+// a632：源档位下拉（智能/官方优先/镜像优先）——独立于依赖安装的镜像档
+function skLoadSource() {
+  const sel = SK.root.querySelector('#skSource');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">源…</option>';
+  _skFetch('/api/skills/source').then(r => {
+    if (!r.ok) return;
+    sel.innerHTML = (r.options || []).map(o =>
+      '<option value="' + _skEsc(o.id) + '"' +
+      (o.id === r.mode ? ' selected' : '') + '>' + _skEsc(o.name) + '</option>').join('');
   });
 }
 
@@ -140,6 +169,9 @@ function skLoadHome() {
         setTimeout(skZhPatch, 15000);
       }
       skRenderHome();
+      if (r.ok && r.source && r.source !== 'skills.sh')
+        showBanner('skills.sh 暂不可达，已切换官方精选兜底（anthropics/skills）',
+                   5000);
       if (!r.ok) showBanner('榜单拉取失败：' + (r.err || ''), 3500, true);
     });
   };
@@ -285,18 +317,36 @@ function skInstZhPatch() {
   }).catch(() => { _skInstZhRun = false; });
 }
 
-function skInstall(key, btn) {
+function skInstall(key, btn, confirmIntegrity) {
   const parts = String(key).split('/');
   if (parts.length !== 3) return;
   if (btn) { btn.disabled = true; btn.textContent = '安装中…'; }
   _skFetch('/api/skills/install', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ owner: parts[0], repo: parts[1], skill: parts[2] }) })
+    body: JSON.stringify({ owner: parts[0], repo: parts[1], skill: parts[2],
+                           confirm_integrity: !!confirmIntegrity }) })
     .then(r => {
       if (btn) { btn.disabled = false; btn.textContent = '安装'; }
+      if (!r.ok && r.integrity_conflict) {
+        // a632（安全核心）：多源内容不一致 = 疑似篡改或镜像缓存延迟——
+        // 默认拒装；展示两源哈希，用户自行判断后可强制
+        const hs = Object.entries(r.hashes || {})
+          .map(([k, v]) => _skEsc(k + '：' + v)).join('<br>') || '（无哈希）';
+        hgModal('安全拦截 · 多源内容不一致',
+          '<div class="hg-modal-body">该技能从多个下载源拉到的内容<b>不一致</b>' +
+          '（可能是镜像缓存延迟，也可能是上游被篡改）。安装的技能会作为 ' +
+          'Claude 的指令与脚本执行，请确认来源可信后再强制安装。<br><br>' +
+          '<code style="font-size:11px;word-break:break-all;user-select:text">' +
+          hs + '</code></div>',
+          [{ label: '取消', value: false },
+           { label: '仍要安装', primary: true, value: true }])
+          .then(yes => { if (yes) skInstall(key, btn, true); });
+        return;
+      }
       if (!r.ok) { showBanner('安装失败：' + (r.err || ''), 4000, true); return; }
       showBanner((r.conflict ? '已覆盖重装：' : '安装成功：') + parts[2] +
-        (r.partial ? '（辅助文件部分缺失——SKILL.md 主体已装）' : ''), 4000);
+        (r.integrity === 'user-override' ? '（⚠ 你确认了不一致内容，风险自担）' : '') +
+        (r.partial ? '（辅助文件部分缺失——SKILL.md 主体已装）' : ''), 4500);
       SK.updates[parts[2]] = false;
       _skRefreshInst();
       if (SK.view === 'detail' && SK.det && SK.det.key === key) skOpenDetail(key);

@@ -24,8 +24,11 @@ import zipfile
 import threading
 import urllib.request
 import urllib.error
+import logging
 
 from src.app_state import HOME_DIR, DATA_DIR
+
+_log = logging.getLogger("skills_repo")
 
 UA = "frontend-console-skills/1.0"
 # v4.0.1：内网 lanzi 网关按 UA 白名单放行 Anthropic 协议（仅 claude-cli/*，
@@ -101,15 +104,123 @@ _TOPICS = [
 
 # ---------------------------------------------------------------- 网络层
 
-def _http(url, timeout=20, want_bytes=False):
+def _http(url, timeout=20, want_bytes=False, extra_headers=None):
     """GET → str/bytes；任何失败返回 None（调用方按不可达处理）。"""
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        headers = {"User-Agent": UA}
+        if extra_headers:
+            headers.update(extra_headers)
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as r:
             b = r.read()
         return b if want_bytes else b.decode("utf-8", "replace")
     except Exception:
         return None
+
+
+# ---- 多源下载（a632，用户定调「源要多、要安全、可选」）--------------------
+# 实测 2026-11-18（逐台机器可达性不同，本机结论仅供选型参考）：
+#   raw.githubusercontent.com   直连 000（被墙形态）——官方源，恒在候选列内
+#   testingcf.jsdelivr.net      200 真镜像，内容与 api.github.com 逐字节一致
+#   fastly/cdn/gcore.jsdelivr   301→raw 本体的跳转器，raw 不通时零增益，剔除
+#   api.github.com + raw Accept 200，作为官方备援（与 raw 的 DNS/SNI 面不同）
+# jsDelivr 对 @branch 引用有最长 12h 缓存——刚发布的技能可能拿到旧版，
+# 交叉验证不一致时会归为「缓存延迟或篡改」，默认拒装（见 _fetch_verified）。
+_RAW_SOURCES = (
+    # (源名, URL 模板, 额外 headers)——{owner}/{repo}/{branch}/{path} 四槽
+    ("official", "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}", {}),
+    ("jsdelivr", "https://testingcf.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}", {}),
+    ("gh_api", "https://api.github.com/repos/{owner}/{repo}/contents/{path}",
+     {"Accept": "application/vnd.github.raw"}),
+)
+# 公共探针（可达性探测用同一份真实文件，避免对探针 URL 的特判）
+_PROBE_OWNER, _PROBE_REPO, _PROBE_BRANCH, _PROBE_PATH = (
+    "anthropics", "skills", "main", "README.md")
+
+_SKILL_SOURCE_MODES = ("auto", "official", "jsdelivr")
+# 内容真伪的权威序（交叉验证 pick / confirm 强制装 / 更新检测基准共用）：
+# 官方原文 → GitHub API（权威、无 CDN 缓存）→ jsDelivr（12h 缓存，沉底）
+_PICK_ORDER = ("official", "gh_api", "jsdelivr")
+
+
+def source_mode():
+    """技能下载源档位（config.json 的 skill_source 键）。独立于依赖安装的
+    online_mirror——域名族与语义完全不同（pip/npm 镜像对 GitHub raw 无意义）。
+    auto=智能（探测可达者按官方→镜像排序）；official=官方直连优先；
+    jsdelivr=镜像优先。非法值回退 auto。"""
+    try:
+        from .app_state import _load_config
+        m = (_load_config().get("skill_source") or "auto").strip()
+    except Exception:
+        return "auto"
+    return m if m in _SKILL_SOURCE_MODES else "auto"
+
+
+def set_source_mode(m):
+    from .app_state import cfg_commit
+    if m not in _SKILL_SOURCE_MODES:
+        raise ValueError("未知技能源档位：%s" % m)
+    # cfg_commit：锁内读改写原子（a623R 审计 N9——裸 {**_load_config()} 的
+    # 读在锁外，与其它配置写并发可丢更新；全仓 22 处旧调用点同款是历史债，
+    # 新代码用更好的既有 API）
+    cfg_commit(lambda d: d.update({"skill_source": m}))
+
+
+def _source_reachability():
+    """各源最近一次可达性（status() 的 5min 探测缓存；没探测过视为可达——
+    首次拉取不该被探测空窗阻塞，错了换下一源即可）。"""
+    return {
+        "official": _STAT.get("official", True),
+        "jsdelivr": _STAT.get("jsdelivr", True),
+        "gh_api": _STAT.get("gh_api", True),
+    }
+
+
+def _raw_url_variants(owner, repo, branch, path):
+    """按档位排出某文件的候选 URL 列表（多源；官方恒在候选列内兜底）。"""
+    reach = _source_reachability()
+    order = [s for s, _u, _h in _RAW_SOURCES]
+    mode = source_mode()
+    if mode == "jsdelivr":
+        order.sort(key=lambda s: s != "jsdelivr")
+    elif mode == "official":
+        order.sort(key=lambda s: s != "official")
+    else:   # auto：探测不可达的沉底（不剔除——探测可能过时，留兜底）
+        order.sort(key=lambda s: not reach.get(s, True))
+    out = []
+    for s in order:
+        tpl, hdr = next(((u, h) for n, u, h in _RAW_SOURCES if n == s), (None, {}))
+        if not tpl:
+            continue
+        out.append((s, tpl.format(owner=owner, repo=repo, branch=branch,
+                                  path=path), hdr))
+    return out
+
+
+def _fetch_multi(variants, timeout=15, want_bytes=True):
+    """按候选序逐源拉取，成功即返回 (bytes, 源名)；全部失败 (None, None)。
+    空响应按失败处理（空 bytes 是断连/污染的常见产物，不能当成功——
+    空内容 sha256 与「真拉到」一致会造成假交叉验证通过）。"""
+    for name, url, hdr in variants:
+        b = _http(url, timeout=timeout, want_bytes=want_bytes, extra_headers=hdr)
+        if b and len(b) > 0:
+            return (b, name)
+    return (None, None)
+
+
+def _variants_from_raw_url(url):
+    """raw.githubusercontent 形态的 URL → 多源候选（辅助文件下载用；
+    download_url 由 GitHub contents API 生成，恒为该形态）。非 raw 形态
+    原样单发。a623R 审计 N1 如实声明：branch 含 /（feature/x）的 raw URL
+    存在**结构性歧义**——feature/x 分支与 owner/repo/feature + path=x/...
+    从 URL 本身无法区分，镜像变体会切错址（通常 404 退化单源官方；病理
+    情形由 install 的 blob sha 校验兜住，错文件进不了盘）。官方变体的重组
+    恰好还原原 URL，恒正确。"""
+    m = re.match(r"https://raw\.githubusercontent\.com/"
+                 r"([^/]+)/([^/]+)/([^/]+)/(.+)$", url or "")
+    if not m:
+        return [("official", url, {})]
+    return _raw_url_variants(m.group(1), m.group(2), m.group(3), m.group(4))
 
 
 def _page(path):
@@ -119,9 +230,14 @@ def _page(path):
     hit = _LB_CACHE.get(key)
     if hit and now - hit[0] < _PAGE_TTL:
         return hit[1]
+    hit = _LB_CACHE.get("neg:" + key)
+    if hit and now - hit[0] < 60:
+        return None   # 失败负缓存：被墙挂起形态下避免每次重付 25s 全价
     html = _http("https://www.skills.sh" + path, timeout=25)
     if html:
         _LB_CACHE[key] = (now, html)
+    else:
+        _LB_CACHE["neg:" + key] = (now, None)
     return html
 
 
@@ -164,15 +280,67 @@ def parse_leaderboard(html):
     return rows
 
 
+# 官方技能子集（anthropics/skills 仓库 skills/ 目录，2026-11-18 contents
+# API 实测 19 个）——skills.sh 不可达时的发现面兜底（用户拍板方案 1：
+# 官方精选；skills.sh 无国内镜像站，第三方仿站不可信）。contents API 可达
+# 时用真实列表，API 也挂时降级用这份常量（可能是旧清单，如实标注）。
+_OFFICIAL_SKILLS = (
+    "academy-guide", "algorithmic-art", "brand-guidelines", "canvas-design",
+    "claude-api", "discernment-nudge", "doc-coauthoring", "docx",
+    "frontend-design", "internal-comms", "mcp-builder", "pdf", "pptx",
+    "skill-creator", "slack-gif-creator", "theme-factory",
+    "web-artifacts-builder", "webapp-testing", "xlsx",
+)
+_OFFICIAL_REPO = "anthropics/skills"
+
+
+def _registry_official():
+    """发现面兜底（a632）：skills.sh 不可达时列 anthropics/skills 官方仓库。
+    contents API（单次调用，60/h 匿名限额内）列 skills/ 目录；API 挂则降级
+    _OFFICIAL_SKILLS 常量。卡片结构与 skills.sh 榜单同构（desc 后台补）。"""
+    names = []
+    via = "official_fallback"
+    txt = _http("https://api.github.com/repos/%s/contents/skills" % _OFFICIAL_REPO,
+                timeout=15)
+    if txt:
+        try:
+            items = json.loads(txt)
+            if isinstance(items, list):
+                names = [it.get("name") for it in items
+                         if isinstance(it, dict) and it.get("type") == "dir"
+                         and it.get("name")]
+        except ValueError:
+            names = []
+    if not names:
+        names = list(_OFFICIAL_SKILLS)
+        via = "official_fallback_static"
+    rows = []
+    for nm in names:
+        rows.append({"key": "%s/skills/%s" % (_OFFICIAL_REPO, nm),
+                     "owner": _OFFICIAL_REPO.split("/")[0],
+                     "repo": _OFFICIAL_REPO.split("/")[1],
+                     "skill": nm,
+                     "name": nm,
+                     "source": _OFFICIAL_REPO,
+                     "installs": "", "weekly": [], "official": True})
+    return rows, via
+
+
 def registry(tab="top", q=""):
     """榜单卡片（tab: top=All Time / trending=24h / hot）；q 非空时在榜单
     内存过滤（skills.sh 无匿名搜索 API）。附带缓存的英文 description 与
-    本地启发式分类（skills.sh topic 页是 JS 空壳，零网络分桶）。"""
+    本地启发式分类（skills.sh topic 页是 JS 空壳，零网络分桶）。
+    a632：返回 (rows, source)——source ∈ skills.sh / official_fallback /
+    official_fallback_static；skills.sh 不可达自动切官方精选兜底。"""
     path = {"trending": "/trending", "hot": "/hot"}.get(tab, "/")
     html = _page(path)
-    if not html:
-        return None
-    rows = parse_leaderboard(html)
+    rows = parse_leaderboard(html) if html else []
+    if rows:
+        source = "skills.sh"
+    else:
+        # a632R（审计 N8）：不可达**和 200 空壳页（限流/反爬）**都切官方
+        # 精选兜底——限流正是本批立项痛点，只判 None 会漏掉这形态
+        rows, source = _registry_official()
     if q:
         ql = q.strip().lower()
         rows = [r for r in rows
@@ -187,7 +355,7 @@ def registry(tab="top", q=""):
             t = d.get("zh")
             if t:
                 r["zh_name"], r["zh_desc"] = t.get("zh_name"), t.get("zh_desc")
-    return rows
+    return rows, source
 
 
 def _topic_of(text):
@@ -204,13 +372,21 @@ def _topic_of(text):
 def _desc_backfill(keys):
     """后台补齐 description（raw 拉 frontmatter，每次 ≤24 个防瞬时风暴）。"""
     for key in keys[:24]:
-        if key in _DESC_CACHE:
-            continue
+        d = _DESC_CACHE.get(key)
+        if d:
+            if not d.get("fail"):
+                continue   # 正常缓存命中
+            if time.time() - d["fail"] < 300:
+                continue   # a632R 审计 N7：失败未过 5min，暂不重试
+            # 失败超过 5min → 落到下面重拉（负缓存过期）
         owner, repo, skill = key.split("/")
         md = _raw_skill_md(owner, repo, skill, cache=False)
         desc = _fm_desc(md[:2048]) if md else ""
         with _DESC_LOCK:
-            _DESC_CACHE[key] = {"desc": desc, "ts": time.time()}
+            # a632R（审计 N7）：失败项记 fail 时间戳——registry 兜底期间
+            # miss 判据会反复命中无 desc 的官方卡，负缓存 5min 防重拉风暴
+            _DESC_CACHE[key] = {"desc": desc, "ts": time.time(),
+                                **({} if md else {"fail": time.time()})}
         # 汉化缓存命中顺手带上（translate_meta 生成过就直接复用）
         zh = _zh_load("meta:" + key)
         if zh:
@@ -274,7 +450,7 @@ _RAW_BRANCHES = ("main", "master")
 
 
 def _raw_skill_md(owner, repo, skill, cache=True):
-    """raw 直拉 SKILL.md（无限额）。路径候选序列逐个试；成功后落盘缓存。"""
+    """多源拉 SKILL.md（路径×分支×源三重候选，成功后落盘缓存）。"""
     cpath = os.path.join(_CACHE_DIR, "%s_%s_%s.md" % (owner, repo, skill))
     if cache and os.path.isfile(cpath):
         try:
@@ -284,9 +460,9 @@ def _raw_skill_md(owner, repo, skill, cache=True):
             pass
     for tpl in _RAW_PATHS:
         for br in _RAW_BRANCHES:
-            u = ("https://raw.githubusercontent.com/%s/%s/%s/"
-                 % (owner, repo, br)) + (tpl % {"s": skill}) + "/SKILL.md"
-            b = _http(u, timeout=15, want_bytes=True)
+            rel = (tpl % {"s": skill}) + "/SKILL.md"
+            b, _src = _fetch_multi(
+                _raw_url_variants(owner, repo, br, rel), timeout=15)
             if b and len(b) > 32:
                 try:
                     os.makedirs(_CACHE_DIR, exist_ok=True)
@@ -298,9 +474,74 @@ def _raw_skill_md(owner, repo, skill, cache=True):
     return None
 
 
+def _fetch_skill_md_verified(owner, repo, skill):
+    """安装用：SKILL.md 多源交叉验证（a632 安全核心——技能本质是给 Claude
+    执行的 prompt+脚本，单源被篡改=持久提示注入）。
+
+    并发拉全部源（小文件，秒级），成功响应（非空）各算 sha256：
+      · 全部一致          → (content, hashes, True)   正常装
+      · 仅 1 源成功        → (content, hashes, None)   单源，记录来源
+      · ≥2 源且哈希不一致  → (None, hashes, False)     默认拒装（调用方
+        带 confirm_integrity 才放行；jsDelivr 对 @branch 有 12h 缓存，
+        刚发布的技能可能假不一致——用户看得到两份哈希自行判断）
+    全部失败 → (None, {}, None)。
+    """
+    cands = []
+    for tpl in _RAW_PATHS:
+        for br in _RAW_BRANCHES:
+            cands.append(((tpl % {"s": skill}) + "/SKILL.md", br))
+    # 逐（路径, 分支）组合试：先多源拉第一个能命中的组合并收集全部源响应
+    for rel, br in cands:
+        variants = _raw_url_variants(owner, repo, br, rel)
+        results = {}
+        threads = []
+        lock = threading.Lock()
+
+        def _pull(name, url, hdr):
+            b = _http(url, timeout=15, want_bytes=True, extra_headers=hdr)
+            if b and len(b) > 32:   # 与 _raw_skill_md 同一非空闸
+                with lock:
+                    results[name] = b
+
+        for name, url, hdr in variants:
+            th = threading.Thread(target=_pull, args=(name, url, hdr), daemon=True)
+            th.start()
+            threads.append(th)
+        for th in threads:
+            th.join(timeout=20)
+        if not results:
+            continue   # 该路径/分支组合全源失败 → 试下一个组合
+        hashes = {n: hashlib.sha256(b).hexdigest()[:16]
+                  for n, b in results.items()}
+        # 三态判定先看源数再看哈希——单源 uniq 恒为 1，先判 uniq 会把单源
+        # 误标成 cross-verified（虚报安全级别）
+        if len(results) == 1:
+            consistent = None
+        elif len(set(hashes.values())) == 1:
+            consistent = True
+        else:
+            consistent = False
+        # content 选取用**确定性权威序**——不能用 dict 迭代序（=线程完成
+        # 序，竞速决定装哪份，审计 S2 实锤）；也不用 _RAW_SOURCES 表序
+        # （jsdelivr 是带最长 12h 缓存的 CDN，排在权威无缓存的 gh_api 之前
+        # 会让「更新检测基准 / confirm 强制装内容」在 official 被墙常态下
+        # 取到旧版：漏报真更新、假更新引导重装静默降级——四轮审计 S3 残
+        # 留实锤）。权威序：official → gh_api → jsdelivr（CDN 沉底——它只
+        # 配当「拉得到就行」的下载源，不配当内容真伪的裁判）。
+        content_bytes = next(
+            (results[n] for n in _PICK_ORDER if n in results),
+            next(iter(results.values())))
+        content = content_bytes.decode("utf-8", "replace")
+        return content, hashes, consistent
+    return None, {}, None
+
+
 def skill_files(owner, repo, skill):
     """技能目录内全部文件（GitHub contents API，限额敏感——失败返回 None，
-    调用方按「仅 SKILL.md」降级，不阻塞安装）。"""
+    调用方按「仅 SKILL.md」降级，不阻塞安装）。
+    a632R（审计 S1）：带出 contents API 自带的 git blob sha——install 侧
+    按公式 sha1("blob %d\\0" % len + content) 校验下载内容（零额外出网），
+    堵「SKILL.md 交叉验证过了、辅助脚本单独被某源毒化」的绕过半边。"""
     for tpl in _RAW_PATHS:
         sub = tpl % {"s": skill}
         u = "https://api.github.com/repos/%s/%s/contents/%s" % (owner, repo, sub)
@@ -312,7 +553,8 @@ def skill_files(owner, repo, skill):
         except ValueError:
             continue
         if isinstance(items, list):
-            return [(it.get("name"), it.get("download_url"), it.get("type"))
+            return [(it.get("name"), it.get("download_url"), it.get("type"),
+                     it.get("sha"))
                     for it in items if isinstance(it, dict)]
     return None
 
@@ -336,16 +578,26 @@ def _safe_skill_dir(name, parent=None):
     return p
 
 
-def install(owner, repo, skill, scope="user"):
+def install(owner, repo, skill, scope="user", confirm_integrity=False):
     """安装技能 → ~/.claude/skills/<skill>/。返回 dict：
-    ok / conflict(已存在) / partial(辅助文件缺失) / err。
-    成功后记来源与 sha（skill_meta.json——更新检测/卸载对账用）。"""
+    ok / conflict(已存在) / partial(辅助文件缺失) / integrity_conflict(源间
+    内容不一致默认拒装) / err。成功后记来源与 sha（skill_meta.json——更新
+    检测/卸载对账用），integrity 标注验证级别。"""
     if scope != "user":
         return {"ok": False, "err": "仅支持 user 级安装"}
     dst = _safe_skill_dir(skill)
     if not dst:
         return {"ok": False, "err": "非法技能名"}
-    md = _raw_skill_md(owner, repo, skill)   # 缓存命中则不再出网
+    # 安装一律绕缓存走多源交叉验证（低频操作，多两次拉取换安全；
+    # 缓存命中留给详情页展示）
+    md, hashes, consistent = _fetch_skill_md_verified(owner, repo, skill)
+    # 先判冲突再判拉取失败：冲突时 md 仍有值（官方源版本），拒装是安全
+    # 决策而非网络失败
+    if consistent is False and not confirm_integrity:
+        # 多源内容不一致：疑似篡改或缓存污染——默认拒装，用户看哈希后自决
+        return {"ok": False, "integrity_conflict": True, "hashes": hashes,
+                "err": "多源内容不一致（疑似篡改或镜像缓存延迟），默认拒装——"
+                       "确认后可强制安装"}
     if not md:
         return {"ok": False, "err": "SKILL.md 拉取失败（检查外网连通）"}
     existed = os.path.isdir(dst)
@@ -358,17 +610,31 @@ def install(owner, repo, skill, scope="user"):
         f.write(md)
     _meta_set(skill, {"key": "%s/%s/%s" % (owner, repo, skill),
                       "sha": hashlib.sha256(md.encode("utf-8", "replace")).hexdigest()[:16],
-                      "ts": int(time.time())})
+                      "ts": int(time.time()),
+                      "integrity": ("cross-verified" if consistent else
+                                    "single-source" if consistent is None else
+                                    "user-override")})
     partial = False
     files = skill_files(owner, repo, skill)
     if files:
-        for name, url, typ in files:
+        for name, url, typ, blob_sha in files:
             if typ != "file" or name == "SKILL.md" or not url:
                 continue
-            b = _http(url, timeout=20, want_bytes=True)
+            b, _src = _fetch_multi(_variants_from_raw_url(url), timeout=20)
             if not b:
                 partial = True
                 continue
+            # a632R（审计 S1）：git blob sha 校验——contents API 给的 sha 是
+            # `sha1("blob <len>\\0" + 内容)`，零额外出网即可验证下载内容与
+            # 上游一致。缺 sha（API 形态变化）跳过校验；不匹配**不落盘**
+            # （记 partial——宁缺一个脚本也不装被毒化的）
+            if blob_sha:
+                calc = hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
+                if calc != blob_sha:
+                    _log.warning("辅助文件 sha 校验失败，拒绝落盘: %s (期望 %s 实得 %s)"
+                                 % (name, blob_sha[:12], calc[:12]))
+                    partial = True
+                    continue
             sp = _safe_skill_dir(name, parent=dst)
             if not sp:
                 continue
@@ -377,7 +643,9 @@ def install(owner, repo, skill, scope="user"):
     elif files is None:
         partial = True   # 目录列不了（限额）——SKILL.md 已装上，如实标注
     return {"ok": True, "conflict": existed, "partial": partial,
-            "dir": dst}
+            "dir": dst, "integrity": ("cross-verified" if consistent else
+                                      "single-source" if consistent is None else
+                                      "user-override")}
 
 
 def uninstall(skill):
@@ -483,20 +751,33 @@ def local_detail(name):
 
 
 def check_updates():
-    """更新检测：对「本工具装的」user 级技能（meta 有 origin）raw 拉最新
+    """更新检测：对「本工具装的」user 级技能（meta 有 origin）多源拉最新
     SKILL.md（绕缓存）比对 sha。并发 4（串行在离线时 N×6 URL×15s 可挂数
-    分钟——全审建议4）。返回 [{skill, has_update, err}]。"""
+    分钟——全审建议4）。返回 [{skill, has_update, err}]。
+    a632R（审计 S3）：改走 _fetch_skill_md_verified——旧实现单源首达，
+    official 被墙 + jsDelivr 12h 旧缓存的常态下会漏报真更新（gh_api 拉到
+    新版却被 jsdelivr 旧版抢答），甚至「重装回旧版」静默降级。基准取
+    verified 的确定性 pick 版本（与 install/confirm 强制装同一份），闭环
+    一致。"""
     def _one(item):
         nm, info = item
         parts = str(info.get("key") or "").split("/")
         if len(parts) != 3 or not info.get("sha"):
             return None
-        md = _raw_skill_md(parts[0], parts[1], parts[2], cache=False)
+        md, _hashes, consistent = _fetch_skill_md_verified(*parts)
         if not md:
             return {"skill": nm, "has_update": False, "err": "拉取失败"}
+        # a632R 四轮（S3 残留终版语义）：pick 已是权威序（official→gh_api→
+        # jsdelivr，CDN 沉底）——权威源与已装的差异就是真实差异，has_update
+        # 照常判定；「假更新引导降级」链已断（confirm 重装装的正是权威版，
+        # 不会再装回镜像旧缓存）。源间不一致降级为 err 警告如实透出。
         cur = hashlib.sha256(md.encode("utf-8", "replace")).hexdigest()[:16]
-        return {"skill": nm, "has_update": cur != info["sha"],
-                "new_sha": cur, "err": ""}
+        out = {"skill": nm, "has_update": cur != info["sha"],
+               "new_sha": cur, "err": ""}
+        if consistent is False:
+            out["err"] = ("源间内容不一致（镜像缓存延迟或疑似篡改）——"
+                          "重装将被拦截确认，确认后安装权威源版本")
+        return out
     items = [(nm, info) for nm, info in _meta_load().items()]
     out = []
     try:
@@ -944,16 +1225,48 @@ def translate_body(md):
 # ---------------------------------------------------------------- 状态
 
 def status():
-    """面板状态条：轻主力模型名 + 数据源可达性（探测结果缓存 5min）。"""
+    """面板状态条：轻主力模型名 + 数据源可达性（探测结果缓存 5min）。
+    a632：三源探测（官方 raw / jsDelivr 镜像 / GitHub API）+ 源档位。"""
     global _STAT
     now = time.time()
     if _STAT.get("ts") and now - _STAT["ts"] < 300:
-        return {**_STAT, "ts": 0, "light_model": light_model()}
+        return {**_STAT, "ts": 0, "light_model": light_model(),
+                "source": source_mode()}
+    probe = {"owner": _PROBE_OWNER, "repo": _PROBE_REPO,
+             "branch": _PROBE_BRANCH, "path": _PROBE_PATH}
+    results = {}
+    threads = []
+    lock = threading.Lock()
+
+    def _probe(name, url, hdr):
+        b = _http(url, timeout=8, want_bytes=True, extra_headers=hdr)
+        with lock:
+            results[name] = bool(b)
+
+    gh_fresh = (_STAT.get("gh_api_ts")
+                and now - _STAT["gh_api_ts"] < 900)
+    for name, url, hdr in _raw_url_variants(
+            probe["owner"], probe["repo"], probe["branch"], probe["path"]):
+        if name == "gh_api" and gh_fresh:
+            continue   # N12：gh_api 探测 15min 降频，省 60/h 匿名限额
+        th = threading.Thread(target=_probe, args=(name, url, hdr), daemon=True)
+        th.start()
+        threads.append(th)
+    for th in threads:
+        th.join(timeout=12)
     ok_sh = _page("/") is not None
-    ok_gh = _http("https://raw.githubusercontent.com/anthropics/skills/main/"
-                  "README.md", timeout=8, want_bytes=True) is not None
-    _STAT = {"ts": now, "skills_sh": ok_sh, "github": ok_gh}
-    return {**_STAT, "light_model": light_model()}
+    _STAT = {"ts": now, "skills_sh": ok_sh,
+             "official": results.get("official", False),
+             "jsdelivr": results.get("jsdelivr", False),
+             # a632R（审计 N12）：gh_api 共享 60/h 匿名限额——探测降频到
+             # 15min（其余源每次 5min 探测），安装/skill_files 的 API 调用
+             # 让额度给真实下载。gh_api_ts 仅**真探测时**刷新——无条件刷
+             # 会让降频窗口自我续期，可达性进程生命周期内冻结（四轮实锤）
+             "gh_api": (results["gh_api"] if "gh_api" in results
+                        else _STAT.get("gh_api", False))}
+    if "gh_api" in results:
+        _STAT["gh_api_ts"] = now
+    return {**_STAT, "light_model": light_model(), "source": source_mode()}
 
 
 _STAT = {}

@@ -3831,16 +3831,18 @@ def _sk_parts(d):
 @app.route("/api/skills/registry")
 def skills_registry():
     """榜单卡片（tab=top/trending/hot；q 内存过滤搜索）。
-    顺手后台补齐英文 description（首屏卡片即时出，描述几秒后渐进可见）。"""
+    顺手后台补齐英文 description（首屏卡片即时出，描述几秒后渐进可见）。
+    a632：skills.sh 不可达自动切官方精选兜底，响应带 source 字段。"""
     from .skills_repo import registry, _desc_backfill
-    rows = registry(request.args.get("tab", "top"),
-                    request.args.get("q", ""))
+    rows, source = registry(request.args.get("tab", "top"),
+                            request.args.get("q", ""))
     if rows is None:
-        return jsonify({"ok": False, "err": "skills.sh 不可达（检查外网）"}), 502
+        return jsonify({"ok": False,
+                        "err": "skills.sh 与官方精选兜底均不可达（检查外网）"}), 502
     miss = [r["key"] for r in rows[:40] if not r.get("desc")]
     if miss:
         threading.Thread(target=_desc_backfill, args=(miss,), daemon=True).start()
-    return jsonify({"ok": True, "rows": rows})
+    return jsonify({"ok": True, "rows": rows, "source": source})
 
 
 @app.route("/api/skills/detail")
@@ -3862,17 +3864,41 @@ def skills_installed():
 
 @app.route("/api/skills/install", methods=["POST"])
 def skills_install():
-    """安装技能到 ~/.claude/skills/。"""
+    """安装技能到 ~/.claude/skills/。a632：源间哈希不一致默认拒装
+    （integrity_conflict），用户确认后带 confirm_integrity=1 强制装。"""
     from .skills_repo import install
     d = request.get_json(force=True, silent=True) or {}
     p = _sk_parts(d)
     if not p:
         return jsonify({"ok": False, "err": "非法 owner/repo/skill"}), 400
     try:
-        r = install(*p, scope=str(d.get("scope") or "user"))
+        r = install(*p, scope=str(d.get("scope") or "user"),
+                    confirm_integrity=bool(d.get("confirm_integrity")))
     except Exception as e:   # 落盘意外（盘满/权限）不炸 500，如实回错
         return jsonify({"ok": False, "err": str(e)[:150]}), 500
     return jsonify(r), (200 if r.get("ok") else 502)
+
+
+@app.route("/api/skills/source", methods=["GET", "POST"])
+def skills_source():
+    """技能下载源档位（a632）：auto=智能（探测可达排序）/ official=官方
+    直连优先 / jsdelivr=镜像优先。GET 返回档位+选项；POST 保存即时生效。"""
+    from . import skills_repo as sr
+    if request.method == "GET":
+        return jsonify({"ok": True, "mode": sr.source_mode(),
+                        "options": [
+                            {"id": "auto", "name": "智能（探测可达排序）"},
+                            {"id": "official", "name": "官方直连优先"},
+                            {"id": "jsdelivr", "name": "jsDelivr 镜像优先"},
+                        ]})
+    d = request.get_json(force=True, silent=True) or {}
+    try:
+        sr.set_source_mode(str(d.get("mode") or "").strip())
+    except ValueError as e:
+        return jsonify({"ok": False, "err": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "err": "保存失败：%s" % e}), 500
+    return jsonify({"ok": True, "mode": sr.source_mode()})
 
 
 @app.route("/api/skills/uninstall", methods=["POST"])
