@@ -574,7 +574,7 @@ def harness_rescue():
         if not s.alive and not s.revive_if_dead():
             err2 = "进程复活失败"
         else:
-            # v4.2R（审计 P1）：裁剪不会改变 _session_ctx_used 的读数（它取
+            # v4.1.0-a590（审计 P1）：裁剪不会改变 _session_ctx_used 的读数（它取
             # jsonl 尾部最后一条 assistant usage）——不跳过容量判定的话，
             # 越需要救援的爆死态越救不回来。此处转写已按 target_ratio 裁过。
             ok2, err2 = s.send_message(last_turn_text, skip_capacity=True)
@@ -757,7 +757,7 @@ def harness_ctx():
     except Exception:
         bad_max = window
     # a264（用户定调）：窗口选择器退役——窗口只走自动链，不回传覆盖值
-    # v4.2R（审计 P2-4）：usedSource 区分「jsonl 真值」与「last_result 兜底」
+    # v4.1.0-a590（审计 P2-4）：usedSource 区分「jsonl 真值」与「last_result 兜底」
     # ——跨方案后 used 可能合法超过当前窗口（大窗切小窗），前端据此不再
     # 把合法超窗当坏数据整帧丢弃；overWindow 给出与容量拦截同口径的预警线。
     _src = getattr(s, "_ctx_used_source", "none")
@@ -814,7 +814,7 @@ def harness_set_model():
     if model == s.model:
         return jsonify({"ok": True, "model": s.model})
     s.model = model
-    # v4.2R（审计 P2-6）：记来源——用户手选。同方案内改窗口等配置导致指纹
+    # v4.1.0-a590（审计 P2-6）：记来源——用户手选。同方案内改窗口等配置导致指纹
     # 变化时，_reconcile_model_with_live 不会把手选模型静默改回默认。
     s.model_origin = "user"
     s.live_model = None   # v2.27.21：旧实报随模型切换作废，start 按新 model 注入
@@ -831,7 +831,7 @@ def harness_set_model():
     # 切换即把新模型的识图口径显性写进对话流（进转写=进上下文）——盖掉
     # 历史里旧模型时代的 analyze_image 调用惯性（resume 保留的历史会让
     # 新模型模仿旧工具调用，实测连环触发不存在的工具）
-    # v4.2R：文案与 session.py 的自动切换共用 _vision_note_for（两处各写
+    # v4.1.0-a590：文案与 session.py 的自动切换共用 _vision_note_for（两处各写
     # 一份迟早漂移，导致模型收到的口径与工具列表不符）
     try:
         from .session import _vision_note_for
@@ -1227,7 +1227,7 @@ def harness_sessions():
                       "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
                       "created": m.get("created", 0), "last_active": last_active,
                       "alive": alive, "busy": busy, "busy_since": busy_since,
-                      "scheme": m.get("scheme") or ""})   # 会话**最近一次运行**的方案名（前端标注用；v4.2 起非拦截依据）
+                      "scheme": m.get("scheme") or ""})   # 会话**最近一次运行**的方案名（前端标注用；v4.1.0-a590 起非拦截依据）
     items.sort(key=lambda x: -x["last_active"])
     _cur_scheme = ""
     _cur_win = 0
@@ -1237,7 +1237,7 @@ def harness_sessions():
         _cur_win = profile_ctx_window(_cur_scheme)
     except Exception:
         pass
-    # v4.2R：每个会话带**实际生效**的窗口，而不是「创建时方案快照的窗口」。
+    # v4.1.0-a608：每个会话带**实际生效**的窗口，而不是「创建时方案快照的窗口」。
     # 二者的区别对用户是可见的：会话 1M 创建、后来切到 500K 方案并成功发送，
     # 活进程早已按 500K 跑，标签若还写 1M 就是撒谎（用户实锤「现有会话标签
     # 也得同步/动态改」）。
@@ -1260,7 +1260,7 @@ def harness_sessions():
             if not win:
                 # 活对象不在（被 GC 回收过）：用该会话**上次运行方案**的窗口。
                 # 元数据里没有窗口字段（从没落过盘），不能读 it["ctxWindow"]
-                # ——v4.2R 审计：原写法读的正是本循环后几行才生成的键，死代码。
+                # ——v4.1.0-a608 审计：原写法读的正是本循环后几行才生成的键，死代码。
                 win = int(_pw(it.get("scheme")) or 0)
             if not win:
                 # 连方案快照都读不到：退当前方案窗口（它下次就跑在当前方案下）

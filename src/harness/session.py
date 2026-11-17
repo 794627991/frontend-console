@@ -84,20 +84,20 @@ class HarnessSession:
         self.busy = False
         self.busy_since = None   # 本轮处理计时起点 ms（busy 时有效，供前端恢复计时）
         self.bridge_fp = None    # 注入时的识图引导词指纹（send 前热更检测，见 start()）
-        # v4.2：本进程启动时注入的**网关配置指纹**（BASE_URL/TOKEN/模型映射/
+        # v4.1.0-a590：本进程启动时注入的**网关配置指纹**（BASE_URL/TOKEN/模型映射/
         # 窗口键）。env 是启动时快照——切 API 方案后活进程仍揣旧 token 打
         # 新网关（401/405）、拿旧模型名（glm-* vs DeepSeek-*）打新网关
         # （400 model not found）。send 前比对，变了就 kill+resume 换新配置。
         # 随元数据落盘：进程被回收重建后仍能判出「这个进程启动时是哪套配置」
         self._env_fp = None
-        # v4.2R（审计 P2-6）：会话模型的来源——"user"（用户 /model 手选）/
+        # v4.1.0-a590（审计 P2-6）：会话模型的来源——"user"（用户 /model 手选）/
         # "scheme"（自动对齐方案）/ None（升级前旧会话）。同方案内改窗口等
         # 配置时不强切手选模型；跨方案仍强切（否则新网关 400 不可用）。
         self.model_origin = None
-        # v4.2R（审计 P2-4）：本会话见过的最大网关实报窗口——判坏数据用，
+        # v4.1.0-a590（审计 P2-4）：本会话见过的最大网关实报窗口——判坏数据用，
         # 切方案不清（大窗会话切小窗后 450K 不是坏数据，是真装得下过）
         self._win_hwm = 0
-        # v4.2R：_session_ctx_used 的取值来源（"jsonl"/"lastResult"/"none"），
+        # v4.1.0-a590：_session_ctx_used 的取值来源（"jsonl"/"lastResult"/"none"），
         # /ctx 回传给前端区分「合法超窗」与「累计口径坏数据」
         self._ctx_used_source = "none"
         # a154：最近一次注入的 --append-system-prompt 字符数（容量卡分类
@@ -211,12 +211,12 @@ class HarnessSession:
                 "gen": _gen,
                 # v3.5.98：会话方案名随元数据落盘（GC/重启后标注不失忆）
                 "scheme": self.scheme,
-                # v4.2：进程启动时注入的网关配置指纹随元数据落盘——进程被
+                # v4.1.0-a590：进程启动时注入的网关配置指纹随元数据落盘——进程被
                 # 闲置回收/重启后重建的对象仍能判出「启动时是哪套配置」，
                 # 否则 _env_fp=None 会让热更判定失效（旧 token 打新网关）。
                 # 值只是 16 位 sha256 摘要，不含 token 明文（见 _live_config_fp）
                 "env_fp": self._env_fp or None,
-                # v4.2R：模型来源跨 GC/重启保留（否则回收后手选标记丢失，
+                # v4.1.0-a590：模型来源跨 GC/重启保留（否则回收后手选标记丢失，
                 # 下次同方案改配置会把用户手选的模型静默改回默认）
                 "model_origin": self.model_origin,
                 # v3.5.154：大回合保活标记随元数据落盘——进程死亡（任务/回传
@@ -367,7 +367,7 @@ class HarnessSession:
             env["MAX_THINKING_TOKENS"] = str(
                 {"low": 4096, "medium": 10240, "high": 20480, "max": 31999}[self.think])
         _trust_workspace(self.cwd)
-        # v4.2：记录本进程启动时注入的网关配置指纹（与 env 注入同源）。
+        # v4.1.0-a590：记录本进程启动时注入的网关配置指纹（与 env 注入同源）。
         # send 前与 settings.json 现值比对，变了就换新进程——否则切方案后
         # 旧进程拿旧 token/旧模型名打新网关必 401/405/400。
         try:
@@ -824,13 +824,13 @@ class HarnessSession:
         skip_capacity=True：跳过容量判定。仅供**已按安全余量裁剪过转写**的
         调用方使用（/rescue 的自动续跑）。注意裁剪不会改变 _session_ctx_used
         的读数（它取 jsonl 尾部最后一条 assistant usage），不跳过的话
-        「越需要救援的场景越救不回来」（v4.2R 审计 P1）。"""
+        「越需要救援的场景越救不回来」（v4.1.0-a590 审计 P1）。"""
         # 上下文超窗拒发（用户定调）：切 API 方案会把模型强制跟着切小窗
         # （快照带模型映射），1M 会话攒超 256K 后发消息必 400 prompt is
         # too long（实测 267112 > 262144）——直接拦在发送前并给出路。
         # 3% 余量：prompt 除历史外还有 system/工具定义等固定开销。
         # /compact 后 _session_ctx_used 撞压缩边界归零，即可继续发。
-        # v4.2（用户拍板推翻 v3.5.98 的方案名硬拦）：跨方案不再无条件拒发，
+        # v4.1.0-a590（用户拍板推翻 v3.5.98 的方案名硬拦）：跨方案不再无条件拒发，
         # 改为**只按上下文容量判定**——智谱/lanzi 之间模型映射不兼容，但
         # 「能不能继续」的物理依据只有一条：本会话已用 tokens 放不放得进
         # **当前方案**的窗口。规则：
@@ -846,7 +846,7 @@ class HarnessSession:
                 # v2.27.22：窗口走候选链（配置名后缀优先）——实报裸名无 [1M]
                 # 信息，单看它 1M 会话会被判成 256K 误拒（用户实锤）
                 mwin = _session_ctx_window(self)
-                # v4.2：跨方案判定用**当前方案**的窗口，不回落 last_result
+                # v4.1.0-a590：跨方案判定用**当前方案**的窗口，不回落 last_result
                 # 实报（那是旧方案旧网关报的，切方案后不成立）
                 _lwin = live_ctx_window(self) or mwin
                 # a591：处置判据抽成 _capacity_verdict（纯函数，可测）——
@@ -912,13 +912,13 @@ class HarnessSession:
                                 return False, "会话进程已退出（识图引导词已更新，请重发）"
                 except Exception:
                     pass
-            # v4.2：网关配置指纹热更（切 API 方案的兜底）——env 是启动时注入
+            # v4.1.0-a590：网关配置指纹热更（切 API 方案的兜底）——env 是启动时注入
             # 的，切方案后活进程仍揣旧 token/旧模型名。指纹变了就**先对齐
             # 模型名**（旧网关私有名新网关不认，400 model not found）再
             # kill+resume 换新配置，上下文与 session_id 全保留（与切模型同款）。
             # 放在 base_url 自愈与 bridge_fp 之后：那两路已先重启过的进程指纹已新。
             #
-            # v4.2R（审计 P2-7/P2-8）：`_fp_now` 为空（settings 读不到）时
+            # v4.1.0-a590（审计 P2-7/P2-8）：`_fp_now` 为空（settings 读不到）时
             # **整段跳过**——探测失败不该产生副作用（否则每回合多一次全量
             # 元数据落盘，且永远补不上基线）。
             # `alive and _env_fp is None` 只可能来自「start 那刻 settings 读
@@ -939,7 +939,7 @@ class HarnessSession:
                                 return False, "会话进程已退出（API 配置已重新加载，请重发）"
                     elif _fp_now and _fp_now != self._env_fp:
                         log.info("活配置已变（切方案/改设置），重启进程换新配置")
-                        # v4.2R（审计 P2-6）：只有**真的换了方案**或模型本来
+                        # v4.1.0-a590（审计 P2-6）：只有**真的换了方案**或模型本来
                         # 就不是用户手选时才强切模型——同方案内改窗口键也会
                         # 让指纹变化，此时不该把手选模型静默改回
                         try:
@@ -954,7 +954,7 @@ class HarnessSession:
                             force=_scheme_changed
                             or getattr(self, "model_origin", None) != "user")
                         if _swapped:
-                            # v4.2R（审计 P2-5）：必须设 _model_switch_note——
+                            # v4.1.0-a590（审计 P2-5）：必须设 _model_switch_note——
                             # 它是唯一进 jsonl 上下文的通道（emit 只到前端）。
                             # 否则新模型看不到识图口径，会模仿历史里旧工具的
                             # analyze_image/Read 惯性（v3.5.285 用户铁令）。
@@ -966,7 +966,7 @@ class HarnessSession:
                             self.kill_proc(quiet=True)
                             if not self.revive_if_dead():
                                 return False, "会话进程已退出（API 配置已更新，请重发）"
-                        # v4.2：会话已在新方案下跑起来——把 scheme 更新为当前
+                        # v4.1.0-a590：会话已在新方案下跑起来——把 scheme 更新为当前
                         # 方案（前端「⇄旧方案」标记随之消失，标注不再误导）
                         if _cur_scheme and _cur_scheme != self.scheme:
                             self.scheme = _cur_scheme
@@ -1016,7 +1016,7 @@ class HarnessSession:
             # 前置口径声明——随用户消息进 stdin=jsonl=模型上下文，新模型
             # 第一次被唤起就看到（盖掉 resume 历史里旧模型时代的
             # analyze_image 调用惯性）。一次性，发完即清。
-            # v4.2R（审计 P2-5 副产）：斜杠命令**不消耗**这条声明——加了
+            # v4.1.0-a590（审计 P2-5 副产）：斜杠命令**不消耗**这条声明——加了
             # 前缀就再也不以 "/" 开头，CLI 侧不再当命令识别（/compact 失效）。
             # 声明留给下一条真人消息。
             # a591：判据抽成 _should_inject_switch_note（纯函数），测试按行为
@@ -2151,7 +2151,7 @@ class HarnessSession:
 def _ctx_window_hwm(s):
     """本会话见过的**最大**网关实报窗口（进程内 hwm，切方案不清）。
 
-    v4.2R（审计 P2-4）：判坏数据要用「这个会话真实能达到的最大窗口」——
+    v4.1.0-a590（审计 P2-4）：判坏数据要用「这个会话真实能达到的最大窗口」——
     大窗会话切到小窗方案后，last_result 兜底的 450K 不该被当前 256K 判成
     坏数据（那是真的装得下过的量）。而 a255 的 1.3M 累计口径若来自 1M 模型，
     仍会大于 hwm 被正确归零。取不到返回 0。"""
@@ -2199,7 +2199,7 @@ def live_ctx_window(s=None):
 
     与 _session_ctx_window 的区别：后者优先用会话 last_result 的网关实报，
     那是**旧方案旧网关**报的，切方案后不成立；容量判定必须只看活配置。
-    但不能因此把 s 参数省掉（v4.2R 审计 P1）——没有窗口键的旧格式方案 /
+    但不能因此把 s 参数省掉（v4.1.0-a590 审计 P1）——没有窗口键的旧格式方案 /
     删过键的配置，若不回落实报就会一律按 256K 兜底，把「小窗切大窗」
     误判成超窗。
 
@@ -2217,7 +2217,7 @@ def live_ctx_window(s=None):
         n = str(env.get(k) or "").lower()
         if "[1m]" in n or n.endswith("1m"):
             return _CTX_WINDOW_1M
-    # v4.2R：无显式窗口键时，用网关实报兜底（比盲猜 256K 准）。实报只在
+    # v4.1.0-a590：无显式窗口键时，用网关实报兜底（比盲猜 256K 准）。实报只在
     # **同一方案内**可信；跨方案时调用方仍会以这里的返回为准——但方案切换
     # 必改 BASE_URL/TOKEN，指纹热更会重启进程并刷新 last_result，短暂
     # 沿用旧实报的风险远小于「大窗被误判 256K 直接拒发」。
@@ -2272,8 +2272,8 @@ def _capacity_verdict(used, lwin, text, is_remote_bot, renew_ok):
     P1 skip_capacity 两条最要害的路径一条测试都没有。抽成纯函数后测试
     直接喂值验行为，不需要起进程。
 
-    次序（v4.2R 审计 P0）：超窗时**远程小助手先续命**，续命成功即放行；
-    续命失败/非小助手才落容量拦截（v4.2R P1 的 skip_capacity 在调用方
+    次序（v4.1.0-a590 审计 P0）：超窗时**远程小助手先续命**，续命成功即放行；
+    续命失败/非小助手才落容量拦截（v4.1.0-a590 P1 的 skip_capacity 在调用方
     短路，不进本函数）。/compact 永远放行——它是超窗唯一出口。
     """
     try:
@@ -2309,7 +2309,7 @@ def _should_inject_switch_note(text, note):
 def _scheme_capacity_block(s, used, cur_win, text=""):
     """跨方案发送的**唯一**拦截依据：已用上下文放不进当前窗口才拦。
 
-    v4.2（用户拍板）：智谱 / lanzi 模型映射不兼容是事实，但"能不能继续"
+    v4.1.0-a590（用户拍板）：智谱 / lanzi 模型映射不兼容是事实，但"能不能继续"
     的物理判据只有容量——旧规则按方案名硬拒导致"小窗切大窗也被拦"。
     规则：
       · used <=0（读不到用量）→ 放行（fail-open，不能因探测失败锁死会话）；
@@ -2347,7 +2347,7 @@ def _scheme_capacity_block(s, used, cur_win, text=""):
 def _vision_note_for(model):
     """模型切换时注入的识图口径声明（进 jsonl 上下文的唯一通道）。
 
-    v4.2R：与 routes.py::harness_set_model 共用同一套文案口径——两处若各写
+    v4.1.0-a590：与 routes.py::harness_set_model 共用同一套文案口径——两处若各写
     一份，迟早漂移（一处改了另一处忘改，模型收到的口径与工具列表不符）。
     计算失败返回空串（不阻断发送）。"""
     try:
@@ -2456,13 +2456,13 @@ def _session_ctx_used(s):
     # 物理不可能超窗（超窗 API 直接报错不会有 success）——超窗判坏数据归零
     # （前端显示「首轮回复后统计」，下轮 jsonl 校准自愈），不再把 1.3M 画在
     # 500K 分母上。
-    # v4.2：跨方案后 used 可能**合法地**超过当前方案窗口（大窗会话切小窗）
+    # v4.1.0-a590：跨方案后 used 可能**合法地**超过当前方案窗口（大窗会话切小窗）
     # ——那是必须被容量判定拦下的真实值，绝不能当坏数据归零（归零=放行
     # → 打进小窗网关 400）。故：
     #   · jsonl 真值（found）：一律保留，超窗就是超窗，交给
     #     _scheme_capacity_block 拦；
     #   · last_result 兜底（!found）：累计口径嫌疑，超窗判坏归零（a255 原意）。
-    # v4.2R（审计 P2-4）：判坏阈值改用**历史最大实报窗口 hwm**（每次 result
+    # v4.1.0-a590（审计 P2-4）：判坏阈值改用**历史最大实报窗口 hwm**（每次 result
     # 到达时更新、切方案不清）——「1M 会话切 256K 后 last_result 兜底 450K」
     # 不该被当前 256K 误杀；而 a255 的 1.3M 仍大于 1M 被归零。hwm 只在进程
     # 内存（进程重启后 last_result 也没了，used 只能来自 jsonl 或 0，安全）。
@@ -2474,7 +2474,7 @@ def _session_ctx_used(s):
                 used = 0
         except Exception:
             pass
-    # v4.2R：把取值来源带给调用方（/ctx 据此让前端区分「合法超窗」与
+    # v4.1.0-a590：把取值来源带给调用方（/ctx 据此让前端区分「合法超窗」与
     # 「累计口径坏数据」）。jsonl=权威真值；lastResult=兜底值
     s._ctx_used_source = "jsonl" if found else ("lastResult" if used else "none")
     return used, window, compacted

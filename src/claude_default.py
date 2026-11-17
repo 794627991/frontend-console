@@ -843,7 +843,7 @@ def active_scheme_name():
 def profile_ctx_window(name):
     """按方案名取该方案快照里的上下文窗口（tokens），取不到返回 0。
 
-    v4.2R：会话卡上的「异方案」标注改为按**窗口大小**判定——两个方案窗口
+    v4.1.0-a608：会话卡上的「异方案」标注改为按**窗口大小**判定——两个方案窗口
     一样大时（如 lanzi / lanzi-qiu 都是 500K）切换不影响任何东西，标红纯属
     噪音（用户实锤）。窗口取值链与 harness.live_ctx_window 一致：
     MAX_CONTEXT_TOKENS / AUTO_COMPACT_WINDOW → 模型名 [1M] → 0（未知）。"""

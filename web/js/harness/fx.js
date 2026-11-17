@@ -50,7 +50,7 @@
   function _hgCtxSave(sid, used, max, badMax, model, src) {
     if (!sid) return;
     const rec = {used: used, max: max};
-    // v4.2R（审计 P2-4）：记录读数来源——jsonl 是权威真值，可以合法超过
+    // v4.1.0-a590（审计 P2-4）：记录读数来源——jsonl 是权威真值，可以合法超过
     // 当前窗口（大窗会话切小窗）；lastResult 兜底值超窗则按坏数据判。
     // 恢复时据此避免把合法超窗误清 0。
     let _old = null;
@@ -147,7 +147,7 @@
     // 三处口径不会再漂移
     const denomAuth = _hgCtxDenomOk(v, sid);
     // 判坏 / 归属不符 → 该清；仅仅「分母未知」不算坏，值本身可能是好的
-    // v4.2R（审计 P2-4）：来源为 jsonl 的读数是权威真值——跨方案后它可以
+    // v4.1.0-a590（审计 P2-4）：来源为 jsonl 的读数是权威真值——跨方案后它可以
     // 合法超过当前窗口（大窗会话切小窗），只按归属判坏，不按阈值判坏。
     const srcJsonl = !!(v && v.src === 'jsonl');
     const badIsh = !!(v && v.used > 0 &&
@@ -300,7 +300,7 @@
     // 若按 500K 判会被整帧丢弃 → 环冻结在旧读数
     const guardMax = (typeof o.badMax === 'number' && o.badMax > 0)
       ? o.badMax : ctxMax;
-    // v4.2R（审计 P2-4）：来源是 jsonl 真值时**不做坏数据丢弃**——跨方案后
+    // v4.1.0-a590（审计 P2-4）：来源是 jsonl 真值时**不做坏数据丢弃**——跨方案后
     // used 可能合法超过当前窗口（大窗会话切小窗），这是必须显示的状态
     // （用户要知道自己已被拦）。a255 的累计口径坏数据来源是 result usage，
     // 由 v4bridge 的 ctxLive 守卫与后端 !found 分支继续拦住。

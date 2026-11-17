@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""跨 API 方案兼容（v4.2）：只按上下文容量判定，不再按方案名硬拦。
+"""跨 API 方案兼容（v4.1.0-a590）：只按上下文容量判定，不再按方案名硬拦。
 
 需求（用户拍板）：
   · 小上下文会话 → 切大上下文方案：放行；
@@ -132,7 +132,7 @@ def test_legacy_session_without_scheme_still_works():
     assert S._scheme_capacity_block(s, 450_000, 262_144) is not None  # 拦
 
 
-# ------------------------------------------------- v4.2R 审计后的回归项
+# ------------------------------------------------- v4.1.0-a590 审计后的回归项
 def test_live_window_falls_back_to_reported(monkeypatch):
     """无窗口键时回落网关实报，不再盲判 256K（审计 P1-3）。
 
