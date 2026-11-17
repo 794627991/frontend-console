@@ -491,6 +491,53 @@ def test_redact_does_not_mangle_ordinary_text(raw):
     assert BL._redact(raw) == raw
 
 
+# ---- a616：审计点名的「只测自己会打的城门」补齐 ---------------------------
+# 疯狗审计实测：CLI 旗标形态 `--password xxx` 与空格赋值 `password xxx`
+# 整行穿透（分隔符类只有 [:=：＝]），而原 8 个参数化样例全落在实现已经
+# 能挡的 key=value/Bearer 形态里。下面这组就是当时漏掉的形态。
+@pytest.mark.parametrize("raw,secret", [
+    ("--password hunter2 user=admin", "hunter2"),
+    ("--token abc123456", "abc123456"),
+    ("--api-key sk-1234567890", "sk-1234567890"),
+    ("mysql -u root -p secret99 --database x", None),   # -p 紧凑形态：见下
+    ("password mypass123", "mypass123"),
+    ("passwd rootpass", "rootpass"),
+    ("pwd abcdefgh", "abcdefgh"),
+    ("secret shhhh123", "shhhh123"),
+    ("api_key sk-live-abcdef", "sk-live-abcdef"),
+    ("wget http://user:pw123456@host/x", "pw123456"),
+])
+def test_secrets_redacted_space_and_flag_forms(raw, secret):
+    """空格/旗标分隔的凭据同样不能入库（审计实测原实现整行穿透）。"""
+    if secret is None:
+        pytest.skip("紧凑 -p 形态暂不覆盖（-p 与端口/路径歧义大）")
+    out = BL._redact(raw)
+    assert secret not in out, out
+    assert "***" in out
+
+
+@pytest.mark.parametrize("raw", [
+    "password 错误，请重试",         # 中文值不能抹（宁可漏抹不抹坏日志）
+    "token 无效",
+    "secret sauce is tasty",        # 值 < 6 位
+    "default config loaded",        # 见下方 _classify 用例
+])
+def test_space_form_does_not_over_redact(raw):
+    """空格形态的值限定 ASCII 可见字符且 ≥6 位——正常日志不能被抹成星号。"""
+    assert BL._redact(raw) == raw
+
+
+@pytest.mark.parametrize("line,level", [
+    ("default config loaded", "info"),      # 审计：default 曾撞 "ault" 判成 error
+    ("Default window size applied", "info"),
+    ("SegmentationFault at 0x0", "error"),  # 真异常词不能被误放过
+    ("PageFault in mmap", "error"),
+])
+def test_classify_default_is_not_error(line, level):
+    """审计：`endswith("fault")` 撞上 default，「仅错误」过滤器混进噪声。"""
+    assert BL._classify(line) == level, BL._classify(line)
+
+
 def test_redact_applies_to_captured_stdout():
     """脱敏必须作用在流接管路径上，不只是 log() 接口。"""
     _install()

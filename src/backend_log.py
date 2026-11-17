@@ -77,7 +77,8 @@ _ACCESS_RE = re.compile(r"^\s*(?:\d+\.\d+\.\d+\.\d+|[0-9a-fA-F:]{2,}) - - "
 # 29 个泄露（PASSWORD= / PaSsWoRd= / TOKEN= 全漏）。改为 lower() 一次后
 # 用同一份关键字表判断——副本成本 ~1.2µs/行，可接受。
 _SECRET_HINTS = ("password", "passwd", "pwd", "token", "secret", "api_key",
-                 "apikey", "access_key", "private_key", "authorization",
+                 "apikey", "api-key", "access_key", "access-key",
+                 "private_key", "private-key", "authorization",
                  "cookie", "session_id", "bearer", "basic ", "jwt",
                  "密码", "口令", "密钥")
 # 值：可选引号包裹 / 非空白；key 两侧允许引号（JSON 形态 "password":"x"）；分隔符含全角
@@ -89,6 +90,16 @@ _SECRET_RE = re.compile(
 _CN_SECRET_RE = re.compile(
     r"(密码|口令|密钥)\s*(?:[:：=＝为是]\s*)?"
     r"(\"[^\"]*\"|'[^']*'|[^\s,，。；;）)）]+)")
+# a614（疯狗审计 v3 重炮二）：**空格分隔**形态——`--password hunter2`、
+# `password mypass`、`--token abc123`。原实现的分隔符类只有 [:=：＝]，空格
+# 形态整行穿透（实测 `--password hunter2 user=admin` 原样入库、原样可导出）。
+# 值限定为 ASCII 可见字符且 ≥6 位：中文词（「password 错误」「token 无效」）
+# 一律不碰，宁可漏抹也不把正常日志抹成星号。
+_SECRET_SPACE_RE = re.compile(
+    r"(?i)(?:(?<=[\s\-])|^)(?:--)?"
+    r"(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key)[\"']?\s*(?:[:=：＝]\s*)?"
+    r"(\"[^\"]{6,}\"|'[^']{6,}'|[A-Za-z0-9._~+/=!@#%^&*$\-]{6,})")
 # HTTP 认证头 / 裸令牌：`Bearer xxx` / `Basic xxx` / `token eyJ...`
 # bearer/basic 的令牌通常 ≥8 字符；裸 token 要 ≥16 才动手，避免误伤
 # 「token 无效」这类正常短语。
@@ -127,6 +138,7 @@ def _redact_line(text):
     text = _BARE_TOKEN_RE.sub("token ***", text)
     text = _SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
     text = _CN_SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
+    text = _SECRET_SPACE_RE.sub(lambda m: m.group(1) + " ***", text)
     return text
 
 
@@ -184,8 +196,13 @@ def _classify(line):
     first = word.split(":", 1)[0]
     # 小写化再判：`socket.timeout` / `gaiainfo` 这类模块限定名是小写的
     fl = first.lower()
-    if fl.endswith(("error", "exception", "interrupt", "fault",
-                    "timeout", "overflow")):
+    # a616（疯狗审计 v3 重炮二）：`endswith("fault")` 撞上 **default**
+    # （"de"+"fault"）——「default config loaded」这种普通日志被判成 error，
+    # 「仅错误」过滤器从此混进噪声，温度计的刻度就歪了。default 是常见
+    # 普通词，静态排除它；其余 *Fault（SegmentationFault/PageFault）照常。
+    if fl.endswith(("error", "exception", "interrupt",
+                    "timeout", "overflow", "fault")) \
+            and not fl.endswith("default"):
         return "error"
     return "info"
 
