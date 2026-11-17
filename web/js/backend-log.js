@@ -38,6 +38,7 @@
     panel.innerHTML =
       '<div class="bl-head">' +
       '  <span class="bl-title">后端日志</span>' +
+      '  <span class="bl-ver" title="当前版本（导出文件头部也带版本号）"></span>' +
       '  <select class="bl-sel" data-bl="level" title="按级别过滤">' +
       '    <option value="all">全部</option>' +
       '    <option value="warn">警告以上</option>' +
@@ -46,6 +47,8 @@
       '  <select class="bl-sel" data-bl="tag" title="按来源过滤"><option value="">全部来源</option></select>' +
       '  <span class="bl-meta"></span>' +
       '  <span class="bl-spacer"></span>' +
+      '  <button class="bl-btn" data-bl="copy" title="一键复制当前筛选结果到剪贴板">复制</button>' +
+      '  <button class="bl-btn" data-bl="export" title="导出完整日志为 .txt（含版本号，便于追溯）">导出</button>' +
       '  <button class="bl-btn" data-bl="clear" title="清空内存缓冲（不影响磁盘文件）">清空</button>' +
       '  <button class="bl-btn" data-bl="close" title="关闭（Esc）">✕</button>' +
       '</div>' +
@@ -54,6 +57,8 @@
     document.body.appendChild(panel);
 
     panel.querySelector('[data-bl="close"]').onclick = hide;
+    panel.querySelector('[data-bl="copy"]').onclick = doCopy;
+    panel.querySelector('[data-bl="export"]').onclick = doExport;
     panel.querySelector('[data-bl="clear"]').onclick = () => {
       fetch('/api/backend_log/clear', { method: 'POST' })
         .then(() => { allRows = []; lastSeq = 0; render(); refresh(); })
@@ -72,6 +77,68 @@
     makeDraggable(panel);
     restorePos();
     return panel;
+  }
+
+  // ---- 导出 / 一键复制 ----
+  function fmtLine(x) {
+    const lv = x.level === 'error' ? '[ERR]'
+      : x.level === 'warn' ? '[WRN]' : '[INF]';
+    const tag = x.tag ? '[' + x.tag + ']' : '';
+    const src = (x.src && x.src !== 'log') ? x.src : '';
+    const parts = [x.ts, lv, tag, src, x.text];
+    return parts.filter(Boolean).join(' ');
+  }
+
+  function doExport() {
+    // 走后端导出：头部带版本号/平台/缓冲统计，用户要求「日志要带版本号
+    // 好追溯」。用 a[download] 触发下载，不在本函数里拼大字符串。
+    const a = document.createElement('a');
+    a.href = '/api/backend_log/export';
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showBanner('已导出日志（含版本号与平台信息）', 3000);
+  }
+
+  function doCopy() {
+    // 一键复制：复制**当前筛选结果**（用户可能只想复制错误），不是全量。
+    // 头部同样带版本号，粘到聊天/工单里能直接追溯。
+    const rows = allRows.filter(passes);
+    if (!rows.length) { showBanner('当前没有可复制的日志', 2500, true); return; }
+    const ver = (panel.querySelector('.bl-ver') || {}).textContent || '';
+    const head = [
+      '='.repeat(60),
+      '前端控制台 ' + ver + ' 后端日志',
+      '导出时间 : ' + new Date().toLocaleString('zh-CN'),
+      '条数     : ' + rows.length,
+      '='.repeat(60),
+      '',
+    ].join('\n');
+    const text = head + rows.map(fmtLine).join('\n') + '\n';
+    const done = () => {
+      const btn = panel.querySelector('[data-bl="copy"]');
+      const old = btn.textContent;
+      btn.textContent = '已复制';
+      setTimeout(() => { btn.textContent = old; }, 1500);
+    };
+    // 优先 Clipboard API；WebView2 里可能被权限拦，退回 execCommand
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => fallback());
+    } else {
+      fallback();
+    }
+    function fallback() {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); }
+      catch (e) { showBanner('复制失败，请用「导出」', 3000, true); }
+      ta.remove();
+    }
   }
 
   // ---- 拖动 ----
@@ -212,6 +279,12 @@
     lastSeq = 0;
     allRows = [];
     autoScroll = true;
+    // 版本号显示在面板标题旁（用户令「启动时必须带上版本号，好追溯」）——
+    // 与标题栏徽标同源（/api/update/state），保证与导出文件里的一致
+    fetch('/api/update/state').then(r => r.json()).then(j => {
+      const el = panel.querySelector('.bl-ver');
+      if (el) el.textContent = (j && j.current) ? 'v' + j.current : '';
+    }).catch(() => {});
     render();
     refresh();
     if (!timer) timer = setInterval(refresh, 2000);

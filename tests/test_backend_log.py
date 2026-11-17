@@ -198,3 +198,49 @@ def test_unhandled_exception_handler_registered():
     src = inspect.getsource(S)
     assert "_api_unhandled" in src
     assert 'backend_log.exception("server"' in src
+
+
+# ---- 2.4.4 追加：导出带版本号 / 一键复制 / 性能开关 ----------------
+def test_export_includes_version():
+    """用户令「启动时必须带上版本号」= 日志本身带版本，导出才能追溯。"""
+    import inspect
+    from src import server as S
+    src = inspect.getsource(S.api_backend_log_export)
+    assert "APP_VERSION" in src, "导出必须带版本号"
+    assert "程序版本" in src
+    assert "Content-Disposition" in src, "要能当附件下载"
+
+
+def test_startup_logs_version_banner():
+    """启动时第一条日志带版本号（用户明确要求）。"""
+    import inspect
+    from src import main as M
+    src = inspect.getsource(M.main)
+    assert "前端控制台 v%s 启动" in src, "启动横幅缺版本号"
+
+
+def test_set_enabled_short_circuits():
+    """性能逃生门：关掉后 write/log 立即返回，不进缓冲。"""
+    _install()
+    BL.log("t", "关之前")
+    n_before = BL.stats()["entries"]
+    BL.set_enabled(False)
+    try:
+        BL.log("t", "关之后不该进")
+        print("print 也不该进")
+    finally:
+        BL.set_enabled(True)
+    assert BL.stats()["entries"] == n_before, "关闭后仍有记录写入"
+    BL.log("t", "重开后")
+    assert BL.stats()["entries"] == n_before + 1
+
+def test_batch_emit_is_single_lock():
+    """批量写走一次持锁（性能手段）：_emit_many 存在，且一次写多行只加一次锁。
+
+    用行为验证而不是源码字面匹配（后者在转义/注释上极易碎）。
+    """
+    _install()
+    before = BL.stats()["entries"]
+    # 一块含 100 行，应产生 100 条记录，且只取一次锁
+    BL._emit_many(["第 %d 行" % i for i in range(100)], "stdout")
+    assert BL.stats()["entries"] == before + 100

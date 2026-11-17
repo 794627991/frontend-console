@@ -2080,8 +2080,53 @@ def api_backend_log():
         limit = int(request.args.get("limit") or 500)
     except (TypeError, ValueError):
         since, limit = 0, 500
-    limit = max(1, min(limit, 2000))
+    # 2.4.4：上限从 2000 放宽到 50000——缓冲已是 10MB，面板首屏与导出都
+    # 需要一次取全（2000 行对 10MB 缓冲是残缺的，用户明确说要「很多信息」）。
+    limit = max(1, min(limit, 50000))
     return jsonify({"ok": True, **backend_log.snapshot(since=since, limit=limit)})
+
+
+@app.route("/api/backend_log/export")
+def api_backend_log_export():
+    """导出全部日志为纯文本（用户需求：增加导出功能）。
+
+    头部带版本号 / 启动时间 / 平台 / 缓冲统计——用户明确要求「日志里要带上
+    版本号，好追溯」。返回 text/plain，前端用 Blob 下载。
+    """
+    import platform
+    from src import backend_log
+    from src.version import APP_VERSION
+    snap = backend_log.snapshot(since=0, limit=50000)
+    lines = []
+    lines.append("=" * 70)
+    lines.append("前端控制台 v%s 后端日志导出" % APP_VERSION)
+    lines.append("=" * 70)
+    lines.append("导出时间 : %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    lines.append("程序版本 : v%s" % APP_VERSION)
+    lines.append("Python   : %s" % sys.version.split()[0])
+    lines.append("平台     : %s (%s)"
+                 % (platform.platform(), platform.machine()))
+    lines.append("打包形态 : %s" % ("frozen(exe)" if getattr(sys, "frozen", False)
+                                    else "源码"))
+    lines.append("缓冲统计 : %d 条 / %d 字符（上限 %d）· 已丢弃 %d 条"
+                 % (snap["entries"], snap["used_chars"],
+                    snap["capacity_chars"], snap["dropped"]))
+    lines.append("=" * 70)
+    lines.append("")
+    for x in snap["lines"]:
+        tag = ("[%s]" % x["tag"]) if x.get("tag") else ""
+        # src 只在不是 "log"（主动埋点）时显示——log 的 tag 已经说明了来源，
+        # 再拼一个 "log" 会变成 "[main]log"，读着别扭
+        src = "" if x.get("src") in ("log", "") else x.get("src", "")
+        lv = {"error": "[ERR]", "warn": "[WRN]"}.get(x["level"], "[INF]")
+        parts = [x["ts"], lv, tag, src, x["text"]]
+        lines.append(" ".join(p for p in parts if p))
+    body = "\n".join(lines) + "\n"
+    fn = "backend-log-v%s-%s.txt" % (
+        APP_VERSION, time.strftime("%Y%m%d-%H%M%S"))
+    return Response(body, mimetype="text/plain",
+                    headers={"Content-Disposition":
+                             'attachment; filename="%s"' % fn})
 
 
 @app.route("/api/backend_log/clear", methods=["POST"])

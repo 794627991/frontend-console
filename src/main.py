@@ -1173,6 +1173,13 @@ def main():
             # 调试手段」——三道收口全开：流接管 + logging 桥 + 未捕获异常钩子
             backend_log.install_logging_bridge()
             backend_log.install_excepthooks()
+            # 用户令（2.4.4）：「启动时必须带上版本号」——日志本身要带版本，
+            # 导出的日志才有追溯价值（否则拿到一份日志不知道是哪个版本出的）。
+            # 第一条就写版本，且做成醒目的横幅，导出后一眼能看到。
+            from src.version import APP_VERSION as _av
+            backend_log.log("main", "=" * 60, "info")
+            backend_log.log("main", "前端控制台 v%s 启动" % _av, "info")
+            backend_log.log("main", "=" * 60, "info")
             backend_log.log("main", "后端日志缓冲已启用（10MB 内存，不写盘）")
         except Exception:
             pass          # 日志缓冲装不上不该挡启动
