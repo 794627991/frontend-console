@@ -1272,6 +1272,13 @@ def main():
             backend_log.log("main", "前端控制台 v%s 启动" % _av, "info")
             backend_log.log("main", "=" * 60, "info")
             backend_log.log("main", "后端日志缓冲已启用（10MB 内存，不写盘）")
+            # a626（用户令）：harness 会话的 [harness] boot 系统消息条撤除
+            # （现行代码已无注入——旧会话显示的是 a587 时代落盘的历史），
+            # 等价信息由 log 系统启动时同步打印（版本 + harness 形态；
+            # worker 端口由 worker 就绪消息自报，经 logging 桥可见）
+            _harness_mode = "inline" if os.environ.get("CLAUDE_INLINE") else "v4 worker"
+            backend_log.log("main", "[harness] boot v%s [%s]（worker 端口见后续就绪日志）"
+                            % (APP_VERSION, _harness_mode))
         except Exception:
             pass          # 日志缓冲装不上不该挡启动
     # 用户实锤（内网）：程序退出后主进程残留+rg.exe 占用——Job Object 绑杀
