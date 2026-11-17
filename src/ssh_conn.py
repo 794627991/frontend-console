@@ -2,9 +2,31 @@
 """SSH 连接。IO 层用 paramiko interactive shell。
 对前端透明：raw 流推 xterm，xterm 输入转发 channel.sendall。
 含 keepalive + 断线指数退避重连。"""
+import socket
 import time, threading
 
 from .base_conn import BaseConnection
+
+
+def _tcp_probe(host, port, timeout):
+    """快速 TCP 连通性探测（不读不写）。失败立即抛 ConnectionError。
+
+    a606：用来把「主机不可达」和「主机可达但 banner 慢」区分开——前者
+    10 秒内报错，后者给足 60 秒等 dropbear 吐 banner。
+    """
+    s = None
+    try:
+        s = socket.create_connection((host, port), timeout=timeout)
+    except socket.timeout:
+        raise ConnectionError("TCP 连接超时（%.0fs）：%s:%s" % (timeout, host, port))
+    except OSError as e:
+        raise ConnectionError("TCP 连接失败：%s:%s（%s）" % (host, port, e))
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
 
 # SSH 集成（可选依赖：延迟导入——纯串口场景不加载 paramiko，省 ~300ms 启动时间）
 # 用到 SSH 时才 import，避免启动时阻塞。paramiko 为 None 表示未安装。
@@ -59,8 +81,21 @@ class SSHConnection(BaseConnection):
         self._keepalive_stop = stop_evt
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # a606（用户实锤「MobaXterm 能连、工具连不上」）：嵌入式设备上的
+        # dropbear 经常要 15~20 秒才发 SSH banner（实测 10.20.115.193
+        # dropbear_2026.91：TCP 1ms 就握手成功，banner 等 15s 才到，完整
+        # 建连 20.2s）。原来的 timeout/banner_timeout 都是默认 10s，正好卡
+        # 在这类设备外面 → paramiko 报 "Error reading SSH protocol banner" /
+        # "No existing session"。MobaXterm 默认不设 banner 超时（或远大于
+        # 10s）所以能连。
+        #
+        # 改成两段式，避免"主机根本不通"时也干等 60 秒：
+        #   ① 先单独做 TCP 探测（10s）：连不上立即抛，症状与原来一致
+        #   ② 通过后 banner/auth 给足 60s（设备慢启动/高负载时的常态）
+        _tcp_probe(self.host, self.ssh_port, 10)
         kwargs = dict(hostname=self.host, port=self.ssh_port, username=self.username,
-                       timeout=10, allow_agent=False, look_for_keys=False)
+                       timeout=60, banner_timeout=60, auth_timeout=60,
+                       allow_agent=False, look_for_keys=False)
         if self.key_path:
             kwargs["key_filename"] = self.key_path
         else:

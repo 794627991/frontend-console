@@ -62,8 +62,10 @@ async function connectPort(port, baud, quiet) {
 }
 
 async function connectSSH(host, port, username, password, key_path, quiet) {
-  // SSH 建连最长 10s（TCP 超时）——任务型通知转圈常驻，含 IP/账号，不能让用户干等无反馈
-  const nid = quiet ? null : notifyTask({type:'ssh', title:`正在连接 ${username}@${host}:${port}`, detail:'SSH · TCP 超时最长 10s'});
+  // a606：嵌入式设备的 dropbear 可能 15~20 秒才发 SSH banner（实测
+  // 10.20.115.193 要 20.2s），所以总超时放宽。任务型通知转圈常驻并说明
+  // 预期耗时，避免用户以为卡死。
+  const nid = quiet ? null : notifyTask({type:'ssh', title:`正在连接 ${username}@${host}:${port}`, detail:'SSH · 慢设备可能需要 20 秒（等待 banner）'});
   try {
     const r = await fetch('/api/connect', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({kind:'ssh', host, port, username, password, key_path})});
     const j = await r.json();
