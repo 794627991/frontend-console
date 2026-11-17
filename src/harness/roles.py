@@ -108,11 +108,14 @@ v3.5.15：model_map 端点映射从三角色判定链退役（用户拍板「换
   （历史绝不新建段）。
 """
 import json
+import logging
 import os
 import re
 import time
 
 import src.app_state as _st
+
+log = logging.getLogger("harness_roles")
 
 _ROLES_KEY = "harness_roles"
 
@@ -331,6 +334,27 @@ def resolve_role_models(models=None, default=None):
             ch or auto_h or "glm-5.3")
 
 
+def _agent_model_ok(model, pool):
+    """子代理模型名是否可用：在**当前方案模型表**里才算数。
+
+    v4.1.0-a615（用户实锤「子代理特别慢，toks 个位数」根因）：
+    designer/reviewer 的 model 字段若写成网关不认的名字（实测 config 里被
+    写进了测试占位值 e-dm / e-rm），CLI 每次派发都先撞 400 model not found，
+    再退回主模型或反复重试——表现就是子代理 tok/s 只有个位数、比主会话慢
+    一个量级，且日志里只有一串 400。
+    模型表为空（读不到）时不判（fail-open，不能因探测失败把配置废掉）。
+    返回 (ok, reason)。"""
+    if not model:
+        return True, ""
+    if not pool:
+        return True, ""
+    bare = str(model).split("[")[0].strip()
+    if bare in [str(m).split("[")[0].strip() for m in pool]:
+        return True, ""
+    return False, "「%s」不在当前 API 方案的模型表内（可选：%s）" % (
+        bare, "、".join(str(m).split("[")[0].strip() for m in pool[:6]))
+
+
 def resolve_agent_models(models=None, default=None):
     """解析 (designer 模型, reviewer 模型)——v2.53 用户拍板：面板直白配
     「设计者/审计者」各自模型（designer_model/reviewer_model 显式优先），
@@ -338,11 +362,26 @@ def resolve_agent_models(models=None, default=None):
     历史行为；只配一槽不影响另一槽回退。v3.5.18（全审建议11）：显式槽
     值剥 [1M] 类窗口后缀——agent md 的 model 字段必须裸 ID（自动路径
     _pick_pool_models 早剥，显式路径此前漏剥）。v3.5.19：回退重档取
-    resolve_tier_models 的重档（联动 API 配置三槽）。"""
+    resolve_tier_models 的重档（联动 API 配置三槽）。
+    v4.1.0-a615：显式槽值再校验一遍「是否在当前方案模型表内」——不认识的
+    名字直接回退重档，否则子代理每次派发都撞 400（见 _agent_model_ok）。"""
     cfg = roles_cfg()
     _tl, _tm, heavy = resolve_tier_models(models, default)
     cd = str(cfg.get("designer_model") or "").split("[")[0].strip()
     cr = str(cfg.get("reviewer_model") or "").split("[")[0].strip()
+    try:
+        pool = list(available_models().get("models") or []) if models is None \
+            else list(models or [])
+    except Exception:
+        pool = list(models or [])
+    if not _agent_model_ok(cd, pool)[0]:
+        log.warning("designer_model 不可用，回退重档：%s",
+                    _agent_model_ok(cd, pool)[1])
+        cd = ""
+    if not _agent_model_ok(cr, pool)[0]:
+        log.warning("reviewer_model 不可用，回退重档：%s",
+                    _agent_model_ok(cr, pool)[1])
+        cr = ""
     return (cd or heavy, cr or heavy)
 
 
