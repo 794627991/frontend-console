@@ -10,10 +10,9 @@ DevTools CDP 基础设施（v3.5.187）——WebView2 调试协议直连客户�
 - websocket-client 懒导入（函数级 try/except，照抄 hiklink_bot HAS_WS
   模式）——已随 exe 打包（前端控制台.spec hiddenimports），源码模式
   hiklink 生产在用；不用 devtools 工具就零导入开销。
-- CDP 端口仅在调试模式开启（run_debug.bat / HARNESS_DEBUG_WEB=1，固定
-  9222；main.py）——a473 起双路开启：run_debug.bat（调试模式）或配置键
-  web_cdp（设置→终端设置→「AI 网页操作」，正常启动也带端口，仅 debug 模式
-  才带 DevTools/右键菜单——两布尔分离）。
+- CDP 端口常开（a624：调试能力常开，main.py 固定带
+  --remote-debugging-port=9222；此前只在 run_debug.bat 下才有）。端口仅绑
+  127.0.0.1。网页 tab 另有 9223（见 web_tabs）。
 """
 import json
 import os
@@ -22,7 +21,7 @@ import urllib.request
 
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
-_DEBUG_PORT = 9222          # run_debug.bat 固定端口（main.py 硬编码）
+_DEBUG_PORT = 9222          # 主 UI CDP 端口（a624 起常开，main.py 硬编码）
 _WEBTAB_PORT = 9223         # R4 审计 D2（W4）：网页 tab 独立 CDP 端口（web_tabs._ensure_env）
 # （R9 审计 W39：find_cdps 死代码已删——零调用方；9223 探活并入设置卡
 #   web_cdp_live 为 D2-b 后续项，落地时再引入多端口探活。）
@@ -54,11 +53,11 @@ class WsMissing(DevtoolsError):
 
 class CdpUnavailable(DevtoolsError):
     def __init__(self):
-        # a473：CDP 两路开启——run_debug.bat（调试模式）或配置键 web_cdp
-        #（设置→终端设置→「AI 网页操作」打开并重启，正常启动也带端口）
-        super().__init__("CDP 端口未开启。两种开启方式：① 用 run_debug.bat "
-                         "启动（调试模式）；② 设置→终端设置→「AI 网页操作"
-                         "（CDP）」开关打开并重启工具")
+        # a624：CDP 端口常开（启动即带 --remote-debugging-port=9222）。
+        # 仍探不到 = 端口被占或进程异常，指向排查方向而非「去开开关」。
+        super().__init__("CDP 端口连不上（9222）。可能原因：端口被其他进程"
+                         "占用，或工具启动失败。可用 netstat -ano | findstr "
+                         "9222 检查后重启工具")
 
 
 class TargetNotFound(DevtoolsError):

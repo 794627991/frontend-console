@@ -84,7 +84,9 @@ const _D = {
   dotOn: '<circle cx="8" cy="8" r="3.4" fill="currentColor" stroke="none"/>',
   dotOff: '<circle cx="8" cy="8" r="4"/>',
   clip: '<path d="m14.3 7.4l-6.1 6.1a4 4 0 0 1-5.7-5.7l5.7-5.7a2.7 2.7 0 1 1 3.8 3.8l-5.7 5.7a1.3 1.3 0 0 1-1.9-1.9l5.7-5.6"/>',
-  square: '<rect x="4.2" y="4.2" width="7.6" height="7.6" rx="1"/>'
+  square: '<rect x="4.2" y="4.2" width="7.6" height="7.6" rx="1"/>',
+  // a624：DevTools 图标（开发者工具语义：带光标的代码窗口）
+  devtools: '<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.2"/><path d="M1.8 5.6h12.4"/><path d="M5.2 8.2L4 9.4l1.2 1.2"/><path d="M8.2 10.6h2.6"/>'
 };
 const ICO = {}, ICO16 = {};
 for (const k in _D) {

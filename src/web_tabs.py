@@ -1072,13 +1072,17 @@ class WebTabs:
                             _ANTI_AUTOSIGNIN_JS)
                     except Exception as e:
                         _log("WARN", "anti-autosignin inject: %r" % e)
-                    # R4 审计 D2：网页 tab 的 DevTools（右键「检查」/F12）与
-                    # CDP 同门控——debug 或 web_cdp 开启才可用（v3.4.99 终裁
-                    # 「正常启动无 F12」对网页 tab 同样成立）
+                    # R4 审计 D2：网页 tab 的 DevTools 与 CDP 同门控。
+                    # a624：调试能力常开 → AreDevToolsEnabled=True（右键
+                    # 「检查」可用，供 MCP/人工排查网页）。
                     try:
                         cvw.Settings.AreDevToolsEnabled = self._cdp
                     except Exception as e:
                         _log("WARN", "devtools: %r" % e)
+                    # a624（用户令）：**不关网页 tab 的加速键**。用户要屏蔽的
+                    # 是「网页相关快捷键把整个工具刷掉」——那发生在主 UI
+                    # （主 UI 已关）。网页 tab 是独立浏览器控件，F5/Ctrl+F
+                    # 在这里就是浏览器本职行为，关掉反而变成「网页刷不了」。
                     self._wire_events(tab_id, ctl, cvw)
                     cvw.Navigate(url or "about:blank")
                     # a555：create 在途期间后发的导航（末次胜出）
@@ -1664,11 +1668,11 @@ def sys_path_append(p):
 
 def _detect_cdp():
     """R4 审计 D2：CDP/DevTools 门控探测——与 main.py 主进程同一口径
-    （debug 开启，或配置键 web_cdp 开启）。install 在 main.py :853 附近
+    （调试能力常开，或配置键 web_cdp 开启）。install 在 main.py :853 附近
     被调用，早于 :1559 的 _wv_debug 赋值，故此处自行探测而非收参。"""
     try:
-        from src.server import DEBUG_WEB
-        if DEBUG_WEB:
+        from src.server import DEBUG_CAPS
+        if DEBUG_CAPS:
             return True
     except Exception:
         pass

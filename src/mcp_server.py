@@ -552,7 +552,7 @@ def tool_tftp_set_dir(url, root_dir):
 # 用最小化 JSON-RPC 实现，避免依赖 mcp SDK（纯标准库即可被 Claude Code 调用）。
 # MCP 协议: https://spec.modelcontextprotocol.io/
 # ---- DevTools（CDP 直连 WebView2，v3.5.187 designer 方案）----
-# 调试专用：CDP 端口仅 run_debug.bat（HARNESS_DEBUG_WEB=1）开启（P0b 用户拍板）。
+# a624：CDP 端口常开（调试能力常开），devtools_* 工具随时可用。
 # 无状态用完即弃：每次调用现查 target→新建 WS→执行→close，页面刷新自愈。
 
 
@@ -985,7 +985,7 @@ _TOOLS = [
     },
     {
         "name": "devtools_eval",
-        "description": "DevTools：在工具真实页面执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。诊断万能底座——可查 DOM/状态/调用后端 API。警告：可改变页面状态与发起真实操作（含发串口命令），慎做破坏性操作；页面刷新即复位。CDP 仅调试模式（run_debug.bat）可用。",
+        "description": "DevTools：在工具真实页面执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。诊断万能底座——可查 DOM/状态/调用后端 API。警告：可改变页面状态与发起真实操作（含发串口命令），慎做破坏性操作；页面刷新即复位。CDP 常开可用。",
         "inputSchema": {
             "type": "object",
             "properties": {

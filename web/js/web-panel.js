@@ -1108,21 +1108,18 @@ window.__webTabDead = function (tabId, err) {
 // 原生菜单，事件不达父页，天然放行）。各模块自建右键菜单（文件树/tab/
 // 终端等）本就自带 preventDefault + stopPropagation，不受影响。
 document.addEventListener('contextmenu', (e) => {
-  // R4 审计 D1（用户定调）：正常模式工具 UI 本体不允许刷新——主 UI 文档
-  // 一律不放行原生菜单（其「重新加载」= 整工具刷新；「web 上刷新刷掉整
-  // 个工具」的根因：阅读/休眠态控件隐藏后 .web-body 右键落到主文档菜单）。
-  // WebView2 控件 HWND 覆盖区的右键由控件自身处理（事件不到主文档，
-  // 天然放行不受影响）。debug 模式保留原行为。
-  if (!window.__HG_DBG__) { e.preventDefault(); return; }
+  // a624（用户令）：主 UI 文档一律不放行原生菜单（其「重新加载」= 整工具
+  // 刷新；「web 上刷新刷掉整个工具」的根因：阅读/休眠态控件隐藏后
+  // .web-body 右键落到主文档菜单）。WebView2 控件 HWND 覆盖区的右键由
+  // 控件自身处理（事件不到主文档，天然放行不受影响）。
   const inWeb = e.target && e.target.closest
       && e.target.closest('.web-body, .web-reader');
   if (!inWeb) e.preventDefault();
 }, true);
-// R4 审计 D1（用户定调）：正常模式 F5/Ctrl+R 不再整刷工具——激活 tab 是
-// 网页时改刷该网页（浏览器语义），否则吞掉；debug 模式放行（整 UI 刷新
-// =调试能力，index.html 的 pagehide 清场照旧）。
+// a624（用户令）：F5/Ctrl+R 不再整刷工具（浏览器级快捷键已在 WebView2
+// 层屏蔽）。前端保留一条路由：激活 tab 恰为网页时，F5 改刷该网页
+// （浏览器语义）；其余情况吞掉。整工具刷新改由后端日志窗的图标按钮触发。
 document.addEventListener('keydown', (e) => {
-  if (window.__HG_DBG__) return;
   if (!(e.key === 'F5' || (e.ctrlKey && /^r$/i.test(e.key)))) return;
   e.preventDefault();
   // R9 审计 B26：只认「激活 tab 恰为网页」——_webCur() 有回落第一个

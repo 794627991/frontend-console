@@ -591,9 +591,9 @@ async function _stRenderTermKeysPane(pane) {
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">AI 网页操作（CDP）</div>
         <div class="dd-row" style="margin-top:6px;">
-          <button class="btn ghost" id="tkCdpToggle" style="width:100%;text-align:left;padding:8px 12px;"></button>
+          <div id="tkCdpLive" style="padding:8px 12px;font-size:12px;color:var(--muted);">检测中…</div>
         </div>
-        <div class="dd-sub">开启后 Claude 可用 devtools_* 工具操作内嵌浏览器（读页面/点击/填表/截图）。</div>
+        <div class="dd-sub">Claude 可用 devtools_* 工具操作内嵌浏览器（读页面/点击/填表/截图）。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
@@ -772,45 +772,25 @@ async function _stRenderTermKeysPane(pane) {
   _stNavKeysCard(pane);
   _stBoostCard(pane);   // a378：CPU 优先随用户令移入终端设置
   _stNoGpuCard(pane);   // a472：无GPU加速随用户令移入终端设置（性能类归堆）
-  _stCdpCard(pane);      // a473：AI 网页操作（CDP 端口）开关
+  _stCdpLive(pane);      // a624：CDP 常开，此处只显示探活状态
 }
 
-// a473：AI 网页操作（CDP）开关——web_cdp 配置键，重启生效（main.py 启动期
-// 读配置决定是否带 --remote-debugging-port；运行中改配置不热生效，按钮如实提示）
-function _stCdpCard(pane) {
-  const btn = pane.querySelector('#tkCdpToggle');
-  if (!btn) return;
-  const sync = (on, live) => {
-    btn.innerHTML = (window.ICO16 ? (on ? ICO16.zap : ICO16.monitor) + ' ' : '')
-      + (on ? '<b style="color:var(--accent)">已开启</b>' : '已关闭')
-      + '<small style="color:var(--muted);font-weight:400;">　' + (on
-        ? (live ? 'AI 可用 devtools_* 工具操作工具主界面与网页 tab（网页 tab 走独立端口 9223，开过网页 tab 后可用）' : '已保存——重启工具后生效')
-        : (live ? '调试模式已带 CDP（AI 当前可用）——本开关只管正常启动'
-                : '点击开启：AI 可操作内嵌浏览器（重启生效）')) + '</small>';
+// a624：CDP 常开（main.py 启动必带 --remote-debugging-port=9222），此处只做
+// 探活状态展示——不再提供开关（关不掉，留开关只会误导用户）。
+function _stCdpLive(pane) {
+  const row = pane.querySelector('#tkCdpLive');
+  if (!row) return;
+  const paint = (live) => {
+    row.innerHTML = window.ICO16
+      ? (live ? ICO16.dotOn : ICO16.dotOff) + ' '
+      : '';
+    row.innerHTML += live
+      ? '<span style="color:var(--accent)">可用</span>'
+      : '<span style="color:var(--muted)">未就绪（重启工具试试）</span>';
   };
-  fetch('/api/theme').then(r => r.json()).then(j => {
-    const on = !!(j && j.web_cdp);
-    // 审计修：活态由服务端 web_cdp_live 探活下发（前端直 fetch 9222 被
-    // CORS 拒——/json/version 无 ACAO 头，跨源必败）
-    const live = !!(j && j.web_cdp_live);
-    btn.onclick = () => {
-      const now = !document.documentElement.hasAttribute('data-cdp-cfg');
-      // 审计 nano④+D 轮披露：POST 与重探 GET 分开兜——POST 失败才是真
-      // 「保存失败」；POST 已成功而 GET 探活失败只降级显示（重开面板自愈），
-      // 不能误报保存失败
-      fetch('/api/theme', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ web_cdp: now }) }).then(r => r.json())
-        .then(() => {
-          document.documentElement.toggleAttribute('data-cdp-cfg', now);
-          showBanner(now ? 'CDP 已开启（配置已保存）——重启工具后生效' : 'CDP 已关闭——重启工具后生效', 4000);
-          fetch('/api/theme').then(r2 => r2.json()).then(j2 => {
-            sync(now, !!(j2 && j2.ok && j2.web_cdp_live));
-          }).catch(() => sync(now, false));
-        }).catch(() => showBanner('保存失败', 2500, true));
-    };
-    document.documentElement.toggleAttribute('data-cdp-cfg', on);
-    sync(on, live);
-  }).catch(() => { sync(false, false); });
+  fetch('/api/theme').then(r => r.json())
+    .then(j => paint(!!(j && j.web_cdp_live)))
+    .catch(() => paint(false));
 }
 
 // a472：无GPU加速开关卡（虚机/远程桌面的动画降帧档）——随用户令从外观页

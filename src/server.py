@@ -61,8 +61,11 @@ except Exception:
 # 调试能力（a624 用户令：run_debug.bat 退役，调试能力**常开**）。
 #
 # 两个概念必须分开，此前混在一个开关里：
-#   HARNESS_DEBUG_WEB=1  前端资源**直读源码目录**（仅源码跑才有意义，打包版
-#                        没有 web/ 源码树）；这个仍只认环境变量
+#   HARNESS_DEBUG_WEB=1  前端资源**直读源码目录 web/**（源码跑才有意义）。
+#                        注意：调试**打包**（打包_debug.bat / HG_NO_ENCRYPT=1）
+#                        只把 src/*.py 明文外置，web 仍是 .enc 加密资源 →
+#                        该判据必须落到明文文件上，否则 `_internal/web`
+#                        目录存在会被误判。
 #   DEBUG_CAPS           **调试能力**：DevTools 可用、整工具刷新、右键菜单。
 #                        常开——用户要求 F12/F5 屏蔽后由日志窗的两个按钮
 #                        承接，devtools 也是 MCP 网页操作的必须品
@@ -70,13 +73,13 @@ _SRC_DBG = os.environ.get("HARNESS_DEBUG_WEB") == "1"
 
 
 def _has_src_web():
-    """源码 web/ 树是否真的可直读（含 index.html）。
+    """源码 web/ 树是否真的可直读（含明文 index.html + js/）。
 
-    a624 实测：打包版的 `<app>/_internal/web/` **目录是存在的**，但里面
-    只有 `index.html.enc` / `*.css.enc`（加密资源），没有任何可直读的
-    明文文件。原先只判 `os.path.isdir` 会把打包版误判成「有源码树」，
-    一旦有人设了 HARNESS_DEBUG_WEB=1 就会走 send_from_directory 拿 404
-    白屏。判据必须落到具体文件上才有效。
+    a624 实测：`<app>/_internal/web/` 在**所有**打包形态下都存在，但里面
+    只有 `index.html.enc` / `*.css.enc`（加密资源），没有可直接伺服的
+    明文文件。调试包（HG_NO_ENCRYPT=1）也只是把 src/*.py 外置，web 照旧
+    加密。所以判据必须落到具体明文文件上——只判 isdir 会把打包版误判成
+    「有源码树」，一旦设了环境变量就 send_from_directory 拿 404 白屏。
     """
     try:
         root = os.path.normpath(os.path.join(
@@ -87,7 +90,7 @@ def _has_src_web():
         return False
 
 
-# 直读源码只在「真有明文前端树」时生效（打包版恒 False → 走资源包）
+# 直读源码只在「真有明文前端树」时生效（任何打包形态恒 False → 走资源包）
 DEBUG_WEB = _SRC_DBG and _has_src_web()
 DEBUG_CAPS = True
 # 兼容既有引用（前端 __HG_DBG__、web_tabs 门控）：语义从「调试模式」改为

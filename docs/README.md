@@ -39,6 +39,6 @@
 ├── ico/                             应用图标
 ├── docs/                            技术文档（本目录）
 ├── data/                            默认数据目录（日志/笔记/缓存/凭据）
-├── run.bat / run_debug.bat          源码启动
+├── run.bat                          源码启动
 └── 前端控制台.spec                  PyInstaller 打包配置
 ```

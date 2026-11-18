@@ -6076,6 +6076,10 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .bl-btn { font-size: 11.5px; color: var(--muted); background: transparent;
   border: 1px solid var(--border); border-radius: 5px; padding: 2px 9px; cursor: pointer; }
 .bl-btn:hover { color: var(--fg); border-color: var(--accent); }
+/* a624：纯图标按钮（强制刷新 / 开发者工具）——方形、无文字，图标随色 */
+.bl-ico { display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 22px; padding: 0; }
+.bl-ico svg { display: block; }
 .bl-body { flex: 1; overflow-y: auto; padding: 6px 10px;
   font-family: Consolas, "Cascadia Mono", monospace; font-size: 11.5px; line-height: 1.55; }
 .bl-row { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-all; }

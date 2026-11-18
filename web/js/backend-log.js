@@ -72,13 +72,28 @@
       '  <button class="bl-btn" data-bl="copy" title="一键复制当前筛选结果到剪贴板">复制</button>' +
       '  <button class="bl-btn" data-bl="export" title="导出完整日志为 .txt（含版本号，便于追溯）">导出</button>' +
       '  <button class="bl-btn" data-bl="clear" title="清空内存缓冲（不影响磁盘文件）">清空</button>' +
+      '  <button class="bl-btn bl-ico" data-bl="reload" title="强制刷新（原 F5）"></button>' +
+      '  <button class="bl-btn bl-ico" data-bl="devtools" title="打开开发者工具（原 F12）"></button>' +
       '  <button class="bl-btn" data-bl="close" title="关闭（Esc）">✕</button>' +
       '</div>' +
       '<div class="bl-body"></div>' +
       '<div class="bl-foot">日志只驻内存（10MB 环形缓冲），进程退出即消失。<span class="bl-hint">拖动标题栏可移动</span></div>';
     document.body.appendChild(panel);
 
+    // a624（用户令）：F5/F12 快捷键已全局屏蔽，能力由这两个图标按钮承接
+    panel.querySelector('[data-bl="reload"]').innerHTML = ICO16.refresh;
+    panel.querySelector('[data-bl="devtools"]').innerHTML = ICO16.devtools;
+
     panel.querySelector('[data-bl="close"]').onclick = hide;
+    panel.querySelector('[data-bl="reload"]').onclick = () => {
+      if (window.__fcHardReload) window.__fcHardReload();
+    };
+    panel.querySelector('[data-bl="devtools"]').onclick = () => {
+      fetch('/api/window/devtools', { method: 'POST' })
+        .then(r => r.json())
+        .then(j => { if (!j.ok) showBanner(j.err || '打开开发者工具失败', 3000, true); })
+        .catch(() => showBanner('打开开发者工具失败', 3000, true));
+    };
     panel.querySelector('[data-bl="copy"]').onclick = doCopy;
     panel.querySelector('[data-bl="export"]').onclick = doExport;
     panel.querySelector('[data-bl="clear"]').onclick = () => {
