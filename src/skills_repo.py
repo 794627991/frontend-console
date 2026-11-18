@@ -703,6 +703,23 @@ def _install_lock(skill):
 _BAD_NAME_CHARS = set('<>:"|?*')
 
 
+def _replace_retry(src, dst, tries=5):
+    """os.replace 带短重试（a636）：Windows 上目录被 AV/索引器/句柄短暂占用
+    时抛 WinError 5/32，实测重装偶发失败。5 次 × 40ms 足够越过扫描窗口。"""
+    last = None
+    for i in range(tries):
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as e:
+            last = e
+            if i == tries - 1:
+                raise
+            time.sleep(0.04 * (i + 1))
+    if last:
+        raise last
+
+
 def _safe_file_name(name):
     """辅助文件名白名单（a636，对抗审计 P2-10）。
 
@@ -817,18 +834,21 @@ def _install_locked(owner, repo, skill, dst, confirm_integrity):
         elif files is None:
             partial = True   # 目录列不了（限额）——SKILL.md 已装上，如实标注
         # ---- 提交阶段：交换目录（同盘 rename 原子） ----
+        # a636：Windows 上目录 rename 可能被 AV / 索引器 / 刚刚读完的句柄
+        # 短暂占用（WinError 5/32），实测重装偶发失败。重试几次再放弃——
+        # 这是短期占用，不是永久错误。
         old = None
         if os.path.isdir(dst):
             old = "%s.old-%d-%d" % (dst, os.getpid(), threading.get_ident())
             shutil.rmtree(old, ignore_errors=True)
-            os.replace(dst, old)
+            _replace_retry(dst, old)
         try:
-            os.replace(tmp, dst)
+            _replace_retry(tmp, dst)
         except OSError:
             # 交换失败：把旧的放回去，别让用户丢技能
             if old and not os.path.isdir(dst):
                 try:
-                    os.replace(old, dst)
+                    _replace_retry(old, dst)
                 except OSError:
                     pass
             raise

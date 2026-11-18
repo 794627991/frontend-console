@@ -3847,7 +3847,7 @@ def _sk_parts(d):
 def skills_registry():
     """榜单卡片（tab=top/trending/hot；q 内存过滤搜索）。
     顺手后台补齐英文 description（首屏卡片即时出，描述几秒后渐进可见）。
-    a632：skills.sh 不可达自动切官方精选兜底，响应带 source 字段。"""
+    a634：skills.sh 不可达自动切官方精选兜底，响应带 source 字段。"""
     from .skills_repo import registry, _desc_backfill
     rows, source = registry(request.args.get("tab", "top"),
                             request.args.get("q", ""))
@@ -3879,7 +3879,7 @@ def skills_installed():
 
 @app.route("/api/skills/install", methods=["POST"])
 def skills_install():
-    """安装技能到 ~/.claude/skills/。a632：源间哈希不一致默认拒装
+    """安装技能到 ~/.claude/skills/。a634：源间哈希不一致默认拒装
     （integrity_conflict），用户确认后带 confirm_integrity=1 强制装。"""
     from .skills_repo import install
     d = request.get_json(force=True, silent=True) or {}
@@ -3902,7 +3902,7 @@ def skills_install():
 
 @app.route("/api/skills/source", methods=["GET", "POST"])
 def skills_source():
-    """技能下载源档位（a632）：auto=智能（探测可达排序）/ official=官方
+    """技能下载源档位（a634）：auto=智能（探测可达排序）/ official=官方
     直连优先 / jsdelivr=镜像优先。GET 返回档位+选项；POST 保存即时生效。"""
     from . import skills_repo as sr
     if request.method == "GET":
