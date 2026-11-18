@@ -286,3 +286,11 @@
         + '</i> <i class="del">-' + ds.del + '</i></span>');
     return out.join('');
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgProjInit = _hgProjInit;
+window._hgQueueSeed = _hgQueueSeed;
+window._hgReduce = _hgReduce;
+window._hgSpinShow = _hgSpinShow;
+window._hgToolBadges = _hgToolBadges;

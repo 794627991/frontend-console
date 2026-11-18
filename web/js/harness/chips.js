@@ -48,3 +48,16 @@
   function thinkChipLabel() {
     const b = _hgQ('[data-hg-think]'); if (b) b.textContent = (_HG.thinkLv ? _HG_THINKS[_HG.thinkLv] : '默认') + ' ▾';   // v3.4.33：只显档位值（ZCode 同款）
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._HG_PERMS = _HG_PERMS;
+window._HG_THINKS = _HG_THINKS;
+window._HG_THINK_TOK = _HG_THINK_TOK;
+window._hgCwdHist = _hgCwdHist;
+window._hgSaveCwd = _hgSaveCwd;
+window.fetchModels = fetchModels;
+window.permChipLabel = permChipLabel;
+window.projChipLabel = projChipLabel;
+window.setProj = setProj;
+window.thinkChipLabel = thinkChipLabel;

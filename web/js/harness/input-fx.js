@@ -144,3 +144,17 @@
     p.style.bottom = (wr.bottom - ar.top + 6) + 'px';
     return p;
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgMentionReset = _hgMentionReset;
+window.clearAtts = clearAtts;
+window.closeMention = closeMention;
+window.closePop = closePop;
+window.handleMentionKey = handleMentionKey;
+window.openPop = openPop;
+window.renderAtts = renderAtts;
+window.renderOverlay = renderOverlay;
+window.selectMention = selectMention;
+window.updateMention = updateMention;
+window.uploadFiles = uploadFiles;

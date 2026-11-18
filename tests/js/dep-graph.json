@@ -2633,7 +2633,7 @@
     "t",
     "tip"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 45,
    "referenced_by": {
     "js/editor.js": [
@@ -2796,7 +2796,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._codeLazyEnhance = _codeLazyEnhance;",
+    "window._hgAskDismiss = _hgAskDismiss;",
+    "window._hgAskDockRestore = _hgAskDockRestore;"
+   ]
   },
   "js/harness/base.js": {
    "defines": [
@@ -2833,7 +2837,7 @@
     "store",
     "todos"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 44,
    "referenced_by": {
     "js/harness/ask-md.js": [
@@ -3053,7 +3057,11 @@
      "B"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._HARNESS_IMG_EXT = _HARNESS_IMG_EXT;",
+    "window._HG = _HG;",
+    "window._HG_EYE = _HG_EYE;"
+   ]
   },
   "js/harness/chatctl.js": {
    "defines": [
@@ -3148,7 +3156,7 @@
     "untouched",
     "value"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 60,
    "referenced_by": {
     "js/analyze.js": [
@@ -3518,7 +3526,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._skillDesc = _skillDesc;",
+    "window._skillZhSync = _skillZhSync;",
+    "window.applyModel = applyModel;"
+   ]
   },
   "js/harness/chips.js": {
    "defines": [
@@ -3537,7 +3549,7 @@
     "setProj",
     "thinkChipLabel"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 62,
    "referenced_by": {
     "js/harness/chatctl.js": [
@@ -3607,7 +3619,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._HG_PERMS = _HG_PERMS;",
+    "window._HG_THINKS = _HG_THINKS;",
+    "window._HG_THINK_TOK = _HG_THINK_TOK;"
+   ]
   },
   "js/harness/fx.js": {
    "defines": [
@@ -3615,6 +3631,7 @@
     "_ACT_WORDS",
     "_CTX_PHYS_MAX",
     "_HG_CTX_FALLBACK",
+    "_actWordIdx",
     "_est",
     "_estScale",
     "_hgCtxCardAway",
@@ -3692,7 +3709,7 @@
     "w",
     "win"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 51,
    "referenced_by": {
     "js/harness/base.js": [
@@ -3776,7 +3793,6 @@
      "_hgFmtDur"
     ],
     "js/harness/main.js": [
-     "_actWordIdx",
      "buildClaudeHarnessTab"
     ],
     "js/harness/panel.js": [
@@ -3839,7 +3855,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgCtxDenomOk = _hgCtxDenomOk;",
+    "window._hgCtxKey = _hgCtxKey;",
+    "window._hgCtxPoll = _hgCtxPoll;"
+   ]
   },
   "js/harness/groups.js": {
    "defines": [
@@ -3960,7 +3980,7 @@
     "w",
     "yst"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 46,
    "referenced_by": {
     "js/harness/ask-md.js": [
@@ -4208,7 +4228,11 @@
      "B"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgAvaCls = _hgAvaCls;",
+    "window._hgRollbackTurn = _hgRollbackTurn;",
+    "window._hgTailAdopt = _hgTailAdopt;"
+   ]
   },
   "js/harness/hist.js": {
    "defines": [
@@ -4280,7 +4304,7 @@
     "thinkHeadUpdate",
     "v"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 49,
    "referenced_by": {
     "js/harness/ask-md.js": [
@@ -4483,7 +4507,11 @@
      "B"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgFmtDur = _hgFmtDur;",
+    "window._histLazyDrop = _histLazyDrop;",
+    "window._histLazyFill = _histLazyFill;"
+   ]
   },
   "js/harness/histcache.js": {
    "defines": [
@@ -4539,7 +4567,7 @@
     "tb",
     "totalTurns"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 56,
    "referenced_by": {
     "js/harness/groups.js": [
@@ -4696,7 +4724,9 @@
     ]
    },
    "top_level_exec": [
-    "_hgRailSync(); } catch (_) {}"
+    "_hgRailSync(); } catch (_) {}",
+    "window._hgPinIntrinsicHeights = _hgPinIntrinsicHeights;",
+    "window._hgRplRebuild = _hgRplRebuild;"
    ]
   },
   "js/harness/input-fx.js": {
@@ -4737,7 +4767,7 @@
     "url",
     "wrEl"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 61,
    "referenced_by": {
     "js/harness/base.js": [
@@ -4848,7 +4878,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgMentionReset = _hgMentionReset;",
+    "window.clearAtts = clearAtts;",
+    "window.closeMention = closeMention;"
+   ]
   },
   "js/harness/main.js": {
    "defines": [
@@ -5034,7 +5068,7 @@
     "x",
     "xc"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 65,
    "referenced_by": {
     "js/a11y.js": [
@@ -5081,7 +5115,6 @@
      "buildClaudeHarnessTab"
     ],
     "js/harness/fx.js": [
-     "_actWordIdx",
      "buildClaudeHarnessTab"
     ],
     "js/harness/groups.js": [
@@ -5597,7 +5630,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgRailActiveRaf = _hgRailActiveRaf;",
+    "window._hgRailSync = _hgRailSync;",
+    "window.buildClaudeHarnessTab = buildClaudeHarnessTab;"
+   ]
   },
   "js/harness/managers.js": {
    "defines": [
@@ -5665,7 +5702,7 @@
     "stTxt",
     "ta"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 63,
    "referenced_by": {
     "js/diff-viewer.js": [
@@ -5800,7 +5837,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.hgPromptManager = hgPromptManager;",
+    "window.hgVisionManager = hgVisionManager;",
+    "window.openRolesCfg = openRolesCfg;"
+   ]
   },
   "js/harness/modal.js": {
    "defines": [
@@ -5829,7 +5870,7 @@
     "want",
     "wrapped"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 64,
    "referenced_by": {
     "js/a11y.js": [
@@ -5909,7 +5950,11 @@
      "push"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.hgConfirm = hgConfirm;",
+    "window.hgModal = hgModal;",
+    "window.hgModalTrack = hgModalTrack;"
+   ]
   },
   "js/harness/panel.js": {
    "defines": [
@@ -6042,7 +6087,7 @@
     "ty",
     "v"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 58,
    "referenced_by": {
     "js/editor.js": [
@@ -6328,7 +6373,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgActDone = _hgActDone;",
+    "window._hgActPush = _hgActPush;",
+    "window._hgAgentModelsFetch = _hgAgentModelsFetch;"
+   ]
   },
   "js/harness/readonly.js": {
    "defines": [
@@ -6365,7 +6414,7 @@
     "t2",
     "tb"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 67,
    "referenced_by": {
     "js/editor.js": [
@@ -6572,7 +6621,7 @@
     "rmv",
     "t"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 68,
    "referenced_by": {
     "js/harness/fx.js": [
@@ -6673,7 +6722,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgProjInit = _hgProjInit;",
+    "window._hgQueueSeed = _hgQueueSeed;",
+    "window._hgReduce = _hgReduce;"
+   ]
   },
   "js/harness/registry.js": {
    "defines": [
@@ -6734,7 +6787,7 @@
     "t",
     "tm"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 69,
    "referenced_by": {
     "js/harness/base.js": [
@@ -6852,7 +6905,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgAg = _hgAg;",
+    "window._hgRegSync = _hgRegSync;",
+    "window._hgRegSyncSoon = _hgRegSyncSoon;"
+   ]
   },
   "js/harness/relay.js": {
    "defines": [
@@ -6928,7 +6985,7 @@
     "w",
     "waiting"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 48,
    "referenced_by": {
     "js/harness/ask-md.js": [
@@ -7088,7 +7145,11 @@
      "B"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgGrantRewind = _hgGrantRewind;",
+    "window._hgPeerLineStop = _hgPeerLineStop;",
+    "window._hgPeerStaleSweep = _hgPeerStaleSweep;"
+   ]
   },
   "js/harness/sessions.js": {
    "defines": [
@@ -7151,7 +7212,7 @@
     "tip",
     "to"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 57,
    "referenced_by": {
     "js/diff-viewer.js": [
@@ -7401,7 +7462,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._AGENT_LABEL = _AGENT_LABEL;",
+    "window._hgAgentRowFindByDesc = _hgAgentRowFindByDesc;",
+    "window._hgAgentRowTimerRestart = _hgAgentRowTimerRestart;"
+   ]
   },
   "js/harness/shell.js": {
    "defines": [
@@ -7491,7 +7556,7 @@
     "uEl",
     "wasHg"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 66,
    "referenced_by": {
     "js/harness/main.js": [
@@ -7739,7 +7804,7 @@
     "wk",
     "zh"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 71,
    "referenced_by": {
     "js/backend-log.js": [
@@ -7882,7 +7947,9 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.skRepoOpen = skRepoOpen;"
+   ]
   },
   "js/harness/state.js": {
    "defines": [
@@ -7938,7 +8005,7 @@
     "visIndEl",
     "warm"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 43,
    "referenced_by": {
     "js/harness/ask-md.js": [
@@ -8190,7 +8257,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgHasHistory = _hgHasHistory;",
+    "window._hgSseResetLocal = _hgSseResetLocal;",
+    "window._hgSyncAudit = _hgSyncAudit;"
+   ]
   },
   "js/harness/store.js": {
    "defines": [
@@ -8213,7 +8284,7 @@
     "i",
     "p"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 70,
    "referenced_by": {
     "js/harness/hist.js": [
@@ -8321,7 +8392,10 @@
      "push"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgDispatch = _hgDispatch;",
+    "window._hgEntryCursorReset = _hgEntryCursorReset;"
+   ]
   },
   "js/harness/subblk.js": {
    "defines": [
@@ -8330,7 +8404,7 @@
     "o",
     "title"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 47,
    "referenced_by": {
     "js/harness/hist.js": [
@@ -8389,7 +8463,10 @@
      "init"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._subToolHeadHtml = _subToolHeadHtml;",
+    "window._toolInputBodyHtml = _toolInputBodyHtml;"
+   ]
   },
   "js/harness/subpane.js": {
    "defines": [
@@ -8567,7 +8644,7 @@
     "wrap",
     "ws"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 59,
    "referenced_by": {
     "js/editor.js": [
@@ -8864,7 +8941,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._SUB_DIR = _SUB_DIR;",
+    "window._SUB_DYN = _SUB_DYN;",
+    "window._hgSubPctApply = _hgSubPctApply;"
+   ]
   },
   "js/harness/tools.js": {
    "defines": [
@@ -9017,7 +9098,7 @@
     "ty",
     "v"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 50,
    "referenced_by": {
     "js/harness/base.js": [
@@ -9298,7 +9379,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._hgAgentRowBindAid = _hgAgentRowBindAid;",
+    "window._hgAgentRowState = _hgAgentRowState;",
+    "window._hgAgentSlotPaint = _hgAgentSlotPaint;"
+   ]
   },
   "js/harness/v4bridge.js": {
    "defines": [

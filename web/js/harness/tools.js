@@ -1065,3 +1065,25 @@ function _taskFinish(tid, state, summary) {
   }
   _subDirPaint && _HG.active === '__dir__' && _subDirPaint();
 }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgAgentRowBindAid = _hgAgentRowBindAid;
+window._hgAgentRowState = _hgAgentRowState;
+window._hgAgentSlotPaint = _hgAgentSlotPaint;
+window._hgBriefDupDesc = _hgBriefDupDesc;
+window._hgDiffLineMemo = _hgDiffLineMemo;
+window._hgExpBucket = _hgExpBucket;
+window._hgExpKey = _hgExpKey;
+window._hgExpLiveTxt = _hgExpLiveTxt;
+window._hgExpSumTxt = _hgExpSumTxt;
+window._hgIsExplore = _hgIsExplore;
+window._hgPatchMissingCmds = _hgPatchMissingCmds;
+window._subLivePaint = _subLivePaint;
+window._taskStop = _taskStop;
+window._tlExpFlush = _tlExpFlush;
+window._tlPlace = _tlPlace;
+window.closeRun = closeRun;
+window.diffHtml = diffHtml;
+window.hgToolCard = hgToolCard;
+window.todoHtml = todoHtml;

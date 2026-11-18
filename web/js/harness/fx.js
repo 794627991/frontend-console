@@ -552,3 +552,16 @@
 
     _hgDynDirty();   // v2.32 面板：状态区运行态徽章/计时跟随
   }
+
+let _actWordIdx = 0;   // 模块化二期：原 sloppy 隐式全局（main.js:953 的同名 let 是
+                      // builder 函数局部、互不相干），strict 模块下补正经声明
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgCtxDenomOk = _hgCtxDenomOk;
+window._hgCtxKey = _hgCtxKey;
+window._hgCtxPoll = _hgCtxPoll;
+window._hgCtxRestore = _hgCtxRestore;
+window._hgDrawCtxRing = _hgDrawCtxRing;
+window.actStop = actStop;
+window.actWord = actWord;
+window.setBusy = setBusy;

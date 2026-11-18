@@ -53,6 +53,10 @@ DECL_RE = re.compile(
 
 # window.xxx = ... 显式挂载
 WIN_RE = re.compile(r"^\s*window\.([A-Za-z_$][\w$]*)\s*=")
+# 模块化二期：存取器挂载形态（跨文件重赋值的 let 走 getter/setter，
+# 运行时同样是 window 属性，lint 全局清单必须认）
+DEFINE_WIN_RE = re.compile(
+    r"^\s*Object\.defineProperty\(window,\s*['\"]([A-Za-z_$][\w$]*)['\"]")
 
 # 第三方库运行时注入的全局名（vendor/ 下的 UMD 包），源码不在本项目里，
 # ESLint 静态看不到，必须显式声明。清单来源：web/index.html 的 vendor 引用
@@ -99,6 +103,10 @@ def scan(path, collect_decls=True):
                         names.add(m.group("fn") or m.group("vn"))
                         continue
                 m = WIN_RE.match(line)
+                if m:
+                    names.add(m.group(1))
+                    continue
+                m = DEFINE_WIN_RE.match(line)
                 if m:
                     names.add(m.group(1))
     except OSError:

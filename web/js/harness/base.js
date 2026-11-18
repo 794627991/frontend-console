@@ -301,3 +301,21 @@ function _hgHistAppend(scope, text) {
   } catch(_) {}
 }
 
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._HARNESS_IMG_EXT = _HARNESS_IMG_EXT;
+window._HG = _HG;
+window._HG_EYE = _HG_EYE;
+window._H_DENIAL = _H_DENIAL;
+window._H_KIND_COLOR = _H_KIND_COLOR;
+window._H_TOOL_CFG = _H_TOOL_CFG;
+window._hCfg = _hCfg;
+window._hDrawerName = _hDrawerName;
+window._hToolIco = _hToolIco;
+window._hToolLabel = _hToolLabel;
+window._harnessMdInstance = _harnessMdInstance;
+window._harnessRelTime = _harnessRelTime;
+window._hgHistAppend = _hgHistAppend;
+window._hgHistRead = _hgHistRead;
+window._hgNormalizeFences = _hgNormalizeFences;

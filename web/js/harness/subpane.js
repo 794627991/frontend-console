@@ -1276,3 +1276,31 @@
     // 与用户手动折叠同机制；histAll 账无损，点开回填）
     try { if (typeof _histCollapseOffscreen === 'function') _histCollapseOffscreen(); } catch (_) {}
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._SUB_DIR = _SUB_DIR;
+window._SUB_DYN = _SUB_DYN;
+window._hgSubPctApply = _hgSubPctApply;
+window._hgSubRegion = _hgSubRegion;
+window._subActivate = _subActivate;
+window._subActiveBySidForget = _subActiveBySidForget;
+window._subDirEnsure = _subDirEnsure;
+window._subDirOpen = _subDirOpen;
+window._subDirPaint = _subDirPaint;
+window._subDirRowClick = _subDirRowClick;
+window._subDirTickStop = _subDirTickStop;
+window._subDynEnsure = _subDynEnsure;
+window._subDynOpen = _subDynOpen;
+window._subEnd = _subEnd;
+window._subOpen = _subOpen;
+window._subPanePctKey = _subPanePctKey;
+window._subReplay = _subReplay;
+window._subReset = _subReset;
+window._subShow = _subShow;
+window._subTabsPaint = _subTabsPaint;
+window._subThinkPollTick = _subThinkPollTick;
+window._subTid = _subTid;
+window._subTlFinalize = _subTlFinalize;
+window._subUserOpenMark = _subUserOpenMark;
+window._subUserQueue = _subUserQueue;

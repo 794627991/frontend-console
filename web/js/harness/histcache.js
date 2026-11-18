@@ -425,3 +425,10 @@ _hgRailSync(); } catch (_) {}
   // 更早历史一律上滑/点击扩段进现有 ZCode 渲染器（_histRefresh 大窗口重渲），
   // 到 HIST_CAP 硬顶后提示条指向左侧会话列表。22-readonly.js 模块保留在盘
   // （window.HgReadonly）但无任何入口，成为不可达代码
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgPinIntrinsicHeights = _hgPinIntrinsicHeights;
+window._hgRplRebuild = _hgRplRebuild;
+window._histFetch = _histFetch;
+window._histRender = _histRender;

@@ -701,3 +701,18 @@
     }
     return true;
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._skillDesc = _skillDesc;
+window._skillZhSync = _skillZhSync;
+window.applyModel = applyModel;
+window.dispatch = dispatch;
+window.handleHistoryKey = handleHistoryKey;
+window.handleSlashKey = handleSlashKey;
+window.newChat = newChat;
+window.renderList = renderList;
+window.send = send;
+window.slashMenuUpdate = slashMenuUpdate;
+window.slashPick = slashPick;
+window.stopGen = stopGen;

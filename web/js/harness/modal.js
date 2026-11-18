@@ -163,3 +163,10 @@
     return hgModal(title, `<div class="hg-modal-body"><label>${esc(label)}</label><input autocomplete="off" data-hg-mi value="${esc(val || '')}" name="hg_mi"></div>`,
       [{label: '取消', value: null}, {label: '保存', primary: true, value: (inp) => (inp ? inp.value.trim() : '')}]);
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window.hgConfirm = hgConfirm;
+window.hgModal = hgModal;
+window.hgModalTrack = hgModalTrack;
+window.hgPrompt = hgPrompt;

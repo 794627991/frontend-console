@@ -404,3 +404,10 @@
       render();
     });
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window.hgPromptManager = hgPromptManager;
+window.hgVisionManager = hgVisionManager;
+window.openRolesCfg = openRolesCfg;
+window.paintVisionBtn = paintVisionBtn;

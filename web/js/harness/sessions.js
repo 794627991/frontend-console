@@ -430,3 +430,24 @@
     if (m) return m;
     return _peerLabel(to);
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._AGENT_LABEL = _AGENT_LABEL;
+window._hgAgentRowFindByDesc = _hgAgentRowFindByDesc;
+window._hgAgentRowTimerRestart = _hgAgentRowTimerRestart;
+window._hgLiveAgentRunning = _hgLiveAgentRunning;
+window._hgLiveAgentsRestore = _hgLiveAgentsRestore;
+window._hgMm = _hgMm;
+window._hgQueueKey = _hgQueueKey;
+window._hgQueueSync = _hgQueueSync;
+window._hgSchemeBadge = _hgSchemeBadge;
+window._peerDesc = _peerDesc;
+window.qEndDrag = qEndDrag;
+window.queuePump = queuePump;
+window.queuePush = queuePush;
+window.refreshSessions = refreshSessions;
+window.renderQueue = renderQueue;
+window.setQuote = setQuote;
+window.showWelcome = showWelcome;
+window.switchTo = switchTo;

@@ -925,3 +925,26 @@
     if (!_HG.openState) d.classList.add('hg-enter');   // 动画批C：live 淡入（openState=hist 重建标志在场不播）
     _hgScrollBottom();
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgAvaCls = _hgAvaCls;
+window._hgRollbackTurn = _hgRollbackTurn;
+window._hgTailAdopt = _hgTailAdopt;
+window._hgTurnDurTxt = _hgTurnDurTxt;
+window._histCollapseOffscreen = _histCollapseOffscreen;
+window._trimOldTurns = _trimOldTurns;
+window._turnHeadShow = _turnHeadShow;
+window._turnHeadStop = _turnHeadStop;
+window._turnHeadSubPaint = _turnHeadSubPaint;
+window.addRow = addRow;
+window.drawerAppend = drawerAppend;
+window.drawerCount = drawerCount;
+window.grpEnsure = grpEnsure;
+window.grpFinalize = grpFinalize;
+window.phResume = phResume;
+window.phStopTimer = phStopTimer;
+window.renderAsst = renderAsst;
+window.renderUser = renderUser;
+window.thinkSegCount = thinkSegCount;
+window.thinkSegCountSet = thinkSegCountSet;

@@ -2321,3 +2321,9 @@ function buildClaudeHarnessTab(opts = {}) {
     // V3 的 _histRefresh 扩窗重拉（v4 下恒 no-op，已随批G 退役）
   });
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgRailActiveRaf = _hgRailActiveRaf;
+window._hgRailSync = _hgRailSync;
+window.buildClaudeHarnessTab = buildClaudeHarnessTab;

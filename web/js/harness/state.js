@@ -120,3 +120,94 @@ let visBtnEl;
       }, 30000);
     }
   }
+
+// 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
+// let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgHasHistory = _hgHasHistory;
+window._hgSseResetLocal = _hgSseResetLocal;
+window._hgSyncAudit = _hgSyncAudit;
+window.saveCache = saveCache;
+Object.defineProperty(window, '_agentModelsTried', { configurable: true,
+  get() { return _agentModelsTried; }, set(v) { _agentModelsTried = v; } });
+Object.defineProperty(window, '_codeIO', { configurable: true,
+  get() { return _codeIO; }, set(v) { _codeIO = v; } });
+Object.defineProperty(window, '_dynRaf', { configurable: true,
+  get() { return _dynRaf; }, set(v) { _dynRaf = v; } });
+Object.defineProperty(window, '_hgActEl', { configurable: true,
+  get() { return _hgActEl; }, set(v) { _hgActEl = v; } });
+Object.defineProperty(window, '_hgAskDockEl', { configurable: true,
+  get() { return _hgAskDockEl; }, set(v) { _hgAskDockEl = v; } });
+Object.defineProperty(window, '_hgAttsEl', { configurable: true,
+  get() { return _hgAttsEl; }, set(v) { _hgAttsEl = v; } });
+Object.defineProperty(window, '_hgConn', { configurable: true,
+  get() { return _hgConn; }, set(v) { _hgConn = v; } });
+Object.defineProperty(window, '_hgCostEl', { configurable: true,
+  get() { return _hgCostEl; }, set(v) { _hgCostEl = v; } });
+Object.defineProperty(window, '_hgCtxInFlight', { configurable: true,
+  get() { return _hgCtxInFlight; }, set(v) { _hgCtxInFlight = v; } });
+Object.defineProperty(window, '_hgCtxPollPending', { configurable: true,
+  get() { return _hgCtxPollPending; }, set(v) { _hgCtxPollPending = v; } });
+Object.defineProperty(window, '_hgCwdEl', { configurable: true,
+  get() { return _hgCwdEl; }, set(v) { _hgCwdEl = v; } });
+Object.defineProperty(window, '_hgFileEl', { configurable: true,
+  get() { return _hgFileEl; }, set(v) { _hgFileEl = v; } });
+Object.defineProperty(window, '_hgFlow', { configurable: true,
+  get() { return _hgFlow; }, set(v) { _hgFlow = v; } });
+Object.defineProperty(window, '_hgInput', { configurable: true,
+  get() { return _hgInput; }, set(v) { _hgInput = v; } });
+Object.defineProperty(window, '_hgJumpBtm', { configurable: true,
+  get() { return _hgJumpBtm; }, set(v) { _hgJumpBtm = v; } });
+Object.defineProperty(window, '_hgLeftNearBottom', { configurable: true,
+  get() { return _hgLeftNearBottom; }, set(v) { _hgLeftNearBottom = v; } });
+Object.defineProperty(window, '_hgListEl', { configurable: true,
+  get() { return _hgListEl; }, set(v) { _hgListEl = v; } });
+Object.defineProperty(window, '_hgMentionEl', { configurable: true,
+  get() { return _hgMentionEl; }, set(v) { _hgMentionEl = v; } });
+Object.defineProperty(window, '_hgOverlayEl', { configurable: true,
+  get() { return _hgOverlayEl; }, set(v) { _hgOverlayEl = v; } });
+Object.defineProperty(window, '_hgQ', { configurable: true,
+  get() { return _hgQ; }, set(v) { _hgQ = v; } });
+Object.defineProperty(window, '_hgRailEl', { configurable: true,
+  get() { return _hgRailEl; }, set(v) { _hgRailEl = v; } });
+Object.defineProperty(window, '_hgRolesCache', { configurable: true,
+  get() { return _hgRolesCache; }, set(v) { _hgRolesCache = v; } });
+Object.defineProperty(window, '_hgScrollBottom', { configurable: true,
+  get() { return _hgScrollBottom; }, set(v) { _hgScrollBottom = v; } });
+Object.defineProperty(window, '_hgSearchEl', { configurable: true,
+  get() { return _hgSearchEl; }, set(v) { _hgSearchEl = v; } });
+Object.defineProperty(window, '_hgSendBtn', { configurable: true,
+  get() { return _hgSendBtn; }, set(v) { _hgSendBtn = v; } });
+Object.defineProperty(window, '_hgStateEl', { configurable: true,
+  get() { return _hgStateEl; }, set(v) { _hgStateEl = v; } });
+Object.defineProperty(window, '_hgTitleEl', { configurable: true,
+  get() { return _hgTitleEl; }, set(v) { _hgTitleEl = v; } });
+Object.defineProperty(window, '_hgWrap', { configurable: true,
+  get() { return _hgWrap; }, set(v) { _hgWrap = v; } });
+Object.defineProperty(window, '_histBusy', { configurable: true,
+  get() { return _histBusy; }, set(v) { _histBusy = v; } });
+Object.defineProperty(window, '_railRaf', { configurable: true,
+  get() { return _railRaf; }, set(v) { _railRaf = v; } });
+Object.defineProperty(window, '_subBodyEl', { configurable: true,
+  get() { return _subBodyEl; }, set(v) { _subBodyEl = v; } });
+Object.defineProperty(window, '_subPaneEl', { configurable: true,
+  get() { return _subPaneEl; }, set(v) { _subPaneEl = v; } });
+Object.defineProperty(window, '_subRes', { configurable: true,
+  get() { return _subRes; }, set(v) { _subRes = v; } });
+Object.defineProperty(window, '_subTabsEl', { configurable: true,
+  get() { return _subTabsEl; }, set(v) { _subTabsEl = v; } });
+Object.defineProperty(window, '_subX', { configurable: true,
+  get() { return _subX; }, set(v) { _subX = v; } });
+Object.defineProperty(window, 'dynEl', { configurable: true,
+  get() { return dynEl; }, set(v) { dynEl = v; } });
+Object.defineProperty(window, 'qDrag', { configurable: true,
+  get() { return qDrag; }, set(v) { qDrag = v; } });
+Object.defineProperty(window, 'queueEl', { configurable: true,
+  get() { return queueEl; }, set(v) { queueEl = v; } });
+Object.defineProperty(window, 'quoteBodyEl', { configurable: true,
+  get() { return quoteBodyEl; }, set(v) { quoteBodyEl = v; } });
+Object.defineProperty(window, 'quoteEl', { configurable: true,
+  get() { return quoteEl; }, set(v) { quoteEl = v; } });
+Object.defineProperty(window, 'visBtnEl', { configurable: true,
+  get() { return visBtnEl; }, set(v) { visBtnEl = v; } });
+Object.defineProperty(window, 'visIndEl', { configurable: true,
+  get() { return visIndEl; }, set(v) { visIndEl = v; } });
