@@ -633,3 +633,44 @@ def test_safe_skill_dir_allows_junction_root(monkeypatch, tmp_path):
     assert p is not None, "根源头是链接时技能名仍应合法"
     # 反例：解析后跑出根外仍然要拒
     assert sr._safe_skill_dir("..") is None
+
+
+def test_raw_skill_md_rejects_error_page_and_negative_caches(monkeypatch):
+    """a644 回归：/api/skills/translate 的 502「SKILL.md 拉取失败」两类根因。
+
+    1) 原判据只有 len>32——企业代理的 HTML 拦截页被当 SKILL.md 返回并落盘；
+    2) 全候选都失败要跑 3 路径×2 分支×多源×15s 超时，且每次重试，前端一
+       开详情页就长时间挂起、日志成串 502。现在失败记忆 60s，重试不再出网。
+    """
+    monkeypatch.setattr(sr, "_RAW_FAIL", {})
+    err = b"<html><body>502 Bad Gateway</body></html>" * 3
+    hits = []
+
+    def fake_http(url, **kw):
+        hits.append(url)
+        return err
+    monkeypatch.setattr(sr, "_http", fake_http)
+
+    assert sr._raw_skill_md("o", "r", "bad") is None
+    first = len(hits)
+    assert first > 0
+    # 失败记忆：同一 key 立刻再拉不再出网
+    assert sr._raw_skill_md("o", "r", "bad") is None
+    assert len(hits) == first, "失败后 60s 内必须走记忆，不得重复出网"
+
+    # 真 SKILL.md 恢复后（TTL 过期）能重新探到并落缓存
+    monkeypatch.setattr(sr, "_RAW_FAIL", {})
+    monkeypatch.setattr(sr, "_http", lambda url, **kw: MD_GOOD + b"\n")
+    got = sr._raw_skill_md("o", "r", "good")
+    assert got and got.startswith("---")
+    assert not os.path.exists(
+        os.path.join(sr._CACHE_DIR, "o_r_bad.md")), "错误页不得写入缓存"
+
+
+def test_raw_skill_md_does_not_cache_error_page(monkeypatch):
+    """错误页即使先到也不能占住缓存位（原实现 len>32 直接落盘）。"""
+    monkeypatch.setattr(sr, "_RAW_FAIL", {})
+    err = b"<!DOCTYPE html><html>gateway</html>" * 4
+    monkeypatch.setattr(sr, "_http", lambda url, **kw: err)
+    assert sr._raw_skill_md("o2", "r2", "s2") is None
+    assert not os.path.exists(os.path.join(sr._CACHE_DIR, "o2_r2_s2.md"))

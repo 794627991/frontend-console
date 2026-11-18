@@ -489,6 +489,11 @@ def detail(owner, repo, skill):
 
 _RAW_PATHS = ("skills/%(s)s", "%(s)s", ".claude/skills/%(s)s")
 _RAW_BRANCHES = ("main", "master")
+# a644：拉取失败记忆。3 路径 × 2 分支 × 多源变体全失败要跑几十次 15s 超时，
+# 打开详情页会长时间挂起并反复重试同一坏 key（日志里 502 成串）。同一 key
+# 失败后 60s 内直接返回 None——远端恢复一个 TTL 就能重新探到。
+_RAW_FAIL = {}
+_RAW_FAIL_TTL = 60.0
 
 
 def _raw_skill_md(owner, repo, skill, cache=True):
@@ -500,20 +505,29 @@ def _raw_skill_md(owner, repo, skill, cache=True):
                 return f.read()
         except OSError:
             pass
+    if cache:
+        k = (owner, repo, skill)
+        if (_RAW_FAIL.get(k) or 0) > time.time() - _RAW_FAIL_TTL:
+            return None
     for tpl in _RAW_PATHS:
         for br in _RAW_BRANCHES:
             rel = (tpl % {"s": skill}) + "/SKILL.md"
             b, _src = _fetch_multi(
                 _raw_url_variants(owner, repo, br, rel), timeout=15,
                 max_bytes=_MAX_SKILL_MD_BYTES)
-            if b and len(b) > 32:
+            # a644：原判据只有 len>32——企业代理返回的 HTML 拦截页也会被当
+            # SKILL.md 落盘返回（502 日志里的一类来源）。复用安装路径的形态闸。
+            if b and len(b) > 32 and _looks_like_skill_md(b):
                 try:
                     os.makedirs(_CACHE_DIR, exist_ok=True)
                     with open(cpath, "wb") as f:
                         f.write(b)
                 except OSError:
                     pass
+                _RAW_FAIL.pop((owner, repo, skill), None)
                 return b.decode("utf-8", "replace")
+    if cache:
+        _RAW_FAIL[(owner, repo, skill)] = time.time()
     return None
 
 

@@ -119,6 +119,11 @@ log = logging.getLogger("harness_roles")
 
 _ROLES_KEY = "harness_roles"
 
+# a644：坏槽值的警告去重表。resolve_agent_models 是热路径（每次派发/每次
+# 面板轮询都调），同一坏值原先每几秒刷两条 warning 淹没日志。改成「同一
+# (槽, 原因) 只在首次 warn，值修好后清记录，再坏可再 warn」。
+_WARN_SEEN = {}
+
 # v2.37（P0+ 根治 c）：目录必须函数化——模块级常量硬指向真实 HOME，测试
 # monkeypatch config 路径清的却是真目录（v2.34 犯过，2026-09-21 00:33 又犯：
 # 无参 install_roles_agents() 把用户真目录换成了 strong 套装）。现在测试用
@@ -355,6 +360,15 @@ def _agent_model_ok(model, pool):
         bare, "、".join(str(m).split("[")[0].strip() for m in pool[:6]))
 
 
+def _warn_once(slot, why):
+    """a644：同一 (槽,原因) 只 warn 一次（热路径去重，见 _WARN_SEEN）。"""
+    key = (slot, why)
+    if _WARN_SEEN.get(slot) == key:
+        return
+    _WARN_SEEN[slot] = key
+    log.warning("%s 不可用，回退重档：%s", slot, why)
+
+
 def resolve_agent_models(models=None, default=None):
     """解析 (designer 模型, reviewer 模型)——v2.53 用户拍板：面板直白配
     「设计者/审计者」各自模型（designer_model/reviewer_model 显式优先），
@@ -384,13 +398,17 @@ def resolve_agent_models(models=None, default=None):
     if cd:
         ok, why = _agent_model_ok(cd, pool)
         if not ok:
-            log.warning("designer_model 不可用，回退重档：%s", why)
+            _warn_once("designer_model", why)
             cd = ""
+        else:
+            _WARN_SEEN.pop("designer_model", None)
     if cr:
         ok, why = _agent_model_ok(cr, pool)
         if not ok:
-            log.warning("reviewer_model 不可用，回退重档：%s", why)
+            _warn_once("reviewer_model", why)
             cr = ""
+        else:
+            _WARN_SEEN.pop("reviewer_model", None)
     return (cd or heavy, cr or heavy)
 
 

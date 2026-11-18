@@ -35,6 +35,7 @@ HARNESS_AGENTS_DIR 重定向临时目录（不触真实 ~/.claude/agents）。�
 `py tests/test_roles_routing.py` 运行。
 """
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -722,6 +723,32 @@ try:
     check("GET resolved 对模型表外的槽值回退重档",
           rs2.get("designer") == "e-heavy" and rs2.get("reviewer") == "e-heavy",
           str(rs2))
+    # a644：坏槽值原本每次解析都 warn——面板轮询/每次派发 → 日志每几秒
+    # 成对刷屏。现在同一 (槽,原因) 只 warn 一次；值改好后清记录可再 warn。
+    _warns = []
+
+    class _H(logging.Handler):
+        def emit(self, rec):
+            if rec.levelno >= logging.WARNING:
+                _warns.append(rec.getMessage())
+
+    hr.log.addHandler(_H())
+    hr.log.setLevel(logging.WARNING)
+    try:
+        hr._WARN_SEEN.clear()
+        for _ in range(4):
+            hr.resolve_agent_models()
+        _n_bad = len(_warns)
+        write_cfg(enabled=True, heavy_model="e-heavy",
+                  designer_model=POOL_HEAVY, reviewer_model=POOL_HEAVY)
+        hr.resolve_agent_models()
+        _cleared = dict(hr._WARN_SEEN)
+    finally:
+        hr.log.removeHandler(_H())
+    check("坏槽值 warning 去重（4 次解析只 warn 一次/槽）",
+          _n_bad <= 2, "实际 %d 条：%s" % (_n_bad, _warns))
+    check("槽值修好后清去重记录", _cleared == {}, str(_cleared))
+
 except ImportError as e:
     # a623R（P3 假绿陷阱，a141 同款历史真炸过）：只有 **flask 缺失**才允许
     # 跳过端点段；flask 在场却 ImportError = 本仓代码/蓝图真炸了，必须红。
