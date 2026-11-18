@@ -472,6 +472,11 @@ def _spawn_cmd(prefer_port):
     env = dict(os.environ)
     env["CLAUDE_WORKER_PORT"] = str(prefer_port)
     env["CLAUDE_WORKER_PARENT_PID"] = str(os.getpid())
+    # a643（用户实锤日志乱码）：worker 的 stdout 中文按系统默认编码（中文
+    # Windows = GBK）写出，而父进程按 UTF-8 decode(errors="replace") →
+    # 每条中文日志都变成一串替代符方块。子进程强制 UTF-8 输出，两端对齐。
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     # a117：主页面真实来源随拉起注入（主进程端口动态随机，硬编码必死）
     if _MAIN_PORT:
         env["CLAUDE_WORKER_MAIN_ORIGIN"] = "http://127.0.0.1:%d" % _MAIN_PORT
@@ -505,6 +510,18 @@ def _apply_base(port, pid):
     _write_endpoint(port, pid)
 
 
+def _decode_worker_line(raw):
+    """worker 输出行解码（a643）。子进程已强制 UTF-8（见 _spawn_cmd），
+    但升级残留的旧 worker 进程仍可能按 GBK 写——先严格 UTF-8，失败再
+    GBK，最后才 replace，保证中文不变成方块。"""
+    for enc in ("utf-8", "gbk"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace")
+
+
 def _spawn_once(prefer_port, ready_timeout=25):
     """拉起一个 worker 实例并等 WORKER_READY。返回 (proc, port) 或抛异常。"""
     import subprocess
@@ -523,7 +540,7 @@ def _spawn_once(prefer_port, ready_timeout=25):
             if not line:
                 got["eof"] = True
                 return
-            s = line.decode("utf-8", "replace").strip()
+            s = _decode_worker_line(line).strip()
             if s.startswith("WORKER_READY"):
                 try:
                     got["port"] = json.loads(s[len("WORKER_READY"):]).get("port")
@@ -550,7 +567,7 @@ def _spawn_once(prefer_port, ready_timeout=25):
         while True:
             try:
                 for ln in p.stdout:
-                    _txt = ln.decode("utf-8", "replace").rstrip()
+                    _txt = _decode_worker_line(ln).rstrip()
                     logging.getLogger("claude_worker.stdout").log(
                         40 if ("ERROR" in _txt or "Traceback" in _txt) else 20,
                         _txt)
