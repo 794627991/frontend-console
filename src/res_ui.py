@@ -16,10 +16,18 @@ import sys
 from ctypes import wintypes
 
 # ---- 常量 ----
+# a647（用户实锤截图）：MB_YESNOCANCEL 曾写成 0x2 —— 那是
+# MB_ABORTRETRYIGNORE（中止/重试/忽略）。用户在「缺少运行环境」弹窗里
+# 看到的就是这三个按钮，点「重试」返回 IDRETRY(4)，代码只认 IDYES/IDNO
+# → 一律当取消退出，离线装包路径根本进不去。MB 按钮组常量必须照 winuser.h：
+#   0x0 OK / 0x1 OKCANCEL / 0x2 ABORTRETRYIGNORE / 0x3 YESNOCANCEL
+#   0x4 YESNO / 0x5 RETRYCANCEL / 0x6 CANCELTRYCONTINUE
 MB_OK = 0x0
 MB_OKCANCEL = 0x1
-MB_YESNOCANCEL = 0x2
+MB_ABORTRETRYIGNORE = 0x2
+MB_YESNOCANCEL = 0x3
 MB_YESNO = 0x4
+MB_RETRYCANCEL = 0x5
 MB_ICONERROR = 0x10
 MB_ICONWARNING = 0x30
 MB_ICONINFORMATION = 0x40

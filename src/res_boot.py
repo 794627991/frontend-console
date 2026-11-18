@@ -531,8 +531,13 @@ def _guide_install(res):
         return _guide_offline(res)
     if rc == res_ui.IDNO:
         return _guide_online(res)
-    return False        # 取消 / 关闭 / msgbox 自身故障（返回 0）都退出
-
+    if rc in (res_ui.IDCANCEL, 0):
+        return False    # 取消 / 关闭 / msgbox 自身故障（返回 0）都退出
+    # a647：兜底——返回值既不是是/否/取消（例如按钮组常量再写错、远程会话
+    # 截断、第三方弹窗接管），**不要直接退出**。内网机器没有外网，离线资源
+    # 包是唯一出路，把它当作「是」继续引导；用户仍可在下一步取消。
+    print("[res_boot] 未知弹窗返回值 %r，改走离线资源包引导" % rc)
+    return _guide_offline(res)
 
 def _guide_offline(res):
     """原离线包引导：说明 → 选包 → 进度 → 重启。"""
