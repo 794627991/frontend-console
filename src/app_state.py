@@ -612,9 +612,52 @@ def _load_cmd_lib():
     except Exception:
         return []
 
+CMD_LIB_BAK = CMD_LIB_FILE + ".bak"      # 上一版（每次写前滚动留底）
+CMD_LIB_SNAP_DIR = CMD_LIB_FILE + ".snap"  # 最近 N 份带时间戳快照
+CMD_LIB_SNAP_KEEP = 5
+
+
+def _rotate_cmd_lib_backup():
+    """写前把当前 cmdlib.json 留底（a645 用户实锤：命令库被清成一条
+    `{"name":"a","cmd":"echo 1"}`，全盘无任何副本可恢复，只能从旧版安装
+    目录里翻出来）。
+
+    cfg_commit 早就做了同样的 .bak 滚动（a242），命令库这条一直漏着——
+    它是用户手写的资产，比 config 更难重建。两层留底：
+      · cmdlib.json.bak        上一版（覆盖即可，手工恢复首选）
+      · cmdlib.json.snap/      最近 N 份带时间戳（防「连续两次异常写」把
+                               .bak 也洗掉——真实事故里前端正是连续提交）
+    """
+    try:
+        if not os.path.isfile(CMD_LIB_FILE):
+            return
+        import shutil
+        import time as _t
+        # 1) 滚动 .bak
+        try:
+            shutil.copy2(CMD_LIB_FILE, CMD_LIB_BAK)
+        except OSError:
+            pass
+        # 2) 时间戳快照（同一秒内多次写只留最新一份，防抖）
+        os.makedirs(CMD_LIB_SNAP_DIR, exist_ok=True)
+        stamp = _t.strftime("%Y%m%d-%H%M%S", _t.localtime())
+        snap = os.path.join(CMD_LIB_SNAP_DIR, "cmdlib-%s.json" % stamp)
+        if not os.path.exists(snap):
+            shutil.copy2(CMD_LIB_FILE, snap)
+        snaps = sorted(os.listdir(CMD_LIB_SNAP_DIR))
+        for old in snaps[:-CMD_LIB_SNAP_KEEP]:
+            try:
+                os.remove(os.path.join(CMD_LIB_SNAP_DIR, old))
+            except OSError:
+                pass
+    except Exception:
+        pass        # 留底失败绝不能挡住正常保存
+
+
 def _save_cmd_lib(lib):
     """保存命令库到工具目录 cmdlib.json。（用户铁律：外部不得改命令库，仅工具 UI 写）
-    a602：改原子写——裸 "w" 直写期间镜像线程可能读到半截 JSON。"""
+    a602：改原子写——裸 "w" 直写期间镜像线程可能读到半截 JSON。
+    a645：写前滚动留底（见 _rotate_cmd_lib_backup）。"""
     tmp = None
     try:
         txt = json.dumps(lib, ensure_ascii=False, indent=2)
@@ -622,6 +665,7 @@ def _save_cmd_lib(lib):
                                 threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(txt)
+        _rotate_cmd_lib_backup()
         replace_retry(tmp, CMD_LIB_FILE)
         tmp = None
         notify_user_file_written(os.path.basename(CMD_LIB_FILE))

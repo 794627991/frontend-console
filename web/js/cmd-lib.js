@@ -10,13 +10,31 @@ async function loadCmdLib() {
   return _cmdLibCache;
 }
 async function saveCmdLib(lib) {
-  _cmdLibCache = lib;
+  const prev = _cmdLibCache;
+  _cmdLibCache = lib;          // 乐观更新（界面立即反映）
   try {
-    await fetch('/api/cmd_lib', {
+    const r = await fetch('/api/cmd_lib', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lib })
     });
-  } catch (e) {}
+    const j = await r.json().catch(() => ({}));
+    // a645：后端对「清空/大幅删减」会 409 拒绝。必须如实报出来并把本地
+    // 缓存回滚——否则界面显示删干净了、磁盘上其实没动，下次刷新又冒回来
+    // （正是命令库被洗那次的前端表现：乐观更新 + 静默失败）。
+    if (!r.ok || j.ok === false) {
+      _cmdLibCache = prev;
+      if (typeof showBanner === 'function') {
+        showBanner(j.err || '命令库保存失败', 5000, true);
+      }
+      return false;
+    }
+    if (Array.isArray(j.lib)) _cmdLibCache = j.lib;
+    return true;
+  } catch (e) {
+    _cmdLibCache = prev;
+    if (typeof showBanner === 'function') showBanner('命令库保存失败（网络）', 4000, true);
+    return false;
+  }
 }
 async function renderCmdPane() {
   // 命令库

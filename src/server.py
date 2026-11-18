@@ -4202,7 +4202,15 @@ def cmd_lib_get():
 
 @app.route("/api/cmd_lib", methods=["POST"])
 def cmd_lib_save():
-    """保存整个命令库（前端全量覆盖）。body: {lib: [{name, cmd}]}"""
+    """保存整个命令库（前端全量覆盖）。body: {lib: [{name, cmd}]}
+
+    a645：这是**全量覆盖**语义，一个空的/残缺的 lib 就能把用户手写的命令库
+    洗掉（用户实锤：库变成一条 `{"name":"a","cmd":"echo 1"}`，全盘无副本）。
+    加两道护栏：
+      1. 清空需显式确认——原库非空而提交为空，且没带 allow_empty，直接拒绝
+      2. 数量骤降保护——原库 ≥5 条而新库不足一半，且没带 allow_shrink，拒绝
+         （前端正常删一两条不受影响；要真删请带 allow_shrink）
+    """
     data = request.get_json(force=True, silent=True) or {}
     lib = data.get("lib")
     if not isinstance(lib, list):
@@ -4210,6 +4218,23 @@ def cmd_lib_save():
     # 规范化：只保留 name/cmd 字段，cmd 必填
     clean = [{"name": str(c.get("name", "")).strip(), "cmd": str(c.get("cmd", "")).strip()}
              for c in lib if isinstance(c, dict) and str(c.get("cmd", "")).strip()]
+
+    old = _load_cmd_lib() or []
+    _allow_empty = bool(data.get("allow_empty"))
+    if not _allow_empty and old and not clean:
+        return jsonify({
+            "ok": False,
+            "err": "拒绝清空命令库（原有 %d 条）。如确需清空，请带 "
+                   "allow_empty=true 重试。" % len(old)}), 409
+    # allow_empty 已经明确表达了「我知道要清空」，骤降检查不再重复拦
+    if (not _allow_empty and not data.get("allow_shrink")
+            and len(old) >= 5 and len(clean) * 2 < len(old)):
+        return jsonify({
+            "ok": False,
+            "err": "拒绝大幅删减命令库（原有 %d 条，提交后仅 %d 条）。"
+                   "如确需删减，请带 allow_shrink=true 重试。"
+                   % (len(old), len(clean))}), 409
+
     # a617：保存失败必须如实回给前端（原来无论成败都 ok:true，用户的命令库
     # 改动会无声消失）。
     if not _save_cmd_lib(clean):
