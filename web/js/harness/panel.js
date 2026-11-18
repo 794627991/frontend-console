@@ -504,7 +504,7 @@
   // 回放」。子代理一律从目录进入（_subDirOpen），不再有这条坏路径。
   function _hgDynRender() {
     if (!dynEl) return;
-    for (const fn of [_dynStat, _dynTodos, _dynAgents, _dynActs, _dynTurns, _dynFiles]) {
+    for (const fn of [_dynStat, _dynTodos, _dynActs, _dynTurns, _dynFiles]) {
       try { fn(); }
       catch (e) {
         // v2.37R6（C 区整栏消失②）：渲染失败降级为可见占位（区分无数据/
@@ -513,15 +513,7 @@
           console.error('[hg-dyn] 分区渲染异常', fn.name, e);
           // v2.39：错误文本直接上屏——WebView2 用户开不了 console，降级占位
           // 只说「详见 console」等于没有诊断信息（用户实锤无法反馈根因）
-          const msg = esc(String((e && e.message) || e || '未知错误')).slice(0, 200);
-          if (fn === _dynAgents) {
-            const secA = _sec('agents');
-            if (secA) {
-              secA.hidden = false;
-              const al = secA.querySelector('[data-hg-d-aglist]');
-              if (al) al.innerHTML = '<div class="hg-sub-replay-note">子代理区渲染异常（已降级显示）：<b>' + msg + '</b></div>';
-            }
-          }
+          // a641：子代理区已删，原来针对它的降级分支一并移除。
         } catch(_) {}
       }
     }
@@ -691,33 +683,8 @@
       todos.length ? (todos.filter(t => t.status === 'completed').length / todos.length * 100) + '%' : '0%';
     sec.querySelector('[data-hg-d-tlist]').innerHTML = html;
   }
-  // a640（用户定调「动态中的子代理协作整个删除」）：区块内容全删——行列表、
-  // 协作行、运行中胶囊、详情卡、「回放该子代理过程」都不再出现在动态页。
-  // 子代理只从两处进：① 本函数渲染的一条目录入口；② 主消息流里各自的子代理
-  // 行（点击开实况）与胶囊。用户实测「从目录点开是正常状态，动态页点开不
-  // 显示回放」——两套 UI 只留一套，避免再走那条坏路径。
-  function _dynAgents() {
-    const sec = _sec('agents');
-    if (!sec) return;
-    let nRun = 0, nEnd = 0;
-    try {
-      const rows = _subDirRows();
-      nEnd = (rows.ended || []).length;
-      nRun = (rows.running || []).length;
-    } catch (_) {}
-    const total = nRun + nEnd;
-    sec.hidden = !total;      // 没有任何子代理：整区不出现
-    if (sec.hidden) return;
-    const _btn = sec.querySelector('[data-hg-agdir]');
-    if (_btn) {
-      _btn.hidden = false;
-      _btn.innerHTML = `<span style="vertical-align:-2.5px">${ICO16.clock}</span> 子代理目录` +
-        (nRun ? ` · <b>${nRun} 运行中</b>` : '') +
-        (nEnd ? ` · 已结束 ${nEnd}` : '') + ' ›';
-    }
-    const listEl = sec.querySelector('[data-hg-d-aglist]');
-    if (listEl) listEl.innerHTML = '';
-  }
+  // a641（用户定调「只保留胶囊点击打开一个途径」）：动态页的子代理区已整块
+  // 移除（a640 删内容、本轮删掉剩下的那条目录入口）。子代理唯一入口 = 胶囊。
   function _dynActs() {                  // E 最近工具：ring 20 条倒序，点击跳消息流，Bash 可复制
     const sec = _sec('acts');
     const acts = (_HG.dyn && _HG.dyn.acts) || [];
@@ -782,11 +749,10 @@
       renderSideStatus();
       return;
     }
-    // v3.2：子代理目录入口（区头按钮）→ 打开目录伪 tab
+    // a641：动态页子代理区已整块移除，`data-hg-agdir` 不再产生。这两条分支
+    // 只为防御旧快照/缓存页里残存的节点——点了仍开目录，不会静默无反应。
     const db = e.target.closest('[data-hg-agdir]');
     if (db) { e.stopPropagation(); _subDirOpen(); return; }
-    // a640：动态页的详情卡与「回放该子代理过程」按钮已移除，这条分支的 DOM
-    // 不再产生——保留空判只为防御旧快照里残存的节点头。真回放入口在目录。
     const rb = e.target.closest('[data-hg-replay]');
     if (rb) { e.stopPropagation(); _subDirOpen(); return; }
     const acp = e.target.closest('[data-hg-actcp]');

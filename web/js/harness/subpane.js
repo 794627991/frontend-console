@@ -63,14 +63,9 @@
       `<div class="hg-dyn-bar"><i data-hg-d-tbar></i></div>` +
       `<div class="hg-dyn-todos" data-hg-d-tlist></div>` +
     `</section>` +
-    // a640（用户定调「动态中的子代理协作整个删除」）：本区只剩一条目录入口
-    // ——子代理行列表、协作行、运行中胶囊、详情卡、「回放该子代理过程」全部
-    // 移除。用户实测「从目录点开是正常状态，动态页点开不显示回放」，两套 UI
-    // 只留目录这一套。
-    `<section class="hg-dyn-sec" data-hg-sec="agents" hidden>` +
-      `<div class="hg-dyn-sec-head">子代理<button class="hg-dyn-dirbtn" data-hg-agdir hidden title="打开子智能体目录（正在运行/已结束全列表）"></button></div>` +
-      `<div data-hg-d-aglist></div>` +
-    `</section>` +
+    // a641（用户定调「也删了吧，只保留胶囊点击打开一个途径，有点丑了」）：
+    // a640 留下的这条「子代理 · 子代理目录 ›」区整块移除。子代理的唯一入口
+    // = 胶囊（点了开目录/动态）。
     `<section class="hg-dyn-sec" data-hg-sec="acts" hidden>` +
       `<div class="hg-dyn-sec-head">最近工具</div>` +
       `<div class="hg-dyn-acts" data-hg-d-acts></div>` +
