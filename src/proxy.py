@@ -520,13 +520,17 @@ def _detect_bili_cmd():
         exe = shutil.which("node")
         if exe:
             out = subprocess.run([exe, "--version"], capture_output=True,
-                                 text=True, timeout=10).stdout.strip().lstrip("v")
+                                 text=True, timeout=10,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                                 ).stdout.strip().lstrip("v")
             major = int(out.split(".")[0]) if out.split(".")[0].isdigit() else 0
             if major >= 22:
                 try:
                     prefix = subprocess.run(["npm", "prefix", "-g"],
                                              capture_output=True, text=True,
-                                             timeout=15).stdout.strip().splitlines()[-1]
+                                             timeout=15,
+                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                                             ).stdout.strip().splitlines()[-1]
                     g_entry = os.path.join(prefix, "node_modules",
                                            "billion-context", "dist", "index.js")
                     if os.path.isfile(g_entry):
@@ -576,7 +580,9 @@ def _bili_install_run():
             st["log"].append(st["err"])
             return
         out = _sp.run([exe, "--version"], capture_output=True, text=True,
-                      timeout=15).stdout.strip().lstrip("v")
+                      timeout=15,
+                      creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0)
+                      ).stdout.strip().lstrip("v")
         major = int(out.split(".")[0]) if out.split(".")[0].isdigit() else 0
         if major < 22:
             st["err"] = "node %s 过旧（需 ≥22）——资源库 node 安装器升级后重试" % out
@@ -586,7 +592,7 @@ def _bili_install_run():
         st["log"].append("npm install -g %s …（需联网，约 1-3 分钟）" % pkg)
         r = _sp.run([npm, "install", "-g", pkg], capture_output=True,
                     text=True, encoding="utf-8", errors="replace",
-                    timeout=900)
+                    timeout=900, creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0))
         tail = ((r.stdout or "") + (r.stderr or "")).strip()
         if tail:
             st["log"].extend(tail.splitlines()[-30:])

@@ -527,14 +527,18 @@
 
 // 模块化二期：转 ES module——跨文件消费名挂 window（AST Program 级声明归属）。
 // let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
+window._hgCompactionEnd = _hgCompactionEnd;
 window._hgGrantRewind = _hgGrantRewind;
 window._hgPeerLineStop = _hgPeerLineStop;
 window._hgPeerStaleSweep = _hgPeerStaleSweep;
 window._hgPeerTimerStart = _hgPeerTimerStart;
 window._hgPeerWaitStop = _hgPeerWaitStop;
+window._hgVisionCardBuild = _hgVisionCardBuild;
 window._hgVisionFillBody = _hgVisionFillBody;
 window._hgVisionResult = _hgVisionResult;
+window._hgVisionSweep = _hgVisionSweep;
 window.renderAudit = renderAudit;
+window.renderCompaction = renderCompaction;
 window.renderExit = renderExit;
 window.renderPeer = renderPeer;
 window.renderPeerRelay = renderPeerRelay;

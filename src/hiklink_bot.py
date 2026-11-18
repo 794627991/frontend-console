@@ -350,7 +350,9 @@ def get_pc_code():
     try:
         cpu = subprocess.check_output(
             ["wmic", "cpu", "get", "name"], shell=False, timeout=5,
-            stderr=subprocess.DEVNULL).decode(errors="ignore").strip()
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        ).decode(errors="ignore").strip()
         cpu = [l for l in cpu.splitlines() if l.strip() and "Name" not in l]
         cpu = cpu[0].strip() if cpu else "CPU"
     except Exception:

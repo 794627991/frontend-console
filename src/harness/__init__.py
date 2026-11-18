@@ -41,9 +41,23 @@ def _git_harness_version():
     try:
         out = subprocess.run(
             ["git", "log", "--format=%s", "-n", "400"],
-            cwd=d, capture_output=True, timeout=5).stdout
-        return _parse_harness_version(
+            cwd=d, capture_output=True, timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        ver = _parse_harness_version(
             out.decode("utf-8", "replace").splitlines())
+        # a650（用户实锤「刷新了没修好」）：版本串只认主题里的 aNNN——
+        # 无号提交（分支修复/实验批）不 bump 版本 → ?v= 不变 → WebView
+        # 命中旧缓存，「改了没效果」连环坑复活。附 HEAD 短哈希：任何提交
+        # （含无号分支提交）都自动破缓存；- 分隔（+ 在 query 里会被解码
+        # 成空格）
+        head = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=d, capture_output=True, timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        h = head.decode("utf-8", "replace").strip()
+        if h:
+            return (ver + "-" + h) if ver else h
+        return ver
     except Exception:
         return ""
 

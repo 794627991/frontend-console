@@ -1086,4 +1086,7 @@ window._tlPlace = _tlPlace;
 window.closeRun = closeRun;
 window.diffHtml = diffHtml;
 window.hgToolCard = hgToolCard;
+window.renderOneToolResult = renderOneToolResult;
+window.renderToolUse = renderToolUse;
+window.statusBadge = statusBadge;
 window.todoHtml = todoHtml;

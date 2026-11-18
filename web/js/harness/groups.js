@@ -390,9 +390,16 @@
     if (g.exec && g.exec.slots) g.exec.slots.innerHTML = '<span class="h-tbadge b-done">完成</span>';
     // v3.2：回合折叠头定稿——文案三态（工作中→已工作/已停止），工时优先
     // 事件事实（CLI duration_ms / 回放 endTs 差值），无事实回退本地差值。
-    // 只有真正发生过工作（思考段或工具）的组才亮头；纯正文组无头（对照
-    // resolveConversationTurnWorkStatus 的 hasWork 判据）
-    const _hasWork = (_segN > 0) || !!(g.counts && Object.keys(g.counts).length);
+    // 只有真正发生过工作（思考段或工具）的组才亮头——a650（用户实锤
+    // 「极简回复没有工作头，留一块空白占位」）：纯正文组同样亮「已工作」，
+    // 空白占位不如给一行事实。折叠仍按原 work 判据（纯正文不折，回复
+    // 保持直接可见——见下方 v3.2.4R 折体块）
+    const _hasText = !!(g.root.querySelector(':scope > .h-msg.asst:not(.ph)')
+      || (g.tl && g.tl.querySelector(':scope > .h-msg.asst:not(.ph)')));
+    const _hasWork = (_segN > 0) || _hasText ||
+      !!(g.counts && Object.keys(g.counts).length);
+    // 折叠判据维持原「真工作」（思考/工具）：纯正文组亮头但不折体，
+    // 「好」这类最终回复留在折叠头外直接可见
     // v3.4.80（用户实锤「工作中 4s 头挂着、点开什么都没有」）：被打断的回合
     // 无条件定稿头——首 token 前打断的空回合（无思考/工具行，_hasWork=false）
     // 也必须从「工作中 Ns」定格「已停止」，否则秒表停了 label 冻结=永挂；
@@ -463,7 +470,7 @@
     // v3.2.4R(F1)：纯正文组（无思考无工具→_hasWork=false→头永不亮）不折——
     // 折进「无头+收体+空时间线」的三重隐藏里内容彻底不可达；纯正文本来就
     // 是该组的全部可见内容，照常留在根区
-    if (g.headBody && _hasWork) {
+    if (g.headBody && (_segN > 0 || (g.counts && Object.keys(g.counts).length))) {
       const texts = g.root.querySelectorAll(':scope > .h-msg.asst:not(.ph)');
       const keep = opt.turnEnd ? texts[texts.length - 1] : null;
       const tl = g.tl;
@@ -932,6 +939,7 @@ window._hgAvaCls = _hgAvaCls;
 window._hgRollbackTurn = _hgRollbackTurn;
 window._hgTailAdopt = _hgTailAdopt;
 window._hgTurnDurTxt = _hgTurnDurTxt;
+window._hgTurnReopen = _hgTurnReopen;
 window._histCollapseOffscreen = _histCollapseOffscreen;
 window._trimOldTurns = _trimOldTurns;
 window._turnHeadShow = _turnHeadShow;

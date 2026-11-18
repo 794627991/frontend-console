@@ -948,7 +948,9 @@ class V4Feed(object):
             return ds                     # 子代理镜像行：不进主投影（红线）
         typ = data.get("type")
         if typ == "assistant":
-            m = data.get("message") or {}
+            m = data.get("message")
+            if not isinstance(m, dict):
+                m = {}   # 防 str（CLI legacy 形态）——裸 .get 崩则整流断
             model = m.get("model") or ""
             hd, _hr = self._ensure_header(turn, ts, seq, model)
             if hd:
@@ -998,7 +1000,9 @@ class V4Feed(object):
                 self._tps["liveToks"] = _est
                 ds.append(P.d_state({"tps": dict(self._tps)}))
         elif typ == "user":
-            m = data.get("message") or {}
+            m = data.get("message")
+            if not isinstance(m, dict):
+                m = {}
             # a68：子代理结论回传（CLI 新版 hand-back）——注入消息含
             # [Subagent hand-back] 标记+from aid+报告全文。全文不进消息流
             #（V3 401 同款），提取正文回填对应子代理的 tool 行（卡摘要）+
@@ -1122,7 +1126,9 @@ class V4Feed(object):
                 elif _st != "compacting" and self.snap["state"].get("compacting"):
                     self.snap["state"]["compacting"] = False
                     ds.append(P.d_state({"compacting": False}))
-            m = data.get("message") or {}
+            m = data.get("message")
+            if not isinstance(m, dict):
+                m = {}
             md = m.get("model") or ""
             if md:
                 ds.append(P.d_state({"model": md}))
@@ -1274,7 +1280,9 @@ class V4Feed(object):
                                      "final": self.snap["state"]["final"],
                                      "err": self.snap["state"]["err"]}))
             elif typ in ("assistant", "user"):
-                m = obj.get("message") or {}
+                m = obj.get("message")
+                if not isinstance(m, dict):
+                    m = {}
                 content = m.get("content")
                 blocks = content if isinstance(content, list) else []
                 # P2 修复（a116）：代理**重新在活动**时必须复位 done/final

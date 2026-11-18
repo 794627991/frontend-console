@@ -805,6 +805,7 @@
 // let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
 window._hgActDone = _hgActDone;
 window._hgActPush = _hgActPush;
+window._hgAgentModelPre = _hgAgentModelPre;
 window._hgAgentModelsFetch = _hgAgentModelsFetch;
 window._hgAgentsRunning = _hgAgentsRunning;
 window._hgAgentsSweep = _hgAgentsSweep;
@@ -817,6 +818,7 @@ window._hgLocalResendPeer = _hgLocalResendPeer;
 window._hgPeerLines = _hgPeerLines;
 window._hgRolesFetch = _hgRolesFetch;
 window._hgTurnEnd = _hgTurnEnd;
+window._hgTurnMend = _hgTurnMend;
 window._subDrop = _subDrop;
 window._subReopen = _subReopen;
 window._subResolveOpen = _subResolveOpen;

@@ -430,5 +430,6 @@ _hgRailSync(); } catch (_) {}
 // let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
 window._hgPinIntrinsicHeights = _hgPinIntrinsicHeights;
 window._hgRplRebuild = _hgRplRebuild;
+window._hgRowAdd = _hgRowAdd;
 window._histFetch = _histFetch;
 window._histRender = _histRender;
