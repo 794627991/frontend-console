@@ -1616,6 +1616,8 @@ function buildClaudeHarnessTab(opts = {}) {
   if (_subX) _subX.onclick = () => {
     if (_subPaneEl) _subPaneEl.style.display = 'none';
     _sub.manual = false;   // v2.35（P0-3）：手动关即退出「回合终结不自动收起」模式
+    // a638：用户亲手收起 = 本会话明确要关着（切回来不得自动弹）
+    try { _subUserOpenMark(_HG.sid, false); } catch (_) {}
   };
   // ==================== v3.3：会话动态胶囊绑定（分屏化）====================
   // 胶囊=分屏唯一开关，四分支状态机：
@@ -1642,6 +1644,8 @@ function buildClaudeHarnessTab(opts = {}) {
         if (_sub.active === _SUB_DYN) {
           _subPaneEl.style.display = 'none';
           _sub.manual = false;
+          // a638：胶囊二次点击 = 用户收起，记关闭意图
+          try { _subUserOpenMark(_HG.sid, false); } catch (_) {}
           return;
         }
         // _subActivate 对未注册 tab 静默早退——动态页未建时必须走 _subDynOpen

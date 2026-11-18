@@ -3,10 +3,29 @@
   // a605：sid → 上次激活的子代理 tab。切会话会 _subReset 清空 tabs，用户
   // 要求「切回来保持上次打开的那个子代理」，重建时按它认领而非从头轮换。
   let _subActiveBySid = {};
+  // a638（用户实锤「我明确都关掉了子代理页，切会话切回来 tab 还是会弹」）：
+  // sid → 该会话**属于用户**的显式开关意图。
+  //   true  = 用户亲手打开过（_subShow 由 ✕/入口/手动点 tab 触发）
+  //   false = 用户亲手关掉了（✕ 关最后一个 tab / _subDrop 收空 / 收起胶囊）
+  // 切会话回来时只有 true 才自动恢复窗格；false（或从未记录 undefined）一律
+  // 保持关着——原来「有历史 active 就无条件 _subShow」把用户的关闭动作
+  // 完全覆盖，只要开过一次就永远弹。
+  let _subUserOpenBySid = {};
+
+  function _subUserOpenMark(sid, open) {
+    if (!sid) return;
+    try { (_subUserOpenBySid || (_subUserOpenBySid = {}))[sid] = !!open; } catch (_) {}
+  }
+
+  function _subUserOpenGet(sid) {
+    if (!sid) return undefined;
+    try { return (_subUserOpenBySid || {})[sid]; } catch (_) { return undefined; }
+  }
   // a612：会话删除时回收该 sid 的 tab 记忆（原来只写不删，随会话数单调增长）
   function _subActiveBySidForget(sid) {
     if (!sid || !_subActiveBySid) return;
     try { delete _subActiveBySid[sid]; } catch (_) {}
+    try { delete (_subUserOpenBySid || {})[sid]; } catch (_) {}
   }
   window._sub = _sub;   // a65：v4bridge 子引擎按 tid 查 tab——const 不上 window，显式挂
   const _subTailBusy = {};   // 复审#1：转写喂数防重入锁（批1 重写时随 _subTailDead 声明块误删致通道整体 ReferenceError）
@@ -88,7 +107,7 @@
     // 均不夺焦点），此前只出目录/版本漏状态
     try { if (typeof _subDirEnsure === 'function') _subDirEnsure(); } catch (_) {}
     _subDynEnsure();
-    _subShow(_SUB_DYN); _subTabsPaint(); _subActivate(_SUB_DYN);
+    _subShow(_SUB_DYN, true); _subTabsPaint(); _subActivate(_SUB_DYN);
     renderSideStatus();
     _hgRolesFetch(); _hgAgentModelsFetch();   // 原 _hgPanelEnterHook 职责随开随拉（点击天然节流）
     _sub.manual = true;                // 用户主动展开——回合终结不自动收（同 _subDirOpen/_subReopen 口径）
@@ -257,7 +276,7 @@
       _sub.order.push(_SUB_DIR);
       _subBodyEl.appendChild(sc);
     }
-    _subShow(_SUB_DIR); _subTabsPaint(); _subActivate(_SUB_DIR);
+    _subShow(_SUB_DIR, true); _subTabsPaint(); _subActivate(_SUB_DIR);
     _subDirPaint();
     _sub.manual = true;   // v3.2：目录是用户主动打开的视图——回合结束不自动收（同 _subReplay 口径）
   }
@@ -386,8 +405,11 @@
     px = Math.min(px, _subPanePctKey() === 'hg-subpane-narrow-pct' ? 360 : 620);
     _subPaneEl.style.width = px + 'px';
   }
-  function _subShow(pendingTid) {
+  function _subShow(pendingTid, userIntent) {
     if (!_subPaneEl || _subPaneEl.style.display !== 'none') return;
+    // a638：只有用户动作才记「想让它开着」——自动派发（manual=false 的
+    // Task 自动开）不记，否则一次自动派发就把该会话永久钉成「要弹」。
+    if (userIntent) _subUserOpenMark(_HG.sid, true);
     // v3.4.39（v3.4.38 复现实锤「还是从大变小」）：两处时序漏洞——
     // ① 档位 key 必须用 pendingTid：展开链里 _subShow 先于 _subActivate 跑，
     //    active 还是 null→误判宽档，首帧写 50%；
@@ -858,13 +880,31 @@
                                        && _sub.tabs[t]);
       const target = (want && _sub.tabs[want]) ? want : (real || _sub.order[0] || null);
       if (!target) return;
-      // a612（审计 D3）：a75 契约是「派发即开窗」。但有历史 active（用户
-      // 上次看的就是它）时无条件恢复——这也覆盖了用户收起窗格后切走再
-      // 切回的情况。只有在既没历史 active、又是用户手动收起的状态下，
-      // 才尊重用户意图不弹窗。
+      // a638（用户实锤「子代理页我明确都关掉了，切会话切回来 tab 还是弹，
+      // 哪怕子代理早结束、主会话也结束了」）：**用户关闭意图优先**。
+      // a612 写的是「有历史 active 就无条件恢复」，结果只要开过一次，之后
+      // 每次切回都弹——用户的 ✕ 被历史记忆覆盖。
+      // 现在的判据：本会话必须被用户显式打开过（true）才自动恢复；
+      //   · false = 用户亲手关过 → 保持关着
+      //   · undefined = 本进程内从未有过用户动作 → 不主动弹（派发自动开窗
+      //     仍由 _subOpen 的非 silent 分支负责，那条路径不看这里）
       const paneHidden = _subPaneEl && _subPaneEl.style.display === 'none';
-      if (!paneHidden || (want && _sub.tabs[want])) _subShow(target);
-      _subActivate(target);
+      const userWants = _subUserOpenGet(_HG.sid) === true;
+      if (!paneHidden) {
+        // 窗格本来就开着（例如 _subReset 没关）：只需同步状态
+        _subActivate(target);
+        return;
+      }
+      if (userWants) {
+        _subShow(target, true);
+        _subActivate(target);
+        return;
+      }
+      // 用户关着（或从未表达意图）：不弹窗，但仍要认领 active 并同步
+      // chrome——否则后续派发/点胶囊打开时 tab 条是空的、宽度错档。
+      _sub.active = target;
+      _subSyncChrome(target);
+      _subTabsPaint();
       return;
     }
     // active 有效：只同步界面状态，不动 active、不滚到底、不重绘目录

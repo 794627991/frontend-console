@@ -365,7 +365,7 @@
       _subOpen(tid, a.type, _desc);
     }
     _sub.manual = true;                  // P0-3：手动来源——回合终结不自动收起，✕ 才收
-    _subShow();
+    _subShow(undefined, true);
     _subActivate(tid);
   }
   function _subDrop(tid) {
@@ -395,7 +395,13 @@
       if (_sub.active) _subActivate(_sub.active);
     }
     _subTabsPaint();
-    if (!_sub.order.length && _subPaneEl) _subPaneEl.style.display = 'none';
+    if (!_sub.order.length && _subPaneEl) {
+      _subPaneEl.style.display = 'none';
+      // a638（用户实锤「子代理页我明确都关掉了，切会话还会弹」）：✕ 关到
+      // 一个不剩 = 用户明确要它关着。记进按 sid 的意图表，切回来时
+      // _subRestoreActive 只认这条，不再凭「历史 active」无条件弹窗。
+      _subUserOpenMark(_HG.sid, false);
+    }
   }
   function _hgAgentsSweep(markErr, forceBg) {     // 回合终结：在跑的子代理统一收尾（防假"运行中"）
     if (!_HG.agents) {
