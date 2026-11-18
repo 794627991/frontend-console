@@ -649,35 +649,20 @@
       try { _hgTurnEnd('interrupt', 0); } catch (_) {}
       try { _subEnd(); } catch (_) {}
     }
-    // v2.15：停止必须自带兜底。复位的唯一来源是后端回一条 `interrupted`
-    // 事件，而后端 interrupt() 在「自身 busy 已是 false」时直接返回错误、
-    // 不发任何事件（进程刚退出、事件丢失、会话查无此 sid 都会走到这条）。
-    // 旧实现不看响应也不兜底 → 前端永远停在生成态，输入框被 busy 拦住，
-    // 点 ■ 再走一遍同样的路径，形成死循环。
-    let gotEvent = false;
-    const onInt = (e) => { if (e.detail === sid) gotEvent = true; };
+    // a665（用户底线：中断必须立刻生效）：本地收尾先行，0ms 定格 UI 并
+    // 释放输入；后端 interrupt 只做后台通知，绝不 await 网络。旧实现先
+    // fetch 再等 2.3s 事件兜底——主服务繁忙/连接卡死时按钮长时间无反应，
+    // busy 不释放，用户「既不能发也不能停」。迟到 interrupted 帧由
+    // _HG._stopLocalAt/_stopLocalSid 闸（v4bridge 终态收口）去重。
+    _stopLocalFinish('已请求');
     try {
-      document.addEventListener('hg-interrupted', onInt);
       const r = await fetch('/api/harness/interrupt', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({sid})});
       const j = await r.json().catch(() => null);
-      if (!j || !j.ok) {
-        // 后端明确拒绝（没有进行中的回复）→ 前端本就该收工
-        if (_HG.sid === sid) setBusy(false);
-        if (j && j.err) showBanner(j.err, 2500);
-        return;
-      }
-      // 后端已受理：等 interrupted 事件；超时没等到就自行收尾
-      // v3.4.79R（复核 P2/P3）：等待窗 1.5s→2.3s 对齐后端上界（kill 的
-      // proc.wait(timeout=2s)+审计/peer 清理，>1.5s 到帧是 Windows 现实路
-      // 径——兜底抢跑会与迟到帧双发）；兜底文案与后端帧统一「已中断回复」
-      // （补充说明走 banner），迟到帧由 _HG._stopLocalAt 闸去重（10-sse 侧）
-      await new Promise(res => setTimeout(res, 2300));
-      if (!gotEvent && _HG.sid === sid) _stopLocalFinish('事件超时');
-    } catch(_) {
-      if (_HG.sid === sid) _stopLocalFinish('连接异常');
-    } finally {
-      document.removeEventListener('hg-interrupted', onInt);
+      // 后端明确拒绝（没有进行中的回复）：本地已收尾，仅提示原因
+      if (j && !j.ok && j.err && _HG.sid === sid) showBanner(j.err, 2500);
+    } catch (_) {
+      // 连接异常：本地已定格，无需回滚（后端进程由 worker 监护自愈）
     }
   }
   function handleHistoryKey(e) {

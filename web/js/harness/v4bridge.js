@@ -727,7 +727,15 @@ const root = window;
         var _vs = _g('_hgVisionSweep');
         if (_vs) { try { _vs(true); } catch (e) {} }
         var _re = _g('renderExit');
-        if (_re) { try { _re(row.text || ''); } catch (e) {} }
+        // a665：stopGen 已本地立即收尾并渲染过 exit 行——同一次停止的迟到
+        // interrupted marker 不得再加一条（15s 窗、同会话、时间对齐）。
+        var _skipExit = false;
+        try {
+          if (row.mkind === 'interrupted' && typeof _HG !== 'undefined' && _HG
+              && _HG._stopLocalAt && _HG._stopLocalSid === _HG.sid
+              && _iAt && Math.abs(_iAt - _HG._stopLocalAt) < 15000) _skipExit = true;
+        } catch (e) {}
+        if (_re && !_skipExit) { try { _re(row.text || ''); } catch (e) {} }
         // 无活组早退（grpFinalize 语义）——绝不 grpEnsure 建组
         var _gf = _g('grpFinalize');
         if (_gf) {
