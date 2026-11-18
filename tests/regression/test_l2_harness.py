@@ -104,14 +104,22 @@ def run():
             # ---- H7-1 回滚按钮只授予末条回复 ----
             rw = pg.ev_obj(
                 "JSON.stringify({rewindBtns: document.querySelectorAll('[data-hg-rewind]').length,"
+                # 按钮 DOM 每条 asst 都建，但仅 can-rewind 宿主上的可见可点（CSS display:none 其余）；
+                # 回滚资格按「回合」授予，因此只能按 eligible 断言，不能数全部 DOM。
+                "eligible: document.querySelectorAll('.h-msg.asst.can-rewind [data-hg-rewind]').length,"
                 "asst: document.querySelectorAll('.h-msg.asst').length,"
                 "grps: document.querySelectorAll('.h-grp').length,"
+                # 一组可含多个回合（工具续轮/连续发送），故不能拿 grps 当回合数上界；
+                # 结构不变量按 asst 气泡统计：每条至多一个按钮，资格数不超过按钮数。
+                "maxPerAsst: Math.max(0, ...[...document.querySelectorAll('.h-msg.asst')]"
+                ".map(m=>m.querySelectorAll('[data-hg-rewind]').length)),"
                 "outside: [...document.querySelectorAll('[data-hg-rewind]')]"
                 ".filter(b=>!b.closest('.h-msg.asst')).length})")
-            # 语义：回滚按钮按「回合」授予（每回合末条一个），不是全局唯一；
-            # 断言每个回合最多一个，且按钮都在 asst 气泡内（不悬空）。
-            _rw_ok = (rw.get("rewindBtns", 0) <= max(1, rw.get("grps", 1))
-                      and rw.get("outside", 0) == 0)
+            # 语义：回滚按钮按「回合末条」授予（can-rewind 宿主可见可点），
+            # 断言：不悬空、每个 asst 气泡至多一个、资格数不超过实际按钮数。
+            _rw_ok = (rw.get("outside", 0) == 0
+                      and rw.get("maxPerAsst", 0) <= 1
+                      and rw.get("eligible", 0) <= rw.get("rewindBtns", 0))
             out.append(result("H7-1r", "回滚按钮按回合唯一且不悬空", "L2", "P2",
                               "PASS" if _rw_ok else "FAIL",
                               json.dumps(rw, ensure_ascii=False)))

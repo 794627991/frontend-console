@@ -6,7 +6,10 @@
 
 hooks：
 - post-commit：跑 L0 静态门禁（秒级，零额度）——失败时醒目提示，绝不阻断提交。
-- pre-push ：跑 L0 + 尝试 L1/L2（应用未运行时自动 SKIP），失败阻断推送。
+- pre-push ：只跑 L0 静态门禁（秒级，不打扰正在使用的会话）——失败阻断推送。
+
+L1/L2（CDP 真机层）必须由用户发起（见 docs 冒烟总纲）：它们会向正在运行的
+应用发真实请求，自动触发会抢占用户会话并可能引起 worker 探活超时重启。
 
 设计约束：
 - hook 只调用 tests/regression/run_all.py，不复制检查逻辑（单一真源）。
@@ -41,21 +44,22 @@ fi
 
 PRE_PUSH = """#!/bin/sh
 {header}
-# 推送前：L0 + 尝试 L1/L2（应用未运行自动 SKIP，不会误伤）
+# 推送前：只跑 L0 静态门禁（秒级、不打真实应用）。
+# L1/L2 会向正在使用的会话发真实请求，必须由用户发起，禁止自动跑。
 cd "$(git rev-parse --show-toplevel)" 2>/dev/null || exit 0
 LOG="$HOME/.serialconsole_pro/regression_last.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 if command -v python >/dev/null 2>&1; then PY=python
 elif command -v python3 >/dev/null 2>&1; then PY=python3
 else exit 0; fi
-echo "[回归] pre-push：L0/L1/L2 …"
-if ! "$PY" tests/regression/run_all.py --layers L0,L1,L2 --no-report >"$LOG" 2>&1; then
-  echo "✖ [回归] 失败，推送已阻断。详情：$LOG"
+echo "[回归] pre-push：L0 静态门禁 …"
+if ! "$PY" tests/regression/run_all.py --layers L0 --no-report >"$LOG" 2>&1; then
+  echo "✖ [回归] L0 失败，推送已阻断。详情：$LOG"
   tail -n 30 "$LOG" 2>/dev/null
   echo "（确需跳过：git push --no-verify）"
   exit 1
 fi
-echo "[回归] 通过"
+echo "[回归] L0 通过"
 """.format(header=HEADER)
 
 
@@ -70,7 +74,10 @@ def _write_hook(name, body):
             # 替换本工具段落（整文件重写：仅保留非本工具内容）
             idx = old.find(HEADER)
             old = old[:idx].rstrip("\n")
-            body = old + "\n" + body if old else body
+            while old.lstrip().startswith("#!"):
+                # body 自带 shebang；历史重复安装可能残留多个，全部去掉
+                old = old.partition("\n")[2].rstrip("\n")
+            body = old + "\n" + body if old.strip() else body
         else:
             body = old.rstrip("\n") + "\n" + body
     with open(p, "w", encoding="utf-8", newline="\n") as f:
@@ -82,7 +89,7 @@ def _write_hook(name, body):
 def install():
     for name, body in (("post-commit", POST_COMMIT), ("pre-push", PRE_PUSH)):
         print("已写入", _write_hook(name, body))
-    print("完成。post-commit=L0；pre-push=L0/L1/L2；日志 ~/.serialconsole_pro/regression_last.log")
+    print("完成。post-commit=L0；pre-push=L0（L1/L2 由用户发起）；日志 ~/.serialconsole_pro/regression_last.log")
 
 
 def remove():
