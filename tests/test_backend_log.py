@@ -1092,18 +1092,25 @@ def test_entry_count_cap_bounds_memory():
         BL._MAX_ENTRIES = old
 
 
-# ---- a623R 已知缺口（文档化，非回归目标）--------------------------------
-@pytest.mark.parametrize("raw", [
-    "password1 hunter2pass",       # 尾缀+空格形态：裸 keyword 口径不认（基线同漏）
-    "secret_key AbCdEf123456",     # 小写复合+空格形态：同上
-    "--password abc.def.ghi",      # 值含点：值字符集排除 .（基线同漏）
-    # a623R 第四轮（G1 补钉）：钉面必须覆盖完整缺口面，防漂移机制才有效
-    ".token hunter2pass",          # 点前缀+空格形态：裸 keyword 口径镜像缺口（基线同漏）
-    "password ab_cd123 leakme",    # 值含 _：值字符集排除 _（基线同漏）
-    'password"hunter2pass"',       # 引号紧贴 keyword 无空格：基线曾挡、现漏（现实罕见）
+# ---- 曾经被「文档化」成缺口、a635 起必须真抹的形态 ------------------------
+# a629 把这六条钉成了「有意不抹（基线同漏）」——审计实测：其中五条在更早的
+# 实现上是抹掉的，变成了新引入的退化；第六条（引号紧贴）确实是这种情况。
+# 把漏洞钉成预期行为，等于测试在替缺陷背书。现在改为断言必须抹掉。
+@pytest.mark.parametrize("raw,secret", [
+    ("password1 hunter2pass", "hunter2pass"),      # 尾缀 + 空格
+    ("secret_key AbCdEf123456", "AbCdEf123456"),   # 小写复合 + 空格
+    ("--password abc.def.ghi", "abc.def.ghi"),     # 值含点
+    ("password ab_cd123 leakme", "ab_cd123"),      # 值含下划线
+    ('password"hunter2pass"', "hunter2pass"),      # 引号紧贴 keyword
 ])
-def test_redact_known_gaps_documented(raw):
-    """这些形态当前**有意不抹**（裸 keyword + 值字符集取舍，见
-    _SECRET_SPACE_RE 注释「已知取舍（声明）」），基线同样漏、非本批回归。
-    钉住现状：若未来实现变了，这里会红——提醒同步更新声明与口径。"""
-    assert BL._redact(raw) == raw
+def test_redact_documents_gaps_now_fixed(raw, secret):
+    out = BL._redact(raw)
+    assert secret not in out, out
+    assert "***" in out, out
+
+
+# 唯一仍未覆盖的形态（点前缀把 keyword 变成扩展名，与路径形态不可区分）
+def test_redact_dot_prefixed_keyword_still_gap():
+    """`.token hunter2pass`：点前缀按文件名/扩展名处理——与 `token.json:4:`
+    路径形态无法区分，保留为声明缺口。"""
+    assert BL._redact(".token hunter2pass") == ".token hunter2pass"

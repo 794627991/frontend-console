@@ -351,9 +351,19 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
 
                     wp = _WP()
                     wp.length = ctypes.sizeof(_WP)
-                    _ct.windll.user32.GetWindowPlacement(
-                        _win_hwnd(fnat), ctypes.byref(wp))
-                    to_max = bool(wp.flags & 2)   # WPF_RESTORETOMAXIMIZED
+                    # a635（对抗审计 P1-2）：fnat 已经是 win.native（WinForms
+                    # Form），而 _win_hwnd 的契约是「pywebview 窗 → HWND」，
+                    # 内部取 win.native —— 再传 Form 进去必然拿到 0（Form 没有
+                    # .native）。原来 GetWindowPlacement 恒失败：to_max 恒
+                    # False、rcNormal 全 0（兜底还原成 0×0）。直接用 Handle。
+                    try:
+                        _hwnd_v = int(fnat.Handle.ToInt64())
+                    except Exception:
+                        _hwnd_v = 0
+                    _gp_ok = bool(_hwnd_v) and bool(
+                        _ct.windll.user32.GetWindowPlacement(
+                            _hwnd_v, ctypes.byref(wp)))
+                    to_max = bool(_gp_ok and (wp.flags & 2))   # WPF_RESTORETOMAXIMIZED
                     rb = None
                     if _fc_restore.get("from_max"):
                         # 最大化期间的最小化——还原回最大化（from_max 由
@@ -366,8 +376,15 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
                     else:
                         rb = _fc_restore["pre_min"]
                     if rb is None:
+                        # a635：GetWindowPlacement 失败时 rcNormal 全 0，直接
+                        # 拿来用会把窗口还原成 0×0（再被下面 clamp 成 200×200）。
+                        # 拿不到可信矩形就交回系统默认布局，别硬写垃圾值。
                         _n = wp.rcNormal
-                        rb = _Rect(_n[0], _n[1], _n[2] - _n[0], _n[3] - _n[1])
+                        if _gp_ok and (_n[2] - _n[0]) > 0 and (_n[3] - _n[1]) > 0:
+                            rb = _Rect(_n[0], _n[1],
+                                       _n[2] - _n[0], _n[3] - _n[1])
+                        else:
+                            return 0
                     fnat.WindowState = _FS.Maximized if to_max else _FS.Normal
                     if not to_max:
                         wa = _Screen.FromHandle(fnat.Handle).WorkingArea
@@ -483,6 +500,22 @@ def _subclass_ncclient(win):
         _orig_wndproc["fn"] = None   # 失败回原生态：残留黑条但不炸窗
 
 
+def _main_core_webview(win):
+    """取主 UI 的 CoreWebView2（DevTools/刷新需要）。失败返回 None。
+    必须从 GUI 线程调用（WinForms 控件跨线程访问会抛）。"""
+    try:
+        f = getattr(win, "native", None)
+        if f is None:
+            return None
+        for c in f.Controls:
+            if getattr(c, "Name", "") == "fc_edge_holder":
+                if c.Controls.Count > 0:
+                    return c.Controls[0].CoreWebView2
+    except Exception:
+        pass
+    return None
+
+
 def _win_set_foreground(win):
     """pywebview 6.x 的 window.focus 是 bool 属性不是方法（window.py:134
     self.focus=focus，调用即 TypeError 'bool' object is not callable，托盘
@@ -552,6 +585,9 @@ def _invoke_gui(win, fn):
 # a596/597 教训实锤：pythonnet 的 .NET 对象不能挂 python 属性（setattr
 # AttributeError——holder._fc_cur 假挂载实锤），状态存模块级 python 容器
 _FC_HOLDER = {"panel": None, "cur": [0], "wv": None}
+# a635：上次上报的主题底色（只留内存记账，不落盘——原 theme_color 配置项
+# 已无消费方，见 _set_form_bg 注释）
+_FC_BG = {"last": ""}
 
 
 def _set_edge_pad(win, phys_px):
@@ -576,16 +612,25 @@ def _set_edge_pad(win, phys_px):
                 return
             holder = _FC_HOLDER["panel"]
             wv = _FC_HOLDER["wv"]
-            # 终审 P1-1：容器化重构曾把创建分支删丢（fc_edge_holder 从不创建
-            # →钩子链/Controller 染色全死码）——恢复：Controls 找不到就创建
-            # Panel 包裹 wv，容器只存引用
+            # a635（对抗审计 P0-1）：a630 声称「恢复创建分支」，但查找条件写成
+            # `not getattr(c, "Dock", None)` —— .NET 枚举成员 bool() 恒 True
+            # （DockStyle.Fill=5 → True），webview 恒找不到 → 这里提前 return
+            # → fc_edge_holder 永不创建，白框钩子/Controller 染色/边缘让位
+            # 全链死码且静默。改为「名字不是 holder 的那个子控件就是 webview」。
             if wv is None:
                 for c in list(f.Controls):
                     if getattr(c, "Name", "") == "fc_edge_holder":
                         holder = c
-                    elif holder is None and not getattr(c, "Dock", None):
+                    else:
                         wv = wv or c   # pywebview 只加一个子控件（webview）
             if wv is None:
+                try:
+                    import src.backend_log as _bl
+                    _bl.warn("window", "_set_edge_pad：Form 上找不到 webview 子控件"
+                             "（Controls=%s），边缘让位/染色链跳过" % (
+                                 [getattr(c, "Name", "?") for c in f.Controls],))
+                except Exception:
+                    pass
                 return
             if holder is None:
                 holder = Panel()
@@ -668,6 +713,7 @@ def _set_edge_pad(win, phys_px):
 
 def _set_form_bg(win, r, g, b):
     """Form 边缘带底色跟随页面主题（win-controls.js 监听 data-theme 上报）。"""
+
     def _do():
         try:
             import clr as _clr
@@ -677,16 +723,12 @@ def _set_form_bg(win, r, g, b):
             if f is None:
                 return
             f.BackColor = Color.FromArgb(int(r), int(g), int(b))
-            # 主题色持久化：下次启动 create_window(background_color=) 用——
-            # 消除「启动瞬间白闪」（默认 #FFFFFF 在页面/上报前的空窗露出）
-            try:
-                from src.app_state import _load_config as _lc, _save_config as _sc
-                _cfg = _lc()
-                if _cfg.get("theme_color") != "#%02X%02X%02X" % (int(r), int(g), int(b)):
-                    _cfg["theme_color"] = "#%02X%02X%02X" % (int(r), int(g), int(b))
-                    _sc(_cfg)
-            except Exception:
-                pass
+            # a635（对抗审计 P2-3）：这里原来每次主题变化都整份 config 原子写
+            # （_load_config + _save_config，含 .bak 滚动），但注释承诺的读取方
+            # create_window(background_color=) 已随 A/B 实验停用——全仓零读取
+            # 方（grep 只命中这处写）。纯 IO 开销 + 退出路径上的写风险窗口。
+            # 保留一行轻量记账（不落盘），供日志面板/排障看上次上报色。
+            _FC_BG["last"] = "#%02X%02X%02X" % (int(r), int(g), int(b))
             # WebView2 呈现层白底根修（用户实锤「外圈红中间白」）：包装属性
             # DefaultBackgroundColor 只在 CoreWebView2 创建前有效，运行时设置
             # 被 Controller 忽略——反射取内部 CoreWebView2Controller 直接设
@@ -1566,13 +1608,13 @@ def main():
                 sender.CoreWebView2.Settings.AreDefaultContextMenusEnabled = True
             except Exception:
                 pass
-            # R4 审计 D1（用户定调）：正常模式禁浏览器级快捷键——F5/Ctrl+R
-            # 不再整刷工具 UI（前端另有按键路由：激活网页 tab 时改刷网页）。
-            # debug 模式保留（整 UI 刷新=调试能力）。网页 tab 是独立控件+
-            # 独立环境，不受此设置影响（其 F5=刷网页 tab）。
+            # a624（用户令）：**浏览器级快捷键一律屏蔽**——F5/Ctrl+R 不再
+            # 整刷工具，F12/Ctrl+Shift+I 也不再直接开 DevTools。能力改由
+            # 后端日志窗口的两个按钮承接（强制刷新 / 打开 DevTools），
+            # 这样快捷键不会在敲命令时误触。网页 tab 是独立控件+独立环境，
+            # 不受此设置影响（其 F5 仍刷网页）。
             try:
-                sender.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = (
-                    bool(_wv_debug))
+                sender.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = False
             except Exception:
                 pass
             # a544：网页 tab 控件管理器装配。失败不阻塞主 UI（网页 tab
@@ -1652,6 +1694,55 @@ def main():
                     pass
             threading.Thread(target=_do, daemon=True).start()
         return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
+    # ---- a624：调试能力改由后端日志窗口的两个图标按钮承接 ----
+    # 用户令：网页相关快捷键（F5/F12/Ctrl+R）全部屏蔽，能力挪到界面上。
+    _ct_json = {"Content-Type": "application/json"}
+    @app.route("/api/window/reload", methods=["POST"])
+    def _api_window_reload():
+        """强制刷新整个工具页面（等同原 F5）。前端 __fcHardReload 里
+        先打 reload_disconnect 清场再 location.reload()。"""
+        w = getattr(main, "_win", None)
+        if w is None:
+            return '{"ok": false, "err": "窗口未就绪"}', 503, _ct_json
+
+        def _do():
+            # evaluate_js 在 GUI 线程等返回值会死锁（a484 实锤）→ 后台线程
+            try:
+                w.evaluate_js(
+                    "window.__fcHardReload && window.__fcHardReload();")
+            except Exception:
+                pass
+        threading.Thread(target=_do, daemon=True).start()
+        return '{"ok": true}', 200, _ct_json
+
+    @app.route("/api/window/devtools", methods=["POST"])
+    def _api_window_devtools():
+        """打开主 UI DevTools（等同原 F12）。走 CoreWebView2 原生窗口，
+        不受 AreBrowserAcceleratorKeysEnabled=False 影响。控件只在 GUI
+        线程可操作，故用 _invoke_gui 封送。"""
+        w = getattr(main, "_win", None)
+        if w is None:
+            return '{"ok": false, "err": "窗口未就绪"}', 503, _ct_json
+        result = {"ok": False, "err": ""}
+
+        def _do():
+            try:
+                cvw = _main_core_webview(w)
+                if cvw is None:
+                    result["err"] = "主界面控件未就绪"
+                    return
+                cvw.OpenDevToolsWindow()
+                result["ok"] = True
+            except Exception as e:
+                result["err"] = repr(e)
+
+        _invoke_gui(w, _do)
+        if result["ok"]:
+            return '{"ok": true}', 200, _ct_json
+        return ('{"ok": false, "err": %s}'
+                % json.dumps(result["err"] or "打开失败"),
+                500, _ct_json)
 
     # ---- a59x 自绘窗控路由（zcode 复刻：页面三钮 + 顶栏拖拽的后端通道）----
     # 命令语义与 zcode desktopCommandHandlers.ts 对齐：MinimizeWindow /
@@ -2453,17 +2544,30 @@ def main():
                     _cur = f2 is not None and f2.WindowState == _FS2.Maximized
                     if _hg_last_state["max"] != _cur:
                         _hg_last_state["max"] = _cur
+                        # a635（对抗审计 P2-1）：补推必须带 overhang——不带
+                        # 时前端 _apply 收到 undefined 会把 ov 归零、摘掉
+                        # hg-overhang 类，恰好在「闸忙、事件交替」这个最需要
+                        # 补偿的窗口里造成 8px 闪烁。
+                        _over2 = _maximize_overhang_css_px(window)
+                        _hg_last_state["over"] = _over2
                         window.evaluate_js(
-                            "window._hgWinState&&window._hgWinState({max:%s})"
-                            % ("true" if _cur else "false"))
+                            "window._hgWinState&&window._hgWinState({max:%s,overhang:%s})"
+                            % ("true" if _cur else "false", _over2))
                 except Exception:
                     pass
             _hg_push_gate.release()
 
     window.events.maximized += lambda: (_fc_restore.__setitem__(
         "from_max", True), _hg_push_win_state(True))
-    window.events.restored += lambda: (_fc_restore.__setitem__(
-        "from_max", False), _hg_restore_bounds_fix(window))
+    # a635（对抗审计 P1-5）：a633 把 restored 链里的 _hg_push_win_state(False)
+    # 换成了 _hg_restore_bounds_fix，而前者是全代码唯一推 max=false 给页面的
+    # 地方——卸载后 UI 的 is-max/❐ 字形只能靠 resize 防抖拉取兜底；Bounds 写
+    # 回后尺寸恰好不变时 resize 不触发，页面停在 is-max。这里补回推送
+    # （顺序：先清 from_max，再矫正 bounds，最后推状态）。
+    window.events.restored += lambda: (
+        _fc_restore.__setitem__("from_max", False),
+        _hg_restore_bounds_fix(window),
+        _hg_push_win_state(False))
     # minimized/restored 自管矫正（用户复现路径实锤：拖边框→任务栏最小化→
     # 还原×N→内容缩块——任务栏还原走 ShowWindow(SW_RESTORE)，不发
     # SYSCOMMAND 钩不到；Windows 对无 CAPTION 窗的 restore 按「假想有边框」
@@ -2476,6 +2580,30 @@ def main():
     window.events.moved += lambda: _hg_track_normal_bounds(window)
 
     def _hg_track_normal_bounds(win):
+        # a635（对抗审计 P2-2）：pywebview 的 Event.set 在 should_lock=False
+        # 时**每个事件开一个 Thread**，拖拽 resize 是 60-120Hz——每帧一个
+        # Python 线程 + 一次跨线程 Invoke 同步等待（py-spy 当初抓到的正是
+        # 这个形态）。这里做**尾随去抖**：拖拽期间只保留最后一个事件，停止
+        # 120ms 后补一次（读的是 GUI 线程里的真实状态，不丢状态）。
+        import time as _t
+        _now = _t.time()
+        if _fc_restore.get("trk_timer"):
+            try:
+                _fc_restore["trk_timer"].cancel()
+            except Exception:
+                pass
+        def _later():
+            _fc_restore["trk_timer"] = None
+            _track_now(win)
+        try:
+            _tm = threading.Timer(0.12, _later)
+            _tm.daemon = True
+            _fc_restore["trk_timer"] = _tm
+            _tm.start()
+        except Exception:
+            _track_now(win)      # 定时器建不起来：直接读（宁多一次不丢）
+
+    def _track_now(win):
         try:
             from System.Windows.Forms import FormWindowState, MethodInvoker
             f = getattr(win, "native", None)
@@ -2652,23 +2780,21 @@ def main():
             update_server.start()
     except Exception:
         pass
-    # v3.4.99（用户终裁「93e 的 UA 门禁是严重错误，撤」）：需求本体只有
-    # 一条——正常启动没有 F12/右键菜单/F5（这些全挂在 pywebview 的 debug
-    # 开关上），而该开关**只认 run_debug.bat**（HARNESS_DEBUG_WEB=1），
-    # config 的 webview_debug 不再单独放行。93~98 的浏览器直开门禁（令牌/
-    # 挑战/UA 三代）系对需求的误读叠加过度工程，连带 403 过四家内部子进
-    # 程，已整体拆除——HTTP 服务恢复仅绑 127.0.0.1 的开放原状。
-    from src.server import DEBUG_WEB as _dbg_web
-    _wv_debug = _dbg_web
-    # a473（用户令：L3 网页操作必须有）：CDP 端口解除 debug 限定——配置键
-    # web_cdp 开启时正常启动也带 --remote-debugging-port（AI 经 devtools_*
-    # MCP 工具操作浏览器：内网换组件/报错分析）。端口只绑 127.0.0.1（CDP
-    # 固有行为），本机单用户工具可接受；默认关，开启需重启生效。
-    # 审计修：**端口与 debug 两布尔分离**——webview.start(debug=) 只认
-    # _dbg_web（v3.4.99 用户终裁「正常启动无 F12/右键/F5」，pywebview 的
-    # debug=True 会整体打开 DevTools 与右键菜单，不能被 web_cdp 波及）
-    _web_cdp_cfg = False
-    if not _wv_debug:
+    # v3.4.99 定的「正常启动无 F12/右键/F5」已由 a624 迭代：
+    # a624（用户令）：调试能力常开（devtools 是 MCP 网页操作的必需品），
+    # 但**浏览器级快捷键全屏蔽**（F5/F12/Ctrl+R/Ctrl+Shift+I），改由后端
+    # 日志窗口的两个按钮承接。pywebview 的 debug=True 会连带打开 DevTools
+    # 快捷键与右键菜单，所以 webview.start 仍传 False；DevTools 由按钮
+    # 显式调用 CoreWebView2.OpenDevToolsWindow() 打开。
+    from src.server import DEBUG_CAPS as _dbg_caps
+    _wv_debug = False
+    # a473（用户令：L3 网页操作必须有）：CDP 端口——AI 经 devtools_* MCP
+    # 工具操作浏览器（内网换组件/报错分析）。端口只绑 127.0.0.1（CDP 固有
+    # 行为），本机单用户工具可接受。
+    # a624：调试能力常开 → 主 UI 的 CDP 端口也常开（MCP 的 devtools_*
+    # 依赖它；此前只在 run_debug.bat 下才有，网页操作需求无法满足）。
+    _web_cdp_cfg = bool(_dbg_caps)
+    if not _web_cdp_cfg:
         try:
             import json as _json
             from src.app_state import CONFIG_FILE

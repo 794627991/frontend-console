@@ -58,10 +58,41 @@ except Exception:
     pass
 
 
-# v3.4.12（用户实锤「重启+Ctrl+F5 仍旧样式」）：调试模式——HARNESS_DEBUG_WEB=1
-# 时前端资源直读源码目录 web/（本文件旁），彻底绕过 RES_DIR/_mem_web/一切副本；
-# run_debug.bat 一键启动（先清旧进程残尸，控制台可见伺服模式打印）
-DEBUG_WEB = os.environ.get("HARNESS_DEBUG_WEB") == "1"
+# 调试能力（a624 用户令：run_debug.bat 退役，调试能力**常开**）。
+#
+# 两个概念必须分开，此前混在一个开关里：
+#   HARNESS_DEBUG_WEB=1  前端资源**直读源码目录**（仅源码跑才有意义，打包版
+#                        没有 web/ 源码树）；这个仍只认环境变量
+#   DEBUG_CAPS           **调试能力**：DevTools 可用、整工具刷新、右键菜单。
+#                        常开——用户要求 F12/F5 屏蔽后由日志窗的两个按钮
+#                        承接，devtools 也是 MCP 网页操作的必须品
+_SRC_DBG = os.environ.get("HARNESS_DEBUG_WEB") == "1"
+
+
+def _has_src_web():
+    """源码 web/ 树是否真的可直读（含 index.html）。
+
+    a624 实测：打包版的 `<app>/_internal/web/` **目录是存在的**，但里面
+    只有 `index.html.enc` / `*.css.enc`（加密资源），没有任何可直读的
+    明文文件。原先只判 `os.path.isdir` 会把打包版误判成「有源码树」，
+    一旦有人设了 HARNESS_DEBUG_WEB=1 就会走 send_from_directory 拿 404
+    白屏。判据必须落到具体文件上才有效。
+    """
+    try:
+        root = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), os.pardir, "web"))
+        return (os.path.isfile(os.path.join(root, "index.html"))
+                and os.path.isdir(os.path.join(root, "js")))
+    except Exception:
+        return False
+
+
+# 直读源码只在「真有明文前端树」时生效（打包版恒 False → 走资源包）
+DEBUG_WEB = _SRC_DBG and _has_src_web()
+DEBUG_CAPS = True
+# 兼容既有引用（前端 __HG_DBG__、web_tabs 门控）：语义从「调试模式」改为
+# 「调试能力可用」，行为等同常开。
+DEBUG_WEB_PAGE = DEBUG_CAPS
 # （v4 归一管线 a137 起唯一基准：HARNESS_V4 / __HG_V4__ 注入与 v4=0 回退
 #  通道已随批G 全量退役，前端 v4main 不再有开关）
 # Claude 子系统进程隔离（v4.0.0 串口卡顿根治，用户定调「Claude 随便占，
@@ -585,11 +616,12 @@ def index():
             data = data.replace(b"__HG_WFAMFLAG__", b"proxy" if CLAUDE_OFFLOAD else b"")
             # 带引号注入（前端 __HG_DBGF__==='1' 字符串严格比较——裸 1 会
             # 1==='1' 恒 false，钩子永不注册=刷新清场整个死链，用户实锤）
-            return data.replace(b"__HG_DBGF__", b"'1'" if DEBUG_WEB else b"''")
+            return data.replace(b"__HG_DBGF__",
+                                b"'1'" if DEBUG_WEB_PAGE else b"''")
         data = data.replace("__HG_VER__", _HV)
         data = data.replace("__HG_WBASE__", WORKER_BASE)
         data = data.replace("__HG_WFAMFLAG__", "proxy" if CLAUDE_OFFLOAD else "")
-        return data.replace("__HG_DBGF__", "'1'" if DEBUG_WEB else "''")
+        return data.replace("__HG_DBGF__", "'1'" if DEBUG_WEB_PAGE else "''")
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
@@ -1481,14 +1513,13 @@ def api_disconnect():
 
 @app.route("/api/reload_disconnect", methods=["POST"])
 def api_reload_disconnect():
-    """debug 页刷新清场（用户定调）：正式发布版禁用前端刷新（无 F5），
-    只有调试机（HARNESS_DEBUG_WEB=1）能刷新——刷新瞬间页面来不及发
-    disconnect，串口/SSH 句柄滞留后端进程占口（CDP 强刷实测 COM10 被
-    自身后端占用）。pagehide sendBeacon 打到这里，全部连接即刻回收；
-    正式版即使手工 POST 也 404（双门：前端不注册钩子 + 后端 DEBUG_WEB）
-    """
-    if not DEBUG_WEB:
-        return jsonify({"ok": False, "err": "仅调试模式"}), 404
+    """整工具刷新前清场：页面卸载瞬间来不及发 disconnect，串口/SSH 句柄
+    滞留后端进程占口（CDP 强刷实测 COM10 被自身后端占用）。前端在
+    pagehide 用 sendBeacon 打到这里，全部连接即刻回收。
+
+    a624：原先只对调试模式开放（正式版无刷新能力）；现在调试能力常开，
+    日志窗的「强制刷新」按钮会真的重载页面，因此对本机请求一律放行
+    （仍受全站 Origin/Host 校验保护）。"""
     close_all_ports()
     return jsonify({"ok": True})
 
@@ -2268,26 +2299,6 @@ def api_backend_log():
     else:
         limit = 50000
     return jsonify({"ok": True, **backend_log.snapshot(since=since, limit=limit)})
-
-
-@app.errorhandler(Exception)
-def _fc_log_unhandled(e):
-    """Flask 路由未捕获异常显式落 backend_log（双保险：werkzeug 的 stderr
-    traceback 已被流接管，这里再加一层结构化记录，防非 debug 差异导致
-    traceback 不落缓冲）。记完继续 raise 交回 werkzeug 走标准 500。"""
-    import traceback as _tb
-    try:
-        _m = ""
-        try:
-            _m = "%s %s " % (request.method, request.path)
-        except Exception:
-            pass
-        backend_log.error("flask", "路由未捕获异常 " + _m + chr(10) + "".join(
-            _tb.format_exception(type(e), e, e.__traceback__)).rstrip())
-    except Exception:
-        pass
-    raise e
-
 
 
 def _backend_log_export_text():

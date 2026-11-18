@@ -353,14 +353,21 @@ def main():
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
     # 日志审计盲区#2（2026-11-17）：worker 未装全局异常钩子——worker 进程
-    # 崩溃只留 data_dir 文件日志且 crash 不回传主进程面板。三件套装上后：
-    # 未捕获异常走 excepthook → logging（basicConfig 文件）+ stdout 排空线
-    # 程回传主进程缓冲双通道可见。
+    # 崩溃只留 data_dir 文件日志且 crash 不回传主进程面板。
+    # a635（对抗审计 P1-3）：a624 只装了 logging 桥 + excepthook，**没装流
+    # 接管**——backend_log.log()/exception() 是直接写内存环形缓冲的，不产生
+    # 任何 stderr 字节，主进程排空线程读不到 → worker 崩溃时面板仍是空的，
+    # 与修复前无差别。这里补 install()：接管后 log() 与 traceback 才真正
+    # 落到 stderr=PARENT 管道，由主进程 _drain 回传。
+    # 注意顺序：basicConfig(filename=...) 之上再加 stderr handler 已在本函数
+    # 前半段完成；install() 只包 sys.stdout/sys.stderr，不影响文件日志。
     try:
         from src import backend_log as _bl
+        _bl.install()
         _bl.install_logging_bridge(logging.INFO)
         _bl.install_excepthooks()
-        _bl.log("worker", "worker 异常钩子已装（excepthook+logging 桥）")
+        _bl.log("worker", "worker 日志链已装（流接管+excepthook+logging 桥）"
+                " installed=%s" % _bl.installed())
         # 终审 P2-5：harness 版本落 config（主进程 boot 行不 import harness，
         # 读此缓存）
         try:
@@ -429,9 +436,17 @@ def main():
     threading.Thread(target=_parent_watchdog, args=(parent_pid,),
                      daemon=True, name="parent-watchdog").start()
 
-    sys.stdout.write("WORKER_READY %s\n" % json.dumps(
+    # 就绪协议必须走**原始** stdout——install() 已把它包成 _TeeStream
+    # （TeeStream 会透传给原流，但显式取原始引用更稳，避免将来 TeeStream
+    # 做缓冲导致握手行被延迟）。
+    try:
+        from src import backend_log as _blrdy
+        _rdy_out = _blrdy._orig_stdout or sys.stdout
+    except Exception:
+        _rdy_out = sys.stdout
+    _rdy_out.write("WORKER_READY %s\n" % json.dumps(
         {"port": actual, "pid": os.getpid()}))
-    sys.stdout.flush()
+    _rdy_out.flush()
     log.info("worker 就绪 port=%s pid=%s prefer=%s", actual, os.getpid(), prefer)
     srv.serve_forever()
 
@@ -539,12 +554,16 @@ def _spawn_once(prefer_port, ready_timeout=25):
                     logging.getLogger("claude_worker.stdout").log(
                         40 if ("ERROR" in _txt or "Traceback" in _txt) else 20,
                         _txt)
-                _retry = 0
+                # a635（对抗审计 P1-4）：管道 EOF = worker 进程已退出，循环
+                # 必须结束。原来 for 正常遍历完走不到 except，_retry 恒 0，
+                # `while True` 永不退出——每次 watchdog 重启泄漏一个 5Hz
+                # 空转线程。保留「异常重试」只针对真正的读错误。
+                return
             except Exception as _e:
                 _retry += 1
                 if _retry > 3:
                     return   # 连续 3 次失败放弃（管道毁——极端兜底）
-            time.sleep(0.2)
+                time.sleep(0.2)
     threading.Thread(target=_drain, daemon=True).start()
     return p, port
 

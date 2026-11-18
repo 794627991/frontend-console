@@ -227,7 +227,7 @@ function buildClaudeHarnessTab(opts = {}) {
     window._HG_VER = 'v' + j.harness;
     window._APP_VER = j.app || '';
   }).catch(() => {});
-  // a627（用户令「harness 的这个完全由 log 系统取代，ⓘ 标记可以删了」）：
+  // a628（用户令「harness 的这个完全由 log 系统取代，ⓘ 标记可以删了」）：
   // 顶栏 ⓘ 诊断按钮删除——职能由后端 log 系统取代（启动行打 harness+工具
   // 双版本，流水经 console hook/worker 回传进 backend_log）。_hgDiag 环形
   // 缓冲与版本 fetch 保留（其余埋点/_HG_VER 消费者仍依赖）。

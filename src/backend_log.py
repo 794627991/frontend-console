@@ -9,6 +9,10 @@
   为此除接管 stdout/stderr 外，还提供 `log(tag, msg)` / `debug()` /
   `warn()` / `error()` / `exception()` 主动埋点接口（详见文件尾）。
 
+版本号约定：注释里的 `aNNN` = **实际提交号**（v4.1.0-aNNN）。形如 `a623R`
+的带 R 后缀者是**审计轮次**编号，不是提交号——本文件里的 `a623R` 指的是
+2026-11-17 那批脱敏/日志审计的轮次（该批改动实际落在 a629 提交）。
+
 三层收口：
 1. 接管 sys.stdout / sys.stderr —— 原有裸 print 零改动即全进缓冲
 2. `log()` 系列 —— 新代码/关键路径主动埋点，带模块标签
@@ -95,8 +99,12 @@ _SECRET_HINTS = ("password", "passwd", "pwd", "token", "secret", "api_key",
 #     （password1/token2/SECRET_KEY 空格形态）一律不认——是已知漏报
 #     缺口（基线同漏），见文末声明。
 _SECRET_RE = re.compile(
-    r"[\"']?([\w.-]*(?i:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key|authorization|cookie|session[_-]?id)[\w.-]*)[\"']?"
+    # a635（对抗审计 P1-1 性能项）：原写法 `[\w.-]*(?i:kw)[\w.-]*` 里内联的
+    # (?i:) 让引擎在每个起始位置反复回溯（实测含关键字行 41µs/行，占整条
+    # 脱敏链 80%）。改为整条 (?i) + 前置断言：语义等价，13µs。
+    r"(?i)(?<![\w.-])[\"']?([\w.-]*(?:password|passwd|pwd|token|secret|"
+    r"api[_-]?key|access[_-]?key|private[_-]?key|authorization|cookie|"
+    r"session[_-]?id)[\w.-]*)[\"']?"
     r"\s*[:=：＝]\s*"
     r"(\"[^\"]*\"|'[^']*'|[^\s,，。；;）)]+)")
 _CN_SECRET_RE = re.compile(
@@ -105,22 +113,52 @@ _CN_SECRET_RE = re.compile(
 # a616（疯狗审计 v3 重炮二）：**空格分隔**形态——`--password hunter2`、
 # `password mypass`、`--token abc123`。原实现的分隔符类只有 [:=：＝]，空格
 # 形态整行穿透（实测 `--password hunter2 user=admin` 原样入库、原样可导出）。
-# a623R 三轮定稿：**只认裸 keyword**（`(?<![\w.])…(?![\w.-])`，两侧非词
-# 字符——比 \b 强，下划线/点续写一律不算）；值限定 ASCII 可见字符，中文
-# 词（「password 错误」「token 无效」）一律不碰，宁漏勿误。值允许**最多
-# 4 段空格分词**（`password abc 12345 leakme` 首段 3 字符旧 {6,} 整行漏）；
-# **首段 ≥6 时只抹单段**（--password hunter2 user=admin 保住 user=admin，
-# 同 a616），首段 <6 才启用多分词；总长 ≥6 的闸在 _redact_line._space_sub。
-# 已知取舍（声明）：带引号值按引号内全量抹；值超 4 段时第 5 段起残留；
-# 带尾缀的空格形态漏（`secret_key xxx` / `password1 xxx`——基线同漏）；
-# 无分隔符且值含 `.`/`_` 漏（`--password abc.def`）；含关键字行成本 ~15µs。
+# a623R 三轮定稿：值限定 ASCII 可见字符，中文词（「password 错误」
+# 「token 无效」）一律不碰，宁漏勿误。值允许**最多 4 段空格分词**
+# （`password abc 12345 leakme` 首段 3 字符旧 {6,} 整行漏）。
+# a635（对抗审计 P1-1，双向退化修复）：值字符类必须含 `.` 和 `_`——下划线/
+# 点恰恰是常见密码形态（`Sup3r_Secret` / `abc.def`），a623R 删掉它们导致
+# 真实凭据整段穿透；同时纯字母短语（`token is invalid` /
+# `password is required`）被并进值抹成星号，日志可读性直接废掉。判据见
+# _redact_line._space_sub 与 _SPACE_PROSE_LEAD。
+_SPACE_WORD = r"[A-Za-z0-9._~+/=!@#%^&*$\-]"
 _SECRET_SPACE_RE = re.compile(
+    # a635（对抗审计 P1-1 第三项）：keyword 允许带尾缀（`secret_key xxx`、
+    # `password1 xxx`）。a623R 为了避开「token_ring / MyPassword123456」这类
+    # 误伤改成了「裸 keyword」，代价是真实凭据形态（secret_key / access_key_id
+    # / password1）整行穿透——而 a623R 的测试还把这个缺口钉成了预期行为。
+    # 正确的折中：允许尾缀，但**值必须像凭据**（见 _redact_line._space_sub：
+    # 含数字/符号或长度足够），纯英文行文一律不碰。
+    # 分隔符必须是「空白」或「引号」——`token.json:4` 这类路径形态没有空白
+    # 紧跟引号，天然排除。
     r"(?i)(?<![\w.])(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key)(?![\w.-])"
-    r"[\"']?\s+"
+    r"private[_-]?key)[\w-]*"
+    # 分隔：空白，或**零宽**紧邻引号（不消耗引号——否则带引号值会剩个尾巴）
+    r"(?:\s+|(?=[\"']))"
     r"(\"[^\"]*\"|'[^']*'"
-    r"|[A-Za-z0-9~+/=!@#%^&*$\-]{6,}"
-    r"|[A-Za-z0-9~+/=!@#%^&*$\-]{2,5}(?:\s+[A-Za-z0-9~+/=!@#%^&*$\-]{2,}){1,3})")
+    r"|" + _SPACE_WORD + r"{6,}"
+    r"|" + _SPACE_WORD + r"{2,5}(?:\s+" + _SPACE_WORD + r"{2,}){1,3})")
+# 行文判断在 _redact_line._space_sub 里做：值必须「像凭据」（含数字/符号，
+# 或单段纯字母 ≥8）才抹。下面这批是**行文首词**——出现在 keyword 后面时
+# 说明是句话（token has expired），一律不抹。
+_SPACE_PROSE_LEAD = frozenset((
+    "is", "was", "are", "were", "be", "been", "being", "has", "have", "had",
+    "will", "would", "can", "cannot", "could", "should", "may", "might",
+    "must", "do", "does", "did", "not", "no", "yes", "ok", "okay", "set",
+    "reset", "required", "missing", "invalid", "expired", "failed", "failure",
+    "success", "succeeded", "error", "errors", "warning", "warn", "info",
+    "debug", "trace", "found", "denied", "refused", "rejected", "accepted",
+    "changed", "updated", "created", "deleted", "removed", "added", "loaded",
+    "saved", "written", "read", "sent", "received", "reused", "renewed",
+    "refreshed", "rotated", "generated", "verified", "checked", "validated",
+    "for", "to", "from", "in", "on", "at", "by", "with", "without", "and",
+    "the", "a", "an", "this", "that", "of", "or", "if", "when", "while",
+    "please", "try", "again", "later", "now", "here", "there", "too", "long",
+    "short", "wrong", "correct", "empty", "blank", "null", "none", "unknown",
+    "value", "field", "length", "policy", "rules", "mode", "type", "name",
+    "ring", "sauce", "syntax", "usage", "ring", "topology",
+))
+
 # HTTP 认证头 / 裸令牌：`Bearer xxx` / `Basic xxx` / `token eyJ...`
 # bearer/basic 的令牌通常 ≥8 字符；裸 token 要 ≥16 才动手，避免误伤
 # 「token 无效」这类正常短语。
@@ -156,18 +194,50 @@ def _redact(text):
 def _redact_line(text):
     if len(text) > _MAX_LINE_CHARS:
         text = text[:_MAX_LINE_CHARS]
+
+    def _kv_sub(m):
+        # a635（对抗审计 P1-1）：`token.json:4: bad` / `token.py, line 3` 这类
+        # 「模块名.后缀 + 冒号」是 traceback/文件路径形态，不是赋值——抹了
+        # 反而把正常日志改坏（原来输出 `token.json=*** bad`）。冒号分隔时
+        # 要求 key 不带点/后缀，或值不像行号（纯数字）。
+        key, val = m.group(1), m.group(2)
+        sep = m.group(0)[len(key):len(m.group(0)) - len(val)]
+        if ":" in sep or "：" in sep:
+            if "." in key:                    # token.json / token.py:4
+                return m.group(0)
+            v = val.strip("\"'")
+            if v.isdigit():                   # Foo:123 行号形态
+                return m.group(0)
+        return key + "=***"
+
     text = _URL_PASS_RE.sub(lambda m: m.group(1) + "***" + m.group(3), text)
     text = _BEARER_RE.sub("***", text)
     text = _BARE_TOKEN_RE.sub("token ***", text)
-    text = _SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
+    text = _SECRET_RE.sub(_kv_sub, text)
     text = _CN_SECRET_RE.sub(lambda m: m.group(1) + "=***", text)
 
     def _space_sub(m):
         # a616 口径：值（去引号）总长 <6 的短词大概率是正常行文（「token
         # ok」），宁可漏抹也不误伤；带引号值按引号内内容算长度
-        if len(m.group(2).strip("\"'")) < 6:
+        val = m.group(2).strip("\"'")
+        if len(val) < 6:
             return m.group(0)
-        return m.group(1) + " ***"
+        # a635（对抗审计 P1-1）：必须「像凭据」才抹——纯英文**行文**（token
+        # is invalid / password reset failed / Token ring topology）不是凭据，
+        # 抹掉等于毁日志；但纯字母口令真实存在（passwd rootpass / pwd
+        # abcdefgh），不能一棍子打死。判据：
+        #   ① 任一段含数字/非字母符号（Sup3r_Secret / hunter2pass）→ 是凭据
+        #   ② 单段纯字母且长度 ≥8（rootpass / abcdefgh）→ 是凭据
+        #   ③ 首段是常见行文虚词（is / has / failed / reset…）→ 不是凭据
+        parts = val.split()
+        if parts and len(parts[0]) <= 6 \
+                and parts[0].lower() in _SPACE_PROSE_LEAD:
+            return m.group(0)
+        if any(any(not ch.isalpha() for ch in p) for p in parts):
+            return m.group(1) + " ***"
+        if len(parts) == 1 and len(parts[0]) >= 8:
+            return m.group(1) + " ***"
+        return m.group(0)
     return _SECRET_SPACE_RE.sub(_space_sub, text)
 
 
