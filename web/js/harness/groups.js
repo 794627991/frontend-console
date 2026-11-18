@@ -522,7 +522,12 @@
     // 再挂「无文字回复」自相矛盾。
     // v3.2.2：正文判定放宽到任意深度（中段定稿已把正文折进体，:scope 直查
     // 会误判「无正文」）；提示行随正文折进体（根区只留回合头+最终结论）
-    if (!g.root.querySelector('.h-msg.asst:not(.ph)') && !g.root.querySelector(':scope > .h-grp-notext') &&
+    // v4.1.0-a667（用户截图「怎么这么多」）：防重也必须按任意深度查——提示
+    // 挂在 headBody 内，原 :scope > 只查根区永远查不到，同组重复定稿会反复
+    // 补（实测中断会话一组 3 条）。已有旧提示时先清多余（自愈），只留首条。
+    const _oldTips = g.root.querySelectorAll('.h-grp-notext');
+    for (let _ti = 1; _ti < _oldTips.length; _ti++) _oldTips[_ti].remove();
+    if (!_oldTips.length && !g.root.querySelector('.h-msg.asst:not(.ph)') &&
         !g.root.querySelector(':scope > .h-subblock') &&
         ((_segN > 0) || (g.counts && Object.keys(g.counts).length))) {
       const tip = document.createElement('div');
