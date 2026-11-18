@@ -592,7 +592,9 @@ def _health_ok():
         return True
     try:
         import urllib.request
-        urllib.request.urlopen(b + "/health", timeout=2).read()
+        # a663：2s 太激进——会话生成/压缩重活时 worker 偶发 2s 内无响应，
+        # 曾被误判挂死连杀重启，直接切断正在输出的回复（用户实锤）。
+        urllib.request.urlopen(b + "/health", timeout=5).read()
         return True
     except Exception:
         return False
@@ -626,8 +628,8 @@ def _supervisor(prefer_port):
                 if not _health_ok():
                     _hung += 1
                     logging.getLogger("claude_worker").warning(
-                        "worker health 探活失败 %d/2", _hung)
-                    if _hung >= 2:
+                        "worker health 探活失败 %d/3", _hung)
+                    if _hung >= 3:
                         try:
                             p.kill()
                         except Exception:
