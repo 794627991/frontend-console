@@ -61,7 +61,15 @@ def encrypt_pkg(app_dir, project_root=None):
     manifest = os.path.join(internal, ".fcenc")
     if project_root is None:
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if not os.path.isfile(manifest):
+    # a635：原来只看 manifest 在不在。Cython 编译失败那轮 src/ 是空的，而
+    # manifest 可能由更早的成功轮次残留 → 重打时跳过外置，死包照发。
+    # 判据改看 pyd 实际在不在（version.pyd 是必备锚点；PyInstaller 产物
+    # 是有限集，先按全后缀扫一遍比钉死 cpXXX 稳）。
+    _src_dir = os.path.join(internal, "src")
+    _has_pyd = os.path.isdir(_src_dir) and any(
+        f.startswith("version.") and f.endswith(".pyd")
+        for f in os.listdir(_src_dir))
+    if not os.path.isfile(manifest) or not _has_pyd:
         _stage_src_pyd(app_dir, project_root)
     enc_files = []
     for d in _TARGET_DIRS:

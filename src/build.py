@@ -123,7 +123,27 @@ def build():
             if n:
                 print(f"资源加密: {n} 个文件（口令混淆内嵌，首启自解密）")
         except Exception as e:
-            print("⚠ 资源加密失败（发布 zip 将含明文 web）:", e)
+            # a635（用户实锤 v2.4.4 死包启动 ModuleNotFoundError: src.version）：
+            # 原来是「打印警告照常发布」——Cython 编译失败时 _internal/src/ 一个
+            # pyd 都没有，包照发，同事装上必崩。加密/编译是发布必经步骤，
+            # 失败即停发，不许产出残缺包。
+            raise SystemExit("[发布守卫] 资源加密/Cython 编译失败，禁止发布：%s" % e)
+        # a635：pyd 外置在 encrypt_pkg 里做，这里复核确实落了盘——空 src/
+        # 的包启动就 ModuleNotFoundError，绝不能进分发流。
+        _src_dir = os.path.join(app_dir, "_internal", "src")
+        _npyd = 0
+        _has_ver = False
+        for _r, _ds, _fs in os.walk(_src_dir):
+            for _f in _fs:
+                if _f.endswith(".pyd"):
+                    _npyd += 1
+                    if _f.startswith("version."):
+                        _has_ver = True
+        if _npyd < 1 or not _has_ver:
+            raise SystemExit("[发布守卫] _internal/src/ 缺少 Cython pyd"
+                             "（找到 %d 个，version.pyd=%s）——禁止发布"
+                             % (_npyd, _has_ver))
+        print("[发布守卫] src pyd 校验通过（%d 个）" % _npyd)
         _publish(app_dir)
         _build_offline_fcpk()    # v4.1：统一加密离线资源包（.fcpk）
         return dist
