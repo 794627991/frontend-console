@@ -1114,3 +1114,37 @@ def test_redact_dot_prefixed_keyword_still_gap():
     """`.token hunter2pass`：点前缀按文件名/扩展名处理——与 `token.json:4:`
     路径形态无法区分，保留为声明缺口。"""
     assert BL._redact(".token hunter2pass") == ".token hunter2pass"
+
+
+# ---- a645（对抗审计 v5）三条实测缺口 --------------------------------------
+@pytest.mark.parametrize("raw,secret", [
+    ("password my secret phrase", "secret"),
+    ('password "correct horse battery"', "correct horse"),
+    ("password correct horse battery staple", "correct horse"),
+    ('pwd "my long passphrase here"', "passphrase"),
+])
+def test_space_form_multiword_secret_now_redacted(raw, secret):
+    """多词口令必须抹：①原实现只认单段/首段≤5；②带引号值未豁免行文判定；
+    ③首词表里的 correct/wrong 让 xkcd 名码整句穿透。"""
+    out = BL._redact(raw)
+    assert secret not in out, out
+    assert "***" in out, out
+
+
+@pytest.mark.parametrize("raw", [
+    "token is invalid",
+    "token ring topology",
+    "password reset failed",
+    "token ring topology failed",
+    "password of the day",
+    "password 错误，请重试",
+    "Api key rotation completed",
+])
+def test_space_form_prose_still_survives(raw):
+    """行文/技术短语不能被抹——句子里有语法虚词，或全部段都是行文词。"""
+    assert BL._redact(raw) == raw
+
+
+def test_prose_lead_has_no_duplicates():
+    """a645：词表里 "ring" 曾出现两次（复制粘贴遗迹）。"""
+    assert len(set(BL._SPACE_PROSE_LEAD)) == len(BL._SPACE_PROSE_LEAD)

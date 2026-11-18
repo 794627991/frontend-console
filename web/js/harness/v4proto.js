@@ -132,9 +132,15 @@
   };
 
   // ---- Node 黄金夹具校验入口 ----
-  if (typeof module !== 'undefined' && module.exports && typeof process !== 'undefined'
-      && process.argv && process.argv.indexOf('--golden') >= 0) {
-    var fs = require('fs');
+  // a645：仓库根的 package.json 带 "type": "module"（JS 工具链），Node 会把本
+  // 文件当 ESM 解析——此时既没有 module.exports 也没有 require，原来那条
+  // 「module.exports && ...」判据整段跳过，golden 校验静默什么都不跑（测试
+  // 里表现为 rc=0 但无输出）。改为只认 process.argv，fs 用 getBuiltinModule
+  // （ESM 下同步可用）兜底。
+  if (typeof process !== 'undefined' && process.argv
+      && process.argv.indexOf('--golden') >= 0) {
+    var fs = (typeof require === 'function') ? require('fs')
+      : process.getBuiltinModule('fs');
     var path = process.argv[process.argv.indexOf('--golden') + 1];
     var cases = JSON.parse(fs.readFileSync(path, 'utf8'));
     var fails = 0;

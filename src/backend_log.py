@@ -131,13 +131,16 @@ _SECRET_SPACE_RE = re.compile(
     # 含数字/符号或长度足够），纯英文行文一律不碰。
     # 分隔符必须是「空白」或「引号」——`token.json:4` 这类路径形态没有空白
     # 紧跟引号，天然排除。
-    r"(?i)(?<![\w.])(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key)[\w-]*"
+    r"(?i)(?<![\w.])((?:password|passwd|pwd|token|secret|api[_-]?key|"
+    r"access[_-]?key|private[_-]?key)[\w-]*)"
     # 分隔：空白，或**零宽**紧邻引号（不消耗引号——否则带引号值会剩个尾巴）
     r"(?:\s+|(?=[\"']))"
     r"(\"[^\"]*\"|'[^']*'"
-    r"|" + _SPACE_WORD + r"{6,}"
-    r"|" + _SPACE_WORD + r"{2,5}(?:\s+" + _SPACE_WORD + r"{2,}){1,3})")
+    # a645：多段分支必须排在单段之前——否则 `password correct horse ...`
+    # 被 {6,} 先吃掉首段 "correct"，整句只剩一个词进 _space_sub，判据看不见
+    # 后面的段（实测 xkcd 口令整句穿透的真因）。
+    r"|" + _SPACE_WORD + r"{2,}(?:\s+" + _SPACE_WORD + r"{2,}){1,3}"
+    r"|" + _SPACE_WORD + r"{6,})")
 # 行文判断在 _redact_line._space_sub 里做：值必须「像凭据」（含数字/符号，
 # 或单段纯字母 ≥8）才抹。下面这批是**行文首词**——出现在 keyword 后面时
 # 说明是句话（token has expired），一律不抹。
@@ -154,9 +157,32 @@ _SPACE_PROSE_LEAD = frozenset((
     "for", "to", "from", "in", "on", "at", "by", "with", "without", "and",
     "the", "a", "an", "this", "that", "of", "or", "if", "when", "while",
     "please", "try", "again", "later", "now", "here", "there", "too", "long",
-    "short", "wrong", "correct", "empty", "blank", "null", "none", "unknown",
+    "short", "wrong", "empty", "blank", "null", "none", "unknown",
     "value", "field", "length", "policy", "rules", "mode", "type", "name",
-    "ring", "sauce", "syntax", "usage", "ring", "topology",
+    "sauce", "ring", "syntax", "usage", "topology",
+))
+
+# a645：语法虚词——出现在多词值的**任意位置**就说明这是句话而不是口令
+# （token is invalid / password of the day / token ring topology）。这些词
+# 不可能是口令的一部分，判定比「首词表」更稳，也不会误伤 xkcd 形态
+# （correct horse battery staple 里没有虚词）。
+_SPACE_FUNC_WORDS = frozenset((
+    "is", "was", "are", "were", "be", "been", "being", "am",
+    "has", "have", "had", "will", "would", "can", "cannot", "could",
+    "should", "may", "might", "must", "do", "does", "did",
+    "not", "no", "for", "to", "from", "in", "on", "at", "by", "with",
+    "without", "and", "the", "a", "an", "this", "that", "these", "those",
+    "of", "or", "if", "when", "while", "than", "then", "as", "into",
+    "about", "after", "before", "again", "still", "also",
+))
+
+# a645：裸关键字（无尾缀）后跟多段纯字母值 = 口令（password my secret
+# phrase / password correct horse battery staple）。带尾缀的形态
+# （token_ring reset done / MyPassword123456 is wrong）是标识符+行文，
+# a623R 定过不许抹。
+_BARE_SECRET_KEYS = frozenset((
+    "password", "passwd", "pwd", "token", "secret", "api_key", "api-key",
+    "apikey", "access_key", "access-key", "private_key", "private-key",
 ))
 
 # HTTP 认证头 / 裸令牌：`Bearer xxx` / `Basic xxx` / `token eyJ...`
@@ -225,19 +251,56 @@ def _redact_line(text):
         # a635（对抗审计 P1-1）：必须「像凭据」才抹——纯英文**行文**（token
         # is invalid / password reset failed / Token ring topology）不是凭据，
         # 抹掉等于毁日志；但纯字母口令真实存在（passwd rootpass / pwd
-        # abcdefgh），不能一棍子打死。判据：
-        #   ① 任一段含数字/非字母符号（Sup3r_Secret / hunter2pass）→ 是凭据
-        #   ② 单段纯字母且长度 ≥8（rootpass / abcdefgh）→ 是凭据
-        #   ③ 首段是常见行文虚词（is / has / failed / reset…）→ 不是凭据
+        # abcdefgh / password my secret phrase），不能一棍子打死。
+        # a645（对抗审计 v5 三条实测缺口）：
+        #   ① 带引号的多词值原样穿透——引号是「这是值」的显式语法，直接抹；
+        #   ② 首词行文表把 correct/wrong/value/name/type 也列了，xkcd 名码
+        #      `correct horse battery staple` 因首词 correct 整句穿透；
+        #   ③ 词表里 "ring" 重复两次（复制粘贴遗迹）。
+        # 现判据（按序）：
+        #   · 引号形态                        → 凭据，抹
+        #   · 任一段是语法虚词（is/of/the…）  → 句子，不抹
+        #   · 每一段都是行文词                → 句子，不抹
+        #     （token ring topology failed / password reset failed）
+        #   · 任一段含数字/非字母符号         → 凭据，抹
+        #   · 单段 ≥8（rootpass）             → 凭据，抹；<8 视为行文（token ok）
+        #   · 裸关键字后的其余多段            → 凭据，抹
+        #   · 带尾缀标识符（token_ring …）    → 按 a623R 约定不抹
         parts = val.split()
-        if parts and len(parts[0]) <= 6 \
-                and parts[0].lower() in _SPACE_PROSE_LEAD:
-            return m.group(0)
+        quoted = bool(m.group(2)[:1] in ("\"", "'"))
+        # a645：尾随的 `k=v` 字段不属于值（--password hunter2 user=admin 的
+        # user=admin 必须原样保留，a616 定过）。剥掉尾部含 '=' 的段后再判定，
+        # 抹的时候只抹值、保留尾部。
+        tail = ""
+        if not quoted:
+            ks = []
+            while len(parts) > 1 and "=" in parts[-1]:
+                ks.insert(0, parts.pop())
+            if ks:
+                tail = " " + " ".join(ks)
+        low = [p.lower() for p in parts]
+
+        def _out(secret):
+            """统一出口：secret=True 抹值（保留引号与尾部字段），否则原样。"""
+            if not secret:
+                return m.group(0)
+            if quoted:
+                return m.group(1) + " ***" + tail
+            return m.group(1) + " ***" + tail
+
+        if quoted:
+            return _out(True)
+        if any(p in _SPACE_FUNC_WORDS for p in low):
+            return _out(False)
+        if all(p in _SPACE_PROSE_LEAD for p in low):
+            return _out(False)
         if any(any(not ch.isalpha() for ch in p) for p in parts):
-            return m.group(1) + " ***"
-        if len(parts) == 1 and len(parts[0]) >= 8:
-            return m.group(1) + " ***"
-        return m.group(0)
+            return _out(True)
+        if len(parts) == 1:
+            return _out(len(parts[0]) >= 8)
+        if m.group(1).lower() in _BARE_SECRET_KEYS:
+            return _out(True)
+        return _out(False)
     return _SECRET_SPACE_RE.sub(_space_sub, text)
 
 
