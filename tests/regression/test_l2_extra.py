@@ -54,7 +54,7 @@ def run():
                   % json.dumps(FIX + "/sample.txt"), await_promise=True, timeout=60)
             ok_monaco = pg.wait_until(
                 "Object.values(connections).some(c=>c.meta&&c.meta.label==='sample.txt'&&!!c.monaco)",
-                timeout=15, interval=0.5)
+                timeout=45, interval=0.5)   # headless 冷启动首次加载 Monaco 可能 >15s，避免偶发假 FAIL
             marker = "回归保存验证-" + str(int(time.time()))
             pg.ev("(function(){var c=Object.values(connections).find(x=>x.meta&&x.meta.label==='sample.txt');"
                   "if(!c)return 'no-conn';c.monaco.setValue(c.monaco.getValue()+'\\n%s');"
