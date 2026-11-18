@@ -823,8 +823,8 @@
    },
    "top_level_exec": [
     "document.querySelectorAll('.claude-sheet-tab').forEach(tab => {",
-    "window._claudeTitleMap = _claudeTitleMap;",
-    "window.connectClaude = connectClaude;"
+    "window.connectClaude = connectClaude;",
+    "window.refreshClaudePanel = refreshClaudePanel;"
    ]
   },
   "js/cmd-lib.js": {
@@ -16050,7 +16050,7 @@
     "v",
     "wantLight"
    ],
-   "is_module": true,
+   "is_module": false,
    "load_index": 5,
    "referenced_by": {
     "js/bit-calc.js": [
@@ -16222,8 +16222,7 @@
    },
    "top_level_exec": [
     "(async function initTheme() {",
-    "})();",
-    "window.LIGHT_THEMES = LIGHT_THEMES;"
+    "})();"
    ]
   },
   "js/tree-fileops.js": {

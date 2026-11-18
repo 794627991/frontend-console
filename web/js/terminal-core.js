@@ -74,7 +74,7 @@ function buildTerminal(portId, meta) {
   tab.innerHTML = `<span class="led"></span><span class="label">${esc(meta.label || portId)}</span><span class="baud" style="color:var(--muted);font-size:10px;">${meta.kind === 'ssh' || meta.kind === 'claude' || meta.kind === 'telnet' || meta.kind === 'shell' ? '' : '@'+meta.baud}</span> <span class="close" title="关闭">✕</span>`;
   tab.onclick = (e) => {
     if (e.target.classList.contains('close')) { e.stopPropagation(); closeConnection(portId); return; }
-    switchTab(portId);
+    window.switchTab(portId);
   };
   // 终端区
   const wrap = document.createElement('div');

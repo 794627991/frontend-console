@@ -3,9 +3,15 @@
 // 目标：**只开低争议的「真缺陷」规则**，不碰格式类规则（引号/缩进/分号），
 // 那会把 4 万行代码淹没成几万条噪音，真问题反而看不见。
 //
-// 这是"传统 script"项目：web/index.html 有 100 个 <script> 标签按顺序加载，
-// 零 ES module，所以每个文件的顶层声明都是全局。跨文件互调全靠这个共享
-// 命名空间 —— app-globals.json 由 tools/js_collect_globals.py 扫描生成。
+// 模块化一期/二期后（js-modularization 分支）：76 个前端 js 中 69 个已转
+// type="module"（模块作用域 + window 挂载/存取器互调，零 import/export）。
+// 留守经典 7 个（含 screenshot 独立页）：workerbase（fetch 补丁必须最先）、
+// icons/util（底层地基）、theme（首帧时机敏感——快照挂载 split-brain 审计
+// 后回滚，见审计修复提交）、ts-outline（动态 import tree-sitter 的宿主）、
+// vcs-panel/vcs-git-ops（并行会话开发中）、screenshot.html。跨文件互调
+// 依旧靠共享命名空间（模块侧经 window 挂载/存取器显式化）——
+// app-globals.json 由 tools/js_collect_globals.py 扫描生成（模块文件只收
+// window 挂载与 defineProperty 存取器，不收内部声明）。
 //
 // 用法（在项目根执行）：
 //   python tools/js_collect_globals.py           # 先刷新全局清单

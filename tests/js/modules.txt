@@ -1,6 +1,5 @@
 js/monaco-bridge.js
 js/file-icons.js
-js/theme.js
 js/skin.js
 js/terminal-core.js
 js/highlight.js

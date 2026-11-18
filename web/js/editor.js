@@ -84,10 +84,10 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
       const c = connections[pid];
       if (c && c.meta && c.meta.kind === 'editor' && String(c.meta.label).toLowerCase() === String(name).toLowerCase()) {
         if (extPath || c.extPath) {
-          if (_normPath(c.extPath) === _normPath(extPath)) { switchTab(pid); return c; }
+          if (_normPath(c.extPath) === _normPath(extPath)) { window.switchTab(pid); return c; }
           continue;   // 同名不同路径：不劫持，新开 tab
         }
-        switchTab(pid); return c;   // a209批1：去重分支也返回 conn（openFileSmart 行号跳转需要拿到实例）
+        window.switchTab(pid); return c;   // a209批1：去重分支也返回 conn（openFileSmart 行号跳转需要拿到实例）
       }
     }
   }
@@ -97,7 +97,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
   tab.dataset.portId = portId;
   tab.innerHTML = `<span class="led"></span><span class="tab-ico">${fileIconHtml(name || '.note', 14)}</span><span class="label">${esc(name || '未命名')}</span><span class="baud"></span><span class="close" title="关闭">✕</span>`;
   if (extPath) tab.title = extPath;   // a209批4：悬浮显完整路径
-  tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); closeEditorTab(portId); return; } switchTab(portId); };
+  tab.onclick = (e) => { if (e.target.classList.contains('close')) { e.stopPropagation(); window.closeEditorTab(portId); return; } window.switchTab(portId); };
   // 双击 tab 标题 → 快捷改名（外部文件禁用——保持原路径）
   tab.querySelector('.label').ondblclick = (e) => {
     e.stopPropagation();
@@ -425,7 +425,7 @@ function buildEditorTab(name, content, extPath, fileMtime, draftExt) {
     }
   };
   document.addEventListener('keydown', conn._docKey);
-  switchTab(portId);
+  window.switchTab(portId);
   refreshSidebar();
   if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a213 P2：打开即着色
   return conn;
@@ -1527,7 +1527,7 @@ function _edCloseNow(conn) {
   if (remaining.length) {
     if (activePortId === conn.portId) {
       // a455：自动回切不计 MRU（与 harness 关 tab 同约定）
-      switchTab(back && connections[back] ? back : remaining[0], true);
+      window.switchTab(back && connections[back] ? back : remaining[0], true);
     }
   }
   else {
@@ -2636,7 +2636,8 @@ window._edConfirm = _edConfirm;
 window._edGetContent = _edGetContent;
 window._edOnSwitchEditor = _edOnSwitchEditor;
 window._edStatText = _edStatText;
-window._mdPvTheme = _mdPvTheme;
+Object.defineProperty(window, '_mdPvTheme', { configurable: true,
+  get() { return _mdPvTheme; }, set(v) { _mdPvTheme = v; } });
 window.newFileMenuShow = newFileMenuShow;
 window.openDroppedFile = openDroppedFile;
 window.openEditorFile = openEditorFile;

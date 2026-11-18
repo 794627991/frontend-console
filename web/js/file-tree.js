@@ -235,7 +235,7 @@ function treeInvalidate(dirPath) {
     // 恒 loading 行无人 fetch，树卡「加载中」（未展开目录上新建即触发）。
     // 父展开则重拉；收起态清缓存即可（下次展开自然拉新）
     if (parent && _TV.open.has(parent)) _tvExpand(parent);
-    else _tvRebuild();
+    else window._tvRebuild();
   }
 }
 window.treeInvalidate = treeInvalidate;
@@ -515,7 +515,7 @@ async function _tvExpand(path) {
   _TV.open.add(path);
   const seq = (_TV.seq.get(path) || 0) + 1;
   _TV.seq.set(path, seq);
-  _tvRebuild();          // loading 行立即出现
+  window._tvRebuild();          // loading 行立即出现
   let j;
   try {
     const r = await fetch('/api/tree/list', {method:'POST',
@@ -523,13 +523,13 @@ async function _tvExpand(path) {
       body: JSON.stringify({path, hidden: _treeShowHidden})});
     j = await r.json();
   } catch(e) {
-    if (_TV.seq.get(path) === seq) { _TV.cache.set(path, {err: '读取失败'}); _tvRebuild(); }
+    if (_TV.seq.get(path) === seq) { _TV.cache.set(path, {err: '读取失败'}); window._tvRebuild(); }
     return;
   }
   if (_TV.seq.get(path) !== seq) return;   // 后发请求已覆盖，本次作废
-  if (!j.ok) { _TV.cache.set(path, {err: j.err || '读取失败'}); _tvRebuild(); return; }
+  if (!j.ok) { _TV.cache.set(path, {err: j.err || '读取失败'}); window._tvRebuild(); return; }
   _TV.cache.set(path, {entries: j.entries || [], truncated: j.truncated || 0});
-  _tvRebuild();
+  window._tvRebuild();
 }
 
 function _tvCollapse(path) {
@@ -547,7 +547,7 @@ function _tvCollapse(path) {
   for (const k of [..._TV.open]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.open.delete(k);
   for (const k of [..._TV.cache.keys()]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.cache.delete(k);
   for (const k of [..._TV.seq.keys()]) if (_nk(k) === _self || _nk(k).startsWith(_pre)) _TV.seq.delete(k);
-  _tvRebuild();
+  window._tvRebuild();
 }
 
 // a3xx（用户定调「跟随我都说了，全删，说全删就要全删，别留」）：
@@ -567,7 +567,7 @@ async function refreshTree() {
   } catch(e) { return; }
   if (!roots.length) {
     _TV.roots = []; _TV.open.clear(); _TV.cache.clear();
-    _tvRebuild();
+    window._tvRebuild();
     const host2 = $('treeRoots');
     let s = host2.querySelector('.tree-sizer');
     if (s) s.remove();
@@ -580,7 +580,7 @@ async function refreshTree() {
   _TV.open.clear();
   _TV.cache.clear();
   _TV.rendered = [-1, -1];
-  _tvRebuild();
+  window._tvRebuild();
   host.scrollTop = 0;
 }
 
@@ -615,7 +615,7 @@ async function _treeToggleHidden() {
       if (j.ok) _TV.cache.set(p, {entries: j.entries || [], truncated: j.truncated || 0});
     } catch(_) {}
   }));
-  _tvRebuild();
+  window._tvRebuild();
 }
 
 // ---- 滚动：rAF 节流窗口重渲 ----
