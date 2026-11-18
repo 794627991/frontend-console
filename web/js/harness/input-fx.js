@@ -2,7 +2,10 @@
   const _HG_MENTION_FILES = [];   // 已引用路径（overlay 高亮用）
   function _hgMentionReset() { _HG_MENTION_FILES.length = 0; }
   function closeMention() {
-    _hgMentionEl.style.display = 'none';
+    // a656：页面早期/切换会话时 _hgMentionEl 可能尚未构建（黑匣子实锤
+    // newChat→switchTo→closeMention 必抛 Cannot read properties of
+    // undefined (reading 'style')）——空引用保护。
+    if (_hgMentionEl) _hgMentionEl.style.display = 'none';
     _HG.mention = null;
   }
   function updateMention() {
@@ -26,6 +29,9 @@
   function renderMention(loading) {
     const m = _HG.mention;
     if (!m) { closeMention(); return; }
+    // a657：与 closeMention 同款空引用保护——页面早期/切换期元素未构建时
+    // 直接放弃本次渲染（下一条 mention 输入会重建）。
+    if (!_hgMentionEl) { _HG.mention = null; return; }
     const files = m.files || [];
     if (!files.length && !loading) { closeMention(); return; }
     _hgMentionEl.style.display = 'block';
@@ -82,6 +88,8 @@
       : 'name=' + encodeURIComponent(p));
   }
   function renderAtts() {
+    // a657：面板未构建时跳过（早期切换竞态；与 closeMention/renderMention 同款）
+    if (!_hgAttsEl) return;
     if (!_HG.atts.length) { _hgAttsEl.style.display = 'none'; _hgAttsEl.innerHTML = ''; return; }
     _hgAttsEl.style.display = 'flex';
     _hgAttsEl.innerHTML = _HG.atts.map((a, i) => {

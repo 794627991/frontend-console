@@ -22,6 +22,7 @@
 为什么以接管流为主：本工程日志几乎全是裸 print（main.py 20+ 处、src/* 大量），
 改成 logging 要动几十个文件且容易漏。接管 stdout/stderr 能一次覆盖全部输出。
 """
+import atexit
 import collections
 import io
 import itertools
@@ -825,6 +826,88 @@ def install_logging_bridge(level=None):
     return _logging_bridge.install(level)
 
 
+# ---- 退出原因审计（a663：从 main.py 合并——单一真源）----
+# 用户定调：常规日志不落盘；**仅非预期退出**写一个 <64KB 的小文件
+# （正常退出只记内存）。目的：工具莫名消失时能直接看到原因。
+_EXIT_AUDIT = {"why": "", "at": 0.0, "done": False, "started": time.time()}
+
+
+def set_exit_reason(why):
+    """先到先得：具体路径（托盘/API/用户关窗）优先于兜底 cleanup。"""
+    if not _EXIT_AUDIT["why"]:
+        _EXIT_AUDIT["why"] = str(why)
+        _EXIT_AUDIT["at"] = time.time()
+
+
+def audit_exit():
+    """幂等收口：写内存日志；非预期退出时额外落一个小文件。"""
+    if _EXIT_AUDIT.get("done"):
+        return
+    _EXIT_AUDIT["done"] = True
+    why = _EXIT_AUDIT.get("why") or "unknown"
+    up = max(0.0, time.time() - _EXIT_AUDIT.get("started", time.time()))
+    _normal = why in ("user_close", "tray_exit", "api_close",
+                      "window_closed", "cleanup")
+    try:
+        log("exit", "退出原因: %s（运行 %.0f 秒）" % (why, up))
+    except Exception:
+        pass
+    if _normal:
+        return
+    try:
+        import os
+        path = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                            "exit_reason.log")
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > 64 * 1024:
+                os.replace(path, path + ".1")
+        except Exception:
+            pass
+        lines = ["[%s] reason=%s uptime=%.0fs" % (
+            time.strftime("%Y-%m-%d %H:%M:%S"), why, up)]
+        try:
+            tail = [e for e in iter_entries(0)][-40:]
+            for _seq, _ts, _level, _src, _tag, _text in tail:
+                lines.append("%s %s [%s] %s" % (_ts, _level, _tag, _text[:200]))
+        except Exception:
+            pass
+        with open(path, "a", encoding="utf-8", errors="replace") as f:
+            f.write(NL.join(lines) + NL)
+    except Exception:
+        pass
+
+
+def _install_exit_hooks():
+    """atexit + signal 退出审计安装（幂等）。"""
+    try:
+        atexit.register(audit_exit)
+    except Exception:
+        pass
+    try:
+        import os
+        import signal as _sig
+
+        def _on_signal(signum, _frame):
+            set_exit_reason("signal:%s" % signum)
+            audit_exit()
+            try:
+                _sig.signal(signum, _sig.SIG_DFL)
+            except Exception:
+                pass
+            try:
+                os.kill(os.getpid(), signum)
+            except Exception:
+                pass
+
+        for _s in (_sig.SIGINT, _sig.SIGTERM):
+            try:
+                _sig.signal(_s, _on_signal)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def install_excepthooks():
     """装全局未捕获异常钩子（主线程 + 所有线程）。幂等。
 
@@ -839,6 +922,7 @@ def install_excepthooks():
     if _excepthooks_installed:
         return
     _excepthooks_installed = True
+    _install_exit_hooks()
     # 盲区#1（2026-11-17 日志审计）：GUI 线程（.NET 消息循环）异常原默认
     # WinForms 弹框/静默——窗体手术全链（_fc_wndproc/_lay/_do_gui/web_tabs
     # 的 WinForms 事件）跑在 GUI 线程，漏网异常不进任何日志。订阅 .NET 两

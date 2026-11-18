@@ -12,7 +12,7 @@ import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from cdp_lib import Page, result          # noqa: E402
+from cdp_lib import Page, result, filter_known_noise          # noqa: E402
 
 
 def _groups(pg):
@@ -37,6 +37,11 @@ def run():
     out = []
     try:
         pg.clear_errs()
+        # 前置：headless 页面是独立实例，harness 面板懒构建——先按真实用户
+        # 路径点 Claude 入口，避免「面板未构建时直调 newChat」的伪异常。
+        pg.ev("(function(){var b=document.querySelector('#btnClaude');"
+              "if(b && !window._hgFlow){b.click();return 1;}return 0;})()")
+        pg.wait_until("!!(window._hgFlow)", timeout=15, interval=0.4)
         orig = pg.ev("(window._HG&&window._HG.sid)||null")
         n0 = _groups(pg)
         heads0 = _heads(pg)
@@ -136,10 +141,11 @@ def run():
                 out.append(result("R1", "快速切会话 ×3 内容不丢", "L2", "P1", "SKIP", "无活动会话"))
         except Exception as e:
             out.append(result("R1", "快速切会话 ×3 内容不丢", "L2", "P1", "CHECK", repr(e)))
-        errs = pg.drain_errs()
+        errs, noise = filter_known_noise(pg.drain_errs())
         out.append(result("L2E", "L2 期间无页面异常", "L2", "P0",
                           "PASS" if not errs else "FAIL",
-                          json.dumps(errs[:5], ensure_ascii=False)))
+                          json.dumps(errs[:5], ensure_ascii=False)
+                          + (" [已知噪声 %d 条]" % len(noise) if noise else "")))
     finally:
         # 恢复：切回原会话
         try:

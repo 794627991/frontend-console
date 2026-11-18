@@ -1,0 +1,203 @@
+/* a654 子系统分卷：vcs（由 tools/split_css_subsystems.py 从 style.css 重排；段内顺序不变） */
+
+/* v3.5.148（用户批注「没有页跳转」）：提交历史弹窗页码跳转输入框 */
+.hg-vcs-hpgin { width: 3.4em; text-align: center; padding: 1px 2px; margin: 0 2px;
+  font: inherit; font-size: var(--fs-xs); border: 1px solid var(--border);
+  border-radius: 4px; background: var(--bg-input); color: inherit; }
+.hg-vcs-hpgin:focus { outline: none; border-color: var(--accent); }
+
+/* v3.5.198 提交列表增减徽章（git --shortstat；svn 无行级统计不渲染） */
+.hg-vcs-stat { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
+  white-space: nowrap; }
+.hg-vcs-stat .up { color: #6fbf73; font-weight: 600; }
+.hg-vcs-stat .del { color: #e06c75; font-weight: 600; }
+
+/* ============================================================
+   v3.5.117 「版本」页签（git/svn，24-vcs.js）——右栏窗格第三伪 tab
+   ============================================================ */
+.hg-vcs-pane { overflow-y: auto; padding: 16px 40px 24px; font-size: 12px; }
+.hg-vcs-rootrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.hg-vcs-roott { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.hg-vcs-root { flex: 1; min-width: 0; background: var(--bg-input); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+.hg-vcs-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
+.hg-vcs-badge { flex-shrink: 0; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+  font-weight: 600; background: rgba(80,200,120,.15); color: #4caf7d; }
+.hg-vcs-badge.svn { background: rgba(80,140,220,.15); color: #6a9fe0; }
+.hg-vcs-badge.none { background: rgba(150,150,150,.15); color: var(--muted); }
+.hg-vcs-branch { font-weight: 600; }
+/* a650：分支按钮（点击开分支管理）；svn 也渲染但点了只提示 */
+.hg-vcs-branchbtn { background: transparent; border: 1px solid transparent; color: inherit;
+  font: inherit; font-weight: 600; padding: 2px 7px; border-radius: 6px; cursor: pointer; }
+.hg-vcs-branchbtn:hover { background: rgba(128,128,128,.12); border-color: var(--border); }
+/* a650：丢弃改动 = 危险操作，红色描边提示 */
+.hg-vcs-danger { color: #d96a6a; border-color: rgba(230,90,90,.45); }
+.hg-vcs-danger:hover:not(:disabled) { background: rgba(230,90,90,.12); }
+.hg-vcs-count { margin-left: auto; color: var(--muted); font-size: 11px; flex-shrink: 0; }
+/* a455：执行方式芯片（版本头右侧，点击开 SSH 配置） */
+.hg-vcs-rmchip { flex-shrink: 0; margin-left: 8px; padding: 2px 9px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; cursor: pointer; border: 1px solid transparent;
+  background: rgba(150,150,150,.15); color: var(--muted); }
+.hg-vcs-rmchip.on { background: rgba(80,200,120,.15); color: #4caf7d;
+  border-color: rgba(80,200,120,.35); }
+.hg-vcs-rmchip.warn { background: rgba(230,160,60,.15); color: #d99a3a;
+  border-color: rgba(230,160,60,.35); }
+.hg-vcs-rmchip:hover { filter: brightness(1.15); }
+/* a455：SSH 配置浮层 */
+.hg-vcs-rdlg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 10060;
+  display: flex; align-items: center; justify-content: center; }
+.hg-vcs-rdlg-card { width: 560px; max-width: 94vw; max-height: 88vh; overflow: auto;
+  padding: 18px 20px; border-radius: 12px; background: var(--bg-panel);
+  border: 1px solid var(--border); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.hg-vcs-rdlg-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.hg-vcs-rdlg-sub { font-size: 12px; color: var(--muted); line-height: 1.65;
+  margin-bottom: 12px; }
+.hg-vcs-rdlg-row { display: flex; gap: 8px; align-items: center; margin: 7px 0;
+  font-size: 12px; }
+.hg-vcs-rdlg-row > label { width: 92px; flex-shrink: 0; color: var(--muted); }
+.hg-vcs-rdlg-row > input, .hg-vcs-rdlg-row > select { flex: 1; min-width: 0;
+  background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px;
+  font-family: var(--font-mono); }
+.hg-vcs-rdlg-acts { display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 14px; flex-wrap: wrap; }
+.hg-vcs-rdlg-msg { font-size: 12px; line-height: 1.6; margin-top: 10px;
+  padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
+.hg-vcs-rdlg-msg.ok { background: rgba(80,200,120,.12); color: #4caf7d; }
+.hg-vcs-rdlg-msg.err { background: rgba(230,90,90,.12); color: #d96a6a; }
+.hg-vcs-rdlg-msg.info { background: rgba(120,120,120,.12); color: var(--muted); }
+/* a650：分支 / stash / 标签弹窗（复用 .hg-vcs-rdlg 外壳） */
+.hg-vcs-rdlg-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.hg-vcs-rdlg-sub2 { font-size: 11px; font-weight: 400; color: var(--muted);
+  font-family: var(--font-mono); word-break: break-all; }
+.hg-vcs-rdlg-x { margin-left: auto; padding: 0 7px; }
+.hg-vcs-rdlg-msg.warn { background: rgba(230,160,60,.12); color: #d99a3a; }
+.hg-vcs-rdlg-acts { justify-content: flex-start; flex-wrap: wrap; align-items: center; }
+.hg-vcs-rdlg-input { flex: 1 1 150px; min-width: 110px; background: var(--bg-input);
+  color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; font-size: 12px; }
+.hg-vcs-brlist { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.hg-vcs-brrow { display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); font-size: 12px; }
+.hg-vcs-brrow:last-child { border-bottom: none; }
+.hg-vcs-brrow:hover { background: rgba(128,128,128,.07); }
+.hg-vcs-brrow.cur { background: rgba(80,200,120,.08); }
+.hg-vcs-brname { font-family: var(--font-mono); font-weight: 600; flex-shrink: 0; }
+.hg-vcs-brrev { font-family: var(--font-mono); color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.hg-vcs-brab { font-size: 11px; color: #6a9fe0; flex-shrink: 0; }
+.hg-vcs-brsub { flex: 1; min-width: 0; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-vcs-brgo, .hg-vcs-brdel { padding: 1px 8px; font-size: 11px; flex-shrink: 0; }
+.hg-vcs-brsec { font-size: 11px; color: var(--muted); margin: 12px 0 6px; }
+.hg-vcs-strow { display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); font-size: 12px; }
+.hg-vcs-strow:last-child { border-bottom: none; }
+.hg-vcs-strow:hover { background: rgba(128,128,128,.07); }
+.hg-vcs-strow .btn { padding: 1px 8px; font-size: 11px; flex-shrink: 0; }
+/* a650：弹窗内二次确认——必须盖在 .hg-vcs-rdlg 之上（10060），否则确认框
+   被开着的分支/标签弹窗盖住，点了看着像没反应 */
+.hg-vcs-cfm { z-index: 10080; }
+.hg-vcs-cfm .hg-vcs-rdlg-card { width: 460px; }
+.hg-vcs-rdlg-body { font-size: 12px; }
+.hg-vcs-rdlg-body .hg-vcs-rdlg-msg { margin-top: 0; }
+.hg-vcs-warn { color: var(--muted); font-size: 11px; }
+.hg-vcs-acts { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
+.hg-vcs-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
+.hg-vcs-files { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.hg-vcs-frow { display: flex; gap: 8px; align-items: center; padding: 7px 14px;
+  border-bottom: 1px solid var(--border); cursor: pointer; }
+.hg-vcs-frow:last-child { border-bottom: none; }
+.hg-vcs-frow:hover { background: rgba(128,128,128,.08); }
+.hg-vcs-st { flex-shrink: 0; width: 20px; height: 18px; line-height: 18px; text-align: center;
+  border-radius: 4px; font-size: 11px; font-weight: 700; }
+.hg-vcs-st.m { background: rgba(230,145,56,.18); color: #e69138; }
+.hg-vcs-st.a { background: rgba(76,175,125,.18); color: #4caf7d; }
+.hg-vcs-st.d, .hg-vcs-st.c { background: rgba(229,72,77,.18); color: #e5484d; }
+.hg-vcs-st.r { background: rgba(140,100,220,.18); color: #a58ce0; }
+.hg-vcs-st.u { background: rgba(150,150,150,.18); color: var(--muted); }
+.hg-vcs-ck { flex-shrink: 0; }
+.hg-vcs-fpath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-family: var(--font-mono); font-size: 11px; }
+.hg-vcs-ren { color: var(--muted); margin-right: 4px; text-decoration: line-through; }
+.hg-vcs-more { padding: 8px 10px; color: var(--muted); font-size: 11px; }
+.hg-vcs-out { margin: 10px 0; border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; }
+.hg-vcs-out-t { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+.hg-vcs-out pre { margin: 0; white-space: pre-wrap; word-break: break-all;
+  font-family: var(--font-mono); font-size: 11px; max-height: 180px; overflow-y: auto; }
+.hg-vcs-sec { margin: 12px 0 6px; font-weight: 600; }
+.hg-vcs-logrow { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); }
+.hg-vcs-logrev { flex-shrink: 0; font-family: var(--font-mono); color: var(--accent); font-size: 11px; }
+.hg-vcs-logmsg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-vcs-logau { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.hg-vcs-empty { padding: 18px 10px; text-align: center; color: var(--muted); font-size: 12px; }
+/* v3.5.292：svn 未版本控制折叠条——次要信息降噪（默认收起=svn st -q 口径） */
+.hg-vcs-unv { margin: 8px 0 0; }
+.hg-vcs-unv-t { padding: 7px 10px; color: var(--muted); font-size: 11px; cursor: pointer;
+  border: 1px dashed var(--border); border-radius: 8px; user-select: none; }
+.hg-vcs-unv-t:hover { color: var(--fg); border-color: var(--muted); }
+.hg-vcs-unv .hg-vcs-files { margin-top: 6px; max-height: 320px; overflow-y: auto; }
+.hg-vcs-loading { padding: 18px 10px; text-align: center; color: var(--muted); }
+.hg-vcs-cfile { display: flex; gap: 6px; align-items: center; padding: 3px 0;
+  font-family: var(--font-mono); font-size: 11px; }
+.hg-vcs-cnew { color: #e69138; font-size: 11px; margin: 6px 0; }
+.hg-vcs-msg { width: 100%; margin-top: 8px; background: var(--bg-input); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  font-size: 12px; resize: vertical; }
+
+/* v3.5.131：提交详情文件行（点提交行展开） */
+.hg-vcs-cfiles { padding: 0 8px 6px 26px; }
+.hg-vcs-cfrow { font-size: var(--fs-xs); font-family: var(--font-mono); color: var(--fg);
+  padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.hg-vcs-cfrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* ---- v3.5.133 提交历史弹窗（designer 方案：master-detail，880px/84vh）---- */
+/* a650（用户实锤「面板有点窄」）：880 → 1240——master-detail 双栏 + 日期/作者/统计列在旧宽度下互相挤压 */
+.hg-modal-vcslog { width: min(1240px, 96%); max-width: 96%; max-height: 86vh; display: flex; flex-direction: column; }
+.hg-vcs-hbody { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--border); }
+.hg-vcs-hlist { width: 46%; min-width: 280px; overflow-y: auto; border-right: 1px solid var(--border);
+  padding: 4px 0; }
+.hg-vcs-hlrow { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px;
+  font-size: var(--fs-xs); cursor: pointer; border-left: 2px solid transparent; }
+.hg-vcs-hlrow:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.hg-vcs-hlrow.on { background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-left-color: var(--accent); }
+.hg-vcs-logdt { flex: none; font-variant-numeric: tabular-nums; color: var(--muted); }
+.hg-vcs-hlfoot { padding: 6px 8px; font-size: var(--fs-2xs); color: var(--muted); }
+.hg-vcs-hdetail { flex: 1; overflow-y: auto; padding: 10px 12px; }
+.hg-vcs-hmeta { display: flex; gap: 12px; align-items: baseline; font-size: var(--fs-sm); }
+.hg-vcs-hmeta b { font-family: var(--font-mono); color: var(--accent); }
+.hg-vcs-hmsg { margin: 6px 0 10px; white-space: pre-wrap; font-size: var(--fs-sm); }
+
+/* ---- v2 提交历史弹窗：工具栏/pager/deco/复制 ---- */
+.hg-vcs-htool { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 8px 12px 4px; }
+.hg-vcs-hsearch, .hg-vcs-hauthor { font-size: var(--fs-xs); padding: 4px 8px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg-card);
+  color: var(--fg); min-width: 0; }
+.hg-vcs-hsearch { flex: 1 1 170px; }
+.hg-vcs-hauthor { flex: 0 1 110px; }
+.hg-vcs-hdate { font-size: var(--fs-xs); padding: 3px 6px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-card); color: var(--fg); }
+.hg-vcs-chip { font-size: var(--fs-2xs); padding: 3px 8px; }
+.hg-vcs-chip.on { color: var(--accent); border-color: var(--accent); }
+/* a650：图形视图的 ASCII 连线列（--graph），等宽 + 不换行 */
+.hg-vcs-graph { font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  white-space: pre; flex-shrink: 0; }
+.hg-vcs-hsep { font-size: var(--fs-2xs); color: var(--muted); }
+.hg-vcs-hpager { display: flex; gap: 8px; align-items: center;
+  padding: 6px 12px; border-top: 1px solid var(--border); }
+.hg-vcs-hpginfo { font-size: var(--fs-xs); color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.hg-vcs-hsize { font-size: var(--fs-xs); padding: 2px 4px;
+  border: 1px solid var(--border); border-radius: 5px; background: var(--bg-card); color: var(--fg); }
+.hg-vcs-deco { font-size: 9px; color: var(--muted); margin-left: 4px; }
+/* a650：HEAD/分支装饰改 SVG 徽标（原文太长挤掉日期/标题，悬停看全名） */
+.hg-vcs-decoic { display: inline-flex; align-items: center; vertical-align: -2px;
+  margin-left: 4px; color: var(--accent, #2a6db5); cursor: help; flex: none; }
+.hg-vcs-copybtn { flex: none; visibility: hidden; font-size: 11px; cursor: pointer;
+  color: var(--muted); padding: 0 2px; }
+.hg-vcs-hlrow:hover .hg-vcs-copybtn { visibility: visible; }
+.hg-vcs-copybtn:hover { color: var(--accent); }

@@ -538,6 +538,9 @@
     // 藏于 flowwrap，任何 busy 态变更（5s 自愈轮询等）都不动活动条/输入卡
     if (_HG.readonly) return;
     _HG.busy = b;
+    // a657：面板尚未构建（页面早期/新会话切换竞态）时只记账面状态，
+    // 不做 DOM 操作——实测 newChat→switchTo→setBusy 对 _hgConn.tab 空引用。
+    if (!_hgConn || !_hgConn.tab || !_hgSendBtn) return;
     _hgConn.tab.querySelector('.led').classList.toggle('on', b);
     _hgSendBtn.classList.toggle('stop', b);
     _hgSendBtn.title = b ? '停止生成' : '发送（Enter）';

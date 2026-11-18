@@ -23,7 +23,8 @@ let panel = null;
   let tagFilter = '';
   let allRows = [];               // 本地全量（最多保留一个上限，防 DOM/内存无界）
   let droppedLocal = false;       // 本地因上限截断过（界面提示用）
-  let gen = 0;                    // 会话代际：show/clear 递增，丢弃在途旧响应
+  let gen = 0;
+  let _verLabel = '';   // 导出/复制头部追溯用（界面不显示）                    // 会话代际：show/clear 递增，丢弃在途旧响应
   let inFlight = false;           // 同一时刻只允许一个请求在途（背压）
   let catchUpMs = 0;              // truncated 追赶的退避间隔
   let tagEvicted = false;         // 所选来源已被本地窗口淘汰（提示用）
@@ -64,7 +65,6 @@ let panel = null;
     panel.innerHTML =
       '<div class="bl-head">' +
       '  <span class="bl-title">后端日志</span>' +
-      '  <span class="bl-ver" title="当前版本（导出文件头部也带版本号）"></span>' +
       '  <select class="bl-sel" data-bl="level" title="按级别过滤">' +
       '    <option value="all">全部</option>' +
       '    <option value="warn">警告以上</option>' +
@@ -191,7 +191,7 @@ let panel = null;
       showBanner('内容约 ' + fmtBytes(approx) + '，请用「导出」保存完整日志', 4000, true);
       return;
     }
-    const ver = (panel.querySelector('.bl-ver') || {}).textContent || '';
+    const ver = _verLabel || '';
     const head = [
       '='.repeat(60),
       '前端控制台 ' + ver + ' 后端日志',
@@ -536,11 +536,10 @@ let panel = null;
     allRows = [];
     droppedLocal = false;
     autoScroll = true;
-    // 版本号显示在面板标题旁（用户令「启动时必须带上版本号，好追溯」）——
-    // 与标题栏徽标同源（/api/update/state），保证与导出文件里的一致
+    // a662（用户令「界面版本号去掉」）：弹窗标题不再显示版本；仅导出/复制
+    // 头部保留追溯用的版本号（从 /api/update/state 取，存模块变量）。
     fetch('/api/update/state').then(r => r.json()).then(j => {
-      const el = panel.querySelector('.bl-ver');
-      if (el) el.textContent = (j && j.current) ? 'v' + j.current : '';
+      _verLabel = (j && j.current) ? 'v' + j.current : '';
     }).catch(() => {});
     render();
     refresh();

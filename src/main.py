@@ -140,6 +140,24 @@ def resource_path(rel):
 # ---- Claude Code 直连入口：endpoint 文件 ----
 # 工具启动时把本地 HTTP 服务地址写到固定文件，任何 Claude Code 会话读它即可发现服务。
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+
+# ---- a663 退出原因审计已合并进 backend_log（单一真源，避免两套审计）----
+def _exit_reason(why):
+    try:
+        from src import backend_log as _bl
+        _bl.set_exit_reason(why)
+    except Exception:
+        pass
+
+
+def _audit_exit():
+    try:
+        from src import backend_log as _bl
+        _bl.audit_exit()
+    except Exception:
+        pass
+
+
 ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
 
 def write_endpoint(port):
@@ -1960,6 +1978,7 @@ def main():
 
     @app.route("/api/window/close", methods=["POST"])
     def _api_window_close():
+        _exit_reason("api_close")
         # 自绘 ✕ 与原生 X 同语义：destroy→Form.Close→closing 拦截链
         # （close_to_tray 默认驻托盘）。_try_destroy 是托盘「退出」同款
         # 通道（后台线程 + 兜底硬退），此处只走 destroy 不置真退标记。
@@ -2295,6 +2314,7 @@ def main():
     main._real_quit = _real_quit
 
     def _do_real_cleanup():
+        _exit_reason("cleanup")
         # a582（内网方案·根因2）：网页 tab 的 WebView2 环境必须在后续
         # taskkill /T /F 树杀**之前**优雅关闭——Chromium cookie/密码库是
         # 延迟批量写盘，被强杀则未落盘数据全丢（用户实锤：每次重开工具
@@ -2354,6 +2374,10 @@ def main():
         # 必须放在全部清理之**后**（a382-2：原位置在 worker/proxy/perf
         # 之前=自杀后余下清理全被剥夺）。Job Object 是内核级兜底（主进程
         # 任何方式退出都杀子进程），taskkill 是即时清
+        try:
+            _audit_exit()
+        except Exception:
+            pass
         try:
             _kill_child_processes()
         except Exception:
@@ -2473,6 +2497,7 @@ def main():
                 pass
 
     def _try_destroy(window):
+        _exit_reason("tray_exit")
         """托盘「退出」：不 show（show+destroy 会闪窗，用户实锤）。
         直接后台线程清理 + destroy——destroy 对隐藏窗同样走 closing，
         _real_quit 已置位，closing 放行清理链。"""

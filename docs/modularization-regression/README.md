@@ -35,6 +35,8 @@ python tools/check_graph.py                  rem 依赖图门禁（M09 同源）
 python tools/check_graph.py --update-baseline rem 结构变更后刷新趋势基线
 python tests/regression/run_all.py --smoke   rem 真机冒烟（用户发起制，1 条额度）
 python tests/regression/render_audit.py      rem 渲染路径测绘（1 条额度）
+python tools/split_css_subsystems.py --dry-run rem CSS 子系统分类预演
+python tests/regression/style_snapshot.py    rem 样式快照/页内对比（--save/--diff）
 ```
 
 ## 提交即回归（推荐一次性启用）

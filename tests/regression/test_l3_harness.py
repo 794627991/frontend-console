@@ -246,6 +246,11 @@ def run(groups=None):
     out = []
     try:
         orig = pg.ev("(window._HG&&window._HG.sid)||null")
+        # 前置：headless 页面是独立实例，harness 面板懒构建——先按真实用户
+        # 路径点 Claude 入口，避免「面板未构建时直调 newChat」的伪异常。
+        pg.ev("(function(){var b=document.querySelector('#btnClaude');"
+              "if(b && !window._hgFlow){b.click();return 1;}return 0;})()")
+        pg.wait_until("!!(window._hgFlow)", timeout=15, interval=0.4)
         pg.clear_errs()
         for g in groups:
             fn = GROUPS.get(g)

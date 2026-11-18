@@ -103,7 +103,8 @@
     // 失败/非 ok 时 busy 停在 true，发送键恒为 ■、活动条恒计时、send() 被
     // 拦下，点 ■ 又回到这条死循环。这里先无条件清掉，真实值由 events 回填。
     setBusy(false);
-    _hgCostEl.classList.remove('warn');   // 清文本不清 class 会让空用量环留着橙色警示
+    // a657：面板元素未构建时跳过（早期切换竞态；setBusy 已做同款保护）
+    if (_hgCostEl) _hgCostEl.classList.remove('warn');   // 清文本不清 class 会让空用量环留着橙色警示
     // v2.3.0：未发送的附件随会话暂存/恢复——切走时把当前 atts 归档到旧会话
     // 名下，切回时取回该会话的暂存（原来无条件清空，用户贴的图切一圈回来
     // 就没了）。发送成功的清空在 send 尾部（清 attsBy），互不干扰。
@@ -270,6 +271,9 @@
   }
   function setQuote(_hgQ) {
     _HG.quote = _hgQ || null;
+    // a657：页面早期/切换会话时引用条元素尚未构建（实测 newChat→switchTo→
+    // setQuote 抛 Cannot read properties of undefined (reading 'style')）。
+    if (!quoteEl) return;
     if (!_HG.quote) { quoteEl.style.display = 'none'; return; }
     const brief = _HG.quote.text.replace(/\s+/g, ' ').trim();
     quoteBodyEl.textContent = `${_HG.quote.who}：${brief.length > 60 ? brief.slice(0, 59) + '…' : brief}`;

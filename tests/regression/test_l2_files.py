@@ -11,7 +11,7 @@ import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from cdp_lib import Page, result          # noqa: E402
+from cdp_lib import Page, result, filter_known_noise          # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(_HERE))
 FIX = os.path.join(ROOT, "tests", "regression", "fixtures").replace(os.sep, "/")
@@ -158,10 +158,11 @@ def run():
                               "left=%s" % left))
         except Exception as e:
             out.append(result("R2", "快速开关编辑器 tab ×3 无残留", "L2", "P2", "CHECK", repr(e)))
-        errs = pg.drain_errs()
+        errs, noise = filter_known_noise(pg.drain_errs())
         out.append(result("L2FE", "L2 文件链路无页面异常", "L2", "P0",
                           "PASS" if not errs else "FAIL",
-                          json.dumps(errs[:5], ensure_ascii=False)))
+                          json.dumps(errs[:5], ensure_ascii=False)
+                          + (" [已知噪声 %d 条]" % len(noise) if noise else "")))
         # 清理：关闭本测试新建但未关掉的连接
         for c in _conns(pg)[n_before:]:
             _close(pg, c["pid"])

@@ -79,13 +79,49 @@ function monacoInit() {
         // 曾因此 DiffEditor 一直卡「对比中…」无红绿高亮，普通编辑器不受影响
         // （着色在主线程，不用 worker）所以一直没暴露）。
         // 修法：data: 脚本里先写死 MonacoEnvironment.baseUrl 为绝对路径再 importScripts。
+        // a662（日志 P0 盲区③）：Worker 内部错误 window.onerror 捕获不到——
+        // 在 worker 引导脚本里接 self.onerror / unhandledrejection，直接上报
+        // /api/frontend_log（blob worker 与页面同源，fetch 可用；5s 节流）。
         const WORKER_BOOT = `
           globalThis.MonacoEnvironment = { baseUrl: '${location.origin}/vendor/monaco/min/' };
+          (function(){
+            var _last = 0;
+            function _rep(txt){
+              try {
+                var now = Date.now();
+                if (now - _last < 5000) return;
+                _last = now;
+                fetch('/api/frontend_log', {method:'POST',
+                  headers:{'Content-Type':'application/json'},
+                  body: JSON.stringify({text:'[worker] ' + String(txt).slice(0,800)})}).catch(function(){});
+              } catch (e) {}
+            }
+            self.onerror = function(msg, src, line, col){
+              _rep((msg||'worker error') + ' @ ' + (src||'') + ':' + (line||0) + ':' + (col||0));
+              return false;
+            };
+            self.addEventListener('unhandledrejection', function(e){
+              _rep('rejection: ' + String((e.reason && (e.reason.stack || e.reason.message)) || e.reason));
+            });
+          })();
           importScripts('${location.origin}/vendor/monaco/min/vs/base/worker/workerMain.js');
         `;
+        // a657：data: worker 的 origin 为 null，importScripts 属跨源请求——
+        // 即使服务端补了 CORS 头，WebView2/headless 仍实测失败（语言服务
+        // 静默不可用）。改用 blob: worker：URL 继承页面 origin，importScripts
+        // 走同源，无需 CORS。缓存 URL 避免每次创建新 blob。
+        let _workerBlobUrl = null;
         window.MonacoEnvironment = {
           getWorkerUrl: function() {
-            return `data:text/javascript;charset=utf-8,${encodeURIComponent(WORKER_BOOT)}`;
+            if (!_workerBlobUrl) {
+              try {
+                _workerBlobUrl = URL.createObjectURL(
+                  new Blob([WORKER_BOOT], { type: 'application/javascript' }));
+              } catch (_) {
+                return `data:text/javascript;charset=utf-8,${encodeURIComponent(WORKER_BOOT)}`;
+              }
+            }
+            return _workerBlobUrl;
           }
         };
         require(['vs/nls.messages.zh-cn', 'vs/editor/editor.main'], () => {

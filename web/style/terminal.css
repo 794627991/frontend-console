@@ -1,0 +1,158 @@
+/* a654 子系统分卷：terminal（由 tools/split_css_subsystems.py 从 style.css 重排；段内顺序不变） */
+
+
+  /* ===== 左侧串口列表 ===== */
+  /* a219：侧栏宽度可拖拽（3px 命中区 + hover 显形——同 tftp resizer 语言） */
+  .sidebar-resizer { width: 4px; flex-shrink: 0; cursor: col-resize;
+    background: transparent; margin-left: -1px; z-index: 5; }
+
+  /* ===== 侧边栏底部 TFTP 面板（高度可拖拽）===== */
+  .tftp-resizer {
+    flex-shrink: 0; height: 7px; cursor: row-resize;
+    background: var(--bg-panel); border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 9px; line-height: 1;
+    user-select: none; transition: background 0.15s, color 0.15s;
+  }
+  /* 收缩链（a59x 五修）：a564 的折叠指示 span 是 JS prepend 的第一个 span，
+     旧 span:first-of-type 选择器命中它——窄宽度 ▶ 被 ellipsis 缩没（用户实锤
+     「▶ 没了左边显宽」）。改用 .tftp-title 精准命中标题；指示符 flex-shrink:0
+     恒显（1285 行既有规则不再被覆盖） */
+  .tftp-head .tftp-title { min-width: 0; flex-shrink: 1;
+    display: block; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  /* 来源标签：TFTP/HFS 传输区分（小胶囊，等宽小字） */
+  .tftp-via { flex-shrink: 0; font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+    padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); }
+
+  /* ===== 中央终端区 ===== */
+  /* 注意选择器作用域：.center 是中央终端区容器，但 Monaco 折叠条内部也有
+     .diff-hidden-lines .center（height:24px 的文字层）——裸 .center 曾把
+     display:flex/flex-direction:column 泄漏进去，文字层被列布局重排，
+     字形下移溢出 24px 盒被 overflow:hidden 裁掉下半截（用户"折叠条文字
+     被裁"两个版本的真凶）。改用 #main .center 限定作用域。 */
+  /* 第2轮盲测实锤（高）：min-width:0 让 center 在窄视口被固定宽侧栏(220)+AI面板(340)
+     挤到 0~16px——tab 栏（含固定 tab/抽屉/⋮ 唯一逃生口）整体不可见不可点。
+     保底 300px：极窄时 AI 面板右侧让位被裁（用户可折叠它换空间），tab 栏始终可用；
+     正常宽度（≥900px）不触发，零影响。html/body overflow:hidden 兜底不出横滚动条 */
+  .main > .center { flex: 1; display: flex; flex-direction: column; min-width: 300px; }
+
+  /* 终端连接工具栏（仿日志 tab 的 log-viewer-toolbar）：串口/SSH 专属功能按钮 */
+  .term-area .term-toolbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+    border-bottom: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
+  .term-toolbar .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .term-toolbar .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .term-toolbar .lv-btn.active { border-color: var(--accent); color: var(--accent); background: var(--bg-panel); }
+  .term-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .term-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  .term-toolbar .btn { padding: 4px 10px; font-size: 11px; }
+  .term-toolbar .info { font-size: 11px; color: var(--muted); margin-left: auto; font-family: var(--font-mono); }
+  /* xterm 终端容器：底色跟主题走（与 xterm theme.background 同源，避免纸感主题下出现深色圈边） */
+  .xterm-wrap {
+    flex: 1; min-height: 0; position: relative; background: var(--term-bg);
+    padding: 4px 6px 0 6px; overflow: hidden;
+  }
+  .xterm-bottom-pad { flex-shrink: 0; height: 18px; background: var(--term-bg); }  /* 底部留白 1 行高，与终端底色一致 */
+  .xterm-wrap .xterm { height: 100%; }
+  .xterm-wrap .xterm-viewport { overflow-y: auto !important; }
+  /* 终端滚动条终局（自绘）：WebView2 156 Fluent 绘制层无视一切 CSS 宽度
+     （像素实测 webkit width:30→画 4px / thin→2px / scrollbar-color→1px），
+     原生视觉全隐（0 宽连 1px 都不画），滚动行为保留；滚动条本体由
+     terminal-core.js _termSbInit 自绘（.hg-term-sb），宽高颜色全自控 */
+  .xterm-wrap .xterm-viewport { scrollbar-width: none !important; scrollbar-color: auto !important; }
+  .xterm-wrap .xterm-viewport::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
+  /* xterm 行高/字号与原终端一致 */
+  .xterm-wrap .xterm-rows { font-family: var(--font-mono); }
+
+  /* ===== 串口搜索分栏（仿日志查看器 .log-search-*） ===== */
+  .term-search-splitter { height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0; display: none; transition: background 0.15s; }
+  .term-search-splitter:hover { background: var(--accent); }
+  .term-search-pane { display: none; flex-direction: column; height: 35%; min-height: 80px; max-height: 70%; background: var(--bg-card); border-top: 1px solid var(--border); flex-shrink: 0; }
+  .term-search-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg-panel); }
+  .term-search-head input { flex: 1; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; padding: 5px 10px; font-size: 12px; transition: border-color 0.2s, box-shadow 0.2s; }
+  .term-search-head input.term-search-exclude { flex: 0 0 200px; color: var(--neon-orange); }
+  .term-search-head input.term-search-exclude::placeholder { color: var(--muted); }
+  .term-search-head input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); outline: none; }
+  .term-search-results { flex: 1; overflow-y: auto; position: relative; background: var(--bg-input); min-height: 40px; }
+  .term-search-results .hline { cursor: pointer; position: static; height: auto; line-height: 1.5; padding: 3px 10px; white-space: pre-wrap; word-break: break-all; border-left: 2px solid transparent; transition: background 0.12s, border-color 0.12s; }
+  .term-search-results .hline:nth-child(odd) { background: var(--bg-card); }  /* 交替行：与底色微区分 */
+  .term-search-results .hline:hover { background: var(--bg-panel); border-left-color: var(--accent); }
+  .term-search-results .hline.active { background: rgba(0,212,255,0.12); border-left-color: var(--accent); color: var(--accent); }
+
+  /* 终端内联输入行（v0.3.0 已弃用，xterm 自带输入；保留样式以防残留引用） */
+  .term-input-line { display: none; }
+  /* 备注弹窗输入框：SSH 连接弹窗同款（.conn-form input）——背景/边框/圆角/聚焦光环一致 */
+  #claudeNoteModal input.note-input { width: 100%; background: var(--bg-input); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; outline: none; }  /* 底部留白 1 行高，与终端一致 */
+  .vlist-inner { position: relative; width: 100%; }
+
+  /* 全屏覆盖容器（top 等）—— v0.3.0：xterm 自身处理全屏序列，此 overlay 仅作"全屏模式"提示条 */
+  .screen-overlay {
+    position: absolute; top: 0; left: 0; right: 0; display: none;
+    z-index: 6; pointer-events: none;
+  }
+
+  /* 断连 overlay（类 MobaXterm）：连接掉线盖在终端上，按 R 立即重连 */
+  .disc-overlay {
+    position: absolute; inset: 0; display: none; z-index: 8;
+    align-items: center; justify-content: center;
+    background: rgba(8, 12, 18, 0.82); backdrop-filter: blur(2px);
+  }
+  /* screen-body/screen-row/screen-cursor 已废弃（xterm 接管），样式保留空壳避免引用报错 */
+  .screen-body, .screen-row, .screen-cursor { display: none; }
+
+  /* 隐藏输入框（v0.3.0：xterm 自带输入，此框已不再承载焦点；保留以防旧引用） */
+  #cmdInput { position: absolute; left: -9999px; width: 1px; opacity: 0; }
+
+  /* 横幅通知：右下角冒泡（不占布局空间——之前顶部横幅显示/消失会挤压
+     .main 高度导致 xterm 尺寸跳动、UI 位移观感差，改为 fixed 悬浮） */
+  .banner {
+    position: fixed; right: 16px; bottom: 16px; z-index: 300;
+    display: none; max-width: 420px; padding: 10px 16px;
+    background: var(--bg-card); border: 1px solid var(--accent);
+    border-radius: 8px; color: var(--fg-bright);
+    font-size: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    word-break: break-all;
+  }
+
+  /* 通知栈：右下角向上堆叠的多条冒泡。并发长任务（多 SSH 同时打开、大文件
+     对比、hex 分析）各自独立一条，互不覆盖；任务结束该条自身变 ✓/✗ 消失。 */
+  #notifyStack {
+    position: fixed; right: 16px; bottom: 16px; z-index: 320;
+    display: flex; flex-direction: column-reverse; gap: 8px;
+    pointer-events: none;   /* 容器不挡点击，条目自身恢复 */
+    max-width: 420px;
+  }
+  /* a607：任务倒计时 + 取消（SSH 慢设备最长等 120s，用户要能看见还要多久、能中止） */
+  .notify .n-countdown { font-variant-numeric: tabular-nums; opacity: 0.9; }
+/* 密码框明文显示中（px-eye-on）：睁眼高亮青色；密文态灰眼（ssh 客户端同款语义） */
+.px-quota-login input[data-px-q-pwd] { padding-right: 26px; }
+/* v3.4.35：思考段不再叠加容器内距——头部自带 10px，再垫 10px 会让分屏内
+   思考段箭头比终端卡/查阅组深 10px（箭头列不齐的元凶，基准=左条2px+10px） */
+
+
+/* ==================== v3.4.88：识图 MCP 折叠卡（统一工作组风格） ==================== */
+.h-tool.h-vision { --h-accent: var(--h-indigo, #6639ba); }
+
+/* v3.3 会话动态分屏化：右侧工具面板对 harness tab 整体隐藏（旧 v2.32 换装
+   形态废止——六分区迁入 harness 内部分屏伪 tab「动态」，21-shell _hgPanelMode
+   只做显隐）。面板对其他 tab（终端助手）零影响，折叠态由 aiToggle 自持 */
+.ai-panel.hg-hide { display: none !important; }
+/* v3.3.5（用户三连实锤「bash 还没对齐」）：终端卡在时间线内收起态=扁平行——
+   盒状卡（四边框+圆角+底色）浮在行轴上，与思考/查阅的扁平左条行混排，观感即
+   「错位」。高特异性压扁任何嵌套层级的 col/oneclick 卡：无底色无框、仅 2px
+   类别左条、直角，行内左距与思考段头对齐（10px）；展开展盒。
+   0,3,1 压过 .h-tool.col(0,2,0)/.h-tool.oneclick.open(0,3,0) 的盒样式 */
+/* 411（用户实锤「bash 高度还是明显不对！要求和之前一样，和思考同高」）：
+   时间线内收起态竖直收紧——压扁形态本就无底无框，v3.3.5 原意=扁平行与
+   思考段头同高（27px 实测 vs Bash 41px）；收起 padding-block 清零+头行
+   内缩；.open 展开态保持原样（展开需要呼吸感） */
+/* 412 自纠（用户实锤「所有带完成徽标的行高度都不对+徽标live不显示」）：411 的
+   min-height:0 移除了行的最小高保护——flex 父（时间线）空间紧张时行被压缩到
+   2px（实测 h:2，徽标在行内但整个不可见=两个症状同一根因）。撤 min-height，
+   改 flex-shrink:0（行不可压）+padding 收紧保留（同高目标不变） */
+.hg-flow .h-tl .h-tool.col:not(.open),
+.hg-flow .h-tl .h-tool.oneclick:not(.open) { padding-block: 0; flex-shrink: 0; }

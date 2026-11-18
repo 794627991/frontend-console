@@ -2280,45 +2280,39 @@ from src import web_tabs as _wt
 _wt.register(app)
 
 
-# ---- 客户端错误黑匣子（a654）：纯内存，不落盘 ----
-_clientlog_lock = _threading.Lock()
-_clientlog_budget = {"minute": -1, "count": 0}
+# ---- a662 WebView2 页面心跳（日志 P0 盲区②：渲染进程崩溃/卡死）----
+# 前端每 15s 上报一次；>60s 无心跳视为渲染进程异常（页面崩溃/挂死）。
+# 纯内存，不落盘。进程自身退出时线程随之消失，不会误报。
+_page_hb = {"last": 0.0, "t0": time.time()}
+_page_hb_lock = _threading.Lock()
 
 
-@app.route("/api/clientlog", methods=["POST"])
-def api_clientlog():
-    """前端 error/unhandledrejection → backend_log 内存环形缓冲。
+@app.route("/api/page_heartbeat", methods=["POST"])
+def api_page_heartbeat():
+    with _page_hb_lock:
+        _page_hb["last"] = time.time()
+    return jsonify({"ok": True})
 
-    用户定调：不落盘（磁盘 IO / 寿命）。日志只驻本进程内存，随
-    backend_log 的 deque 上限自动淘汰，进程退出即失。
-    限流：每分钟全域最多 60 条，单批最多 20 条——页面异常风暴不能把
-    日志缓冲或请求通道拖垮。
-    """
-    from src import backend_log
-    data = request.get_json(force=True, silent=True) or {}
-    errs = data.get("errors")
-    if not isinstance(errs, list):
-        return jsonify({"ok": False, "err": "errors 必须是数组"}), 400
+
+def _page_hb_watch():
     import time as _t
-    minute = int(_t.time() // 60)
-    with _clientlog_lock:
-        if _clientlog_budget["minute"] != minute:
-            _clientlog_budget["minute"] = minute
-            _clientlog_budget["count"] = 0
-        room = max(0, 60 - _clientlog_budget["count"])
-        take = [e for e in errs[:min(len(errs), 20, room)] if isinstance(e, dict)]
-        _clientlog_budget["count"] += len(take)
-    ver = str(data.get("ver") or "")[:40]
-    url = str(data.get("url") or "")[:120]
-    sid = str(data.get("sid") or "")[:40]
-    for e in take:
-        msg = str(e.get("m") or "")[:500]
-        stack = str(e.get("stack") or "").replace("\n", " ⏎ ")[:1500]
-        backend_log.error(
-            "client", "[%s] %s | ver=%s sid=%s url=%s | %s"
-            % (str(e.get("t") or "error")[:12], msg, ver, sid, url, stack))
-    return jsonify({"ok": True, "accepted": len(take),
-                    "dropped": len(errs) - len(take)})
+    while True:
+        try:
+            _t.sleep(30)
+            gap = 0.0
+            with _page_hb_lock:
+                last = _page_hb["last"]
+                if last > 0 and _t.time() - last > 60:
+                    gap = _t.time() - last
+                    _page_hb["last"] = _t.time()   # 重置防刷屏
+            if gap:
+                from src import backend_log as _bl
+                _bl.error("ui", "[webview] 页面心跳丢失 %.0f 秒（渲染进程可能崩溃/卡死）" % gap)
+        except Exception:
+            pass
+
+
+_threading.Thread(target=_page_hb_watch, daemon=True).start()
 
 
 # ---- 升级功能（v2.1.0）：客户端检查/应用 + 发布端分发服务控制 ----

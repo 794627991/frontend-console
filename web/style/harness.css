@@ -1,0 +1,2540 @@
+/* a654 子系统分卷：harness（由 tools/split_css_subsystems.py 从 style.css 重排；段内顺序不变） */
+
+  /* Claude 官方星形标志（品牌色 D97757，内联 SVG 免请求）——顶栏按钮/tab/面板/最近列表共用 */
+  .claude-ico { display: inline-block; width: 1em; height: 1em; vertical-align: -0.125em;
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiNEOTc3NTciLz4KICA8ZyBmaWxsPSIjRkZGN0VEIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgzMiwzMikiPgogICAgPHBhdGggZD0iTSAwIC0yMS41IEMgMS4yIC0xOS40IDUuOCAtMTEuNCA3LjEgLTkuMiBMIDIuOSAtNy45IEMgMS42IC0xMC4xIC0yLjkgLTE4LjEgLTQuMSAtMjAuMiBaIiB0cmFuc2Zvcm09InJvdGF0ZSgwKSIvPgogICAgPHBhdGggZD0iTSAwIC0yMS41IEMgMS4yIC0xOS40IDUuOCAtMTEuNCA3LjEgLTkuMiBMIDIuOSAtNy45IEMgMS42IC0xMC4xIC0yLjkgLTE4LjEgLTQuMSAtMjAuMiBaIiB0cmFuc2Zvcm09InJvdGF0ZSg0NSkiLz4KICAgIDxwYXRoIGQ9Ik0gMCAtMjEuNSBDIDEuMiAtMTkuNCA1LjggLTExLjQgNy4xIC05LjIgTCAyLjkgLTcuOSBDIDEuNiAtMTAuMSAtMi45IC0xOC4xIC00LjEgLTIwLjIgWiIgdHJhbnNmb3JtPSJyb3RhdGUoOTApIi8+CiAgICA8cGF0aCBkPSJNIDAgLTIxLjUgQyAxLjIgLTE5LjQgNS44IC0xMS40IDcuMSAtOS4yIEwgMi45IC03LjkgQyAxLjYgLTEwLjEgLTIuOSAtMTguMSAtNC4xIC0yMC4yIFoiIHRyYW5zZm9ybT0icm90YXRlKDEzNSkiLz4KICAgIDxwYXRoIGQ9Ik0gMCAtMjEuNSBDIDEuMiAtMTkuNCA1LjggLTExLjQgNy4xIC05LjIgTCAyLjkgLTcuOSBDIDEuNiAtMTAuMSAtMi45IC0xOC4xIC00LjEgLTIwLjIgWiIgdHJhbnNmb3JtPSJyb3RhdGUoMTgwKSIvPgogICAgPHBhdGggZD0iTSAwIC0yMS41IEMgMS4yIC0xOS40IDUuOCAtMTEuNCA3LjEgLTkuMiBMIDIuOSAtNy45IEMgMS42IC0xMC4xIC0yLjkgLTE4LjEgLTQuMSAtMjAuMiBaIiB0cmFuc2Zvcm09InJvdGF0ZSgyMjUpIi8+CiAgICA8cGF0aCBkPSJNIDAgLTIxLjUgQyAxLjIgLTE5LjQgNS44IC0xMS40IDcuMSAtOS4yIEwgMi45IC03LjkgQyAxLjYgLTEwLjEgLTIuOSAtMTguMSAtNC4xIC0yMC4yIFoiIHRyYW5zZm9ybT0icm90YXRlKDI3MCkiLz4KICAgIDxwYXRoIGQ9Ik0gMCAtMjEuNSBDIDEuMiAtMTkuNCA1LjggLTExLjQgNy4xIC05LjIgTCAyLjkgLTcuOSBDIDEuNiAtMTAuMSAtMi45IC0xOC4xIC00LjEgLTIwLjIgWiIgdHJhbnNmb3JtPSJyb3RhdGUoMzE1KSIvPgogIDwvZz4KPC9zdmc+") no-repeat center / contain; }
+  .hg-term-sb { position: absolute; top: 4px; right: 3px; bottom: 4px; width: 14px;
+    z-index: 6; }
+  .hg-term-sb-th { position: absolute; left: 1px; right: 1px; min-height: 36px;
+    background: color-mix(in srgb, var(--muted) 60%, transparent);
+    border-radius: 2px; cursor: ns-resize; }
+  .hg-term-sb-th:hover { background: var(--muted); }
+  .hg-term-sb-th:active { background: var(--accent); }
+  /* ---- 渐隐滚动条（全站统一,用户拍板；终端 14px 宽条除外）------------
+     v4 结构：条挂非滚动锚点（滚动容器内部 absolute 会被内容滚走）；
+     挂载=util.js _hgFadeSb（ver5,自动托管 observer 全站铺开）。
+     .hg-fade-sb-host=挂载标记：隐藏原生条（Fluent 层宽度不可控是前轮
+     实测结论）。显隐由 JS mouseenter/leave 挂摘 sb-drag 类驱动 */
+  .hg-fade-sb-host { scrollbar-width: none; scrollbar-color: auto; }
+  .hg-fade-sb-host::-webkit-scrollbar { width: 0; height: 0; }
+  .hg-fade-sb { position: absolute; top: 4px; right: 2px; bottom: 4px; width: 10px;
+    z-index: 5; opacity: 0; transition: opacity .35s ease; pointer-events: none; }
+  .hg-fade-sb.sb-drag { opacity: 1; pointer-events: auto; }
+  .hg-fade-sb-th { position: absolute; left: 2px; right: 2px; min-height: 32px;
+    background: color-mix(in srgb, var(--muted) 40%, transparent);
+    border-radius: 999px; cursor: ns-resize; }
+  /* v7 横向条：复用 .hg-fade-sb 容器类，必须把基础类的竖向约束全部复位
+     （right/bottom 会把它钉死在右侧竖条位；left/top/width 由 JS 按宿主
+     rect 每拍定位，CSS 只定高度与滑块方向） */
+  .hg-fade-sbh { right: auto; bottom: auto; width: auto; height: 10px; }
+  .hg-fade-sbh > .hg-fade-sb-th { left: 2px; right: auto; top: 2px; bottom: auto;
+    min-height: 0; height: 6px; min-width: 32px; cursor: ew-resize; }
+  /* 横向条的 hover/active 与竖向同色（复用上面两条规则即可，无需重复） */
+  .hg-fade-sb.sb-drag > .hg-fade-sb-th:hover {
+    background: color-mix(in srgb, var(--muted) 85%, transparent); }
+  .hg-fade-sb-th:active { background: var(--accent); }
+
+  /* Claude 会话/技能标签（第 2 期，照 mcp-pane 模式） */
+  .claude-pane { padding: 10px 14px; overflow-y: auto; }
+  .claude-head { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; margin-bottom: 12px; }
+  .claude-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .claude-head .dot.on { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .claude-section { margin-bottom: 14px; }
+  .claude-section .title { font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+  .claude-run { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; margin-bottom: 4px; }
+  .claude-run:hover { border-color: var(--accent); }
+  .claude-run .cstate { margin-left: auto; color: var(--muted); font-size: 10px; }
+  /* 运行中卡同时挂 claude-sess（两行模板）时，覆盖单行 flex——两排布局由 srow1/srow2 决定 */
+  .claude-sess.claude-run { display: block; margin-bottom: 0; padding: 8px 10px; }
+  .claude-sessions { display: flex; flex-direction: column; gap: 8px; }
+  .claude-sess { padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+  .claude-sess:hover { border-color: var(--accent); background: var(--bg-input); }
+  .claude-sess .srow1 { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .claude-sess .cdir { font-weight: 600; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .claude-sess .cstate { color: var(--muted); font-size: 10px; flex-shrink: 0; white-space: nowrap; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 0; }
+  .claude-sess .ctime { margin-left: auto; color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  /* 第二排：摘要 + 行尾会话 id 短码（等宽灰字）——用户要求能看出是哪个会话 */
+  .claude-sess .srow2 { color: var(--muted); font-size: 10px; margin-top: 3px; display: flex; align-items: baseline; gap: 8px; }
+  .claude-sess .srow2 .sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .claude-sess .srow2 .sid { font-family: var(--font-mono); font-size: 9px; color: var(--muted); opacity: 0.75; flex-shrink: 0; }
+  /* 会话备注按钮：卡片右缘固定、放大可点；hover 卡片才亮色（不 hover 也占位，
+     用户要求固定位置不漂移） */
+  .claude-sess .note-btn { margin-left: auto; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; flex-shrink: 0; opacity: 0.45; border-radius: 4px; }
+  .claude-sess:hover .note-btn { opacity: 1; }
+  .claude-sess .note-btn:hover { color: var(--accent); background: var(--bg-input); }
+  .claude-sess .cdir.noted { text-decoration: underline dotted; text-underline-offset: 3px; }
+  .claude-skills { display: flex; flex-direction: column; gap: 4px; }
+  .claude-skill { font-size: 11px; padding: 4px 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; }
+  .claude-skill .sk-name { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+  .claude-skill .sk-src { margin-left: 6px; font-size: 9px; padding: 1px 5px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); }
+  .claude-skill .sk-src.src-project { color: var(--neon-green); border-color: var(--neon-green); }
+  .claude-skill .sk-desc { color: var(--muted); margin-top: 2px; }
+  .claude-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+  /* Claude 安装引导窗：检测行 + 安装日志区（等宽小字、自动滚底） */
+  .cs-log { max-height: 220px; overflow-y: auto; background: var(--bg-input);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.6;
+    color: var(--fg); word-break: break-all; }
+  /* Claude 面板子 sheet（活跃/历史/技能）——照 cmd-sheets 模式 */
+  .claude-sheets { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+  /* MCP 子 sheet 内的二级页签：缩进一层 + 小一号，视觉上与一级（活跃/历史/技能/MCP）分层 */
+  .claude-sheets.mcp-sub-sheets { margin: 0 0 8px 10px; border-bottom: none; gap: 6px; }
+  .claude-sheets.mcp-sub-sheets .claude-sheet-tab { font-size: 11px; padding: 3px 8px; border-radius: 4px; }
+  .claude-sheet-tab { font-size: 11px; font-weight: 600; color: var(--muted); padding: 4px 10px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; }
+  .claude-sheet-tab:hover { color: var(--fg); }
+  .claude-sheet-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .claude-sheet-tab .count { font-size: 9px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; margin-left: 3px; color: var(--muted); }
+  .claude-sheet-pane { display: none; }
+  .claude-sheet-pane.active { display: block; }
+  .claude-pane { display: flex; flex-direction: column; }
+
+/* ============================================================
+   Claude Proxy 面板（proxy-panel.js；原独立工具合入）
+   ============================================================ */
+.px-body { padding: 14px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; font-size: 12px; }
+/* 悬浮卡（Claude 输入卡上方 Proxy 按钮 hover） */
+.hg-loads-tip { position: fixed; z-index: 12000; min-width: 260px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 36px rgba(0,0,0,.55); padding: 9px 11px;
+  font-family: var(--font-mono); font-size: 11px; pointer-events: none; }
+.hg-loads-row { display: grid; grid-template-columns: 92px 1fr 44px;
+  gap: 8px; align-items: center; padding: 3px 0; }
+.hg-loads-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.hg-loads-bar { position: relative; height: 5px; border-radius: 3px;
+  background: color-mix(in srgb, var(--border) 70%, transparent); overflow: hidden; }
+.hg-loads-bar i { position: absolute; inset: 0 auto 0 0; display: block;
+  border-radius: 3px; background: #67c23a; }
+.hg-loads-bar.px-load--normal i { background: #409eff; }
+.hg-loads-bar.px-load--busy i { background: #e6a23c; }
+.hg-loads-bar.px-load--jam i { background: #f56c6c; }
+.hg-loads-pct { color: var(--muted); text-align: right; }
+.hg-loads-pct.px-load--busy { color: #e6a23c; }
+.hg-loads-pct.px-load--jam { color: #f56c6c; }
+
+/* ---- Claude Harness 界面化对话 v2（claude-harness.js）：微信式多会话 ---- */
+/* 布局：左会话栏 + 右会话区（顶栏 / 气泡流 / 输入卡） */
+.hg { flex: 1; display: flex; min-height: 0; background: var(--bg); }
+.hg-flex1 { flex: 1; }
+.hg-side { width: 232px; min-width: 232px; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); background: var(--bg-card);
+  position: relative; }   /* 登录冒泡弹窗的定位锚点 */
+.hg-side-head { padding: 10px; }
+.hg-new-btn { width: 100%; padding: 8px 10px; border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+  border-radius: 10px; font-size: 13px; cursor: pointer; transition: background .15s; }
+.hg-new-btn:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.hg-search-wrap { padding: 0 10px 8px; }
+.hg-search { width: 100%; box-sizing: border-box; padding: 5px 9px; font-size: var(--fs-base);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-search:focus { outline: none; border-color: var(--accent); }
+.hg-sessions { flex: 1; overflow-y: auto; padding: 0 6px 8px; }
+.hg-list-empty { padding: 16px 10px; font-size: var(--fs-base); color: var(--muted); text-align: center; }
+.hg-item { padding: 8px 10px; border-radius: 10px; cursor: pointer; margin-bottom: 3px; }
+.hg-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.hg-item.active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.hg-item-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* v2.7：项目名优先（第一行，accent 色），claude 会话名退居第二行 */
+.hg-item-proj { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600;
+  color: var(--fg-bright, var(--fg)); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-item.active .hg-item-proj { color: var(--accent); }
+.hg-item-title { flex: 1; min-width: 0; font-size: 12.5px; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-item.active .hg-item-title { color: var(--fg-bright, var(--fg)); font-weight: 600; }
+.hg-item-time { font-size: var(--fs-xs); color: var(--muted); flex-shrink: 0; }
+.hg-item-sub { flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v3.5.98：会话方案徽章——API 方案名标注
+   v4.1.0-a608（用户实锤「两个 500K 方案互切也标红，闹心」）：.diff 只在「会话
+   窗口大于当前方案窗口」时出现（切小窗才有超窗风险），窗口相同/更大
+   一律中性色——旧语义「异方案即标红」已废（v4.1.0-a590 起方案名不再是拦截依据） */
+.hg-item-scheme { margin-left: 4px; padding: 0 4px; border: 1px solid var(--border);
+  border-radius: 6px; font-size: 10px; color: var(--muted); vertical-align: 1px; }
+.hg-item-scheme.diff { color: var(--neon-orange, #d29922); border-color: var(--neon-orange, #d29922); }
+.hg-item-acts { display: none; align-items: center; gap: 2px; flex-shrink: 0; }
+.hg-item:hover .hg-item-acts, .hg-item.active .hg-item-acts { display: inline-flex; }
+.hg-item-busy { color: var(--accent); font-size: var(--fs-2xs); }
+.hg-item-act { border: none; background: transparent; color: var(--muted); cursor: pointer;
+  font-size: 11px; padding: 1px 3px; border-radius: 4px; }
+.hg-item-act:hover { color: var(--fg); background: var(--bg); }
+.hg-item-act.del:hover { color: var(--neon-red, #e06c75); }
+
+.hg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hg-top { display: flex; align-items: center; gap: 8px; padding: 9px 20px;
+  border-bottom: 1px solid var(--border); }
+.hg-title { font-size: var(--fs-lg); font-weight: 600; color: var(--fg-bright, var(--fg));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.hg-cwd { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--accent);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-top-state { font-size: var(--fs-sm); color: var(--muted); flex-shrink: 0; }
+.hg-flowwrap > .hg-flow { flex: 1; }
+.hg-flow { overflow-y: auto; padding: 20px 32px; display: flex; position: relative;
+  flex-direction: column; gap: 12px; align-items: flex-start;
+  /* R9.19：禁浏览器滚动锚定——发消息后视口上方历史区的 CV 估高修正
+     （600px/组占位→真高）触发锚定机制自动挪 scrollTop 跟随上方锚元素
+     = 「弹到上面某轮会话的位置」（用户实锤，与近期提交无关，a120P 估高
+     机制起就有）。贴底由 harness 自己的 stickBtm 机制管，无需浏览器锚定 */
+  overflow-anchor: none; }
+/* v3.4.16（用户终裁「最后一次」）：全部布局实验（居中/视差/镜像/自动切宽）
+   整体退回——恢复原始形态：AI 内容靠左 820 列、用户消息贴右缘、输入卡居中。
+   实验期规则全部清除（含一处误插到规则外的顶层声明，CSS 解析器从此处开始
+   错误恢复，后续规则行为不可靠——彻查发现） */
+.hg-flow > .h-msg.user { max-width: 410px; }
+.hg-rail::-webkit-scrollbar { display: none; }
+.hg-rail.show { display: flex; }
+.hg-rail-t { border: none; background: transparent; padding: 2px 5px;
+  display: flex; align-items: center; justify-content: center; height: 10px; cursor: pointer; }
+.hg-rail-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none; display: flex; flex-direction: column; }
+.hg-rail-scroll::-webkit-scrollbar { display: none; }
+.hg-rail-pg { flex: none; border: none; background: transparent; align-self: center;
+  width: 16px; text-align: center;
+  color: var(--muted); font-size: 8px; line-height: 11px; padding: 1px 0; cursor: pointer; }
+.hg-rail-pg:hover { color: var(--fg); }
+.hg-rail-t i { display: block; width: 9px; height: 2px; border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+  transition: width .15s, background-color .15s; }
+.hg-rail-t:hover i { width: 17px; height: 3px; background: #ffb02e; }   /* v3.5.213b：hover 琥珀橙高亮（亮白暗主题不显眼）——宽+粗+暖色三重对比 act 蓝 */
+.hg-rail-t.act i { width: 15px; background: var(--accent); }
+.hg-jumpbtm.show { display: inline-flex; }
+.hg-jumpbtm:hover { transform: translateY(-2px); filter: brightness(1.1);
+  box-shadow: 0 7px 20px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.22); }
+.hg-jumpbtm:active { transform: scale(.92); }
+/* v2.10：flow 全部直接子项禁垂直压缩——定高 column flex 子项默认
+   flex-shrink:1，超高内容(长思考块/大抽屉)会被按比例压扁到 ~2px 再被
+   各自 overflow:hidden 裁掉（v2.9 只豁免了抽屉，用户实测思考块仍被压）。
+   禁压缩后按自然高度撑开滚动区，由 flow 滚动承载。
+   v2.15：原先写在这条规则内部当原生嵌套（`& > *`），是全文唯一一处嵌套；
+   WebView2 的 Chromium 版本低于 120 时整条规则被解析器静默丢弃，等于这条
+   修复从未生效。改成顶层独立选择器，与文件其余写法一致。 */
+.hg-flow > * { flex-shrink: 0; }
+/* v2.24.4：flow 直接子项的气泡不再固定 820 宽——按内容自适应（用户定调：
+   「我的消息根本就没这么长」短消息短泡，max-width 88% 限长）。
+   AI 泡都在 .h-grp 内（组内 width:100% 全宽）不受影响。 */
+.hg-flow > .h-msg { max-width: min(820px, 88%); }
+.hg-flow > .h-tool, .hg-flow > .h-tool-res { width: min(820px, 100%); max-width: none; }
+.hg-flow > .h-tool-res { padding-left: 10px; }
+.hg-flow > .h-raw { width: min(820px, 100%); }
+/* v2.6：思考块入列（此前 width:88% 按 flow 全宽算，1400px 窗下 1176px，
+   比 820px 气泡列长一截——用户实测「虚线比气泡长」的根因） */
+.hg-flow > .h-exit { width: min(820px, 100%); }
+/* v2.7 过程抽屉：一轮回复的非回答过程（工具行）收纳容器，消息流只留抽屉组头
+   （「缩成一团/思考块压扁」根因 flex-shrink 已在 .hg-flow 全局禁压缩处理，见上）
+   v2.11：抽屉靠 AI 侧（左）对齐，放 AI 气泡上方，不再居中；
+   v2.18：每消息一组——.h-grp{ .h-grp-proc{ 双抽屉横排 } + AI 气泡 }，
+   收起态组头一行极简（用户：默认只占一小部分），展开不超会话一半 */
+.hg-flow > .h-grp { width: min(820px, 100%); }
+/* v3.1h（用户定调「所有数据不许拖横条,全部自适应」）：消息流全链
+   禁横向滚动——长词/长命令/代码一律折行截断,详情点开展开(展开体同禁)
+   a119（用户实锤「主窗弹新消息瞬间闪出一条又消失,多次没修到」根因）：
+   overflow-x:hidden + visible 组合被 CSS 规范算成 overflow-y:auto——
+   .h-grp/.h-bubble/.h-turn-body 等天生全是滚动容器,弹新消息布局换挡的
+   一帧内容瞬时超高就顶出滚动条随即消失（用户窗 Edge 下是 Fluent 悬浮
+   条,闪现感极强）。真正要竖滚的只有 .hg-flow/.h-tool-coll/.h-drawer-
+   body（保留 hidden）；其余改 overflow-x:clip——裁剪但不构成滚动容器,
+   overflow-y 恢复 visible,条从机制上不可能出现（视觉裁剪与 hidden 全
+   同）。2321 行 .h-tl 系当年已用压条法修过同款,此处补齐并升级去容器 */
+.hg-flow, .h-tool-coll, .h-drawer-body { min-width: 0; max-width: 100%; overflow-x: hidden; }
+.h-grp, .h-grp-proc, .h-turn-body, .h-tl, .h-tl-grp-body, .h-bubble { min-width: 0; max-width: 100%; overflow-x: clip; }
+/* a118（用户实锤「超长会话所有点开动画掉帧」）：卡体级视口裁剪——折叠态
+   （max-height:0/42vh 裁切）不与视口相交=跳过布局/样式，可见组内几百个
+   折叠卡体不再是 max-height 动画每帧布局的基线税；展开相交即渲染，动画
+   照常。与 .h-grp 组级裁剪（a114）同族，粒度到卡体 */
+.h-tool-coll, .h-think-seg-body, .h-drawer-body {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 240px; }
+/* a120（性能档案实锤「主窗 1000+ 消息翻动掉帧」，Layout 317 次×56ms 均
+   值）：消息行级视口裁剪——a114 组级 CV 下带超长正文泡（审计报告数千
+   px）的组进视口＝整组一帧内全量 markdown 布局＝帧尖刺；行级 CV 让物化
+   随滚动逐行摊开（嵌套 CV 合法：组被跳过时行随组跳过，组物化后视口外
+   的行仍跳过）。仅主消息流——子窗格 220 行上限已整族豁免（见 a119R），
+   只读流（.hg-ro-flow）不在此列 */
+.hg-flow .h-msg { content-visibility: auto; contain-intrinsic-size: auto 200px; }
+/* a120Q（用户实锤「思考/bash 展开掉帧没解决」）：工具时间线行级裁剪——
+   大会话巨回合打开后时间线千级工具行是裸 DOM（无 CV），展开任一张卡
+   后续全部兄弟行逐帧重排＝展开动画掉帧真身。行级 CV 后展开只动视口内
+   已物化的少量行，屏外全是占位 */
+.hg-flow .h-tl .h-tool { content-visibility: auto; contain-intrinsic-size: auto 28px; }
+/* a120P（实测复现「子窗格一脏→读布局=全文档 22k 对象 89ms 强制重排」）：
+   滚动容器布局隔离——流内任何脏（增量追加/秒表/开卡）不再沿祖先链冒泡
+   到 #document，读布局只冲刷本容器（档案里 317 次全文档布局的主通道）。
+   A/B 实测纯滚动帧率无回归（117→117ms 持平）＝零代价卫生层 */
+.hg-flow, .hg-sub-msgs { contain: layout; }
+/* a120P：钉高期强制物化——_hgPinIntrinsicHeights 渲染收尾临时挂本类关
+   CV 量真高（首读一次付清全量布局，实测 449 元素 175ms），量完即摘 */
+.hg-pin-force .h-grp, .hg-pin-force .h-msg, .hg-pin-force .h-tl .h-tool
+  { content-visibility: visible !important; }
+/* a119R（用户实锤「子窗格拉到底，一来新消息滚动跳回工作中标头，必现」）：
+   子窗格豁免卡体视口裁剪——窗格时间线有 220 行硬上限（_subTlCap），布局
+   零压力；CV 估高（240px/卡）却让 scrollHeight 与贴底判距（80px 窗）全
+   失真：真高几千 px 的思考体按 240px 估，用户在真底时估高差远超 80px →
+   判「不贴底」停止跟随；整窗重建的贴底恢复落在估高底 → 物化后视口停在
+   当前轮「工作中」标头附近。主流大窗（无行数上限）保留 CV 性能红利不动 */
+.hg-sub-msgs .h-tool-coll, .hg-sub-msgs .h-think-seg-body,
+.hg-sub-msgs .h-drawer-body { content-visibility: visible; }
+/* a118R：重内容开合跳过动画（_hgHeavySkip 点击时判定加类）——动画期间
+   重体每帧全量布局是 10fps 卡顿的真身，直达一次到位
+   a120Q：覆盖回合体（grid 1fr→0fr 过渡）——百级工具行展开同治 */
+.no-anim, .no-anim .h-tool-coll, .no-anim .h-think-seg-body,
+.no-anim .h-drawer-body, .no-anim .h-turn-body { transition: none !important; }
+/* a27（用户实锤「右缘竖条一闪而过，大丑」）：overflow-x:hidden 使纵向
+   计算值变 auto——组时间线内容比分配高度多几 px（gap/行渲染抖动）就闪现
+   满高滚动条 thumb。这几个布局容器的纵向滚动非设计意图，滚动条隐藏
+   （滚轮仍可微滚，竖条永绝）
+   a40（用户实测 a28 藏法失效复发）：WebView2 内核 scrollbar-width 计算值
+   已 none 竖条仍在——藏滚动条不可靠。改釜底抽薪：.h-tl 用 overflow-x:clip
+   （裁溢出但不创建滚动容器，兼容 Chrome 90+）+ 纵向显式 visible——纵向
+   计算值不再被强制成 auto，无滚动资格即无 thumb；5px 微溢出直接裁掉
+   （a28 实证是布局抖动，无视觉差）
+   a58R（用户实测带图轮组右缘两根竖条复发）：其余三容器（turn-body/
+   grp-proc/tl-grp-body）同样中招——统一全部升级为 clip 语义，藏法退役
+   （四容器均无纵向滚动设计意图，动画用 grid rows 不依赖 overflow） */
+.h-tl, .h-tl-grp-body, .h-turn-body, .h-grp-proc { scrollbar-width: none; }
+.h-tl::-webkit-scrollbar, .h-tl-grp-body::-webkit-scrollbar,
+.h-turn-body::-webkit-scrollbar, .h-grp-proc::-webkit-scrollbar { display: none; }
+.h-tl, .h-tl-grp-body, .h-turn-body, .h-grp-proc {
+  overflow-x: clip; overflow-y: visible; }
+.h-bubble, .h-tool-coll pre, .h-bubble pre, .h-bubble code {
+  overflow-wrap: anywhere; word-break: break-word; }
+.h-bubble pre, .h-tool-coll pre { white-space: pre-wrap; }
+/* v2.24 滚动窗口式历史加载：顶部提示条（v2.24.7 恒居中——列靠左后用户仍要提示条居中） */
+.hg-hist-more { align-self: center; width: auto; margin: 4px auto 8px; display: block;
+  font-size: 11.5px; color: var(--muted); background: var(--bg-card);
+  border: 1px dashed var(--border); border-radius: 14px; padding: 5px 16px; }
+/* v3.2.10：点击=扩段加载更早——无封顶（上滑同款，任何会话可翻到第一条） */
+.hg-hist-more { cursor: pointer; }
+.hg-hist-more b { color: var(--accent); }
+
+/* ==================== v2.24 只读禅模式（超长会话历史归档查阅）====================
+   全屏覆盖：无侧栏/输入/一切入口，只剩居中历史流（VSCode 禅模式）。
+   退出即整层销毁。 */
+/* v3.5.50 只读模式 v2（主渲染管线复用）：RO 层替换 flowwrap 占同层位，
+   分屏 .hg-subpane 保持原位自动让位；flow 限宽居中两边留白 */
+.hg-ro { flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg); }
+.hg-ro-bar { flex-shrink: 0; display: flex; align-items: center; gap: 14px;
+  padding: 10px 22px; border-bottom: 1px solid var(--border);
+  background: var(--bg-panel); }
+.hg-ro-title { font-size: var(--fs-lg); font-weight: 600; color: var(--fg-bright); }
+.hg-ro-busy { font-size: var(--fs-cap); color: var(--accent); animation: hg-think-blink 1.4s ease-in-out infinite; }
+.hg-ro-hint { flex: 1; font-size: var(--fs-sm); color: var(--muted); }
+.hg-ro-btn { flex-shrink: 0; font-size: var(--fs-base); color: var(--muted);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px;
+  padding: 5px 14px; cursor: pointer; }
+.hg-ro-btn:hover { color: var(--accent); border-color: var(--accent); }
+.hg-ro-exit:hover { color: var(--neon-red); border-color: var(--neon-red); }
+.hg-ro-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.hg-ro-drawer { flex-shrink: 0; width: 250px; flex-direction: column;
+  overflow-y: auto; border-right: 1px solid var(--border);
+  background: var(--bg-card); padding: 6px 4px; }
+.hg-ro-drawer-head { font-size: var(--fs-cap); color: var(--muted);
+  padding: 4px 10px 6px; }
+.hg-ro-dlist { display: flex; flex-direction: column; gap: 2px; }
+.hg-ro-ditem { display: flex; flex-direction: column; gap: 1px; padding: 6px 10px;
+  border-radius: 7px; cursor: pointer; }
+.hg-ro-ditem:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.hg-ro-ditem.cur { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.hg-ro-dtitle { font-size: var(--fs-base); color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-ro-dmeta { font-size: var(--fs-2xs); color: var(--muted); }
+/* RO flow：与主窗口完全一致（v3.5.75 用户拍板「和主窗保持一致,左右间隔
+   一定间距即可」）——flow 占满 RO 区（导轨贴左缘/滚动条贴右缘），内容列
+   靠左 820 列（.hg-flow 自带 padding:20px 32px 即固定间距），零计算零变量。
+   v3.5.65-74 的居中/偏移尝试全部退役 */
+.hg-rov-wrap { flex: 1; min-width: 0; display: flex; overflow: hidden; }
+.hg-rov-fw { width: 100%; position: relative;
+  display: flex; flex-direction: column; height: 100%; }
+.hg-rov-fw > .hg-flow { flex: 1; min-height: 0; }
+.h-grp-proc { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.h-grp-proc > .h-drawer { flex: 0 1 auto; min-width: 120px; max-width: 100%; }
+.h-grp-proc > .h-drawer.think { flex-shrink: 0; }
+.h-grp > .h-msg { width: auto; max-width: 100%; }
+/* 思考组头动画：活动思考脉动（v2.18 沿用，思考次数/思考中字样挂载） */
+.hg-think-anim { display: inline-block;
+  animation: hg-think-blink 1.4s ease-in-out infinite; }
+/* v2.18 占位气泡：AI 未输出正文时的活泼文案 + 三点跳动 */
+.h-msg.ph .h-bubble { display: flex; align-items: center; gap: 10px;
+  background: color-mix(in srgb, var(--bg-card) 60%, transparent);
+  border-style: dashed; box-shadow: none; }
+.hg-ph-word { font-size: var(--fs-lg); color: var(--muted); }
+.hg-ph-dots { display: inline-flex; gap: 3px; align-items: flex-end; }
+.hg-ph-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+  animation: hg-ph-bounce 1.2s ease-in-out infinite; }
+.hg-ph-dots i:nth-child(2) { animation-delay: .15s; }
+.hg-ph-dots i:nth-child(3) { animation-delay: .3s; }
+/* v2.18 思考分段条目：一段一个可折叠行（结构仿 .h-tool.col） */
+.h-think-seg { border: 1px solid var(--border); border-left: 3px solid var(--h-violet, #8957e5);
+  border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
+.h-think-seg-head { display: flex; align-items: baseline; gap: 6px; width: 100%;   /* 用户强迫症：「思考」与「持续了N秒」水平不齐——center几何居中在小字号时段视觉下沉，改 baseline 文字基线对齐（ZCode inline 文本流同款） */
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
+  font-size: var(--fs-sm); padding: 4px 10px 4px 10px; cursor: pointer; text-align: left; }
+.h-think-seg-head:hover { color: var(--fg); background: color-mix(in srgb, var(--h-violet, #8957e5) 6%, transparent); }
+.h-think-seg .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; align-self: center; }
+.h-think-prev { align-self: center; }   /* 摘要视口/箭头几何居中（非文本成员不参与基线） */
+.h-think-seg.open .h-chev { transform: rotate(90deg); }
+.h-think-seg-name { font-weight: 600; color: var(--fg); flex: 0 0 auto; white-space: nowrap; }
+/* 思考流③ ZCode reasoning.tsx 完整复刻：摘要视口=单行滚动（流水式）——
+   完成态 :empty 隐藏（时长回贴「思考 持续了N秒」整串贴排，不推右）；
+   流式态 flex:1 占位，内容 span min-w-max，JS scrollLeft=scrollWidth 推尾
+   （旧内容左移最新恒可见），两侧 16px 渐隐 mask；分隔点仅流式显示（:has） */
+.h-think-prev { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap;
+  color: var(--muted); font-size: var(--fs-xs); font-family: var(--font-ui);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
+.h-think-prev:empty { display: none; }
+.h-think-prev > span { display: inline-block; min-width: max-content; }
+/* 动画批C：live 新行进入淡入（ZCode 逐行渐显对位；hist 重建不打类不播） */
+.hg-enter { animation: hg-enter-kf var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)) both; }
+/* 动画批D：徽章翻动（状态翻转纵向翻入） */
+.hg-flip { animation: hg-flip-kf var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); display: inline-flex; }
+
+/* 思考流换行翻转（ZCode QueuedSummaryContent motion 复刻）：旧行上翻淡出
+   （y:-0.8em）、新行自下滑入（y:0.8em→0），300ms cubic-bezier(.4,0,.2,1)；
+   exit 克隆 absolute 原位防布局跳动，animationend 自拆 */
+.h-think-prev { position: relative; }
+.h-think-prev > .exit { position: absolute; inset: 0 auto auto 0; animation: hg-think-line-out .3s cubic-bezier(.4, 0, .2, 1) forwards; }
+.h-think-prev > .enter { animation: hg-think-line-in .3s cubic-bezier(.4, 0, .2, 1); }
+.h-think-dot { display: none; color: var(--muted); flex: 0 0 auto; }
+.h-think-seg-head:has(.h-think-prev:not(:empty)) .h-think-dot { display: inline; }
+.h-think-seg-t { font-size: var(--fs-xs); color: var(--muted); font-family: var(--font-mono); }
+.h-think-seg-t { flex: 0 0 auto; white-space: nowrap; }   /* 识图实测「秒」字掉行/「思考」竖排——ZCode shrink-0 nowrap 对位 */
+/* v3.0 流式思考纯文本路径（对照 ZCode reasoning 的 whitespace-pre-wrap）：
+   textNode 直插无 md 包裹，plain 修饰类期间保换行；定稿升级移除该类，
+   md 内容回到正常空白折叠（pre-wrap 挂基类会被 <p> 继承破坏 md 排版） */
+.h-think-seg-body.hg-think-plain { white-space: pre-wrap; word-break: break-word;
+  overflow-wrap: anywhere; }
+/* 419-①（用户记录「思考点开没有平滑动画，编辑/查阅/bash都有」）：display
+   硬切改 max-height 过渡（416 工具卡同方案）——收起 0/展开 42vh 可插值 */
+.h-think-seg-body { display: block; max-height: 0; padding: 0 10px;
+  overflow: hidden; font-size: var(--fs-base);
+  transition: max-height var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              padding var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1));
+  color: var(--muted); line-height: 1.7; white-space: normal;
+  /* v3.2.19（用户实锤「思考没有限制宽度」）：word-break:break-word 不影响
+     min-content 宽度，长路径照样把容器顶宽溢出；anywhere 参与内在尺寸
+     计算，长 token 在容器内折行 */
+  overflow-wrap: anywhere; min-width: 0; }
+.h-think-seg-body p { margin: .4em 0; }
+/* v2.59：展开态限高自适应（用户实锤超长思考撑爆界面）——与执行抽屉 42vh 同款
+   v2.59R：横向也自适应——思考内的代码块/长行换行或块内滚动，不撑破主窗 */
+.h-think-seg.open .h-think-seg-body { max-height: 42vh; padding: 2px 10px 8px;
+  overflow-y: auto; max-width: 100%; overflow-x: auto; }
+.h-think-seg-body pre, .h-think-seg-body code { white-space: pre-wrap;
+  word-break: break-word; overflow-wrap: anywhere; max-width: 100%; }
+.hg-sub-think.open .hg-sub-think-body { display: block; max-height: 40vh;
+  overflow-y: auto; max-width: 100%; overflow-x: auto; }
+.hg-sub-think-body pre, .hg-sub-think-body code { white-space: pre-wrap;
+  word-break: break-word; overflow-wrap: anywhere; max-width: 100%; }
+/* v2.18 展开态上限：不超会话一半，超出内部滚动（用户明确：最长不能超过会话一半） */
+.h-drawer.open .h-drawer-body { max-height: 42vh; overflow-y: auto; }
+.h-drawer { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
+.h-drawer-head { display: flex; align-items: center; gap: 8px; width: 100%;
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
+  font-size: 12px; padding: 7px 12px; cursor: pointer; text-align: left; }
+.h-drawer-head:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.h-drawer .h-chev { transition: transform .15s; }
+.h-drawer.open .h-chev { transform: rotate(90deg); }
+.h-drawer-title { flex-shrink: 0; font-weight: 600; }
+/* v2.20：思考抽屉「一键折叠」钮（组头最右，点击收抽屉+收全部思考段） */
+/* v2.21：思考段右下角「收起 ⌄」钮（组头右上角的 ⌃ 已删——位置丑且语义重复） */
+.h-think-seg-fold { display: block; text-align: right; font-style: normal;
+  color: var(--muted); font-size: 10.5px; line-height: 1; padding: 3px 8px 5px;
+  cursor: pointer; user-select: none; }
+.h-think-seg-fold:hover { color: var(--accent); }
+.h-think-seg:not(.open) .h-think-seg-fold { display: none; }
+.h-drawer-stats { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.h-drawer-chip { font-size: var(--fs-xs); font-family: var(--font-mono); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.h-drawer-body { padding: 4px 8px 8px;
+  display: none; flex-direction: column; gap: 6px; }
+.h-drawer.open .h-drawer-body { display: flex; }
+.h-drawer-body > .h-tool, .h-drawer-body > .h-tool-res { width: 100%; max-width: none; }
+/* v2.18.1：抽屉体子项禁止 flex 压缩——思考段多段时总高超 42vh，
+   flex 默认 shrink:1 会把每段压成几像素细条（2.png「缩成一团」根因：
+   .h-think-seg 自身 overflow:hidden 使 flex 项 min-height:auto 下限失效）。
+   内容超高由 .h-drawer.open .h-drawer-body 的 overflow-y:auto 滚动兜底。 */
+.h-drawer-body > * { flex-shrink: 0; }
+.h-drawer-body > .h-tool-res { padding-left: 10px; }
+/* 活动词压缩覆盖态（v2.7：正在压缩上下文…高亮） */
+.hg-act-word.hg-act-special { color: var(--neon-orange, #d29922); }
+.hg-welcome { margin: auto; text-align: center; color: var(--muted); }
+.hg-welcome-ico { margin-bottom: 26px; }
+.hg-welcome-ico .claude-ico.big { display: inline-block; width: 28px; height: 28px; }
+.hg-welcome-title { font-size: 22px; font-weight: 700; color: var(--fg-bright, var(--fg));
+  margin-bottom: 8px; }
+.hg-welcome-desc { font-size: var(--fs-lg); line-height: 1.8; }
+.h-msg.user { align-self: flex-end; position: relative; }
+/* v2.22：用户消息操作钮组（右上角，hover 显示）：↻ 重发 / ✎ 编辑后重发 */
+/* v3.1h：与 AI 消息动作条同构——消息下方右对齐 hover 浮现(原右上角绝对定位) */
+.h-macts { display: none; gap: 4px; justify-content: flex-end; margin: 2px 6px 0 0; }
+.h-msg.user:hover .h-macts { display: flex; }
+/* ---- v3.5.11 超长用户消息自动折叠（用户需求：默认收起，▾ 展开 ▴ 收起）---- */
+/* ::after 已被气泡尾巴占用（2463 行），渐隐走 ::before；底色对齐泡体 */
+.h-msg.user.longfold .h-bubble { max-height: 132px; overflow: hidden; }
+.h-msg.user.longfold .h-bubble::before {   /* 底部渐隐暗示被截断 */
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 46px;
+  background: linear-gradient(transparent,
+    color-mix(in srgb, var(--accent) 18%, var(--bg-card))); pointer-events: none; z-index: 1; }
+.h-msg.user.longfold.open .h-bubble { max-height: none; overflow: visible; }
+.h-msg.user.longfold.open .h-bubble::before { display: none; }
+.h-fold-btn { align-self: flex-end; margin: 4px 6px 0 0; padding: 2px 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: transparent;
+  color: var(--muted); font-size: 11px; cursor: pointer; }
+.h-fold-btn:hover { color: var(--accent); border-color: var(--accent); }
+.h-mico { width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg-card); color: var(--muted);
+  cursor: pointer; font-size: 11px; line-height: 1; }
+.h-mico:hover { color: var(--accent); border-color: var(--accent); }
+.h-mact { width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg-card);
+  color: var(--muted); font-size: 12px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0; }
+.h-mact:hover { color: var(--accent); border-color: var(--accent); }
+.h-msg.asst { align-self: flex-start; }
+.h-msg .h-bubble { padding: 10px 14px; font-size: 13.5px; line-height: 1.7;
+  /* v2.24.9 去 overflow-x:auto——尾巴伪元素越界被它裁掉（尖没了）还撑出
+     横向滚动条（识图会话读图实锤「多出拖动条/尾巴没了」）。长内容换行
+     由 word-break 兜底，代码块 pre 自带 overflow-x:auto 不受影响 */
+  word-break: break-word; position: relative; }
+/* v2.24.6 气泡尾巴：旋转方块伪元素画真尖角（用户泡朝右下、AI 泡朝左下），
+   同底色+同侧边框与泡体无缝衔接，微信式指向感 */
+.h-msg.user .h-bubble { border-radius: 14px 14px 10px 14px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border)); }
+.h-msg.user .h-bubble::after {
+  content: ''; position: absolute; right: -5px; bottom: 8px;
+  width: 13px; height: 13px; transform: rotate(45deg);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
+  border-right: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-radius: 0 3px 0 0; z-index: -1; }
+.h-msg.asst .h-bubble { border-radius: 14px 14px 14px 10px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.h-msg.asst .h-bubble::after {
+  content: ''; position: absolute; left: -5px; bottom: 8px;
+  width: 13px; height: 13px; transform: rotate(45deg);
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 3px 0 0 0; z-index: -1; }
+.h-bubble p { margin: 0 0 .5em; } .h-bubble p:last-child { margin-bottom: 0; }
+.h-bubble pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; overflow-x: auto; margin: .4em 0; }
+.h-bubble code { font-family: var(--font-mono); font-size: var(--fs-base);
+  background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+.h-bubble pre code { background: transparent; padding: 0; }
+.h-bubble table { border-collapse: collapse; margin: .5em 0; }
+.h-bubble th, .h-bubble td { border: 1px solid var(--border); padding: 4px 8px; font-size: var(--fs-base); }
+.h-bubble a { color: var(--accent); }
+.h-bubble ul, .h-bubble ol { margin: .3em 0; padding-left: 1.4em; }
+.h-bubble-atts { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.hg-bubble-atts .hg-att-mini { font-size: var(--fs-sm); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1px 6px; color: var(--muted); }
+
+/* 子代理消息：缩进 + 弱化 */
+
+/* 工具调用行：等宽紧凑条 */
+.h-tool { align-self: flex-start; font-family: var(--font-mono); font-size: var(--fs-sm);
+  color: var(--muted); background: var(--bg-card); border: 1px solid var(--border);
+  border-left: 2px solid var(--accent); border-radius: 6px; padding: 4px 10px;
+  max-width: 86%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-tool.sub { margin-left: 24px; }
+/* v3.4.27（用户实锤「没对齐」）：分屏时间线内的 .sub 行去遗留缩进——
+   与思考段/查阅行同缘对齐（24px 是旧抽屉嵌套时代的缩进） */
+.h-tl .h-tool.sub { margin-left: 0; }
+/* v3.4.29：分屏工具行与思考段强制同内距（10px）——两套 DOM 结构各自
+   的 padding 差异不再依赖巧合对齐（用户实锤「还没对齐」） */
+.hg-sub-body .h-tl > .h-tool { padding-left: 10px; }
+.h-tool.h-vision .h-vision-state { flex: none; white-space: nowrap; }
+.h-tool.h-vision .h-vision-state .h-tbadge { flex: none; white-space: nowrap; }
+.h-tool.h-vision .h-tbadge.b-run { animation: hgVisionPulse 1.6s ease-in-out infinite; }
+.h-vision-chan { flex: none; font-size: 9.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
+.h-vision-lb { font-size: var(--fs-2xs); color: var(--muted); margin: 6px 0 4px;
+  font-family: var(--font-ui); }
+.h-vision-pre { margin: 0; padding: 6px 8px; background: var(--code-bg, rgba(127,127,127,.08));
+  border-radius: 6px; font-family: var(--font-mono); font-size: var(--fs-xs);
+  white-space: pre-wrap; word-break: break-word; color: var(--fg); max-height: 220px; overflow-y: auto; }
+.h-vision-src { font-size: var(--fs-2xs); color: var(--muted); margin-top: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.h-vision-md { font-size: var(--fs-sm); line-height: 1.6; color: var(--fg);
+  max-height: 320px; overflow-y: auto; }
+.h-vision-md :first-child { margin-top: 0; }
+.h-vision-md :last-child { margin-bottom: 0; }
+/* v3.5.13（用户实锤「回传粗体/表格看不出来」）：md 元素样式此前只作用于
+   .h-bubble 作用域——识图回传容器裸奔（表格无边框=一坨文字）。对齐 h-bubble
+   同款：表格边框/strong/代码/列表/标题分级 */
+.h-vision-md table { border-collapse: collapse; margin: .5em 0; }
+.h-vision-md th, .h-vision-md td { border: 1px solid var(--border); padding: 4px 8px; }
+.h-vision-md th { background: var(--bg, rgba(127,127,127,.08)); }
+.h-vision-md strong { font-weight: 700; color: var(--fg-bright, var(--fg)); }
+.h-vision-md code { font-family: var(--font-mono); font-size: var(--fs-xs);
+  background: var(--code-bg, rgba(127,127,127,.08)); padding: 1px 4px; border-radius: 4px; }
+.h-vision-md ul, .h-vision-md ol { margin: .3em 0; padding-left: 1.4em; }
+.h-vision-md h1, .h-vision-md h2, .h-vision-md h3, .h-vision-md h4 {
+  font-size: 1.05em; font-weight: 700; margin: .6em 0 .3em; }
+.h-vision-md a { color: var(--accent); }
+.h-vision-md blockquote { border-left: 3px solid var(--border); padding-left: 8px;
+  color: var(--muted); margin: .4em 0; }
+.h-vision-empty { color: var(--muted); font-style: italic; }
+.h-tbadge.b-warn { color: var(--h-warn); font-weight: 600;
+  background: color-mix(in srgb, var(--h-warn) 14%, transparent); }
+/* v3.4.84（用户实锤「未对齐」）：exit 行归组后左对齐——.h-exit 基类是
+   居中分割线样式（align-self:center 配两侧横线），时间线内与思考/工具行
+   混排显得缩进；顶层散落形态（无组兜底）保留居中 */
+.h-tl .h-exit { align-self: flex-start; }
+.h-tool-name { color: var(--accent); font-weight: 600; margin-right: 6px; }
+.h-tool-arg { opacity: .8; }
+.h-tool-res { align-self: flex-start; font-family: var(--font-mono); font-size: var(--fs-sm);
+  color: var(--muted); padding: 1px 8px 1px 12px; max-width: 86%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- v3.2.6（ZCode 子智能体模式）：主流单行任务卡 + 窗格时间线 ---- */
+/* 子代理段卡退役：主流唯一入口=Agent/Task 派发单行卡（下组），完整过程统一
+   在右侧窗格时间线查看（对照 ZCode agent.tsx 产品边界）。段根仍留在 DOM
+   （回填/收尾/轮询兜底扫描/快照恢复的机器挂点），视觉全隐 */
+.h-subblock { display: none !important; }
+/* Agent/Task 单行任务卡解剖：✦ 子智能体 | 类型 chip（按类型名哈希取色）|
+   描述（单行省略）| 实时活动流（运行中活字）| 状态徽章/秒表/摘要 | 整行可点
+   开窗格。无折叠体（canToggle=false 的等价物） */
+.h-tool.agentline { max-width: 100%; }
+/* v3.4.65（用户实锤「子智能体行留了很大一块空白」）：agentline 无 ▸ 箭头
+   （展开体恒空、折叠语义不适用），却吃到 col 行的 30px 箭头位缩进=行首
+   一大块空白。收回 10px，与思考段/查阅头文字起点对齐。col.agentline 双类
+   (0,5,0) 压过 4098/4113/4118 的 col 组 (0,4,0)——同特异性源序会输（轻审
+   headless 实测 30px 实锤） */
+.hg-flow .h-tl .h-tool.col.agentline,
+.hg-sub-body .h-tl .h-tool.col.agentline { padding-left: 10px; }
+.h-tool.agentline .h-tool-head { cursor: pointer; }
+.h-tool.agentline .h-tool-name { flex-shrink: 0; }
+/* v3.5.269（用户定调「完成徽章全部贴边对齐」）：agentline arg 吃满剩余宽，
+   状态槽（完成徽章）贴行右端——与 bash 卡/后台任务行同几何 */
+.h-tool.agentline .h-tool-arg { white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; flex: 1 1 0; min-width: 0; }
+.h-ag-live { min-width: 0; flex: 0 1 auto; font-size: var(--fs-xs);
+  color: var(--accent); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; animation: hg-sub-pulse 1.6s ease-in-out infinite; }
+.h-ag-live:empty { display: none; }
+.h-tool.agentline .h-tslots { margin-left: auto; }
+/* v3.5.142（用户批注「名字去掉，保留空间给过程显示」）：类型 chip（.h-ag-type）
+   随「子智能体」类别词一并退役——行 title 悬浮保留类型全文；新增过程计数
+   「N思 M工」（运行中挂在秒表尾，数据来自 agents 档案） */
+/* v3.5.269 撤「N思M工」计数后 .h-ag-cnt 唯一生产者已撤（对抗审 F6 清孤儿） */
+/* v3.5.283（徽章一律对齐收口）：识图卡空槽隐藏（state margin:auto 推右后
+   残余 2px 消除）+已回传徽章推右 */
+.h-tool.h-vision .h-tslots:empty { display: none; }
+.h-tool.h-vision .h-vision-state { margin-left: auto; }
+/* v3.5.284（用户实锤「查阅组内完成徽章显示不全」）：head 空间不足时徽章
+   被压缩成残条（无 shrink:0 保护）——状态槽与徽章永不压缩，空间不足由
+   name/arg 收敛承担（两者 min-width:0 已就位）；组内行 max-width 100%
+   防行超组体被 overflow:hidden 裁切 */
+.h-tl .h-tslots, .h-tl .h-tbadge { flex-shrink: 0; }
+/* 图6/7（用户令「所有带完成徽章的位置固定直接贴右边」）：全局工具行徽章
+   槽右贴——.h-tool-arg 已 flex:1 占位（:3051），槽位 margin-left:auto 恒推
+   右，不再依赖 agentline/col 特例 */
+.h-tool .h-tslots { margin-left: auto; }
+.h-tl-grp-body .h-tool { max-width: 100%; }
+/* 窗格时间线：子代理自己的会话用主会话同款回合结构（回合头+时间线+根区结
+   论）。行样式全复用主链类（.h-tl/.h-think-seg/.h-tool/.h-tl-grp），这里只
+   补窗格作用域的身份行/结论区/占位说明 */
+.hg-sub-grp { display: flex; flex-direction: column; gap: 8px; }
+.hg-sub-idline { display: flex; align-items: center; gap: 6px; padding: 2px 2px 0; }
+.hg-sub-idline .h-ava { margin-right: 0; }
+.hg-sub-idline-ty { font-weight: 600; font-size: var(--fs-base); }
+.hg-sub-concl { display: flex; flex-direction: column; }
+.hg-sub-concl .h-msg { margin: 0; }
+.hg-sub-msgs .h-msg.asst { max-width: 92%; }
+.hg-sub-fold-wrap { width: fit-content; max-width: 100%; }
+.hg-sub-msgs .hg-sub-replay-note { margin: 0; }
+
+/* 杂音/退出行 */
+.h-raw { align-self: flex-start; font-family: var(--font-mono); font-size: var(--fs-sm);
+  color: var(--neon-red, #e06c75); padding: 2px 8px; word-break: break-all; }
+.h-exit { align-self: center; font-size: var(--fs-sm); color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 6px; padding: 3px 12px; margin-top: 6px; }
+/* v2.20：模型切换分割线（会话内换模型即时生效的可见反馈） */
+.h-switch { align-self: center; display: flex; align-items: center; gap: 10px;
+  width: min(560px, 80%); margin: 8px 0 2px; color: var(--muted);
+  font-size: 11px; white-space: nowrap; }
+.h-switch span { flex: 1; border-top: 1px dashed var(--border); }
+.h-switch i { font-style: normal; color: var(--accent); }
+/* a52（用户实测「压缩分割线把会话分成两个工作区」）：压缩线弱化——
+   左对齐单行小字（与时间条/系统提示同视觉层级），去掉全宽居中分割线
+   形态；信息（压缩中秒表/完成规模耗时）全保留 */
+.h-switch[data-hg-compact] { align-self: stretch; width: auto; gap: 6px;
+  padding: 2px 0 2px 14px; margin: 2px 0; font-size: var(--fs-2xs); }
+.h-switch[data-hg-compact] span { border-top: none; flex: 0; }
+/* v2.34：审计警示卡——light 形态回合结算违规（直改超线/跳过 reviewer）。
+   红边红字居中卡片：区别于用户/AI 气泡（这是 harness 的裁决）与 h-raw
+   噪音行（那条更小更轻）；warn 档唯一出口，auto 档续发前先出这条。 */
+.h-audit { align-self: center; width: min(680px, 92%); margin: 8px 0 2px;
+  border: 1px solid rgba(224, 108, 117, 0.55); background: rgba(224, 108, 117, 0.08);
+  color: var(--neon-red, #e06c75); border-radius: 8px; padding: 6px 12px;
+  font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+/* v2.27.3：跨会话回传气泡（识图结论等，区别于 user/AI 消息） */
+.h-peer { align-self: flex-start; width: min(820px, 100%); }
+.h-peer-head { font-size: var(--fs-sm); color: var(--accent); margin-bottom: 3px; font-weight: 600; }
+/* 批3（迁出主窗）：协作回传通知行——段退役后的单行承载体（点击开对端窗格） */
+.h-sub-notify { align-self: flex-start; display: flex; align-items: center; gap: 6px;
+  max-width: min(820px, 100%); padding: 4px 10px; border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: 8px; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--ink); background: var(--bg2, rgba(127,127,127,.06));
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.h-sub-notify:hover { border-color: var(--accent); }
+.h-sub-notify .h-ava { flex: 0 0 auto; }
+.h-sub-notify-txt { color: var(--ink2, var(--ink)); opacity: .85; overflow: hidden;
+  text-overflow: ellipsis; }
+
+/* ---- v2.37（P1-C）模型标识与头像徽标 ----
+   色板全走主题/语义变量（--hgd-* 与 --accent），零写死色；头像=首字母圆标，
+   按名字符哈希取色（同名恒同色）。纯 class 结构，随 innerHTML 快照序列化 */
+.h-mmeta { display: flex; align-items: center; gap: 5px; margin-top: 3px; padding-left: 2px; }
+.h-mmodel { font-size: var(--fs-2xs); color: var(--muted); font-family: var(--font-mono); }
+.h-ava {
+  flex: none; width: 15px; height: 15px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; line-height: 1; color: var(--bg-card);
+  vertical-align: -3px; margin-right: 4px;
+}
+.h-ava-0 { background: var(--hgd-run); }
+.h-ava-1 { background: var(--hgd-fail); }
+.h-ava-2 { background: var(--hgd-halt); }
+.h-ava-3 { background: var(--hgd-wait); }
+.h-ava-4 { background: var(--accent); }
+/* v3.5.142：类型 chip（span.h-ag-type）已随「子智能体」类别词退役（08-tools
+   _hgAgentRowBuild），chip 取色规则一并删除 */
+.h-switch .hg-peer-t { font-weight: 400; font-variant-numeric: tabular-nums; }
+/* v2.21：内建斜杠命令的系统卡片（/help /status 等在消息流里的回显） */
+.h-syscard { align-self: center; width: min(560px, 86%); margin: 8px 0 2px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-input);
+  padding: 10px 14px; font-size: 12px; }
+.h-syscard-t { font-weight: 600; color: var(--fg-bright); margin-bottom: 6px; font-size: var(--fs-base); }
+.h-syscard-r { display: flex; gap: 12px; padding: 2px 0; color: var(--muted); line-height: 1.5; }
+.h-syscard-r b { flex: 0 0 96px; color: var(--accent); font-family: Consolas, monospace; font-weight: 600; }
+.h-syscard-r span { flex: 1; min-width: 0;
+  overflow-wrap: anywhere; word-break: break-all; }
+/* v2.21：子代理行——运行秒表 + 完成摘要 */
+.h-tsec { font-size: var(--fs-2xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.h-tagent-brief { font-size: var(--fs-sm); color: var(--muted); max-width: 340px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+
+/* ---- 底部输入卡（ClaudeDesktop 式）----
+   v2.2 美化：限宽 760→820 与气泡列对齐；卡片加大留白、聚焦光晕阴影；
+   textarea 最小高度提升（用户反馈「聊天框有点小」） */
+/* v3.4.5（用户定调「居中两消息中间」）：输入卡恒居构图正中——视差让 AI 列
+   微偏左、用户消息微偏右，输入卡在两者中间（任何偏移实验均废止） */
+.hg-card-wrap { position: relative; padding: 8px 32px 16px; border-top: 1px solid var(--border); }
+.hg-atts { display: flex; flex-wrap: wrap; gap: 6px; max-width: 820px; margin: 0 auto 8px; }
+/* ---- 消息排队条（v2.20，参考 ZCode：busy 时继续输入 → 排队）
+   v2.20：悬浮层——原来在文档流里占高，排队条一出现聊天区被压矮、消息被
+   顶走（用户实测）。absolute 浮在输入卡上方，主窗口布局零影响 ---- */
+/* v2.21：排队条改回流内（用户定论：悬浮版会向上盖住消息流尾部——多条
+   排队时最后一条消息被挡住看不见）。排队条回到输入卡上方占位，与对话框
+   同宽同列、随队列增减同步推挤输入区，消息流只是变矮（可滚动）不被遮挡 */
+.hg-queue { width: min(820px, 100%); margin: 0 auto 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 240px; overflow-y: auto; }
+/* ---- 引用消息（v2.27：右键消息→引用，微信同款引用条）---- */
+.hg-quote { width: min(820px, 100%); margin: 0 auto 8px; display: flex;
+  align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg);
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: 8px; padding: 6px 8px 6px 10px; }
+.hg-quote-tag { flex-shrink: 0; color: var(--accent); font-weight: 600; }
+.hg-quote-body { flex: 1; min-width: 0; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-quote-x { flex-shrink: 0; border: none; background: transparent;
+  color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 5px;
+  font-size: 11px; }
+.hg-quote-x:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* 右键消息的迷你菜单（fixed 贴鼠标挂 body，不受滚动/祖先定位影响） */
+.hg-ctxmenu { position: fixed; z-index: 90; min-width: 120px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.hg-ctx-item { padding: 6px 10px; font-size: var(--fs-base); color: var(--fg);
+  border-radius: 6px; cursor: pointer; }
+.hg-ctx-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.hg-q-item { display: flex; align-items: center; gap: 8px; font-size: var(--fs-cap);
+  color: var(--muted); background: var(--bg-card); border: 1px dashed var(--border);
+  border-radius: 10px; padding: 5px 6px 5px 10px; }
+.hg-q-grip { flex-shrink: 0; color: var(--border); font-size: var(--fs-base);
+  cursor: grab; padding: 0 2px; border-radius: 4px; touch-action: none; }
+.hg-q-grip:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* v2.25：排队条拖动排序——抓手按住拖；被拖项淡出+虚线框，落点项顶部亮条预告位置 */
+.hg-q-item.dragging { opacity: .45; border-style: solid; border-color: var(--accent); }
+.hg-q-item.drop-before { box-shadow: 0 -2px 0 0 var(--accent); }
+.hg-q-item.drop-after { box-shadow: 0 2px 0 0 var(--accent); }
+.hg-q-text { flex: 1; min-width: 0; color: var(--fg); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-q-act { border: none; background: transparent; color: var(--muted); flex-shrink: 0;
+  font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 6px; cursor: pointer;
+  white-space: nowrap; }
+.hg-q-act:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.hg-q-act[data-qact="now"]:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.hg-q-act[data-qact="del"]:hover { color: var(--neon-red, #e06c75); background: color-mix(in srgb, var(--neon-red, #e06c75) 12%, transparent); }
+.hg-att-chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-cap);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 3px 6px 3px 4px; color: var(--fg); max-width: 240px; }
+/* v2.19：缩略图此前没有任何尺寸约束——原图多大就撑多大（附件栏被一张
+   4K 截图顶爆）。定成 20×20 方形缩略图，object-fit 裁切。 */
+.hg-att-thumb { width: 20px; height: 20px; flex-shrink: 0; border-radius: 4px;
+  object-fit: cover; background: var(--bg); cursor: zoom-in; display: block; }
+.hg-att-ico { flex-shrink: 0; font-size: var(--fs-base); line-height: 1; }
+.hg-att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-att-x { border: none; background: transparent; color: var(--muted); cursor: pointer;
+  padding: 0 2px; flex-shrink: 0; font-size: 12px; line-height: 1; }
+.hg-att-x:hover { color: var(--neon-red, #e06c75); }
+.hg-input-card { max-width: 820px; margin: 0 auto;   /* v3.4.1R2：宽区偏移由下方容器查询接管（上一版 auto+固定右距=右锚错修） */
+  background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 16px; padding: 8px 12px 8px;
+  transition: border-color .15s, box-shadow .15s; }
+/* v2.20（参考 ZCode）：项目选择器挪到输入卡顶部一行 */
+.hg-card-head { display: flex; align-items: center; gap: 8px; padding: 0 2px 6px; }
+.hg-proj { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  border: none; background: transparent; color: var(--muted); font-size: 11.5px;
+  padding: 3px 8px; border-radius: 8px; cursor: pointer; max-width: 100%;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hg-proj:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.hg-proj [data-hg-projname] { color: var(--fg); font-weight: 600; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; }
+.hg-input-card:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-input { display: block; width: 100%; box-sizing: border-box; border: none; background: transparent; padding: 4px 6px;
+  color: var(--fg); font-size: 13.5px; line-height: 1.6; resize: none; outline: none;
+  min-height: 44px; max-height: 200px; font-family: inherit; }
+.hg-card-foot { display: flex; align-items: center; gap: 8px; padding-top: 6px;
+  flex-wrap: wrap; }   /* v2.25：窄窗口下 chip 换行，不再溢出输入卡 */
+/* 模型 chip：长模型名先收缩省略（glm-5.3-flash[1M] 窗口化时曾顶破卡片） */
+/* v3.4.31（用户实锤「图标太不明显」）：权限图标加大加深——默认主题色，
+   切到「变更前确认」转橙色警示 */
+.hg-chip[data-hg-perm] { font-size: 15px; line-height: 1; color: var(--fg); }
+.hg-chip[data-hg-perm].perm-confirm { color: var(--h-warn, #d97706); }
+.hg-chip[data-hg-model] { min-width: 0; max-width: 200px; overflow: hidden;
+  text-overflow: ellipsis; }
+.hg-chip { border: 1px solid var(--border); background: transparent; color: var(--muted);
+  font-size: 11.5px; border-radius: 999px; padding: 3px 10px; cursor: pointer; white-space: nowrap; }
+.hg-chip:hover { color: var(--fg); border-color: var(--accent); }
+/* v2.20：纯图标 chip（＋附件 / ⚡技能）——正方形圆角，紧凑 */
+.hg-chip-ico { min-width: 28px; padding: 3px 0; text-align: center; border-radius: 8px;
+  font-size: 13px; line-height: 1; font-weight: 600; }
+/* v2.3 问题4：上下文用量环（⭕ SVG 圆环 + 百分比，替代金额）
+   v2.6：去掉旧金额样式的 max-width/overflow/ellipsis（flex 收缩曾把环压爆），
+   环和文字定宽不收缩 */
+.hg-cost { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; }   /* v2.36：上下文 % 数字等宽跳动不抖 */
+.hg-ctx-ring { width: 22px; height: 22px; flex-shrink: 0; display: block;
+  overflow: visible; }
+.hg-ctx-pct { font-size: var(--fs-sm); white-space: nowrap; }
+.hg-cost.warn { color: var(--neon-orange, #d29922); }
+.hg-cost.warn .hg-ctx-pct { color: var(--neon-red, #e06c75); font-weight: 600; }
+/* a154：上下文容量卡（仿 ZCode，圆环点击弹出，fx.js _hgCtxCardToggle）。
+   z-index 95：普通内容之上、通用模态（100）与确认框（200）之下——
+   对抗审修正（原 320 会压顶一切弹窗） */
+.hg-ctx-card { position: fixed; z-index: 95; width: 310px; max-width: calc(100vw - 16px);
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  font-family: var(--font-ui); font-size: var(--fs-base, 12px); color: var(--fg); }
+.hg-ctx-head { display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 10px; }
+.hg-ctx-head b { font-size: var(--fs-lg); }
+.hg-ctx-head span { color: var(--muted); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; }
+.hg-ctx-bar { height: 8px; border-radius: 999px; background: var(--border);
+  overflow: hidden; margin-bottom: 12px; }
+.hg-ctx-bar i { display: block; height: 100%; border-radius: 999px;
+  transition: width .3s; }
+.hg-ctx-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.hg-ctx-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  flex-shrink: 0; }
+.hg-ctx-dot.est { background: var(--muted); }
+.hg-ctx-name { flex: 1; }
+.hg-ctx-val { color: var(--muted); font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; }
+.hg-ctx-line { padding-top: 6px; }
+.hg-ctx-dim { color: var(--muted); font-size: var(--fs-sm, 11px); }
+.hg-ctx-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: var(--fs-sm, 11px); line-height: 1.5; }
+/* v2.19：图标换成 SVG（旧的字符 ➤/■ 基线不齐、■ 还是窄长条，用户嫌丑）。
+   两个 svg 常驻 DOM，靠 .stop 切换显隐，避免改 DOM 引起重排。 */
+.hg-send { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;
+  border: none; background: var(--accent); color: var(--on-accent, #001020); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  transition: filter .15s, transform .15s; }
+.hg-send svg { width: 15px; height: 15px; fill: currentColor; display: none; }
+.hg-send .hg-ic-send { display: block; margin-left: 2px; }
+.hg-send .hg-ic-stop { width: 14px; height: 14px; }
+.hg-send.stop { background: var(--neon-red, #e06c75); box-shadow: 0 0 0 3px
+  color-mix(in srgb, var(--neon-red, #e06c75) 22%, transparent); }
+.hg-send.stop .hg-ic-send { display: none; }
+.hg-send.stop .hg-ic-stop { display: block; }
+.hg-send:hover { filter: brightness(1.12); transform: scale(1.06); }
+.hg-send:active { transform: scale(.96); }
+
+/* popover（技能/模型/项目/权限/思考下拉）
+   v2.20：bottom 不再写死——openPop 按锚点实际位置内联计算（贴 anchor 上缘） */
+.hg-pop { position: absolute; z-index: 30;
+  min-width: 240px; max-height: 300px; overflow-y: auto; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 10px; padding: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.hg-pop-title { font-size: var(--fs-xs); color: var(--muted); padding: 4px 8px 6px; }
+.hg-pop-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px;
+  border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--fg); }
+.hg-pop-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-pop-item.on b { color: var(--accent); }
+.hg-pop-item b { font-weight: 600; flex-shrink: 0; }
+.hg-pop-item span { font-size: var(--fs-xs); color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-pop-empty { padding: 8px; font-size: var(--fs-cap); color: var(--muted); }
+/* v2.21：斜杠命令菜单（CLI 式）——与输入框同宽、命令+描述横排、
+   底部固定提示行、↑↓ 选择高亮整行 */
+.hg-pop.slash { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.hg-pop.slash .hg-pop-list { max-height: 264px; overflow-y: auto; padding: 6px; }
+.hg-pop.slash .hg-pop-item b { color: var(--fg-bright); min-width: 72px; }
+.hg-pop.slash .hg-pop-item.on,
+.hg-pop.slash .hg-pop-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-pop.slash .hg-pop-item.on b { color: var(--accent); }
+.hg-pop.slash .hg-pop-foot { flex-shrink: 0; border-top: 1px solid var(--border);
+  padding: 7px 12px; font-size: 11px; color: var(--muted); }
+
+/* 轻量模态（铁律2：禁原生 confirm/prompt，暗色模态框） */
+.hg-modal-ov { position: absolute; inset: 0; z-index: 40; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; }
+.hg-modal { width: 340px; max-width: 86%; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.hg-modal-title { font-size: var(--fs-xl); font-weight: 600; color: var(--fg-bright, var(--fg)); margin-bottom: 10px; }
+.hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7; }
+/* a650：需要保留换行/缩进的弹窗正文（改动清单、命令预览）单独标 class——
+   pre-wrap 不能上 .hg-modal-body，那会把所有既有弹窗 HTML 源码里的缩进
+   空白渲染成可见空洞。 */
+.hg-modal-body.hg-pre { white-space: pre-wrap; }
+.hg-modal-body.hg-pre code { white-space: normal; }
+.hg-modal-body label { display: block; font-size: var(--fs-cap); color: var(--muted); margin-bottom: 5px; }
+/* a452（审计 P1：复选框看不见勾选态）：全文通用选择器会把 checkbox/radio
+   的原生绘制一并抹掉（勾/未勾长得一样，三角色弹窗的「启用三角色」就是
+   一个空方块）。appearance:none 只给文本类输入框。
+   a452（第二轮审计 P1：特异性回归）：`:not()` 会把该参数选择器的特异性
+   计入整条——`.hg-modal-body input:not(...):not(...)` 是 0-3-1，直接压过
+   靠后声明的 `.hg-roles-line input`（0-1-1），三角色面板的分级线数字框
+   宽度从 74px 被顶成 100%、padding/字号也跟着变，flex 行被撑破。
+   用 `:where()` 把内部特异性归零，整条回到 0-1-1，恢复「靠文件顺序决胜」。 */
+.hg-modal-body :where(input:not([type=checkbox]):not([type=radio])) { width: 100%; box-sizing: border-box; padding: 6px 9px; font-size: 12.5px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg);
+  /* a441：modal.js 把文本输入框统一改成 type=search（躲浏览器自动填充黑窗），
+     search 的原生外观/清除按钮要抹平，避免与既有输入框观感不一致 */
+  -webkit-appearance: none; appearance: none; }
+.hg-modal-body input[type=checkbox], .hg-modal-body input[type=radio] { width: auto; }
+.hg-modal-body input::-webkit-search-cancel-button,
+.hg-modal-body input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
+.hg-modal-body input:focus { outline: none; border-color: var(--accent); }
+.hg-modal-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+/* ---- 自定义提示词（v2.8：左栏底部入口 + 多条目管理界面）---- */
+.hg-prompt-btn { flex-shrink: 0; margin: 6px; padding: 7px 10px; font-size: var(--fs-base);
+  background: transparent; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--muted); cursor: pointer; text-align: center; }
+.hg-prompt-btn:hover { color: var(--fg); border-color: var(--accent); }
+.hg-modal.hg-modal-prompt { width: 620px; max-width: 92%; }
+/* ---- 恢复会话（v2.27：新建会话下方入口，扫描盘上孤儿转写手动找回）---- */
+.hg-recover-btn { margin-top: 6px; border-color: var(--border); background: transparent;
+  color: var(--muted); }
+.hg-recover-btn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.hg-modal.hg-modal-recover { width: 520px; max-width: 92%; }
+.hg-recover-list { margin-top: 10px; max-height: 55vh; overflow-y: auto; }
+.hg-r-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; }
+.hg-r-item.done { opacity: .55; }
+.hg-r-info { flex: 1; min-width: 0; }
+.hg-r-title { font-size: 12.5px; color: var(--fg-bright, var(--fg));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-r-meta { font-size: var(--fs-xs); color: var(--muted); margin-top: 2px; }
+.hg-r-btn { flex-shrink: 0; font-size: var(--fs-sm); padding: 4px 12px; }
+.hg-prompt-hint { font-size: var(--fs-cap); color: var(--muted); margin-bottom: 8px;
+  line-height: 1.6; border: none; }
+.hg-prompt-list { display: flex; flex-direction: column; gap: 10px;
+  max-height: 52vh; overflow-y: auto; padding: 2px; }
+.hg-prompt-item { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
+  background: color-mix(in srgb, var(--bg-card) 60%, var(--bg)); }
+.hg-prompt-item.off { opacity: .55; }
+.hg-prompt-item-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.hg-prompt-note { flex: 1 1 auto; min-width: 0; padding: 4px 8px; font-size: var(--fs-cap);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-prompt-note:focus { outline: none; border-color: var(--accent); }
+.hg-prompt-scope { flex-shrink: 0; padding: 4px 6px; font-size: var(--fs-cap);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-prompt-proj { flex-shrink: 0; width: 130px; padding: 4px 8px; font-size: var(--fs-cap);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-prompt-proj:focus { outline: none; border-color: var(--accent); }
+.hg-prompt-onoff, .hg-prompt-del { flex-shrink: 0; border: none; background: transparent;
+  cursor: pointer; font-size: 12px; padding: 2px 4px; border-radius: 4px; }
+.hg-prompt-onoff:hover, .hg-prompt-del:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-prompt-empty { padding: 18px 0; text-align: center; font-size: var(--fs-base); color: var(--muted); }
+.hg-prompt-ta { display: block; width: 100%; box-sizing: border-box; min-height: 90px;
+  max-height: 30vh; resize: vertical; padding: 8px 10px; font-size: 12.5px;
+  line-height: 1.6; font-family: inherit; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--fg); }
+.hg-prompt-ta:focus { outline: none; border-color: var(--accent); }
+/* ---- 识图会话配置（v2.14：左栏提示词上方入口）---- */
+.hg-modal.hg-modal-vision { width: 640px; max-width: 92%;
+  max-height: 84vh; display: flex; flex-direction: column; }   /* v3.5.12：弹窗整体不超屏（三角色/识图共用） */
+.hg-modal.hg-modal-vision .hg-modal-body { overflow-y: auto; flex: 1; min-height: 0; }
+.hg-vision-hint { font-size: var(--fs-cap); color: var(--muted); margin-bottom: 10px;
+  line-height: 1.7; border: none; }
+.hg-vision-hint b { color: var(--fg); font-weight: 600; }
+.hg-vision-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.hg-vision-switch { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+  color: var(--fg); cursor: pointer; user-select: none; }
+.hg-vision-switch input { width: auto; margin: 0; cursor: pointer; }
+.hg-vision-state { font-size: var(--fs-cap); color: var(--muted); }
+.hg-vision-state.on { color: var(--neon-green, #4ade80); }
+.hg-vision-grid { display: flex; gap: 10px; margin-bottom: 10px; }
+/* label 纵排 flex：说明文字行数不一时控件仍贴底对齐（gap=文字与控件保底间距，
+   auto margin 吸收剩余——三槽说明长短不一也不错位） */
+.hg-vision-grid > label { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+  gap: 5px; font-size: 11.5px; color: var(--muted); margin-bottom: 0; }
+.hg-vision-grid input, .hg-vision-grid select { margin-top: auto; width: 100%;
+  box-sizing: border-box; padding: 6px 9px; font-size: 12.5px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-vision-grid input:focus, .hg-vision-grid select:focus { outline: none; border-color: var(--accent); }
+.hg-vision-prompt-lab { display: block; font-size: var(--fs-cap); color: var(--muted); margin-bottom: 0; }
+/* v2.25：多模态名单是单行输入，别套 hg-vision-prompt（那是提示词 textarea，
+   min-height 200px——用户实测「框太大，有点丑」） */
+.hg-vision-mm { display: block; width: 100%; box-sizing: border-box; margin-top: 5px;
+  padding: 6px 9px; font-size: 12px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-vision-mm:focus { outline: none; border-color: var(--accent); }
+.hg-vision-prompt { display: block; width: 100%; box-sizing: border-box; margin-top: 5px;
+  min-height: 200px; max-height: 42vh; resize: vertical; padding: 8px 10px; font-size: 12px;
+  line-height: 1.65; font-family: inherit; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--fg); }
+.hg-vision-prompt:focus { outline: none; border-color: var(--accent); }
+/* ===== v2.56 三角色面板重设计：卡片化槽行+紧凑分级线，长说明进悬浮/折叠 ===== */
+.hg-roles .hg-modal-body { padding: 10px 14px 6px; }
+.hg-roles-mode { font-size: var(--fs-2xs); color: #fff; background: var(--accent);
+  border-radius: 8px; padding: 1px 8px; vertical-align: 2px; margin-left: 8px; }
+.hg-roles-top { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.hg-roles-modeinfo { font-size: var(--fs-cap); color: var(--muted); }
+.hg-roles-more { font-size: var(--fs-sm); color: var(--muted); margin-bottom: 4px; }
+.hg-roles-more summary { cursor: pointer; user-select: none; }
+.hg-roles-more summary:hover { color: var(--fg); }
+/* v3.5.0+（用户实锤「点开屏幕快放不下」）：说明体+折叠的代理槽限高滚动，
+   展开不再撑爆小屏弹窗；v3.5.12 再收紧 40vh→28vh（大屏上 40vh 仍近半屏，
+   用户二锤「依旧挤满」）*/
+.hg-roles-more[open] { display: block; max-height: 28vh; overflow-y: auto; }
+.hg-roles-more div { padding: 6px 9px; margin-top: 5px; line-height: 1.75;
+  background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 6px; }
+.hg-roles-sec { font-size: var(--fs-sm); font-weight: 600; color: var(--fg);
+  border-top: 1px solid var(--border); padding-top: 8px; margin: 9px 0 4px; }
+.hg-roles-sec i { font-style: normal; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.hg-roles-slot { display: flex; align-items: center; gap: 9px; padding: 4px 0; }
+.hg-roles-ico { flex: none; width: 22px; height: 22px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: #fff; }
+.hg-roles-ico.main { background: #6366f1; }
+.hg-roles-ico.light { background: #0891b2; }   /* v3.5.0 三档：轻/中档色 */
+.hg-roles-ico.mid { background: #0ea5e9; }
+.hg-roles-ico.des { background: #d97757; }
+.hg-roles-ico.rev { background: #059669; }
+.hg-roles-name { flex: none; width: 118px; font-size: var(--fs-base); color: var(--fg); }
+.hg-roles-name i { display: block; font-style: normal; font-size: var(--fs-2xs);
+  color: var(--muted); }
+.hg-roles-slot select { flex: 1; min-width: 0; padding: 4px 8px; font-size: var(--fs-base);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--fg); }
+.hg-roles-note { font-size: var(--fs-xs); color: var(--muted); margin: 3px 0 2px; }
+.hg-roles-line { display: flex; align-items: center; gap: 9px; padding: 3px 0;
+  font-size: 12px; }
+.hg-roles-line > span { flex: none; width: 54px; color: var(--fg); }
+.hg-roles-line input, .hg-roles-line select { flex: none; width: 74px;
+  padding: 4px 8px; font-size: 12px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-roles-line input:focus, .hg-roles-line select:focus { outline: none;
+  border-color: var(--accent); }
+.hg-roles-line select { width: auto; min-width: 160px; }
+.hg-roles-line em { font-style: normal; font-size: var(--fs-xs); color: var(--muted);
+  min-width: 0; }
+/* ============ harness v2.1：claudecodeui 移植样式 ============ */
+
+/* ---- 工具行通用升级：不再 nowrap，支持徽章+复制按钮 ----
+   v2.3 问题2：命令不再单行硬撑（超长命令曾顶爆气泡宽度）——arg 允许换行；
+   行内放不下时 flex-wrap，徽章/复制按钮落到下一行而非溢出 */
+.h-tool { white-space: normal; overflow: visible; text-overflow: clip;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: 88%;
+  border-radius: 8px; transition: border-color .15s, background .15s; }
+.h-tool:not(.col):hover { background: color-mix(in srgb, var(--accent) 5%, var(--bg-card)); }
+.h-tool .h-tool-arg { flex: 1 1 auto; min-width: 0; max-width: 100%;
+  overflow-wrap: anywhere; word-break: break-all;
+  /* v3.4.4（用户定调「不允许换行，必须一行显示，显示不全自行截断」）：
+     live 终端行命令单行省略（旧 pre-wrap 随内容换行成多行）；全文悬浮 title */ 
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-tool .h-tool-sec { flex-shrink: 0; color: var(--muted); opacity: .75; }
+.h-tool-copy { flex-shrink: 0; border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 10px; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
+/* v2.44R：段内抽屉头的复制钮是 head <button> 内的 span（嵌套 button 非法）
+   ——补行内块布局，样式复用上方 .h-tool-copy */
+.h-tool-head .h-tool-copy { display: inline-block; }
+.h-tool-copy:hover { color: var(--accent); border-color: var(--accent); }
+
+/* 状态徽章（源 deriveToolStatus：running 蓝 / completed 绿 / error 红 / denied 橙） */
+.h-tslots { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; }
+/* v3.3.7：完成徽章与复制钮呼吸间距（用户实锤「贴的太紧」） */
+.h-tslots .h-tbadge { margin-right: 2px; }
+.h-tool .h-tool-copy { margin-left: 6px; }
+.h-tbadge { font-size: 9.5px; padding: 1px 7px; border-radius: 999px; font-family: inherit; }
+.h-tbadge.b-run { color: var(--h-run); background: color-mix(in srgb, var(--h-run) 14%, transparent); }
+.h-tbadge.b-done { color: var(--h-ok); background: color-mix(in srgb, var(--h-ok) 14%, transparent); }
+.h-tbadge.b-err { color: var(--h-err); background: color-mix(in srgb, var(--h-err) 14%, transparent); }
+.h-tbadge.b-deny { color: var(--h-warn); background: color-mix(in srgb, var(--h-warn) 14%, transparent); }
+.h-tool.err { border-color: var(--neon-red, #e06c75);
+  border-left-color: var(--neon-red, #e06c75); }
+.h-tool.err .h-tool-arg { color: var(--neon-red, #e06c75); }
+
+/* 分组行（×N 折叠）：折叠体收起，点组头展开成员明细 */
+.h-tool.group { cursor: default; }
+.h-tool.group .h-tool-arg { color: var(--fg); }
+.h-tool.group .h-group-rows { display: none; margin-top: 4px; }
+.h-tool.group.open-group .h-group-rows { display: block; }
+
+/* ---- 折叠组（collapsible 工具：diff/todo/agent/plan）---- */
+.h-tool.col { display: block; padding: 0; }
+/* v3.5.278→283（用户铁令「所有徽章以子代理完成位置为基准一律对齐，流式
+   +重渲全部」）：状态槽推广到全部 col head 恒推右（margin-left:auto）——
+   实测三行 gap：bash 23/agentline 13/vision 27（各 head 内容排布差异），
+   slots 恒推 head 右缘后 gap 统一=head padding-right，全行一列 */
+.h-tool.col .h-tool-head .h-tslots { margin-left: auto; }
+/* v3.5.282（用户铁令「所有完成/错误/已回传徽章一律无条件对齐，流式+重渲
+   全形态」）：①head 内 name 收敛——SendMessage 等 Default 行的长标题
+   （JSON 全文）无收敛把行撑爆，徽章被推出容器越界裁切（用户实锤图1 行2）；
+   短名行零影响（shrink 只在挤时生效）②识图卡状态位同推右保险（无 slots
+   结构，已回传徽章所在）——三路合围后所有徽章右缘一列对齐 */
+.h-tool.col .h-tool-head .h-tool-name {
+  min-width: 0; flex-shrink: 1; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.h-tool-head .h-vision-state { margin-left: auto; flex-shrink: 0; }
+/* v4.0.0-a42：交互提问卡（h-askcard）——askuser 从 mcp 工具行（原始 JSON
+   参数+结果平铺置底）改为识图同款折叠卡。卡件复用 .h-tool col 全套样式
+   （头部/徽章/折叠体/点开委托零新增），此处只补折叠体内部排版 */
+.h-askcard-q { padding: 8px 12px; border-bottom: 1px dashed var(--border); }
+.h-askcard-q:last-of-type { border-bottom: none; }
+.h-askcard-q > b { display: block; margin-bottom: 6px; font-size: var(--fs-base); }
+.h-askcard-opt { display: flex; gap: 8px; align-items: baseline;
+  padding: 3px 0 3px 10px; font-size: var(--fs-sm); }
+.h-askcard-opt code { flex-shrink: 0; padding: 1px 6px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 4px; }
+.h-askcard-dsc { color: var(--muted); }
+/* a63：bash/PowerShell 命令体纯文本 pre——命令不走 markdown（__x__ 粗体
+   语法吞下划线=复制损坏，用户实锤）。等宽+保留空白+可换行 */
+.h-tool-cmd { margin: 0; padding: 6px 10px; white-space: pre-wrap;
+  word-break: break-all; font-family: var(--font-mono);
+  font-size: var(--fs-sm); color: var(--fg); }
+.h-askcard-ans { padding: 8px 12px; background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border-top: 1px solid var(--border); font-size: var(--fs-sm); white-space: pre-wrap; }
+/* v4.0.0-a36：行头文本基线统一（用户实测「识图 #x 与提示词水平不对齐」）：
+   emoji 图标 span 的字体度量把行盒撑到 17-19px、纯文本 15px，center
+   对齐下两种盒的文字基线漂移 1-2px。固定行高后同排文本 span 等高同
+   基线（实测识图/agent/思考/组头/查阅五类行头全中招，一并修） */
+.h-tool-head > span, .h-think-seg-head > span, .h-turn-head > span,
+.h-tl-grp-head > span { line-height: 1.35; }
+.h-tool.col .h-tool-head { display: flex; align-items: center; gap: 6px; width: 100%;
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
+  font-size: var(--fs-sm); padding: 5px 10px; cursor: pointer; text-align: left; }
+/* v3.4.49（用户定调「全部统一字号」）：行头名称统一 font-ui + fs-sm——
+   命令/路径内容保持 mono（代码语义），head 内 arg 与 live 收起行 name 回挂 mono/ui */
+.h-tool-head .h-tool-arg { font-family: var(--font-mono); }
+.hg-flow .h-tl .h-tool > .h-tool-name, .hg-sub-body .h-tl .h-tool > .h-tool-name { font-family: var(--font-ui); }
+.h-tool.col .h-tool-head:hover { color: var(--fg); }
+.h-tool.col .h-chev { transition: transform .15s; display: inline-block; font-size: 10px; }
+.h-tool.col.open .h-chev { transform: rotate(90deg); }
+.h-tool.col .h-tool-name { color: var(--fg); }
+.h-tool.col .h-tool-badge { font-size: 9.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; }
+.h-tool.col { border-left-width: 3px;
+  border-left-color: var(--h-accent, var(--accent)); }
+/* 动画批A：工具卡开合高度过渡（ZCode Radix Collapsible 300ms 同参）——
+   display 硬切 → grid-rows 0fr→1fr 过渡（免量高），padding 随行内同步过渡；
+   收起态 pointer-events 关（0fr 时内容不可点） */
+/* 406 修复（用户实锤「Bash 下方一大片空白」）：387 批A 的 grid-template-rows:0fr
+   只折叠第一行——coll 含多子元素（Bash 的 arg+body / err 行 body+out）时第二个
+   子元素落**隐式行 auto**（实测 0px 62.39px=空白块露出）。改 grid-auto-rows 管
+   全部行（含隐式）；auto-rows 不可插值=开合动画退化瞬切（383 默认全收后开合
+   低频，正确性优先） */
+/* 416（三修折叠——devtools 实测抓真凶）：406 的 grid-auto-rows:0fr 在浏览器
+   实际行为不折叠（结果文本 append 后 coll computed height=13px=完成行
+   +13px 持续不回落，用户实锤「完成时高度变高」），纸上等价臆断未实测之过。
+   回归最古老可靠的 max-height 技巧——且 max-height 可插值=387 的开合
+   动画随之找回（406 曾弃）；展开上限 60vh（长输出内滚） */
+.h-tool.col .h-tool-coll { display: block; max-height: 0; opacity: 0;
+  padding: 0 10px; overflow: hidden; pointer-events: none;
+  transition: max-height var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              padding var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); }
+/* a270（用户实锤「所有展开卡限最大高度」）：60vh→42vh 与思考段/抽屉
+   统一；关键补 overflow-y:auto——旧 overflow:hidden 下超 60vh 内容被
+   静默裁掉且滚不动（MCP 大 JSON 回显实锤观感"没限制"） */
+.h-tool.col.open .h-tool-coll { max-height: 42vh; overflow-y: auto; opacity: 1;
+  padding: 6px 10px 10px; pointer-events: auto; }
+.h-tool-body { font-size: var(--fs-sm); color: var(--fg); line-height: 1.6;
+  font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
+  max-height: 320px; overflow-y: auto; }
+.h-tool-out { font-size: var(--fs-sm); color: var(--muted); line-height: 1.55;
+  font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word;
+  max-height: 260px; overflow-y: auto; margin-top: 6px; border-top: 1px solid var(--border);
+  padding-top: 6px; }
+/* v2.24.4：展开卡内的参数 JSON 限高（识图长 prompt 撑爆卡片）——行内摘要不受影响 */
+.h-tool-coll > .h-tool-arg { max-height: 200px; overflow-y: auto; }
+/* v2.44 段内/抽屉头摘要：单行省略——「默认收起一行」的承诺不能被长命令/长
+   路径换行破坏（主链行内工具行保持可换行，仅限 col 抽屉头）；全文靠 title
+   悬浮与展开体 */
+  /* v3.1h：工具名不换行不收缩（用户实锤 PowerShell 名被 nowrap 的 arg 挤到换行；
+     name 保持单行，arg 走 ellipsis 让位——v2.44 单行省略设计的补全） */
+  .h-tool.col .h-tool-head .h-tool-name { white-space: nowrap; flex-shrink: 0; }
+.h-tool.col .h-tool-head .h-tool-arg { flex: 1 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
+
+/* v2.24.5 微信式时间条（>5 分钟才插，居中灰字） */
+.h-time { align-self: center; width: auto; margin: 10px auto 2px;
+  font-size: 10.5px; color: var(--muted); background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+  border-radius: 10px; padding: 2px 10px; }
+.h-tool-out.err-txt { color: var(--neon-red, #e06c75); }
+
+/* diff（源 createDiff：绿增红删行；v2.8 上下文行暗显 + 长等值段折叠摘要） */
+.h-diff { font-size: var(--fs-sm); font-family: var(--font-mono); line-height: 1.6;
+  max-height: 320px; overflow-y: auto; }
+.h-diff .d-add { color: var(--h-ok); background: color-mix(in srgb, var(--h-ok) 10%, transparent); padding: 0 6px; }
+.h-diff .d-del { color: var(--h-err); background: color-mix(in srgb, var(--h-err) 9%, transparent); padding: 0 6px; }
+/* v3.3.11（用户实锤「完全看不清了」）：删除行去划线+正文回可读色——行布局
+   （行号+左红条+红底）时代三层信号叠加把代码糊死；删除语义由左条+底色
+   承担足够，文本保持 fg（轻微红染） */
+.h-diff .d-del { text-decoration: none; }
+.h-diff .d-del .d-tx { color: color-mix(in srgb, var(--h-err) 30%, var(--fg)); }
+.h-diff .d-ctx { color: var(--muted); opacity: .55; padding: 0 6px; }
+.h-diff .d-info { color: var(--muted); opacity: .7; text-align: center; padding: 0 6px; }
+.hg-code { border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  margin: .5em 0; background: var(--code-bg);
+  /* v3.0 视口外跳渲染（对照 ZCode CodeBlockContainer 的 content-visibility）：
+     大回复几十个代码块只有视口内的真渲染，离屏的以固有高度占位——滚动
+     性能的大头。到视口自动渲染，无需 JS 参与 */
+  content-visibility: auto; contain-intrinsic-size: auto 200px; }
+.hg-code-head { display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 12px 0; }
+.hg-code-head span { font-size: var(--fs-xs); color: var(--code-fg); user-select: none;
+  text-transform: lowercase; }
+.hg-code-copy { border: none; background: transparent; color: var(--code-muted);
+  font-size: var(--fs-xs); cursor: pointer; padding: 2px 4px; }
+.hg-code-copy:hover { color: var(--code-fg); }
+.hg-code-copy.ok { color: var(--h-green); }
+.hg-code pre { margin: 0; border: none; background: transparent !important; }
+.hg-code pre code { display: block; padding: 8px 14px 12px; font-size: var(--fs-base);
+  line-height: 1.6; font-family: var(--font-mono); overflow-x: auto;
+  background: transparent !important;
+  /* 深底容器固定浅字：代码块底色语义化为 --code-bg（v3.0 随主题换肤），
+     hljs 未命中语言（无 .hljs 类）时文字会继承主题 --fg——须钉住代码字色 */
+  color: var(--code-fg); }
+
+/* ---- 输入框堆叠（textarea + mention 高亮镜像层）---- */
+.hg-input-stack { position: relative; }
+.hg-input-overlay { position: absolute; inset: 0; padding: 2px 4px;
+  font-size: 13px; line-height: 1.6; font-family: inherit; color: transparent;
+  pointer-events: none; white-space: pre-wrap; word-break: break-word;
+  overflow: hidden; }
+.hg-input-overlay .hg-mention-hl { color: transparent;
+  background: color-mix(in srgb, var(--h-sky) 25%, transparent); border-radius: 3px; }
+.hg-input { position: relative; z-index: 1; }
+
+/* ---- @ 引用下拉 ---- */
+.hg-mention-drop { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 35;
+  min-width: 300px; max-width: 480px; max-height: 260px; overflow-y: auto;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 4px; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+.hg-mention-item { display: flex; flex-direction: column; padding: 6px 10px;
+  border-radius: 6px; cursor: pointer; }
+.hg-mention-item b { font-size: var(--fs-base); color: var(--fg); font-weight: 600; }
+.hg-mention-item span { font-size: var(--fs-xs); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-mention-item:hover, .hg-mention-item.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-mention-item.sel b { color: var(--accent); }
+
+/* ---- Lightbox ---- */
+.hg-lightbox { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.82);
+  display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.hg-lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 4px;
+  box-shadow: 0 8px 48px rgba(0,0,0,.6); }
+.hg-lightbox-x { position: absolute; top: 18px; right: 22px; border: none;
+  background: rgba(255,255,255,.12); color: #fff; font-size: 15px;
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer; }
+.hg-lightbox-x:hover { background: rgba(255,255,255,.22); }
+
+/* ---- 活动指示（源 ActivityIndicator：动词轮换+计时）
+   v2.19：从输入卡上方的独立横栏（带边框+停止钮）收成底部行内小胶囊，
+   与上下文环并排；停止钮删除（右下角圆钮已承担该动作）。
+   v2.36 与面板状态徽章同语言：运行=绿点脉冲 + 状态词提亮 + 绿色等宽秒表
+   （原 accent 青点青字仅此处独用，与面板「运行绿」语义脱节） ---- */
+.hg-activity { display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* v3.3.4（用户定调「状态唯一面=胶囊」）：底部活动条视觉退役——与胶囊信息
+   完全重复（状态词/秒表/上下文%），双处显示职责错位。元素保留 DOM（actWord
+   特殊词注入/秒表 tick 仍以它为数据源，胶囊与动态页 A 区派生消费），仅隐藏 */
+.hg-card-foot .hg-activity { display: none !important; }
+.hg-act-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hgd-run);
+  flex-shrink: 0; animation: hg-pulse 1.2s ease-in-out infinite; }
+.hg-act-word { color: var(--fg-bright); font-weight: 600; }
+.hg-act-t { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--hgd-run); }
+
+/* ---- 识图会话工作指示（v2.19：顶栏常驻 + 跃迁冒泡）
+   v2.20：眼睛图标换描边 SVG（emoji 随系统字形，用户嫌丑） ---- */
+.hg-vis-ind { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  white-space: nowrap; cursor: default; }
+.hg-eye { width: 12px; height: 12px; flex-shrink: 0; fill: none;
+  stroke: currentColor; stroke-width: 1.7; }
+.hg-pop-item .hg-eye { width: 11px; height: 11px; vertical-align: -1.5px; margin-right: 2px; }
+.hg-item-sub .hg-eye { width: 11px; height: 11px; vertical-align: -1.5px; margin-left: 2px; }
+.hg-vis-ind.busy { color: var(--accent); }
+.hg-vis-ind.busy::before { content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0; animation: hg-pulse 1.2s ease-in-out infinite; }
+/* v2.21：侧栏「识图会话」按钮的状态徽标 */
+.hg-vstat { font-size: var(--fs-xs); }
+.hg-vstat.ok { color: var(--neon-green, #3fb950); }
+.hg-vstat.busy { color: var(--accent); }
+.hg-vstat.wait { color: var(--neon-orange, #d29922); }
+.hg-vstat.off { color: var(--muted); }
+.hg-vis-toast { position: absolute; top: -36px; right: 36px; z-index: 35;
+  max-width: min(320px, 60%); padding: 6px 12px; font-size: 11.5px;
+  color: var(--fg); background: var(--bg-card); border: 1px solid var(--accent);
+  border-radius: 999px; box-shadow: 0 4px 18px rgba(0,0,0,.35);
+  opacity: 0; transform: translateY(6px);
+  transition: opacity .25s, transform .25s; pointer-events: none; }
+.hg-vis-toast.on { opacity: 1; transform: none; }
+
+/* ---- 交互式提问卡片（v2.17：mcp__harness__ask_user 的可点选项）----
+   模型问用户要选择时，答案不能靠打字——卡片给出选项，点选后提交，
+   后端唤醒阻塞中的 MCP 工具调用。 */
+.h-ask { align-self: center; width: min(820px, 100%); margin: 6px 0;
+  border: 1px solid var(--accent); border-radius: 10px; background: var(--bg-card);
+  overflow: hidden; font-size: 12.5px; }
+.h-ask.done { border-color: var(--border); opacity: .85; }
+.h-ask-q { padding: 10px 12px; }
+.h-ask-q + .h-ask-q { border-top: 1px solid var(--border); }
+.h-ask-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.h-ask-badge { flex-shrink: 0; font-size: var(--fs-xs); font-weight: 600; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; }
+.h-ask-title { flex: 1; color: var(--fg-bright); font-weight: 600; }
+.h-ask-multi { flex-shrink: 0; font-size: var(--fs-2xs); color: var(--muted); }
+.h-ask-opts { display: flex; flex-direction: column; gap: 6px; }
+.h-ask-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%;
+  text-align: left; border: 1px solid var(--border); border-radius: 8px;
+  background: transparent; color: var(--fg); padding: 7px 10px; cursor: pointer;
+  font: inherit; transition: border-color .12s, background .12s; }
+.h-ask-opt:hover:not(:disabled) { border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.h-ask-opt.on { border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.h-ask-opt:disabled { cursor: default; }
+.h-ask-radio { flex-shrink: 0; width: 13px; height: 13px; margin-top: 2px;
+  border: 1.5px solid var(--border); border-radius: 50%; position: relative; }
+.h-ask-opt.on .h-ask-radio { border-color: var(--accent); }
+.h-ask-opt.on .h-ask-radio::after { content: ''; position: absolute; inset: 2.5px;
+  border-radius: 50%; background: var(--accent); }
+.h-ask-opt-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h-ask-opt-txt b { font-weight: 600; color: var(--fg-bright); }
+.h-ask-desc { color: var(--muted); font-size: var(--fs-cap); line-height: 1.45; }
+/* v2.24.3：提问卡片自由输入框（选项不够时自己打字，回车提交） */
+.h-ask-extra { margin-top: 6px; }
+.h-ask-x { width: 100%; box-sizing: border-box; font-size: var(--fs-base);
+  font-family: inherit; color: var(--fg); background: var(--bg-input);
+  border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px;
+  outline: none;
+  /* a440：type=search（关浏览器自动填充深色候选层）带来的原生控件要抹平 */
+  -webkit-appearance: none; appearance: none; }
+.h-ask-x::-webkit-search-cancel-button,
+.h-ask-x::-webkit-search-decoration { -webkit-appearance: none; display: none; }
+.h-ask-x:focus { border-color: var(--accent); border-style: solid; }
+.h-ask.done .h-ask-x { display: none; }
+/* v3.3.2(D8)：已提交 ask 卡折叠态——题头+已选项+✓ 已提交脚保留，未选项与
+   输入区隐藏；点击开合回看完整选择情况（老快照 done 卡无此类=维持展开） */
+.h-ask.done.collapsed { cursor: pointer; }
+.h-ask.done.collapsed .h-ask-opt:not(.on) { display: none; }
+.h-ask.done.collapsed .h-ask-extra { display: none; }
+/* v3.3.2(D7)：机器注入弱化行（task-notification/system-reminder）——单行
+   dim 入回合时间线，摘要 + 悬浮全文，不切割回合 */
+.h-sysnote { align-self: stretch; font-size: var(--fs-cap); color: var(--muted);
+  opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: help; }
+.h-ask-foot { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-card) 60%, transparent); }
+.h-ask-submit { border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--accent); color: var(--on-accent, #fff); font-size: 12px; font-weight: 600;
+  padding: 5px 16px; cursor: pointer; }
+.h-ask-submit:disabled { opacity: .4; cursor: default; }
+.h-ask-submit:not(:disabled):hover { filter: brightness(1.12); }
+.h-ask-hint { color: var(--muted); font-size: var(--fs-sm); }
+.h-ask-done { color: var(--neon-green, #3fb950); font-weight: 600; font-size: var(--fs-base); }
+  /* v3.1h：提交态显式备注行（用户实锤「备注没体现」——disabled 输入框形态
+     视觉太弱像选项描述；单独一行列出自由输入，历史重放同走 askDone）
+     v3.2.31：备注行退役——补充说明升格为选项列表内的同形态卡片（下） */
+  .h-ask-note { font-size: 11px; color: var(--acc, #4a9eff); margin-left: 8px; }
+/* v3.2.31（需求1）：补充说明选项卡——复用 .h-ask-opt 全套边框/内边距/radio，
+   加「补充说明」徽章标识来源；.on 态与被选选项同染（它是提交作答的一部分）。
+   div+cursor:default：展示锁定，不参与点击选择 */
+.h-ask-opt.hg-ask-xopt { cursor: default; }
+.h-ask-opt.hg-ask-xopt:hover { border-color: var(--border); background: transparent; }
+.h-ask-opt.hg-ask-xopt.on:hover { border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.h-ask-opt.hg-ask-xopt .h-ask-opt-txt b { white-space: normal; line-height: 1.55; }
+.hg-ask-xbadge { display: inline-block; flex: none; font-size: var(--fs-2xs);
+  font-weight: 600; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 0 6px; margin-right: 6px;
+  vertical-align: 1px; white-space: nowrap; }
+/* v3.4.60：ask 卡 ZCode 方案——序号 chip（替代 radio，老卡 radio 规则上方保留）、
+   多题分页器、忽略钮；done 折叠=单行摘要（summed 类限定新代卡，老快照不命中） */
+.h-ask-num { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px;
+  border: 1px solid var(--border); border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.h-ask-opt.on .h-ask-num { background: var(--accent); border-color: var(--accent);
+  color: var(--on-accent, #fff); }
+.h-ask-pgr { margin-left: auto; flex-shrink: 0; display: inline-flex;
+  align-items: center; gap: 2px; align-self: center; }
+.h-ask-pgv { width: 22px; height: 22px; border: 1px solid var(--border);
+  border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 12px; line-height: 1; display: grid; place-items: center; }
+.h-ask-pgv:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.h-ask-pgv:disabled { opacity: .35; cursor: default; }
+.h-ask-pgn { font-size: var(--fs-xs); color: var(--muted); min-width: 2.5em;
+  text-align: center; font-variant-numeric: tabular-nums; }
+.h-ask-page { display: none; }
+.h-ask-page.cur { display: block; border-top: none; }   /* 分页单页可见不吃兄弟顶线 */
+.h-ask-ignore { margin-left: auto; border: 1px solid var(--border); border-radius: 6px;
+  background: transparent; color: var(--fg); font-size: 12px; padding: 5px 14px;
+  cursor: pointer; }
+.h-ask-ignore:hover { border-color: var(--accent); color: var(--accent); }
+.h-ask.done .h-ask-sum { display: none; }   /* 展开回看时摘要行让位 */
+.h-ask-sum { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px;
+  cursor: pointer; white-space: nowrap; min-width: 0; }
+.h-ask.done.collapsed .h-ask-sum { display: flex; }
+.h-ask.done.collapsed .h-ask-sum:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.h-ask-sum-ok { color: var(--neon-green, #3fb950); font-weight: 600; flex-shrink: 0; }
+.h-ask-sum-q { color: var(--muted); flex-shrink: 0; max-width: 40%;
+  overflow: hidden; text-overflow: ellipsis; }
+.h-ask-sum-arw { color: var(--muted); flex-shrink: 0; }
+.h-ask-sum-a { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  color: var(--fg-bright); font-weight: 600; }
+.h-ask-sum-n { color: var(--muted); flex-shrink: 0; }
+.hg-ask-dock { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0;
+  width: min(820px, 100%); margin: 0 auto; z-index: 20; }
+.hg-ask-dock:not(.on) { display: none; }
+.h-ask.h-ask-dock { box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  max-height: min(48vh, 420px); overflow-y: auto; margin: 0;
+  align-self: stretch; width: 100%; }
+/* 收缩动画（完成态 JS 配合：先定 maxHeight 再加 hg-out 类） */
+.h-ask.hg-out { max-height: 0 !important; opacity: 0; transform: translateY(6px);
+  margin: 0; border-top-width: 0; border-bottom-width: 0; overflow: hidden;
+  transition: max-height .2s ease, opacity .16s ease, transform .2s ease,
+    margin .2s ease, border-width .2s ease; }
+.hg-ask-dock > .h-ask { animation: hgAskIn .15s ease; }
+/* flow 结果行：dim 单行 ellipsis、不可点，复用 .h-ask-sum 内部 span 族 */
+.h-ask-rs { align-self: center; width: min(820px, 100%); margin: 2px 0;
+  font-size: var(--fs-sm); color: var(--muted); }
+.hg-proxy-state { font-size: var(--fs-xs); font-family: var(--font-mono);
+  color: var(--muted); }
+.hg-proxy-state.on { color: #34c77b; }
+.hg-proxy-state.err { color: #e5484d; }
+.hg-login-side { display: inline-flex; align-items: center; gap: 6px;
+  justify-content: center; text-align: center; }
+.hg-login-side [data-hg-login-text] { overflow: hidden;
+  text-overflow: ellipsis; }
+.hg-login-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.hg-login-dot.off { background: var(--muted); opacity: .5; }
+.hg-login-dot.idle { background: var(--muted); opacity: .75; }
+.hg-login-dot.wait { background: #d99b2b; }
+.hg-login-dot.err { background: #e5484d; }
+.hg-login-dot.on { background: #34c77b; box-shadow: 0 0 6px rgba(52,199,123,.55); }
+/* 冒泡弹窗：按钮上方气泡（暗色卡，与全局模态同风格） */
+.hg-login-pop { position: absolute; left: 8px; right: 8px; bottom: 46px;
+  z-index: 50; background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 10px; display: flex; flex-direction: column;
+  gap: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
+  animation: hgPopIn .16s ease-out; }
+.hg-login-pop .hg-login-inp { width: 100%; box-sizing: border-box;
+  padding: 5px 9px; font-size: var(--fs-base); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
+.hg-login-pop .hg-login-inp:focus { outline: none; border-color: var(--accent); }
+/* 密码类输入（SSO 密码 / App Secret）：右侧内置显隐按钮，输入区让出内边距 */
+.hg-login-pop .hg-inp-wrap { position: relative; width: 100%; }
+.hg-login-pop .hg-inp-wrap .hg-login-inp { padding-right: 32px; }
+.hg-login-pop .hg-inp-eye { position: absolute; right: 4px; top: 50%;
+  transform: translateY(-50%); display: inline-flex; align-items: center;
+  justify-content: center; width: 24px; height: 24px; padding: 0;
+  background: transparent; border: 0; border-radius: 4px;
+  color: var(--muted); cursor: pointer; }
+.hg-login-pop .hg-inp-eye:hover { color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hg-login-pop .hg-inp-eye svg { width: 14px; height: 14px; }
+.hg-login-pop [data-hg-login-btn] { width: 100%; text-align: center; }
+.hg-login-pop .hg-pop-row { display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--fg); }
+/* 胶囊内两段：固定前缀「机器人」+ 用户名（颜色表达登录态） */
+.hg-login-side .hg-login-botlabel { color: var(--muted); font-size: var(--fs-sm); }
+.hg-login-side .hg-login-userlabel { font-size: var(--fs-sm); }
+.hg-login-userlabel.off { color: var(--muted); }
+.hg-login-userlabel.on { color: #34c77b; }
+/* 机器人凭据区：标题行（指示灯表达状态）+ 字段列（输入框与保存按钮同宽） */
+.hg-login-pop .hg-robot-box { display: flex; flex-direction: column; gap: 8px;
+  padding-top: 8px; border-top: 1px solid var(--border); }
+.hg-login-pop .hg-robot-head { gap: 6px; }
+.hg-login-pop .hg-robot-title { font-size: var(--fs-sm); color: var(--muted); }
+/* 分区小标题（如「账号登录」）：与机器人标题同一视觉层级 */
+.hg-login-pop .hg-robot-hint { font-size: var(--fs-sm); color: var(--muted); }
+.hg-login-pop .hg-robot-state { font-size: var(--fs-sm); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-login-pop .hg-robot-fields { display: flex; flex-direction: column;
+  gap: 6px; }
+.hg-login-pop .hg-robot-save { width: 100%; margin: 0; padding: 5px 10px;
+  font-size: var(--fs-sm); }
+/* v2.27：登出按钮从独立整行搬进「已登录」行右侧（用户要求紧凑），文案缩为「登出」 */
+.hg-login-pop .hg-pop-logout { margin-left: auto; flex-shrink: 0; padding: 2px 10px;
+  font-size: 11px; background: transparent; border: 1px solid
+  color-mix(in srgb, #e5484d 45%, var(--border)); border-radius: 6px; cursor: pointer;
+  color: #e5484d; }
+.hg-login-pop .hg-pop-logout:hover { background: color-mix(in srgb, #e5484d 14%, transparent); }
+
+/* v2.3.9 会话列表项目分组：组头 + 缩进子项 */
+.hg-grp { display: flex; align-items: center; gap: 7px; padding: 7px 10px 5px;
+  border-radius: 8px; cursor: pointer; user-select: none; margin-top: 6px; }
+.hg-grp:first-child { margin-top: 0; }
+.hg-grp:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.hg-grp-chev { font-size: var(--fs-2xs); color: var(--muted); width: 12px; flex-shrink: 0;
+  transition: transform .15s; }
+.hg-grp.closed .hg-grp-chev { transform: rotate(0deg); }
+.hg-grp:not(.closed) .hg-grp-chev { transform: rotate(90deg); }
+.hg-grp-name { flex: 1; min-width: 0; font-size: var(--fs-base); font-weight: 700;
+  color: var(--muted); letter-spacing: .3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-grp.active-grp .hg-grp-name { color: var(--accent); }
+.hg-grp-count { font-size: var(--fs-2xs); color: var(--fg); background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 8px; padding: 1px 7px; flex-shrink: 0; }
+.hg-grp-time { font-size: var(--fs-2xs); color: var(--muted); flex-shrink: 0; opacity: .8; }
+.hg-item.grp-child { margin-left: 14px; border-left: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 0 10px 10px 0; }
+
+/* v2.3.10 只读模式 ZCode 式大修：模式总开关 pill + 工具行内联命令 */
+.h-tool-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 11px;
+  color: var(--muted); direction: rtl; text-align: left; }
+/* rtl 截断保尾部（命令尾部信息量大：文件名/参数在尾），hover 放大看全 */
+.h-tool-hint:hover { white-space: normal; direction: ltr; text-align: left; }
+
+/* v2.3.11 只读模式 ZCode 重构（harness-readonly.js）：轮总开关 + 轮体 */
+.hg-ro-switch { display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; cursor: pointer; padding: 6px 4px;
+  font-size: 13.5px; color: var(--fg); font-weight: 400; text-align: left; }
+.hg-ro-switch:hover { color: var(--fg-bright, var(--fg)); }
+.hg-ro-switch-t { flex: 1; min-width: 0; }
+.hg-ro-switch-a { font-size: 15px; color: var(--muted); flex-shrink: 0;
+  transition: transform .15s; display: inline-block; }
+.hg-ro-switch.open .hg-ro-switch-a { transform: rotate(90deg); }
+.hg-ro-turn { padding-left: 10px; border-left: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  margin: 2px 0 14px 6px; }
+/* v2.3.12 轮内行限宽：旧规则 .hg-ro-flow > .h-tool 只命中 roFlow 直接子级，
+   展开轮体（.hg-ro-turn）里的行是孙级不命中 → 通栏拉满（用户嫌「边框太长」）。
+   内容行统一 680px 紧凑条（贴 ZCode），h-switch 分割线保持通栏。 */
+.hg-ro-turn > .h-think-seg, .hg-ro-turn > .h-tool,
+.hg-ro-turn > .h-msg, .hg-ro-turn > .h-peer { margin-left: 10px; width: min(680px, 100%); }
+.h-think-seg-t { color: var(--muted); font-size: var(--fs-cap); }
+/* v2.46 只读层子代理段：段头一行（头像字符+角色+说明+状态计数）——
+   busy 会话重开后只读层是唯一历史入口，段可见但保持轻量（过程行
+   并入计数不逐行渲，守住海量会话 DOM 有界）；正文气泡走 .h-msg.asst.sub */
+.hg-ro-sub { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px 10px;
+  width: min(680px, 100%); font-size: 11.5px; color: var(--muted);
+  border: 1px dashed var(--border); border-radius: 8px; padding: 4px 10px; }
+.hg-ro-sub-ava { flex-shrink: 0; width: 16px; height: 16px; border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent); font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; }
+.hg-ro-sub b { color: var(--fg); font-size: var(--fs-cap); }
+.hg-ro-sub-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-ro-sub-stat { margin-left: auto; flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
+.hg-ro-sub.err b, .hg-ro-sub.err .hg-ro-sub-stat { color: var(--h-err); }
+.hg-ro-turn > .h-msg.asst.sub { margin-left: 10px; width: min(640px, 100%); opacity: .94; }
+
+/* v2.28.15 回滚按钮——只挂在「最后一个定下来的回合」的 AI 消息上
+   （can-rewind 类由 result 结算/历史重建授予，随 innerHTML 快照存活）；
+   未授予的消息连按钮都不显示，视觉干净 */
+.h-msg.asst .hg-msg-acts { display: none; margin-top: 2px; justify-content: flex-end; }
+/* v3.4.42：消息脚行——署名左、动作条右，一行贴住气泡（hover 显条不再撑高）
+   a445（用户实锤「回滚按钮被截断」）：按钮组宽度是固定的（两个圆钮 + 回滚
+   胶囊），气泡一宽或窗口一窄，space-between 单行布局就会把右端挤出 .h-msg
+   被 .hg-flow 的 overflow-x:hidden 裁掉。改 flex-wrap + 动作条 margin-left:auto
+   ——放得下时仍是一行贴右，放不下时动作条整体换到下一行且继续靠右，任何宽度
+   都不会被裁 */
+.h-msg-foot { display: flex; flex-wrap: wrap; align-items: center;
+  gap: 4px 8px; margin-top: 2px; min-width: 0; max-width: 100%; }
+.h-msg-foot .h-mmeta { min-width: 0; }
+/* a591（用户实锤「回滚到这里还是被截断」）：a589 只让**整个按钮组**换行，
+   但按钮组自身是不换行的 flex 容器 + flex-shrink:0 —— 窗口一窄，三按钮
+   总宽超气泡宽就整组溢出，被 .hg-flow 的 overflow-x:hidden 从右缘裁掉
+   （截图里的半截圆钮）。修：组自身允许换行 + 允许收缩，且 max-width:100%
+   把可用宽度钉死在脚行内——放不下时组内按钮折行，绝不溢出气泡。 */
+.h-msg-foot .hg-msg-acts { margin-top: 0; margin-left: auto; flex-shrink: 1;
+  flex-wrap: wrap; max-width: 100%; justify-content: flex-end; gap: 4px; }
+/* v3.1h：全部 AI 消息 hover 浮现动作条（复制/编辑参考 ChatGPT 式消息下方
+   右对齐；回滚钮仍只在 can-rewind 授予后出现） */
+.h-msg.asst:hover .hg-msg-acts { display: flex; }
+/* v3.4.40（用户实锤「过程中回滚没有意义」）：hover 显条规则把回滚钮也带了
+   出来——中间正文 hover 即见即点。回滚钮单独上锁：只认 can-rewind 授予 */
+.h-msg.asst .hg-msg-acts .hg-mact[data-hg-rewind] { display: none; }
+.h-msg.asst.can-rewind .hg-msg-acts .hg-mact[data-hg-rewind] { display: inline-block; }
+.h-msg.asst.can-rewind .hg-msg-acts { display: flex; opacity: 0.4; transition: opacity 0.15s; }
+.h-msg.asst.can-rewind:hover .hg-msg-acts { opacity: 1; }
+.hg-mico { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--muted, #6d7f9d);
+  background: var(--bg-card); color: var(--muted); cursor: pointer; font-size: 12px;
+  line-height: 1; margin-right: 6px; display: inline-flex; align-items: center;
+  justify-content: center; padding: 0; }   /* v3.4.95：flex 居中（SVG 图标）+ 边框加深一档（用户实锤「边框显示不全」观感——--border 在浅色系下过淡） */
+.hg-mico:hover { color: var(--accent); border-color: var(--accent); }
+.hg-mact {
+  border: 1px solid var(--bd, #4a4a4a); background: transparent;
+  color: var(--muted, #9a9a9a); font-size: 11px; line-height: 1.4;
+  padding: 2px 9px; border-radius: 10px; cursor: pointer;
+}
+.hg-mact:hover { color: var(--fg, #e6e6e6); border-color: var(--fg, #888); }
+.hg-mact:disabled { opacity: 0.5; cursor: default; }
+/* v2.36 IDE 风大修（VS Code / Linear 参考）：面板六分区/窗格/输入状态区统一
+   视觉语言——①状态色全部走 --hgd-* 语义变量（运行绿/完成灰/失败红/中断橙/
+   等待蓝，见文件上方 html 块），替换写死的 #22A55F；②计时/计数继承
+   tabular-nums（秒表跳动不再抖布局）；③层次靠 bg-panel→bg-card→hover 微染
+   分层，边框降为发丝级；④可点行 hover 淡染 + 150ms 过渡。
+   间距节奏：面板 12/14 · 卡片 10/12 · 分区头下 8 · 行距 1~2。
+   v3.3：.hg-dyn-pane=分屏伪 tab sc（兼 .hg-sub-msgs 滚动容器），展示态随
+   sc 无 hidden 形态；padding 由 .hg-sub-body（10/12）承担不再自付 */
+.hg-dyn-pane { display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto; font-variant-numeric: tabular-nums; }
+
+/* ---- v3.2.31 会话动态胶囊：分屏唯一开关的角部浮标 ----
+   胶囊常驻 harness wrap 内（跨 tab 天然隐藏），色板全走 hgd 系列主题变量，
+   零写死色；秒表 tabular-nums。 */
+
+.hg-dyn-capsule {
+  /* v3.3.6（用户定调「远不如第一版在右上角好看」）：回到 v3.2.31 原位——
+     流区右上角浮标；v3.3.4 的输入卡上方位实测更丑，废止 */
+  position: absolute; top: 10px; right: 14px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 7px;
+  max-width: min(56%, 460px);
+  padding: 4px 12px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 90%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--fg); font-size: var(--fs-cap); font-family: inherit; line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.18);
+  transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.hg-dyn-capsule:hover { border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--bg-card) 92%, transparent); }
+/* 展开态（面板已显示）：accent 染边提示「再点收回」——胶囊是开合唯一控制面 */
+.hg-dyn-capsule.open { border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel)); }
+.hg-dyn-capsule .hg-caps-dot { flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--hgd-done); }
+.hg-dyn-capsule.run .hg-caps-dot { background: var(--hgd-run);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-capsule.wait .hg-caps-dot { background: var(--hgd-wait);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-capsule .hg-caps-st { flex: none; font-weight: 600; white-space: nowrap; }
+.hg-dyn-capsule .hg-caps-dur { flex: none; font-family: var(--font-mono);
+  font-size: 11px; color: var(--muted); }
+.hg-dyn-capsule.run .hg-caps-dur { color: var(--hgd-run); }
+.hg-dyn-capsule.wait .hg-caps-dur { color: var(--hgd-wait); }
+.hg-dyn-capsule .hg-caps-ag { flex: 0 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
+/* a92S：溢出滚动态（panel 溢出检测加类）——去省略号让 scrollLeft 生效 */
+.hg-dyn-capsule .hg-caps-ag.scroll { text-overflow: clip; }
+.hg-dyn-capsule .hg-caps-ctx { flex: none; font-family: var(--font-mono);
+  margin-left: 4px;   /* v3.3.14：dur 与 ctx 恒有间距，不依赖容器 gap */
+  font-size: 11px; color: var(--accent); }
+.hg-dyn-capsule .hg-caps-ctx.warn { color: var(--h-warn); font-weight: 600; }
+.hg-dyn-capsule .hg-caps-dur:empty, .hg-dyn-capsule .hg-caps-ag:empty,
+.hg-dyn-capsule .hg-caps-ctx:empty { display: none; }
+/* bug5③ 兜底：子代理运行中且窗格未开——胶囊高亮脉冲（绝不静默后台） */
+.hg-dyn-capsule.attn { border-color: var(--accent);
+  animation: hgCapsAttn 1.6s ease-in-out infinite; }
+/* v3.4.68（用户定调「保持主题色但不能太单一」）：dot 与状态字收 --accent
+   （跟主题走）；dur 保持 3508 默认 --muted + 3510/3511 run/wait 状态色
+   （--hgd-* 仅此两处在用，勿删变量）、3517 warn 保持 --h-warn——主色+
+   状态色秒表+警示点缀的层次。后置同构覆盖三态 dot 规则；pulse 动画留在
+   原规则不受影响。 */
+.hg-dyn-capsule .hg-caps-dot,
+.hg-dyn-capsule.run .hg-caps-dot,
+.hg-dyn-capsule.wait .hg-caps-dot { background: var(--accent); }
+.hg-dyn-capsule .hg-caps-st { color: var(--accent); }
+
+/* ---- 分区卡片骨架 ---- */
+.hg-dyn-sec {
+  background: var(--bg-card);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 10px; padding: 10px 12px; flex: none;
+}
+.hg-dyn-sec-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .6px;
+  padding-bottom: 6px; margin-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+.hg-dyn-sec-head .hg-dyn-pill { margin-left: auto; }
+.hg-dyn-sec-head .hg-dyn-sub { margin-left: auto; font-size: var(--fs-2xs); font-weight: 400; letter-spacing: 0; text-transform: none; }
+/* v2.36 pill：绿底白字 → 语义淡染胶囊。计数 pill 中性灰；进度/运行 pill 绿染；
+   运行 pill 的闪烁收进 ::before 前缀点（不再整块呼吸压文字） */
+.hg-dyn-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; padding: 1px 8px; border-radius: 999px; font-weight: 600;
+  color: var(--muted); background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.hg-dyn-pill[data-hg-d-tdone], .hg-dyn-pill.run {
+  color: var(--hgd-run); background: color-mix(in srgb, var(--hgd-run) 13%, transparent);
+}
+.hg-dyn-pill.run::before { content: ''; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--hgd-run); animation: hgDynPulse 1.6s ease-in-out infinite; }
+
+/* ---- A 会话状态 ---- */
+.hg-dyn-strow { display: flex; align-items: center; gap: 7px; font-size: var(--fs-base);
+  padding-bottom: 8px; margin-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent); }
+.hg-dyn-strow .hg-dyn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+/* v2.36 修正既有失配：run/wait 类由 JS 挂在分区(section)上，旧选择器
+   .hg-dyn-strow.run 永不命中——状态点一直是灰的。改为分区作用域，
+   并细分「等待蓝」（仅协作等待、非 busy 时 JS 加 wait 类；wait 规则置于
+   run 之后，同类名并存时 wait 胜出） */
+.hg-dyn-sec.run .hg-dyn-dot { background: var(--hgd-run);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-sec.wait .hg-dyn-dot { background: var(--hgd-wait);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-stlabel { color: var(--fg-bright); font-weight: 600; }
+.hg-dyn-dur { margin-left: auto; color: var(--muted); font-family: var(--font-mono);
+  font-size: 11px; font-weight: 500; }
+.hg-dyn-sec.run .hg-dyn-dur { color: var(--hgd-run); }
+.hg-dyn-sec.wait .hg-dyn-dur { color: var(--hgd-wait); }
+.hg-dyn-kv { display: flex; gap: 8px; font-size: var(--fs-cap); line-height: 1.55;
+  align-items: baseline; padding: 1.5px 0; }
+.hg-dyn-kv .k { flex: none; width: 44px; color: var(--muted); }
+/* v2.36：值列补 flex:1+min-width:0——无 min-width 的 nowrap flex 子项按
+   全文字宽撑开，超长模型名/路径曾把卡片顶破（ellipsis 不生效） */
+.hg-dyn-kv .v { flex: 1; min-width: 0; color: var(--fg); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-dyn-kv .v.act { cursor: pointer; transition: color .15s; }
+.hg-dyn-kv .v.act:hover { color: var(--accent); }
+.hg-dyn-kv .v.mono { font-family: var(--font-mono); cursor: copy; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.hg-dyn-kv.ctx .v { color: var(--accent); font-family: var(--font-mono); }
+.hg-dyn-kv.ctx.warn .v { color: var(--h-warn); font-weight: 600; }
+
+/* ---- B 任务进度 ---- */
+.hg-dyn-bar { height: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  overflow: hidden; margin: 2px 0 8px; }
+.hg-dyn-bar i { display: block; height: 100%; width: 0; background: var(--hgd-run);
+  border-radius: 2px; transition: width .4s ease; }
+.hg-dyn-todos { display: flex; flex-direction: column; gap: 1px; max-height: 180px; overflow-y: auto; }
+.hg-dyn-todo { display: flex; gap: 6px; font-size: var(--fs-cap); line-height: 1.45;
+  align-items: baseline; cursor: pointer; border-radius: 5px; padding: 2px 5px;
+  transition: background-color .15s; }
+.hg-dyn-todo:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-dyn-todo .hg-dyn-ck { flex: none; width: 12px; text-align: center; }
+.hg-dyn-todo .hg-dyn-ts { flex: none; margin-left: auto; font-size: var(--fs-2xs); color: var(--muted); font-family: var(--font-mono); }
+.hg-dyn-todo.completed .hg-dyn-tt { text-decoration: line-through; color: var(--muted); }
+.hg-dyn-todo.completed .hg-dyn-ck { color: var(--hgd-run); }
+.hg-dyn-todo.in_progress .hg-dyn-ck { color: var(--h-warn); }
+.hg-dyn-todo.in_progress .hg-dyn-tt { color: var(--fg-bright); }
+.hg-dyn-todo.pending .hg-dyn-ck { color: var(--muted); }
+/* v2.36：任务文本 flex:1——时间戳贴右缘对齐成列（原随文本长度漂移） */
+.hg-dyn-tt { flex: 1; min-width: 0; color: var(--fg); word-break: break-all; }
+
+/* ---- v3.1 进程面板（B 区 ZCode 式重做）：✓/→/○ 三态分组清单 ----
+   视觉对照 ZCode 截图：状态图标列 16px + 悬挂缩进文本（两行内省略）；
+   分组头可折叠（‹ 旋钮），已完成=绿✓灰文、进行中=蓝→亮文、待处理=灰○ */
+.hg-proc-row { display: flex; gap: 7px; align-items: baseline; font-size: var(--fs-cap);
+  line-height: 1.5; padding: 2px 5px 2px 7px; border-radius: 5px; cursor: pointer; }
+.hg-proc-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-proc-ico { flex: none; width: 14px; text-align: center; font-weight: 600; }
+.hg-proc-tt { flex: 1; min-width: 0; color: var(--fg);
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; word-break: break-word; }
+.hg-proc-ts { flex: none; margin-left: 4px; font-size: var(--fs-2xs);
+  color: var(--muted); font-family: var(--font-mono); align-self: center; }
+.hg-proc-row.completed .hg-proc-ico { color: var(--h-ok); }
+.hg-proc-row.completed .hg-proc-tt { color: var(--muted); }
+.hg-proc-row.in_progress .hg-proc-ico { color: var(--h-run); font-weight: 700; }
+.hg-proc-row.in_progress .hg-proc-tt { color: var(--fg-bright, var(--fg)); }
+.hg-proc-row.pending .hg-proc-ico { color: var(--muted); }
+.hg-proc-row.pending .hg-proc-tt { color: var(--muted); }
+.hg-proc-grp { display: flex; align-items: center; gap: 5px; width: 100%;
+  border: none; background: transparent; color: var(--muted); font-family: var(--font-ui);
+  font-size: var(--fs-2xs); padding: 4px 5px 2px 7px; cursor: pointer; text-align: left; }
+.hg-proc-grp:hover { color: var(--fg); }
+.hg-proc-grp .h-chev { display: inline-block; transition: transform .15s;
+  font-size: 10px; transform: rotate(-90deg); }
+.hg-proc-grp .h-chev.open { transform: rotate(0deg); }
+.hg-proc-grp-name { font-weight: 600; letter-spacing: .02em; }
+.hg-proc-turn { display: flex; align-items: center; gap: 6px; margin: 1px 5px 3px;
+  font-size: var(--fs-2xs); color: var(--muted); font-family: var(--font-mono); }
+.hg-proc-live { width: 6px; height: 6px; border-radius: 50%; background: var(--h-run);
+  animation: hg-proc-pulse 1.2s ease-in-out infinite; }
+
+/* ---- v3.1 ZCode 式回合摘要行（「🔍 查阅 · 1 搜索 · 1 文件」）+ 流底 spinner ---- */
+/* v3.3.8（用户实锤「怎么还单独出来了」）：摘要胶囊归时间线轴——旧规则
+   居中悬在回合体顶，列居中后视觉上像凭空漂出的孤儿；左对齐 25px 与
+   时间线内容轴（bar 12px+缩进 13px）对齐，读作回合的一部分 */
+.h-turnsum { display: flex; justify-content: flex-start; padding: 4px 0 2px 25px; }
+.h-turnsum-pill { font-size: var(--fs-2xs); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 12px;
+  background: color-mix(in srgb, var(--bg-card) 60%, transparent);
+  user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 90%; }
+.hg-spin-row { display: flex; align-items: center; gap: 8px; justify-content: center;
+  /* v3.3.1：视觉恒垫底——flow 是 flex 列，spinner 常在内容之前被 append（busy
+     快照/重建残留、乐观渲染时序），DOM 位置不可控，order 强制它永远在最下 */ 
+  order: 999999;
+  padding: 10px 0 6px; color: var(--muted); font-size: var(--fs-xs); }
+.hg-spin { width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--muted) 35%, transparent);
+  border-top-color: var(--accent); animation: hg-spin-rot .8s linear infinite; }
+
+/* ---- v3.1 工具行徽标：文件类型色块 + diff 增删计数 + 失败标记 ---- */
+/* v3.3.13（用户实锤「JS 黄色图标浅色下看不见」）：徽章文字改恒用前景色——
+   旧「同色系浅字+浅底」在浅色主题对比度归零；语言身份由底色 tint+左色条
+   （--badge-c）承担，双主题文字恒可读 */
+.hg-file-badge { flex: none; display: inline-block; min-width: 26px; text-align: center;
+  font-size: 9px; font-weight: 700; letter-spacing: .04em; line-height: 14px;
+  border-radius: 3px; padding: 0 3px 0 5px; margin: 0 2px; vertical-align: middle;
+  background: color-mix(in srgb, var(--badge-c, var(--muted)) 22%, transparent);
+  color: var(--fg); box-shadow: inset 2px 0 0 var(--badge-c, transparent);
+  font-family: var(--font-mono); text-transform: uppercase; }
+.hg-file-badge.ext-js { --badge-c: #f1e05a; }
+.hg-file-badge.ext-ts { --badge-c: #3178c6; }
+.hg-file-badge.ext-py { --badge-c: #3572a5; }
+.hg-file-badge.ext-md { --badge-c: #083fa1; }
+.hg-file-badge.ext-json { --badge-c: #df4e2f; }
+/* v3.5.291（用户实锤「C 的图标完全看不清」）：ext-css/html/yml/c/sh/go/rs/java
+   八个徽章仍是 v3.3.13 前旧写法（浅字+浅底/灰底灰字，浅色主题对比度归零）——
+   统一迁入 --badge-c 体系（背景 tint+左色条担语言身份，文字恒前景色双主题可读）。
+   c/h/cpp 取 VSCode C 图标蓝灰 #a8b9cc（官方 #555 灰与无色 fallback 难区分） */
+.hg-file-badge.ext-css { --badge-c: #563d7c; }
+.hg-file-badge.ext-html { --badge-c: #e34c26; }
+.hg-file-badge.ext-yml { --badge-c: #cb171e; }
+.hg-file-badge.ext-c { --badge-c: #a8b9cc; }
+.hg-file-badge.ext-sh { --badge-c: #89e051; }
+.hg-file-badge.ext-go { --badge-c: #00add8; }
+.hg-file-badge.ext-rs { --badge-c: #de8c26; }
+.hg-file-badge.ext-java { --badge-c: #b07219; }
+.hg-diffstat { flex: none; font-family: var(--font-mono); font-size: 10px;
+  margin: 0 2px; vertical-align: middle; }
+.hg-diffstat .add { color: var(--h-ok); font-style: normal; font-weight: 600; }
+.hg-diffstat .del { color: var(--h-err); font-style: normal; font-weight: 600; }
+.h-tool-failmark { flex: none; font-size: 11px; line-height: 12px; color: var(--h-err);
+  border-bottom: 1px dotted var(--h-err); padding-bottom: 1px; margin-left: 4px; }
+
+/* ---- v3.1 DOM 节省 → v3.5.55 撤除（用户实锤「上翻跳翻不连贯」）----
+   content-visibility:auto 的占位估高（72px）与真实高度差距过大，上翻时
+   元素进入视口被真实渲染导致高度跳变=滚动位置跳翻。会话规模下性能收益
+   不抵 UX 代价，行级撤除；代码块层保留（块高度较可控且不透明度低）。 */
+
+/* ---- C 子代理实况（E 工具行共用 adot/at/desc/el 内层类，状态色规则两处同写；
+   完成=灰点灰耗时——IDE 式「过去了就安静」，运行/失败/中断各自着色） ---- */
+.hg-dyn-agent { display: flex; align-items: center; gap: 6px; font-size: var(--fs-cap);
+  cursor: pointer; border-radius: 5px; padding: 2px 5px; flex-wrap: wrap;
+  transition: background-color .15s; }
+/* a93S（用户定调「模型名太长挤一行，分两行显示」）：模型独立次行小字——
+   flex-basis:100% 强制换行，缩进对齐首行文字 */
+.hg-dyn-agent .hg-dyn-amdl { flex: 0 0 100%; order: 9; margin: -2px 0 0 17px;
+  font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.hg-dyn-agent:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-dyn-agent + .hg-dyn-agent { margin-top: 2px; }
+.hg-dyn-agent.run .hg-dyn-at { color: var(--fg-bright); font-weight: 600; }
+/* v2.36：描述列 flex:1+min-width:0——耗时/状态词贴右缘对齐成列 */
+.hg-dyn-agent .hg-dyn-desc { flex: 1; min-width: 0; color: var(--muted); overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hg-dyn-adot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--hgd-done); }
+.hg-dyn-agent.run .hg-dyn-adot, .hg-dyn-act.run .hg-dyn-adot { background: var(--hgd-run);
+  animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-agent.done, .hg-dyn-agent.hist { color: var(--muted); }
+.hg-dyn-agent.done .hg-dyn-adot, .hg-dyn-agent.hist .hg-dyn-adot { background: var(--hgd-done); }
+.hg-dyn-agent.fail .hg-dyn-adot, .hg-dyn-act.fail .hg-dyn-adot { background: var(--hgd-fail); }
+.hg-dyn-agent.halt .hg-dyn-adot { background: var(--hgd-halt); }
+.hg-dyn-agent.fail .hg-dyn-at { color: var(--hgd-fail); }
+.hg-dyn-agent.halt .hg-dyn-at { color: var(--hgd-halt); }
+.hg-dyn-el { margin-left: auto; flex: none; color: var(--hgd-done); font-size: var(--fs-sm);
+  font-weight: 500; font-family: var(--font-mono); }
+.hg-dyn-agent.run .hg-dyn-el, .hg-dyn-act.run .hg-dyn-el { color: var(--hgd-run); font-weight: 600; }
+.hg-dyn-agent.done .hg-dyn-el, .hg-dyn-agent.hist .hg-dyn-el,
+.hg-dyn-act.done .hg-dyn-el { color: var(--muted); font-weight: 400; }
+.hg-dyn-agent.fail .hg-dyn-el, .hg-dyn-act.fail .hg-dyn-el { color: var(--hgd-fail); }
+.hg-dyn-agent.halt .hg-dyn-el { color: var(--hgd-halt); }
+/* v2.36 详情卡：半透 inset 底 + accent 调左缘线；结果摘要等宽小字（机器
+   输出用 mono，与面板等宽场景统一） */
+.hg-dyn-agdetail {
+  margin: 4px 0 6px 13px; padding: 7px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--bg-panel) 55%, transparent);
+  font-size: 11px; color: var(--fg);
+}
+.hg-dyn-agres { max-height: 120px; overflow-y: auto; white-space: pre-wrap;
+  word-break: break-all; margin-top: 5px; color: var(--muted);
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 1.6; }
+
+/* ---- E 最近工具（唯一限高滚动列表；完成=灰点灰耗时，运行=绿点脉冲，
+   失败=红——原完成态沿用绿底基色永绿，是状态语义漏洞） ---- */
+.hg-dyn-acts { display: flex; flex-direction: column; gap: 1px; max-height: 200px; overflow-y: auto; }
+.hg-dyn-act { display: flex; gap: 6px; font-size: var(--fs-sm); align-items: baseline;
+  padding: 2px 5px; border-radius: 5px; cursor: pointer;
+  transition: background-color .15s; }
+.hg-dyn-act:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-dyn-act .hg-dyn-at { flex: none; color: var(--fg); font-weight: 500; }
+.hg-dyn-act .hg-dyn-desc { flex: 1; min-width: 0; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-dyn-act.fail .hg-dyn-at { color: var(--hgd-fail); }
+.hg-dyn-actcp { flex: none; border: none; background: none; color: var(--muted);
+  cursor: pointer; font-size: 11px; padding: 0 2px; border-radius: 3px;
+  transition: color .15s; }
+.hg-dyn-actcp:hover { color: var(--accent); }
+
+/* ---- F 回合历史 / G 当前文件 ---- */
+.hg-dyn-turns, .hg-dyn-files { display: flex; flex-direction: column; gap: 2px; }
+.hg-dyn-turn { display: flex; gap: 8px; font-size: var(--fs-sm); align-items: baseline;
+  color: var(--fg); padding: 1px 2px; }
+.hg-dyn-turn .hg-dyn-tk { flex: none; width: 14px; text-align: center; }
+/* v2.36 语义拆分：✓ 绿 / ✗ 红（旧版与中断同为橙，失败不辨）/ ⏹ 中断橙 / ⏻ 灰 */
+.hg-dyn-turn.ok .hg-dyn-tk { color: var(--hgd-run); }
+.hg-dyn-turn.error .hg-dyn-tk { color: var(--hgd-fail); }
+.hg-dyn-turn.interrupt .hg-dyn-tk { color: var(--hgd-halt); }
+.hg-dyn-turn.exit .hg-dyn-tk { color: var(--muted); }
+.hg-dyn-turn .hg-dyn-tn { color: var(--muted); font-family: var(--font-mono); }
+.hg-dyn-turn .hg-dyn-td { font-family: var(--font-mono); }
+.hg-dyn-turn .hg-dyn-tt2 { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
+.hg-dyn-file { font-size: var(--fs-sm); font-family: var(--font-mono); color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 2px; }
+
+/* ---- 跳转高亮（消息流目标行）：v2.36 改 outline 渐隐——旧版把行背景动画到
+   transparent，移除类时回跳 bg-card 会闪一下；outline 不占布局不盖底色，
+   随行圆角走 ---- */
+.hg-dyn-jump { animation: hgDynJump 1.5s ease-out; }
+
+/* v2.36 面板/窗格内滚动条收细一档（全局 8px → 6px），与信息密度协调 */
+.hg-dyn-pane::-webkit-scrollbar, .hg-dyn-pane ::-webkit-scrollbar,
+.hg-subpane::-webkit-scrollbar, .hg-subpane ::-webkit-scrollbar { width: 6px; height: 6px; }
+
+/* a118R（用户实锤「主窗刷消息必出粗滚动条，修多次没修到」）：主消息流
+   一直用的是 Windows 经典原生滚动条（~17px 粗条怼在内容右缘，63k px 滚动
+   量恒可见；新消息到达 thumb/轨道重算+内容宽度挤压恢复=肉眼可见的条）。
+   补上与子窗格同款的细滚动条样式——粗条消失，观感与 dyn/子窗格统一 */
+.hg-flowwrap::-webkit-scrollbar, .hg-flowwrap ::-webkit-scrollbar,
+.hg-flow::-webkit-scrollbar, .hg-flow ::-webkit-scrollbar { width: 6px; height: 6px; }
+.hg-flow::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 45%, transparent);
+  border-radius: 3px; }
+.hg-flow::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+.hg-flow::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- v2.33 子代理实时窗格（聊天区右侧，可拖拽调宽）----
+   定位：临时实时镜像视图——主 flow 灰色 sub 行保留，回合终结窗格收起
+   v2.36 IDE 化：tab 从描边芯片改「平时透明 + hover 淡染 + 激活浮起（顶缘
+   accent 条 + bg-card 抬升）」，状态点/计时与面板同语言；resizer 悬停改
+   淡染细条；计时数字继承 tabular-nums */
+.hg-subpane {
+  display: none; flex-direction: row; flex: none;
+  /* v3.2.31：真分屏——宽度由 JS 按聊天区总宽百分比（25%~75%，默认 50%）
+     计算（14-subpane _hgSubPctApply），CSS 只保留窄窗地板，640px 上限拆除。
+     v3.2.31R（复审4）：CSS 兜底分母对齐 JS 口径——width:50% 的分母是 .hg
+     全宽（含 232px 会话栏），后台 tab 自动开窗格（wrap 隐藏 JS 不落 px）
+     切回后偏差 ~116px；calc 扣除会话栏后取半=聊天区总宽的 50% */
+  width: calc((100% - 232px) * 0.5); min-width: 240px;
+  transition: width .25s ease;   /* v3.4.22：宽窄档切换平滑 */
+  border-left: 1px solid var(--border); background: var(--bg-panel);
+  min-height: 0; font-variant-numeric: tabular-nums;
+}
+.hg-sub-resizer { width: 5px; flex: none; cursor: col-resize; background: transparent;
+  transition: background .15s; }
+.hg-sub-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.hg-sub-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.hg-sub-head {
+  display: flex; align-items: center; gap: 4px; padding: 5px 6px 5px 9px;
+  border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0;
+}
+.hg-sub-tabs { display: flex; gap: 3px; align-items: center; }
+.hg-sub-tab {
+  display: flex; align-items: center; gap: 5px; font-size: 11px;
+  padding: 3px 9px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  color: var(--muted); background: transparent; border: 1px solid transparent;
+  transition: background-color .15s, color .15s, border-color .15s;
+}
+.hg-sub-tab:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.hg-sub-tab.active { color: var(--fg-bright); font-weight: 600;
+  background: var(--bg-card);
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: inset 0 2px 0 var(--accent); }
+.hg-sub-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--hgd-done); }
+.hg-sub-tab.run .hg-sub-dot { background: var(--hgd-run); animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-sub-tab.err .hg-sub-dot { background: var(--hgd-fail); }
+.hg-sub-x {
+  margin-left: auto; flex: none; border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: 12px; padding: 3px 6px; border-radius: 5px;
+  transition: color .15s, background-color .15s;
+}
+.hg-sub-x:hover { color: var(--fg-bright); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+/* 窗格重设计 P1-5 复审修复：滚动容器是 msgs 而非 body——JS 的贴底跟随/
+   stick 判定与 scrollTop 赋值全在 sc(=.hg-sub-msgs) 上算，body 滚 msgs
+   不滚则测距恒 0（守卫失效）且赋值 no-op（永不跟随）。body 改 flex 列、
+   msgs 自撑满高自滚；msgs 每 tab 一个，顺带各自 scrollTop 独立（body 跨
+   tab 共享，方案 a 前只有一份滚动位置） */
+.hg-sub-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px; }
+.hg-sub-msgs { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; }
+/* 窗格重设计 P1-5 补课：msgs 成滚动容器后子项默认 flex-shrink:1——内容超窗
+   时每行被压扁挤成一团（用户实锤「数据一多就缩一起」）。主 flow/只读层同款
+   坑已修过两次（3d22ecc/b4b7b7c），子项禁垂直压缩，内容自然撑开走滚动。 */
+.hg-sub-msgs > * { flex-shrink: 0; }
+/* v3.3.10（用户实锤「分屏回复自适应，气泡都被截断了」「完成/出错太靠边」）：
+   ① 子容器禁横向溢出——长孤儿行曾把内容顶出可视区，气泡右缘被裁；
+   ② ↳ 孤儿结果行折行不截断（旧 nowrap+ellipsis 窄分屏下断在半字）；
+   ③ 时间线右缘留 12px 呼吸，状态徽章（完成/出错）不贴容器边 */
+.hg-sub-msgs { overflow-x: hidden; }
+/* v3.4：tab 内多轮块（消息N+已工作N+结论N）纵排分界 */
+.hg-sub-turn + .hg-sub-turn { margin-top: 6px; padding-top: 6px;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent); }
+.hg-sub-body .h-tl { padding-right: 12px; }
+/* v3.4.62（用户实锤「分页子代理莫名其妙的换行」）：孤儿结果行恢复单行省略
+   ——v3.3.10 的折行把 JS 已归一的单段文本在窄列折成多行顶格错位；文本已
+   replace(/\s+/g,' ')，nowrap+hidden+ellipsis 三件套齐配（当年「断半字」是
+   overflow 未配齐的旧疾，不复发），全文走 title 悬浮（JS 已补） */
+.hg-sub-body .h-tl .h-tool-res { white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; word-break: keep-all; overflow-wrap: normal; }
+.hg-sub-msg { font-size: var(--fs-base); line-height: 1.65; color: var(--fg); white-space: pre-wrap; word-break: break-word; }
+.hg-sub-tool {
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 0 1px 8px; border-left: 2px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.hg-sub-res {
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 0 1px 8px; border-left: 2px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.hg-sub-res.err { color: var(--hgd-fail); border-left-color: var(--hgd-fail); }
+
+/* ---- v2.35 子代理模型角标（tab 内，悬浮看全名）/ 重开入口可点击提示 ----
+   v2.36：角标描边框改淡染底胶囊（与面板 amdl 同款），去掉压灰的 opacity */
+.hg-sub-mdl { font-size: 9.5px; color: var(--muted); max-width: 90px;
+  overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-radius: 3px; padding: 0 4px; }
+.hg-dyn-amdl { flex: none; font-size: 9.5px; color: var(--muted);
+  padding: 0 4px; border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent); }
+/* P1-5：协作代理行（SendMessage peer/识图转交）——「协作」徽章（accent 标
+   种类）+ 等待蓝点（标状态，与面板/输入框等待语义一致；完成后回灰） */
+.hg-dyn-pbadge { flex: none; font-size: 9px; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 3px; padding: 0 3px; opacity: .9; }
+/* （v2.53：.hg-dyn-hbadge/.hg-sub-hv「重」角标样式随角标一起移除——
+   设计者/审计者行名本身已直白标识身份，用户要求去掉「重」字样） */
+.hg-dyn-agent.peer .hg-dyn-adot { background: var(--hgd-wait); }
+.hg-dyn-agent.peer.done .hg-dyn-adot { background: var(--hgd-done); }
+.hg-dyn-agent.peer.run .hg-dyn-adot { animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-dyn-agent.peer.run .hg-dyn-el { color: var(--hgd-wait); }
+/* P0-2：子代理消息行/工具行、已转交线——点击重开窗格/说明，给手型提示
+   v2.36：hover 虚线框提亮为 accent 调（可点性更明显） */
+.h-msg.asst.sub[data-hg-sub], .h-tool.sub[data-hg-sub] { cursor: pointer; }
+.h-msg.asst.sub[data-hg-sub]:hover { outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px; border-radius: 8px; }
+.h-switch[data-peer] { cursor: pointer; }
+
+/* ---- v2.38 历史子代理回放窗格：tab 置灰+「回放」徽章、加载/缺失说明、
+   详情卡回放按钮。色板全走主题/语义变量 ---- */
+.hg-sub-tab.replay { opacity: .78; }
+.hg-sub-tab.replay .hg-sub-dot { background: var(--hgd-done); animation: none; }
+.hg-sub-rp { flex: none; font-size: 9px; color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 3px; padding: 0 3px; }
+.hg-sub-replay-note { font-size: var(--fs-xs); color: var(--muted);
+  padding: 3px 6px; border-left: 2px solid var(--border); opacity: .9; }
+
+/* ---- v2.37R6+：回放长文本行默认折叠（>500 字符或 ≥8 行）----
+   折叠态 clip ~8 行高+底部渐隐；「展开 ∨/收起 ∧」钮走 20-main body 委托。
+   纯视觉层：行数统计/cap 不受影响，重拉重建后默认折叠。色板全走主题变量 */
+.hg-sub-fold-wrap { min-width: 0; }
+.hg-sub-fold-wrap .hg-sub-fold-body { position: relative; min-width: 0; }
+.hg-sub-fold-wrap.folded .hg-sub-fold-body {
+  max-height: calc(1.6em * 8); overflow: hidden;
+}
+.hg-sub-fold-wrap.folded .hg-sub-fold-body::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.4em;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--bg-panel) 92%, transparent));
+  pointer-events: none;
+}
+/* v2.37R6 复审修复：展开态（20-main toggle 'open'）——解除裁剪与渐隐，
+   否则「展开 ∨」只翻按钮文案、正文永远被裁在 8 行 */
+.hg-sub-fold-wrap.open .hg-sub-fold-body {
+  max-height: none; overflow: visible;
+}
+.hg-sub-fold-wrap.open .hg-sub-fold-body::after { display: none; }
+.hg-sub-fold-tog { display: inline-block; font-size: var(--fs-xs); color: var(--accent);
+  cursor: pointer; user-select: none; padding: 1px 4px; border-radius: 4px; }
+.hg-sub-fold-tog:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* ---- 窗格重设计（docs/子代理窗格UI重设计.md P1+P2）---- */
+/* P1-1 单-tab ✕：默认隐形，hover 整个 tab 才浮现（运行中防误触）；✕ 自身
+   hover 提亮成可点按钮。子元素自带 title，悬浮文案优先于 tab 整体 title */
+.hg-sub-x2 { flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-right: -5px; border-radius: 4px;
+  font-size: 10px; line-height: 1; color: var(--muted); opacity: 0;
+  transition: opacity .12s, background-color .12s, color .12s; }
+.hg-sub-tab:hover .hg-sub-x2 { opacity: .8; }
+.hg-sub-x2:hover { opacity: 1; color: var(--fg-bright);
+  background: color-mix(in srgb, var(--fg) 14%, transparent); }
+/* P1-3 md 行：复用 .h-bubble 全局排版（p/pre/code/ul 的规则都在 .h-bubble
+   类下），窗格窄列只收敛字号/断行；.h-msg 作用域的气泡 padding 不命中 */
+.hg-sub-msgmd { font-size: var(--fs-base); line-height: 1.6; color: var(--fg);
+  max-width: 100%; overflow-wrap: anywhere; }
+.hg-sub-msgmd pre { max-width: 100%; }
+/* P1-4 裁剪提示条：居中小字，替代静默删首 */
+.hg-sub-omit { flex: none; text-align: center; font-size: var(--fs-2xs); color: var(--muted);
+  padding: 2px 0; opacity: .85; user-select: none; }
+/* P2-6 thinking 折叠行：head 按钮 + 隐藏 body，.open 展开；chev 旋转指路 */
+.hg-sub-think {
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.hg-sub-think-head { display: flex; align-items: center; gap: 5px; width: 100%;
+  border: none; background: none; cursor: pointer; padding: 1px 0;
+  font-size: 10.5px; color: var(--muted); font-family: inherit; text-align: left; }
+.hg-sub-think-head:hover { color: var(--fg); }
+.hg-sub-think-chev { display: inline-block; transition: transform .15s; }
+.hg-sub-think.open .hg-sub-think-chev { transform: rotate(90deg); }
+.hg-sub-think-body { display: none; font-size: var(--fs-cap); line-height: 1.6;
+  overflow-wrap: anywhere; min-width: 0;
+  color: var(--muted); padding: 4px 0 2px; }
+.hg-sub-think.open .hg-sub-think-body { display: block; max-height: 40vh;
+  overflow-y: auto; }
+/* ---- v2.57R：工具行折叠气泡（与思考行同交互——头行点开才显示输入/结果
+   详情；覆盖旧 .hg-sub-tool 一行式 nowrap 定义）---- */
+.hg-sub-tool { white-space: normal; overflow: visible; text-overflow: clip;
+  padding-left: 8px; }
+.hg-sub-tool.done { border-left-color: color-mix(in srgb, #4ade80 45%, transparent); }
+.hg-sub-tool.err { border-left-color: var(--hgd-fail); }
+.hg-sub-tool-head { display: flex; align-items: center; gap: 0; width: 100%;
+  border: none; background: none; cursor: pointer; padding: 1px 0;
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  text-align: left; }
+.hg-sub-tool-head:hover { color: var(--fg); }
+.hg-sub-tool-head .hg-sub-tdot { margin-right: 5px; }
+.hg-sub-tool.err .hg-sub-tdot { background: var(--hgd-fail); }
+.hg-sub-tool-name { flex: none; margin-right: 5px; }
+.hg-sub-tool-hint { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-sub-tool-chev { display: inline-block; margin-left: auto; flex: none;
+  transition: transform .15s; }
+.hg-sub-tool.open .hg-sub-tool-chev { transform: rotate(90deg); }
+.hg-sub-tool-body { display: none; font-size: var(--fs-sm); line-height: 1.55;
+  color: var(--muted); padding: 4px 0 2px; white-space: pre-wrap;
+  word-break: break-word; max-height: 200px; overflow: auto; }
+.hg-sub-tool.open .hg-sub-tool-body { display: block; }
+.hg-sub-tool-out.err { color: var(--hgd-fail); }
+/* P2-7 工具行状态点：进行中灰点脉冲（与 tab 绿点脉冲同节奏），结果回点
+   变绿定格 */
+.hg-sub-tdot { display: inline-block; flex: none; width: 6px; height: 6px;
+  border-radius: 50%; margin-right: 5px; vertical-align: 1px;
+  background: var(--muted); animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-sub-tool.done .hg-sub-tdot { background: var(--hgd-done); animation: none; }
+/* P2-8 结果行可点击展开全文：仅超 120 字的行带 data-hg-subfull（手型+hover
+   提亮，属性名避开拖宽条的 data-hg-subres 钩子）；展开态放开单行省略约束，
+   pre-wrap 保留原文换行 */
+.hg-sub-res[data-hg-subfull] { cursor: pointer; }
+.hg-sub-res[data-hg-subfull]:hover { color: var(--fg); }
+.hg-sub-res.open { white-space: pre-wrap; overflow: visible; text-overflow: clip; }
+.hg-dyn-replay-btn {
+  display: block; width: 100%; margin-top: 6px; padding: 3px 6px;
+  font-size: 10.5px; cursor: pointer; border-radius: 5px;
+  color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.hg-dyn-replay-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+
+/* ============================================================
+   v3.2 ZCode 式回合闭合 + 内联工具时间线 + 查阅聚组 + 子代理目录
+   （对照 packages/ui ConversationTurnGroup/ToolCallBlocks/explore/
+   SubagentDirectorySidePane 的视觉规格）
+   ============================================================ */
+
+/* ---- 回合折叠头：⏱ 已工作 N 分 N 秒 › ---- */
+.h-turn-head { display: flex; align-items: center; gap: 6px; width: fit-content;
+  padding: 1px 4px; border: 0; background: none; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--muted); border-radius: 5px; }
+.h-turn-head:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.h-turn-head .h-chev { font-size: 10px; color: var(--muted); opacity: .8;
+  transition: transform .15s; display: inline-block; }
+.h-turn-label { color: var(--muted); }
+.h-turn-sub { font-size: var(--fs-2xs); color: var(--muted); opacity: .75;
+  font-family: var(--font-mono); }
+/* 动画批B：组开合高度过渡（工具卡同款 grid-rows 方案；display 硬切退役） */
+.h-turn-body.closed { display: grid; grid-template-rows: 0fr; opacity: 0; overflow: hidden; }
+/* 展开态 chevron 转正（收起态 › 右指） */
+.h-grp-proc:has(.h-turn-body:not(.closed)) > .h-turn-head .h-chev { transform: rotate(90deg); }
+
+/* ---- 组内纵向布局（v3.2 前双抽屉横排 → 回合头+工作区纵排） ---- */
+.h-grp-proc { display: flex; flex-direction: column; gap: 6px; }
+.h-grp-proc > .h-drawer { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+.h-turn-body { display: grid; grid-template-rows: 1fr; opacity: 1; gap: 6px;
+  transition: grid-template-rows var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)),
+              opacity var(--hg-dur, .3s) var(--hg-ease, cubic-bezier(.4,0,.2,1)); }
+.h-turn-body > * { min-height: 0; }
+/* v4.0.0-a34（用户实测「20 轮后开合思考卡顿」）：收起终态的工作区体跳过
+   子树 layout+paint——grid 0fr 只压高度不省布局，长会话收起组全量 DOM
+   常驻拖垮全局动画帧率；hidden 对不可见内容零视觉差，展开过渡首帧付
+   一次性回建成本（远小于每帧常驻） */
+.h-turn-body.closed > * { content-visibility: hidden; }
+/* v3.2.2：折进体的中间正文——对齐 .h-grp > .h-msg 的自适应宽（体是
+   flex column，默认拉伸会拉满组宽） */
+.h-turn-body .h-msg { width: auto; max-width: 100%; }
+.h-tl .h-think-seg.open { background: color-mix(in srgb, var(--fg) 2%, transparent);
+  border-color: var(--border); border-left: 2px solid var(--h-violet, #8957e5);
+  border-radius: 6px; }
+/* v3.2.4：插回时间线的中间正文——裸 md 气泡形态（头像/模型徽章只属于根区
+   的最终结论），与工具行/思考段同轴 */
+.h-tl > .h-msg { margin: 2px 0; }
+.h-tl > .h-msg .h-mmeta { display: none; }
+.h-tl > .h-msg .h-bubble { font-size: var(--fs-base);
+  border: 1px solid var(--border); border-radius: 10px; }
+.h-tl .h-think-seg.open .h-think-seg-body { padding: 2px 12px 8px 16px; }
+.h-think-seg-body ul, .h-think-seg-body ol { margin: .3em 0; padding-left: 1.4em; }
+
+/* ---- 内联工具时间线：左侧脊柱竖线（截图4 同款） ---- */
+.h-tl { position: relative; display: flex; flex-direction: column; gap: 3px;
+  margin: 0 0 0 12px; padding-left: 13px; }
+.h-tl::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
+  width: 1px; background: color-mix(in srgb, var(--border) 90%, transparent); }
+.h-tl > .h-tool, .h-tl > .h-tool-res, .h-tl > .h-tl-grp { position: relative; }
+/* v3.3.3（用户实锤「bash 未对齐」）：终端卡与思考段/查阅组同几何——工具行
+   不再 shrink-to-content（align-self:flex-start 基类），stretch 全宽使所有
+   时间线行共享同一左缘/右缘；收起态透明无边（开盒仅 .open 展开时出现） */
+.h-tl > .h-tool { align-self: stretch; max-width: 100%; }
+/* v3.1h（用户实锤 Bash 超长行撑破窗口）：.h-tl 是 flex column，子项
+   min-width:auto 让 nowrap 内容撑破 max-width——全链放开收缩约束，
+   行宽上限=时间线宽（组已 width:min(820px,100%) 自适应窗口） */
+.h-tl > * { min-width: 0; max-width: 100%; }
+/* v3.4.44（用户实锤「产生换行的还是没对齐」+像素实测：各 folding 行的 ▸ 盒
+   左缘仍随 border+padding 复合漂移 ~5px、glyph 宽随字体漂移）——绝对定位
+   钉死：▸ 盒挂在行盒（relative）padding-box left:10px（border 2px 后=12px），
+   垂直 margin-top 半盒高居中（不用 translateY，给 open 态 rotate(90deg) 让
+   transform 通道）。各行头文字缩进统一 30px（border2+30=图标列 32px）。
+   live/hist、收起/展开、思考/查阅/终端卡、主流/分屏同一坐标，无复合巧合 */
+.hg-flow .h-tl .h-think-seg, .hg-sub-body .h-tl .h-think-seg,
+.h-tl-grp-body .h-tool { position: relative; }
+.hg-flow .h-tl .h-chev, .hg-sub-body .h-tl .h-chev {
+  position: absolute; left: 10px; top: 8px;
+  font-size: 10px; width: 14px; line-height: 1;
+  font-family: var(--font-ui, system-ui);   /* v3.4.48:▸ glyph 随行字体漂移（mono 的 ▸ 撑满字框明显大一圈）——箭头独立于行字体，统一 UI 字体 */
+  display: inline-flex; align-items: center; justify-content: center; }
+/* v3.4.37（用户最终通牒实锤：col 类折叠行 ▸ 比思考/查阅深 10px）：Bash/Edit
+   等带 .h-tool-head 的行=容器 10px + 头自带 10px 双叠=22px。头左距归零+垂直
+   统一 4px，几何基准全收口到容器：左条 2px + 容器 10px = ▸ 盒左缘恒 12px
+   （历史回放与实况路径、主流与分屏同一公式） */
+.hg-flow .h-tl .h-tool > .h-tool-head,
+.hg-sub-body .h-tl .h-tool > .h-tool-head {
+  padding: 4px 10px 4px 0; }
+.h-turn-body, .h-grp-proc { min-width: 0; }
+.h-tl:empty { display: none; }
+/* 时间线里的工具行去掉旧抽屉时代的块状底色——内联行更轻；
+   v3.2R1：col 类别色左边框与 err 红边显式恢复（原先写成无人消费的
+   --h-accent-l 死变量，等于把类别色/错误边整体抹透明） */
+.h-tl .h-tool { background: transparent; border-color: transparent; padding-left: 0; }
+.h-tl .h-tool.col { border-left: 2px solid var(--h-accent, var(--accent)); }
+.h-tl .h-tool.err { border-left: 2px solid var(--neon-red, #e06c75); }
+.h-tl .h-tool .h-tool-coll { margin-left: 0; }
+.hg-flow .h-tl .h-tool.col:not(.open) .h-tool-head,
+.hg-flow .h-tl .h-tool.oneclick:not(.open) .h-tool-head { padding-block: 3px; }
+
+.hg-flow .h-tl .h-tool.col,
+.hg-flow .h-tl .h-tool.oneclick,
+/* v3.4.64：直角压扁扩到分屏（用户实锤「分屏 Bash 行左条带弧线，主窗口是
+   直的」）——4093 只补了分屏 padding，直角/透明底这组漏罩，8px 圆角残留
+   让 2px 左条两端成弧 */
+.hg-sub-body .h-tl .h-tool.col,
+.hg-sub-body .h-tl .h-tool.oneclick {
+  background: transparent; border-color: transparent;
+  border-left: 2px solid var(--h-accent, var(--accent));
+  border-radius: 0; box-shadow: none; padding-left: 10px;   /* v3.4.44:▸ 盒钉死后 30px=图标列 32px */
+}
+.hg-flow .h-tl .h-tool.oneclick.open,
+.hg-sub-body .h-tl .h-tool.oneclick.open {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-color: var(--border);
+  border-left: 2px solid var(--h-accent, var(--accent));
+  border-radius: 8px;
+}
+.hg-flow .h-tl .h-tool.col.err,
+.hg-flow .h-tl .h-tool.err,
+.hg-sub-body .h-tl .h-tool.col.err,
+.hg-sub-body .h-tl .h-tool.err { border-left-color: var(--neon-red, #e06c75); }
+
+/* ---- 查阅聚组：🔍 查阅 · N 搜索 · M 文件（展开=左竖线+子行树） ---- */
+.h-tl-grp { display: flex; flex-direction: column; gap: 2px;
+  border-left: 2px solid var(--border);  /* v3.4.35:左条统一 2px,与思考段/终端卡同构 */ }
+.h-tl-grp-head { display: flex; align-items: center; gap: 6px; width: fit-content;
+  padding: 4px 10px 4px 10px;  /* v3.4.44:▸ 盒绝对钉死后头文字让位到图标列 32px */ border: 0; background: none; cursor: pointer;
+  font-size: var(--fs-sm); color: var(--muted); text-align: left; border-radius: 5px; }
+.h-tl-grp-head:hover { color: var(--fg); }
+.h-tl-grp-head .h-chev { font-size: 10px; display: inline-block;
+  transition: transform .15s; color: var(--muted); }
+.h-tl-grp.open > .h-tl-grp-head .h-chev { transform: rotate(90deg); }
+.h-tl-grp-name { color: var(--muted); font-weight: 500; }
+.h-tl-grp-sum { color: var(--muted); opacity: .8; font-size: var(--fs-xs); }
+/* 展开的子行树：左竖线 + 缩进（ZCode explore ml-2 border-l pl-3.5 同款） */
+.h-tl-grp-body { display: none; margin: 1px 0 2px 21px; padding-left: 11px;  /* v3.1h:随头 13px 同步右移 */
+  border-left: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  flex-direction: column; gap: 3px; }
+.h-tl-grp.open > .h-tl-grp-body { display: flex;
+  max-height: 42vh; overflow-y: auto; }
+.hg-flow .h-tl .h-tool.col:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.col:not(.open)::before,
+.hg-flow .h-tl .h-tool.oneclick:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.oneclick:not(.open)::before {
+  content: ''; position: absolute; left: 0; top: calc(50% - 15px);
+  width: 2px; height: 30px; border-radius: 1px;
+  background: var(--h-accent, var(--accent));
+}
+.hg-flow .h-tl .h-tool.col.err:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.col.err:not(.open)::before,
+.hg-flow .h-tl .h-tool.err:not(.open)::before,
+.hg-sub-body .h-tl .h-tool.err:not(.open)::before {
+  background: var(--neon-red, #e06c75);
+}
+/* ② 查阅聚组（收起态=组头行） */
+.h-tl-grp:not(.open) {
+  border-left-color: transparent; position: relative; min-height: 30px;
+}
+.h-tl-grp:not(.open)::before {
+  content: ''; position: absolute; left: 0; top: calc(50% - 15px);
+  width: 2px; height: 30px; border-radius: 1px;
+  background: var(--border);
+}
+/* ③ 思考段（收起态；原 3px 紫边——统一为 2px 定长条）。收起态放行
+   overflow：基类 hidden 会裁掉负偏移的 ::before 条（收起时无 body
+   可裁，展开态恢复 hidden 管动画裁切） */
+.h-think-seg:not(.open) {
+  border-left: 2px solid transparent; position: relative; min-height: 30px;
+  overflow: visible;
+}
+.h-think-seg:not(.open)::before {
+  content: ''; position: absolute; left: 0; top: calc(50% - 15px);
+  width: 2px; height: 30px; border-radius: 1px;
+  background: var(--h-violet, #8957e5);
+}
+
+/* ---- diff 行号列（截图1 编辑卡：行号 + 绿底新增 + 竖条）----
+   v3.2R1：选择器提为 .h-tool-coll .h-diff .d-*（真实结构是
+   .h-tool-coll > .h-diff > .d-*）并显式覆盖 padding——与旧 .h-diff .d-*
+   规则（0,2,0）同特异性叠加时旧 padding 6px 残留、行号列整体右移 */
+.h-tool-coll .h-diff .d-ctx, .h-tool-coll .h-diff .d-add, .h-tool-coll .h-diff .d-del,
+.h-tool-coll > .d-ctx, .h-tool-coll > .d-add, .h-tool-coll > .d-del {
+  display: flex; align-items: baseline; padding: 1px 8px 1px 0; }
+.h-tool-coll .d-ln { flex: none; width: 34px; text-align: right; margin-right: 8px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--muted);
+  opacity: .6; user-select: none; }
+.h-tool-coll .d-tx { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-all; }
+.h-tool-coll .h-diff .d-add, .h-tool-coll > .d-add {
+  background: color-mix(in srgb, #2ea043 12%, transparent);
+  border-left: 3px solid #2ea043; }
+.h-tool-coll .h-diff .d-del, .h-tool-coll > .d-del {
+  background: color-mix(in srgb, #e5484d 10%, transparent);
+  border-left: 3px solid #e5484d; }
+/* v3.2R2(N1)：+/− 行的 3px 左竖条把内容盒右推 3px——行号列负边距对冲，
+   与无边框的 .d-ctx 行号竖列对齐（R1 重写选择器时误删的基线补偿） */
+.h-tool-coll .d-add .d-ln, .h-tool-coll .d-del .d-ln {
+  margin-left: -3px; padding-right: 3px; }
+
+/* ---- oneclick 终端卡（Bash 行点开输出） ---- */
+.h-tool.oneclick { cursor: pointer; }
+/* v3.4.26（用户定调，对照 ZCode 终端卡 图2/图3）：终端卡两态形态——
+   收起=严格单行（▸ 图标 Bash 命令省略 徽章 复制），命令不再折行成第二行
+   碎片；展开=命令全文（pre-wrap 换行）+输出块（图2 样式）。
+   :not(.open) 保证展开态不被 flex 单行规则覆盖 */
+.h-tool.oneclick:not(.open) { display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; }
+.h-tool.oneclick:not(.open) > * { flex: none; }
+.h-tool.oneclick:not(.open) > .h-tool-arg { flex: 1 1 auto; min-width: 0;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-tool.oneclick.open > .h-tool-arg { white-space: pre-wrap; overflow: visible;
+  text-overflow: clip; }
+.h-tool.oneclick .h-tool-chev { font-size: 10px; color: var(--muted);
+  display: inline-block; transition: transform .15s; } /* v3.4.35:去掉 margin-right——flex gap 6px 已有,双叠导致图标间距比思考/查阅宽一倍 */
+.h-tool.oneclick.open .h-tool-chev { transform: rotate(90deg); }
+.h-tool.oneclick.open { background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-color: var(--border); }
+
+/* ---- 子代理目录（右栏伪 tab：正在运行/已结束两组列表） ---- */
+.hg-sub-dir { display: flex; flex-direction: column; }
+.hg-sub-dir-head { font-size: var(--fs-sm); font-weight: 600; color: var(--fg);
+  padding: 10px 12px 6px; border-bottom: 1px solid var(--border); }
+.hg-sub-dir-sec { font-size: var(--fs-xs); font-weight: 500; color: var(--muted);
+  padding: 10px 12px 4px; }
+.hg-sub-dir-empty { font-size: var(--fs-sm); color: var(--muted); opacity: .7;
+  padding: 6px 12px 10px; }
+.hg-sub-dir-row { display: flex; align-items: flex-start; gap: 9px; width: 100%;
+  padding: 7px 10px; border: 0; background: none; cursor: pointer; text-align: left;
+  border-radius: 8px; font-size: var(--fs-sm); }
+.hg-sub-dir-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.hg-sub-dir-ico { flex: none; width: 16px; text-align: center; margin-top: 1px;
+  font-size: 12px; }
+.hg-sub-dir-row.run .hg-sub-dir-ico { color: var(--hgd-run); animation: hgDynPulse 1.6s ease-in-out infinite; }
+.hg-sub-dir-row.ok .hg-sub-dir-ico { color: var(--hgd-done); }
+.hg-sub-dir-row.err .hg-sub-dir-ico { color: var(--hgd-fail); }
+.hg-sub-dir-row.stop .hg-sub-dir-ico { color: var(--h-warn); }
+.hg-sub-dir-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.hg-sub-dir-t1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.hg-sub-dir-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--fg); font-weight: 500; }
+.hg-sub-dir-st { flex: none; font-size: var(--fs-2xs); color: var(--muted); opacity: .75; }
+.hg-sub-dir-sum { font-size: var(--fs-xs); color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-sub-dir-time { flex: none; font-size: var(--fs-2xs); color: var(--muted);
+  opacity: .7; margin-top: 2px; font-family: var(--font-mono); }
+.hg-sub-tab.dir, .hg-sub-tab.dyn { color: var(--muted); }
+.hg-sub-tab .hg-sub-dir-tabico { margin-right: 4px; font-size: 11px; }
+.hg-sub-tab.dir.active, .hg-sub-tab.dyn.active { color: var(--fg); }
+/* 面板 C 区目录入口（⏱ 已结束 N ›） */
+.hg-dyn-dirbtn { margin-left: auto; border: 0; background: none; cursor: pointer;
+  font-size: var(--fs-2xs); color: var(--muted); padding: 1px 4px; border-radius: 4px; }
+.hg-dyn-dirbtn:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* v3.2.21：子代理窗格内来向消息（派发提示/追加消息）——右对齐窄气泡，
+   与主会话 user 气泡同语言；时间线流内占一行 */
+/* v3.2.23（用户实锤「来都被收缩了」）：来向气泡右对齐改 fit-content+自动
+   左推——原 align-self:flex-end 在时间线 flex 列里 shrink-to-fit 塌成
+   ~98px 窄条、长文被挤成 4000px 高的细柱；fit-content 按内容取宽并受
+   max-width 封顶，高度自然撑开 */
+.hg-sub-msgs .h-msg.user.hg-sub-u, .h-tl .h-msg.user.hg-sub-u {
+  width: fit-content; max-width: 88%;
+  margin: 6px 0 6px auto;
+  padding: 8px 12px; border-radius: 12px 12px 3px 12px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.hg-sub-u .h-bubble { background: transparent; border: none; padding: 0; margin: 0; font-size: var(--fs-base); }
+
+/* v3.2.24（用户实锤「要自适应窗口，别让我左右拖」）：窗格内容限宽链——
+   flex 子项 min-width:0 阻断 min-content 宽度上传（长路径曾把整链撑到
+   1166px 逼出横向拖动），长词在容器内折行，横向溢出硬禁 */
+.hg-sub-msgs { overflow-x: hidden; }
+.hg-sub-msgs .hg-sub-grp, .hg-sub-msgs .h-grp, .hg-sub-msgs .h-grp-proc,
+.hg-sub-msgs .h-turn-body, .hg-sub-msgs .h-tl, .hg-sub-msgs .h-tl-grp,
+.hg-sub-msgs .h-tl-grp-body { min-width: 0; max-width: 100%; width: 100%; }
+.hg-sub-msgs .h-tool, .hg-sub-msgs .h-tl-grp-head,
+.hg-sub-msgs .h-tool-arg, .hg-sub-msgs .h-tool-out,
+.hg-sub-msgs .h-tool-head { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+
+/* v3.1h（用户实锤「查阅」名称/命令换行）：聚组子行与时间线行头单行省略——
+   超长命令/路径截断,点开展开体看全文;展开体已限宽自适应 */
+.h-tl-grp-body .h-tool, .h-tl > .h-tool { overflow: hidden; }
+.h-tl-grp-body .h-tool-name, .h-tl > .h-tool .h-tool-name,
+.h-tl-grp-body .h-tool-arg, .h-tl > .h-tool .h-tool-arg {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* ---- v3.5.22 后台任务卡（Task 与子代理区分；⧗ 图标+独立底色，视觉上
+   与工具行/子代理段明确分家）---- */
+.h-taskcard { display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; margin: 3px 0; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border));
+  font-size: var(--fs-sm); }
+.h-task-ico { flex: none; color: var(--accent); }
+.h-task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--fg); }
+.h-task-t { flex: none; font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--muted); }
+
+/* ---- v3.5.57 回合归档提示（主窗口只保留最近 20 轮，更早的进只读看）----
+   v3.5.61（用户拍板「保留这个，然后居中」）：flex 居中——flow 限宽内视觉居中 */
+.h-archive-hint { display: flex; align-items: center; justify-content: center;
+  width: 100%; box-sizing: border-box;   /* v3.5.63：flow 是 align-items:flex-start 的 flex column——不拉满则 hint 收缩成窄条，「居中」只在条内生效 */
+  padding: 8px 12px; font-size: var(--fs-sm);
+  color: var(--muted); border-bottom: 1px dashed var(--border); cursor: pointer; }
+
+/* v3.5.249（用户四图定调：收起=不换行+复制不暴露；点开=流式风格全文+复制键）
+   ① live bash 卡（_tlOneclickify 升级行，无 head 结构）收起单行——.h-tool 的
+   flex-wrap:wrap 让长命令把徽章挤落第二行（换行实锤）；:not(:has) 排除
+   hist/识图卡（它们有 head button，本就单行形态） */
+/* v3.5.261（用户定调「保持后台任务行这个宽度，bash 才是要改的」）：live
+   bash 行 max-width 88%→100% 与后台任务行同宽——arg 拉伸填满、状态徽章
+   贴行右端（旧 88% 让徽章悬在 88% 处留一截空白） */
+.h-tool.col.oneclick:not(:has(> .h-tool-head)) {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; max-width: 100%; }
+/* v3.5.254（用户实锤「流式bash点开一字一行」）：open 态转 wrap + arg basis 0——
+   收起态 coll 不参与布局 nowrap 单行正常；点开后 coll(flex:1 0 100%)独占整行
+   放输出，首行 arg 占剩余宽省略——旧规则 nowrap 下 coll 恒占满基准宽把 arg
+   (word-break:break-all 的 min-content=1字) 压成一字一行 */
+.h-tool.col.oneclick:not(:has(> .h-tool-head)).open { flex-wrap: wrap; }
+.h-tool.col.oneclick:not(:has(> .h-tool-head)) > .h-tool-coll { flex: 1 0 100%; min-width: 0; }
+.h-tool.col.oneclick:not(:has(> .h-tool-head)).open > .h-tool-arg { flex: 1 1 0; }
+/* ② 复制键默认藏（收起态不直接暴露），点开（open）才显示——live 升级行 /
+   hist 行 / sub 抽屉行统一此门控；后置同权覆盖上方 3106 的恒显规则 */
+.h-tool .h-tool-copy { display: none; }
+.h-tool.open .h-tool-copy { display: inline-block; margin-left: 6px; }
+
+/* v3.5.256：Lightbox 图片加载失败提醒层（文件不存在/已删除） */
+.hg-lightbox-err { max-width: 80vw; padding: 22px 30px; border-radius: 10px;
+  background: rgba(20,24,30,.92); color: #ffb86b; font-size: 14px;
+  border: 1px solid rgba(255,184,107,.4); word-break: break-all; }
+
+/* v3.5.283（用户铁令「徽章以子代理完成位置为基准一律对齐，流式+重渲全部」）：
+   行几何锁死 agentline 基准（pl10/pr0/bl2）——保底覆盖段压过任何历史变体 */
+.hg-flow .h-tl .h-tool.col,
+.hg-flow .h-tl .h-tool.oneclick,
+.hg-sub-body .h-tl .h-tool.col,
+.hg-sub-body .h-tl .h-tool.oneclick {
+  padding-left: 10px !important;
+  padding-right: 0 !important;
+}
+.h-tl .h-think-seg-head,
+.h-tl .h-tl-grp-head {
+  padding-left: 10px !important;
+}
+
+
+/* ==================== 技能仓库（31-skills.js，全屏独立页） ==================== */
+.sk-repo { display: none; position: absolute; inset: 0; z-index: 40;
+  background: var(--bg); flex-direction: column; }
+
+/* v3.5.296：会话行活跃 spinner（busy ● 太弱——用户实锤「都在活跃但看不出来」） */
+.hg-item-run { display: inline-block; width: 9px; height: 9px; margin-right: 5px;
+  border: 2px solid var(--accent, #2a6db5); border-top-color: transparent;
+  border-radius: 50%; animation: spin-rot 0.8s linear infinite;
+  vertical-align: -1px; flex-shrink: 0; }
+.hg-item.running .hg-item-title { color: var(--fg-bright); }
+
+/* a273：子代理目录「展开全部/收起」钮（>20 条折叠） */
+.hg-sub-dir-more { display: block; width: 100%; border: none; background: transparent;
+  color: var(--muted); font-size: var(--fs-xs); padding: 8px 0; cursor: pointer;
+  text-align: center; border-top: 1px solid var(--border); margin-top: 4px; }
+.hg-sub-dir-more:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+
+/* ============================================================
+   a286: Tab 双模式——分组抽屉（Edge 风）+ Pin 固定
+   平铺模式（默认）= a285 Chrome 收缩方案不变；
+   抽屉模式 = 同类 tab 收进抽屉（图标+类型+数量+活跃名），
+   固定的 tab 始终平铺在抽屉左侧，双模式设置里可切。
+   ============================================================ */
+/* 抽屉容器：插在 tabs flex 行内（固定 tab 之后、⋮ 之前） */
+.tab-drawer-bar { display: flex; align-items: center; gap: 4px;
+  flex: 0 1 auto; min-width: 0; overflow: hidden; margin-left: 4px; }
+
+/* R1 审计 W11（A11'）：a493 的 .web-blank-hint 规则已删（a544 后 iframe
+   XFO 场景结构性消失，前端 hint 元素同步删除） */
+
+  /* ---- a59x 边缘 resize 热区（白框终局方案配套）----
+     inset 带与 WebView2 有固有白框（试金石实验实锤），命中改走页面层：
+     四边+四角 6px 隐形条，cursor 提示拖拽方向；is-max 态隐藏 */
+  .edge-hot { position: fixed; z-index: 12; background: transparent;
+    pointer-events: auto; }

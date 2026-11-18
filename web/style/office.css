@@ -1,0 +1,126 @@
+/* a654 子系统分卷：office（由 tools/split_css_subsystems.py 从 style.css 重排；段内顺序不变） */
+
+/* a355R（第21轮）：安装进度条的不确定态——跑外部安装器（OnlyOffice 静默装
+   10 分钟）或复制上万小文件时没有百分比可报，改用流动条纹表示"在动"。
+   不做这一层的话，用户看到一条停在 0% 的条会以为卡死。 */
+#rsProgWrap.indeterminate > #rsProgBar {
+  width: 100% !important;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--accent) 0 10px,
+    color-mix(in srgb, var(--accent) 45%, transparent) 10px 20px);
+  background-size: 28px 100%;
+  animation: rsStripe 0.9s linear infinite;
+}
+.office-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.office-title { font-size: 12px; color: var(--fg-bright); font-family: var(--font-mono); }
+.office-info { font-size: 10px; color: var(--muted); }
+.xlsx-table-wrap::-webkit-scrollbar-corner { background: transparent; }
+/* 单元格：默认自动换行（文字多→多行→行高自动撑开） */
+.xlsx-edit-table td { white-space: pre-wrap; word-break: break-word; vertical-align: top; }
+.xlsx-edit-table td:focus { white-space: pre-wrap; }
+/* 列宽拖拽手柄：表头格右缘 6px 竖条 */
+.xlsx-edit-table th { position: relative; }
+.xlsx-edit-table { border-collapse: collapse; font-size: 12px; font-family: var(--font-mono);
+  background: var(--bg-card); min-width: 100%;
+  /* a295：fixed 布局——列宽严格由 th 决定（auto 布局会按内容重新分配，
+     拖拽列宽 delta 被吃掉，实测 60px 拖动只生效 19px） */
+  table-layout: fixed; }
+.xlsx-edit-table th { position: sticky; top: 0; z-index: 2; background: var(--bg-panel);
+    color: var(--muted); font-weight: 600; padding: 3px 10px; border: 1px solid var(--border);
+    font-size: 10px; min-width: 72px; }
+.xlsx-edit-table td { border: 1px solid var(--border); padding: 3px 10px; min-width: 72px;
+    color: var(--fg); outline: none;
+    /* a295：自动换行在此条直接声明（白名单实测有继承来的 nowrap 压 pre-wrap） */
+    white-space: pre-wrap !important; word-break: break-word; vertical-align: top; }
+.xlsx-edit-table td:focus { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg-card)); white-space: normal; }
+.xlsx-edit-table td.hasf { color: var(--accent); }
+.xlsx-edit-table .xlsx-row-head { background: var(--bg-panel); color: var(--muted);
+    font-size: 10px; text-align: center; cursor: pointer; min-width: 36px; }
+.xlsx-edit-table .selrow td { background: color-mix(in srgb, var(--accent) 5%, var(--bg-card)); }
+/* a290 全功能：OnlyOffice 编辑器全屏容器（盖在 tab 视图上） */
+.ov-ds-editor { position: absolute; inset: 0; z-index: 50; background: var(--bg-panel); }
+/* a290 全功能：Excel 编辑模式（Luckysheet）——顶部保存工具行 */
+.xlsx-edit-bar { display: flex; align-items: center; gap: 8px; height: 38px;
+  padding: 0 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  position: relative; z-index: 4; background: var(--bg-panel); }
+/* a290 全功能：docx 目录索引侧栏（绝对定位悬浮左缘，不挤文档宽度） */
+/* a300：目录栏改 position:fixed（视口级）——原 absolute 在滚动的 office-body
+   内，文档一滚目录跟着滚走（用户实锤"翻页把索引翻走"）。fixed 相对视口钉住；
+   left 取 tab 栏下整体左缘，top 从 office 工具栏底开始（工具栏高 36px+tab 栏
+   高度由运行时 JS 算，CSS 给安全默认，JS 挂载时精确设置 top） */
+.ov-docx-outline { position: fixed; left: 0; top: 90px; bottom: 0; width: 200px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+  border-right: 1px solid var(--border); z-index: 30;
+  overflow-y: auto; padding: 8px 0; font-size: 11px;
+  backdrop-filter: blur(6px); }
+.ov-docx-outline-title { font-weight: 700; color: var(--muted); padding: 4px 12px 8px;
+  letter-spacing: 1px; font-size: 10px; }
+.ov-docx-outline-item { padding: 4px 12px; cursor: pointer; color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-left: 2px solid transparent; }
+.ov-docx-outline-item.lv1 { font-weight: 700; }
+.ov-docx-outline-item.lv2 { padding-left: 24px; }
+.ov-docx-outline-item.lv3 { padding-left: 36px; color: var(--muted); }
+.ov-docx-outline-item.lv4, .ov-docx-outline-item.lv5, .ov-docx-outline-item.lv6 { padding-left: 46px; color: var(--muted); font-size: 10px; }
+.ov-docx-outline-item:hover { color: var(--accent); }
+.ov-docx-outline-item.cur { color: var(--accent); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* 有目录时文档主体右移避让 */
+.office-body:has(.ov-docx-outline) .docx-container { margin-left: 200px; }
+/* a302R：大纲隐藏时文档占满全宽（:has 不看可见性，须用 .hidden 类摘匹配） */
+.office-body:has(.ov-docx-outline.hidden) .docx-container { margin-left: 0 !important; }
+/* a300：office 滚动条显式豁免全站隐藏（用户令：宽大的条好抓，终端同款 14px） */
+.office-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; position: relative;
+  display: flex; flex-direction: column; align-items: center; }
+.office-err { color: var(--neon-red); font-size: 12px; padding: 20px; text-align: center; }
+.office-loading { color: var(--muted); font-size: 12px; padding: 40px; }
+/* docx：Word 底白页 + 主题容器底色 */
+.docx-container { background: var(--bg-panel); max-width: 100%; }
+.docx-container .docx-wrapper { background: var(--bg-panel); padding: 16px 0; }
+.docx-container .docx-wrapper > section.docx { background: #fff; margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+/* pdf */
+.pdf-canvas { max-width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.pdf-page-label { text-align: center; font-size: 11px; color: var(--muted);
+  font-family: var(--font-mono); padding: 8px 0; }
+/* xlsx */
+.xlsx-tabs { display: flex; gap: 4px; padding: 4px 0; flex-wrap: wrap; flex-shrink: 0; }
+.xlsx-tabs button { font-size: 11px; padding: 3px 10px; }
+.xlsx-tabs button.active { color: var(--accent); border-color: var(--accent); }
+.xlsx-table-wrap { flex: 1; overflow: auto; margin-top: 4px; }
+.xlsx-table-wrap table { border-collapse: collapse; font-size: 11px;
+  font-family: var(--font-mono); }
+.xlsx-table-wrap td, .xlsx-table-wrap th { border: 1px solid var(--border);
+  padding: 3px 8px; color: var(--fg); white-space: nowrap; }
+.xlsx-table-wrap th { background: var(--bg-card); font-weight: 600; }
+/* ppt 占位 */
+.office-ppt-placeholder { text-align: center; padding: 60px 20px; }
+
+/* ===== a283 Office Viewer Pro（PDF 极致性能 + 搜索 + 目录） ===== */
+.ov-pdf { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg-panel); }
+.ov-pdf-toolbar { display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+.ov-pdf-main { flex: 1; display: flex; min-height: 0; }
+.ov-pdf-outline { width: 220px; flex-shrink: 0; overflow-y: auto;
+  border-right: 1px solid var(--border); padding: 6px 0; }
+.ov-pdf-outline-head { font-size: 10px; font-weight: 600; color: var(--muted);
+  padding: 4px 10px 6px; letter-spacing: 1px; }
+.ov-pdf-outline-item { font-size: 11px; color: var(--fg); padding: 3px 8px;
+  cursor: pointer; border-radius: 4px; line-height: 1.4; word-break: break-all; }
+.ov-pdf-outline-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
+.ov-pdf-pages { flex: 1; overflow-y: auto; overflow-x: auto; padding: 12px;
+  display: flex; flex-direction: column; align-items: center; outline: none; }
+.ov-pdf-page { margin-bottom: 10px; position: relative; display: flex;
+  flex-direction: column; align-items: center; min-height: 200px; width: fit-content; }
+.ov-pdf-page-loading { display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 200px; color: var(--muted); font-size: 12px;
+  font-family: var(--font-mono); background: var(--bg-card); border-radius: 4px; }
+.ov-pdf-canvas { box-shadow: 0 2px 8px rgba(0,0,0,0.2); display: block; }
+.ov-pdf-page-label { font-size: 9px; color: var(--muted); text-align: center;
+  padding: 2px 0; font-family: var(--font-mono); }
+.ov-pdf-searchbar { display: none; align-items: center; gap: 6px; padding: 4px 10px;
+  border-top: 1px solid var(--border); background: var(--bg-card); flex-shrink: 0; }
+.ov-pdf-search-results { font-size: 10px; color: var(--muted); flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }

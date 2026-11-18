@@ -7,7 +7,11 @@
 import base64
 import json
 import os
+import socket
+import subprocess
 import sys
+import tempfile
+import shutil
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +22,39 @@ if ROOT not in sys.path:
 from src import devtools_cdp as dc          # noqa: E402
 
 PORT = int(os.environ.get("REGRESSION_CDP_PORT", "9222"))
+MODE = os.environ.get("REGRESSION_CDP_MODE", "headless")   # headless|real
+CHROME_CANDIDATES = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+]
+
+
+def _find_chrome():
+    for p in CHROME_CANDIDATES:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _free_port():
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _app_url():
+    """用户窗口的地址（headless 用同一后端）。失败回落环境变量。"""
+    try:
+        for t in dc.list_targets(PORT):
+            if t.get("type") == "page" and t.get("url", "").startswith("http"):
+                return t["url"]
+    except Exception:
+        pass
+    return os.environ.get("REGRESSION_APP_URL", "http://127.0.0.1:4415/")
 ARTIFACTS = os.path.join(_HERE, "artifacts")
 
 
@@ -32,16 +69,71 @@ def artifact_dir():
 class Page(object):
     """一个常驻 CDP 页会话（测试期间复用，减少建连抖动）。"""
 
-    def __init__(self, port=None):
-        self.port = port or PORT
-        targets = dc.list_targets(self.port)
-        pages = [t for t in targets if t.get("type") == "page"]
-        if not pages:
-            raise RuntimeError("CDP 端口 %d 无 page target（应用未运行？）" % self.port)
-        self.target = pages[0]
+    def __init__(self, port=None, mode=None):
+        """mode: headless（默认，独立 Chrome，不碰用户窗口）| real（9222）。"""
+        self._proc = None
+        self._profile = None
+        m = mode or MODE
+        if m == "real":
+            self.port = port or PORT
+            targets = dc.list_targets(self.port)
+            pages = [t for t in targets if t.get("type") == "page"]
+            if not pages:
+                raise RuntimeError("CDP 端口 %d 无 page target（应用未运行？）" % self.port)
+            self.target = pages[0]
+        else:
+            self._start_headless()
         self.cs = dc.CdpSession(self.port, self.target["id"], timeout=10)
         self.cs.__enter__()
         self._hook_errors()
+
+    def _start_headless(self):
+        chrome = _find_chrome()
+        if not chrome:
+            raise RuntimeError("未找到 Chrome/Edge，无法 headless")
+        url = _app_url()
+        self.port = _free_port()
+        self._profile = tempfile.mkdtemp(prefix="reg-hl-")
+        self._proc = subprocess.Popen(
+            [chrome, "--headless=new", "--remote-debugging-port=%d" % self.port,
+             "--user-data-dir=%s" % self._profile, "--disable-gpu",
+             "--no-first-run", "--no-default-browser-check", url],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        end = time.time() + 30
+        while time.time() < end:
+            try:
+                pages = [t for t in dc.list_targets(self.port)
+                         if t.get("type") == "page"]
+                if pages:
+                    self.target = pages[0]
+                    break
+            except Exception:
+                pass
+            time.sleep(0.3)
+        else:
+            raise RuntimeError("headless CDP 连接失败")
+        # 等待页面就绪（后端页面有 _HG_VER）
+        end = time.time() + 25
+        while time.time() < end:
+            try:
+                cs = dc.CdpSession(self.port, self.target["id"], timeout=5)
+                cs.__enter__()
+                try:
+                    r = cs.send("Runtime.evaluate", {
+                        "expression": "document.readyState==='complete' && !!window._HG_VER",
+                        "returnByValue": True}, timeout=5)
+                    if (r.get("result") or {}).get("value"):
+                        cs.__exit__(None, None, None)
+                        return
+                finally:
+                    try:
+                        cs.__exit__(None, None, None)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            time.sleep(0.5)
+        raise RuntimeError("headless 页面未就绪（%s）" % url)
 
     # ---- 求值 ----
     def ev(self, expr, timeout=30.0, await_promise=False):
@@ -76,12 +168,13 @@ class Page(object):
           window.__regHooked = 1; window.__regErrs = [];
           window.addEventListener('error', function(e){
             window.__regErrs.push({t:'error', m:String(e.message||''),
-              f:String(e.filename||''), l:e.lineno||0, ts:Date.now()});
+              f:String(e.filename||''), l:e.lineno||0,
+              stack:String((e.error&&e.error.stack)||'').slice(0,1200), ts:Date.now()});
           });
           window.addEventListener('unhandledrejection', function(e){
             window.__regErrs.push({t:'rejection',
               m:String((e.reason && e.reason.message) || e.reason || ''),
-              ts:Date.now()});
+              stack:String((e.reason&&e.reason.stack)||'').slice(0,1200), ts:Date.now()});
           });
           return 'hooked';
         })()""")
@@ -117,6 +210,34 @@ class Page(object):
             self.cs.__exit__(None, None, None)
         except Exception:
             pass
+        if self._proc is not None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+            self._proc = None
+        if self._profile:
+            try:
+                shutil.rmtree(self._profile, ignore_errors=True)
+            except Exception:
+                pass
+            self._profile = None
+
+
+# ---- 已知噪声过滤（第三方库/测试自身快速操作的固有报错）----
+NOISE_PATTERNS = (
+    "AbstractContextKeyService has been disposed",   # Monaco dispose 竞态（D3）
+    "importScripts",                                 # worker 被快速关闭中止（R2 场景）
+)
+
+
+def filter_known_noise(errs):
+    """返回 (真实异常, 已知噪声)。"""
+    kept, noise = [], []
+    for e in errs or []:
+        sig = str(e.get("m") or "") + str(e.get("stack") or "")
+        (noise if any(p in sig for p in NOISE_PATTERNS) else kept).append(e)
+    return kept, noise
 
 
 # ---- 结果容器 ----

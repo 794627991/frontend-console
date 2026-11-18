@@ -131,6 +131,15 @@ def main():
     if not a.no_report:
         _append_report(rows_by_layer, meta)
         print("报告已追加: %s" % REPORT)
+    # 铁律护栏：测试绝不关闭工具；跑完必须仍可达（不可达=应用被外部关闭，
+    # 只报警不重启——重启由用户决定）。
+    try:
+        import urllib.request as _u
+        _u.urlopen("http://127.0.0.1:9222/json/list", timeout=3)
+        print("[护栏] 应用存活 ✓")
+    except Exception:
+        print("[护栏][警告] 应用 CDP 不可达——可能已被外部关闭/重启（测试脚本自身"
+              "从不调用关闭）。请检查 crash_dump / 退出原因。")
 
 
 if __name__ == "__main__":
