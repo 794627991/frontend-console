@@ -8,7 +8,11 @@
  * 浏览器：挂 window.V4P（script 标签按序加载，无模块系统）。
  * Node（黄金夹具校验）：node v4proto.js --golden <golden.json>。
  */
-(function (root) {
+// 模块化一期（js-modularization 分支）：已转 ES module——IIFE 壳换成
+// const root = ...。无 import/export 语法：Node golden 仍按 CJS 解析（argv
+// 门 + getBuiltinModule，a645 口径），浏览器按 module 解析（模块作用域），
+// 两侧共用同一份函数体。V4P 挂载照旧。
+const root = (typeof window !== 'undefined' ? window : globalThis);
   'use strict';
 
   var ROW_KINDS = ['turn_header', 'user_input', 'assistant_text', 'reasoning',
@@ -182,4 +186,3 @@
 
   root.V4P = V4P;
   if (typeof module !== 'undefined' && module.exports) module.exports = V4P;
-})(typeof window !== 'undefined' ? window : globalThis);

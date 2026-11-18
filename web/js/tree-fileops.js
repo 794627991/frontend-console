@@ -7,7 +7,10 @@
 //   → 本文件。后端：/api/tree/fileops（mkdir|touch|rename|copy|delete，
 //   delete 走系统回收站可恢复）。
 // ============================================================
-(function () {
+// 模块化一期（js-modularization 分支）：已转 ES module——IIFE 壳已剥。
+// 对外表面：window._treeConfirmDelete/_treeRootOf/_treeToggleExpand（sidebar
+// :309 typeof 守卫）+ 对 window._tvRebuild 的包装（file-tree 模块先挂载，
+// 本模块按文档序后执行，包装时基座必在）。
   'use strict';
   const SEP = String.fromCharCode(92);   // 反斜杠（避免任何转义歧义）
   const baseName = (p) => String(p).split('/').pop().split(SEP).pop();
@@ -542,4 +545,3 @@
 
   const tr = $('treeRoots');
   if (tr) { tr.tabIndex = 0; tr.style.outline = 'none'; }
-})();

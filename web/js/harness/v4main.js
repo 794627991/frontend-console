@@ -11,7 +11,9 @@
  * 开关：a138（用户拍板「V4 唯一基准，不允许存在开关」）起 v4On 恒 true——
  * ?v4=0 / localStorage hg_v4 / 服务端 __HG_V4__ 注入等回退通道已全量退役。
  */
-(function (root) {
+// 模块化一期：已转 ES module——IIFE 壳换成 const root = window。
+// root.V4Store/V4Bridge 运行时查找，文档序保证先挂载。
+const root = window;
   'use strict';
 
   function v4On() {
@@ -247,4 +249,3 @@
     subNotify: v4SubNotify,
     subFocus: v4SubFocus
   };
-})(window);

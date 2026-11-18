@@ -593,43 +593,43 @@ window.__fcHardReload = function () {
 <script src="vendor/pdfjs/pdf.min.js"></script>
 <script src="vendor/xlsx/xlsx.full.min.js"></script>
 <!-- a290R：Excel 编辑用自建网格（零运行时依赖）+ OnlyOffice 分层，Luckysheet vendor 备用未引用 -->
-<script src="web/js/monaco-bridge.js"></script>
+<script type="module" src="web/js/monaco-bridge.js"></script>
 <script src="web/js/util.js?v=__HG_VER__"></script>
-<script src="web/js/file-icons.js"></script>
-<script src="web/js/theme.js"></script>
-<script src="web/js/skin.js?v=__HG_VER__"></script>
-<script src="web/js/terminal-core.js"></script>
-<script src="web/js/highlight.js"></script>
-<script src="web/js/history.js"></script>
-<script src="web/js/sidebar.js"></script>
+<script type="module" src="web/js/file-icons.js"></script>
+<script type="module" src="web/js/theme.js"></script>
+<script type="module" src="web/js/skin.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/terminal-core.js"></script>
+<script type="module" src="web/js/highlight.js"></script>
+<script type="module" src="web/js/history.js"></script>
+<script type="module" src="web/js/sidebar.js"></script>
 <script type="module" src="web/js/sidebar-resize.js?v=__HG_VER__"></script>
-<script src="web/js/logs-modal.js"></script>
-<script src="web/js/replay.js"></script>
-<script src="web/js/search.js"></script>
-<script src="web/js/sense.js"></script>
-<script src="web/js/analyze.js"></script>
-<script src="web/js/cmd-lib.js"></script>
-<script src="web/js/log-viewer.js"></script>
+<script type="module" src="web/js/logs-modal.js"></script>
+<script type="module" src="web/js/replay.js"></script>
+<script type="module" src="web/js/search.js"></script>
+<script type="module" src="web/js/sense.js"></script>
+<script type="module" src="web/js/analyze.js"></script>
+<script type="module" src="web/js/cmd-lib.js"></script>
+<script type="module" src="web/js/log-viewer.js"></script>
 <script src="web/js/ts-outline.js"></script>
-<script src="web/js/hex-viewer.js"></script>
-<script src="web/js/hex-diff.js"></script>
-<script src="web/js/diff-viewer.js"></script>
-<script src="web/js/editor.js"></script>
-<script src="web/js/notes-nav.js"></script>
-<script src="web/js/tab-drag.js"></script>
-<script src="web/js/claude.js"></script>
-<script src="web/js/settings.js?v=__HG_VER__"></script>
-<script src="web/js/tftp.js"></script>
-<script src="web/js/ctx-menu.js?v=__HG_VER__"></script>
-<script src="web/js/file-tree.js?v=__HG_VER__"></script>
-<script src="web/js/tree-fileops.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/hex-viewer.js"></script>
+<script type="module" src="web/js/hex-diff.js"></script>
+<script type="module" src="web/js/diff-viewer.js"></script>
+<script type="module" src="web/js/editor.js"></script>
+<script type="module" src="web/js/notes-nav.js"></script>
+<script type="module" src="web/js/tab-drag.js"></script>
+<script type="module" src="web/js/claude.js"></script>
+<script type="module" src="web/js/settings.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/tftp.js"></script>
+<script type="module" src="web/js/ctx-menu.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/file-tree.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/tree-fileops.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/nav.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/tree-search.js?v=__HG_VER__"></script>
-<script src="web/js/bit-calc.js"></script>
+<script type="module" src="web/js/bit-calc.js"></script>
 <script src="web/js/vcs-panel.js?v=__HG_VER__"></script>
 <script src="web/js/vcs-git-ops.js?v=__HG_VER__"></script>
-<script src="web/js/web-panel.js?v=__HG_VER__"></script>
-<script src="web/js/proxy-panel.js"></script>
+<script type="module" src="web/js/web-panel.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/proxy-panel.js"></script>
 <script type="module" src="web/js/proxy-usage.js"></script>
 <script type="module" src="web/js/snip.js"></script>
 <!-- 模块化一期（js-modularization 分支）：type="module" 的脚本为 defer 语义
@@ -638,7 +638,7 @@ window.__fcHardReload = function () {
      backend-log 仅 window.__backendLogToggle（排障直调）。经典脚本对它们的
      依赖为零（tools/js_dep_graph.py + 逐名 grep 核实）。 -->
 <script type="module" src="web/js/a11y.js?v=__HG_VER__"></script>
-<script src="web/js/office-viewer.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/office-viewer.js?v=__HG_VER__"></script>
 <!-- v3.0:claude-harness.js 拆分为 harness/ 21 文件(编号锁加载顺序,不得调换;
      state/base 提供共享状态与基础表,main 最后组装 builder,shell 挂顶层外壳) -->
 <script src="web/js/harness/state.js?v=__HG_VER__"></script>
@@ -650,10 +650,10 @@ window.__fcHardReload = function () {
 <script src="web/js/harness/hist.js?v=__HG_VER__"></script>
 <script src="web/js/harness/tools.js?v=__HG_VER__"></script>
 <script src="web/js/harness/fx.js?v=__HG_VER__"></script>
-<script src="web/js/harness/v4proto.js?v=__HG_VER__"></script>
-<script src="web/js/harness/v4store.js?v=__HG_VER__"></script>
-<script src="web/js/harness/v4bridge.js?v=__HG_VER__"></script>
-<script src="web/js/harness/v4main.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/harness/v4proto.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/harness/v4store.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/harness/v4bridge.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/harness/v4main.js?v=__HG_VER__"></script>
 <script src="web/js/harness/histcache.js?v=__HG_VER__"></script>
 <script src="web/js/harness/sessions.js?v=__HG_VER__"></script>
 <script src="web/js/harness/panel.js?v=__HG_VER__"></script>
@@ -673,7 +673,7 @@ window.__fcHardReload = function () {
 <script type="module" src="web/js/resources.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/win-controls.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/backend-log.js?v=__HG_VER__"></script>
-<script src="web/js/init.js?v=__HG_VER__"></script>
+<script type="module" src="web/js/init.js?v=__HG_VER__"></script>
 <!-- a59x 边缘 resize 热区（inset=0 白框终局方案配套）：四边+四角 6px
      隐形条，mousedown 报方向/鼠标起点，mousemove 报绝对坐标，后端 GUI
      批次 SetWindowPos（幂等无累积误差）。is-max 态隐藏（最大化不可缩放） -->

@@ -1345,3 +1345,9 @@ function _ovXlsxBindBar(conn, body) {
   };
 }
 
+
+// 模块化一期（js-modularization 分支）：转 ES module——裸顶层声明转为模块
+// 作用域，跨文件消费名补挂 window（消费者均 typeof 守卫运行时：editor.js
+// :1501/:2351；openOfficeFile 的既有挂载 :133 不变）。
+window._officeKindOf = _officeKindOf;
+window._ovRevokeBlobs = _ovRevokeBlobs;

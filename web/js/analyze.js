@@ -136,3 +136,8 @@ function _renderAnaCards(c) {
 // ---- 命令标签 ----
 // 命令库：后端持久化（~/.serialconsole_pro/cmdlib.json），跨端口/重启保留
 // 内存缓存避免每次渲染都异步拉取
+
+// 模块化一期：转 ES module——跨文件/Python 裸引用消费名挂 window。
+// 清单由 eslint no-undef 神谕反推（零启发式）：本文件转模块后，其余
+// 文件/Python 推送的裸标识符引用全部经 window 解析。
+window.renderAnalyze = renderAnalyze;

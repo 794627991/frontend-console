@@ -688,3 +688,14 @@ _treeSyncHiddenBtn();
 _tvDecosCalc();          // a209批1：初始装饰（后续由 editor.js 调 treeDecoRefresh）
 
 refreshTree();
+
+// 模块化一期（js-modularization 分支）：转 ES module——裸顶层声明转为
+// 模块作用域，跨文件消费名统一挂 window。注意 _tvRebuild 必须挂：tree-
+// fileops（也是 module，加载序在本文件之后）在模块尾部包装它（图标态
+// 同步猴补），挂载缺失会让 typeof 守卫静默跳过=结构变更不再刷新。
+window._tvRebuild = _tvRebuild;
+window._tvExpand = _tvExpand;
+window._tvPad = _tvPad;
+window._tvPaint = _tvPaint;
+window.refreshTree = refreshTree;
+window.addTreeRoot = addTreeRoot;

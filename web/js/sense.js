@@ -108,3 +108,7 @@ function renderSense() {
 
 // ---- 分析标签 ----
 // 4 类关键字正则
+
+// 模块化一期：转 ES module——跨文件裸引用消费名挂 window（eslint 神谕）。
+window.connectAiSSE = connectAiSSE;
+window.refreshMcpInfo = refreshMcpInfo;

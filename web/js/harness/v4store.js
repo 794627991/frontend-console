@@ -12,7 +12,9 @@
  * 挂载：window.V4Store（构造器）。渲染层 subscribe 监听两种通知：
  *   {kind:'status'} / {kind:'snapshot'} / {kind:'deltas', deltas, snap}
  */
-(function (root) {
+// 模块化一期：已转 ES module——IIFE 壳换成 const root = window。
+// 互引全走运行时 root.V4P（v4proto 模块按文档序先执行、先挂载）。
+const root = window;
   'use strict';
 
   var ACK_MS = 15000;         // 连接建立后未收到首帧的判死窗
@@ -262,4 +264,3 @@
   };
 
   root.V4Store = V4Store;
-})(window);

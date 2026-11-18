@@ -820,3 +820,12 @@ function closeLogViewer(portId) {
 // ============================================================
 // TFTP 面板（侧边栏底部）
 // ============================================================
+
+// 模块化一期：转 ES module——跨文件/Python 裸引用消费名挂 window。
+// 清单由 eslint no-undef 神谕反推（零启发式）：本文件转模块后，其余
+// 文件/Python 推送的裸标识符引用全部经 window 解析。
+window.buildLogViewer = buildLogViewer;
+window.closeLogViewer = closeLogViewer;
+window.renderLogResults = renderLogResults;
+window.renderLogSlice = renderLogSlice;
+window.toggleLogSearchPane = toggleLogSearchPane;

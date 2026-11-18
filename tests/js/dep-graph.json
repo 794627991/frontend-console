@@ -68,7 +68,7 @@
     "t",
     "target"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 16,
    "referenced_by": {
     "js/diff-viewer.js": [
@@ -177,7 +177,9 @@
      "init"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.renderAnalyze = renderAnalyze;"
+   ]
   },
   "js/backend-log.js": {
    "defines": [
@@ -521,7 +523,7 @@
     "val",
     "wrap"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 34,
    "referenced_by": {
     "js/editor.js": [
@@ -608,7 +610,9 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.buildBitCalcTab = buildBitCalcTab;"
+   ]
   },
   "js/claude.js": {
    "defines": [
@@ -668,7 +672,7 @@
     "ss",
     "t"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 26,
    "referenced_by": {
     "js/harness/ask-md.js": [
@@ -818,7 +822,9 @@
     ]
    },
    "top_level_exec": [
-    "document.querySelectorAll('.claude-sheet-tab').forEach(tab => {"
+    "document.querySelectorAll('.claude-sheet-tab').forEach(tab => {",
+    "window._claudeTitleMap = _claudeTitleMap;",
+    "window.connectClaude = connectClaude;"
    ]
   },
   "js/cmd-lib.js": {
@@ -859,7 +865,7 @@
     "title",
     "toIdx"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 17,
    "referenced_by": {
     "js/bit-calc.js": [
@@ -949,7 +955,7 @@
     "m",
     "mw"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 29,
    "referenced_by": {
     "js/sidebar.js": [
@@ -978,7 +984,9 @@
      "showBanner"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.buildCtxMenu = buildCtxMenu;"
+   ]
   },
   "js/diff-viewer.js": {
    "defines": [
@@ -1053,7 +1061,7 @@
     "wrap",
     "z"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 22,
    "referenced_by": {
     "js/analyze.js": [
@@ -1296,7 +1304,8 @@
    },
    "top_level_exec": [
     "document.getElementById('tabs').addEventListener('contextmenu', e => {",
-    "document.getElementById('portList').addEventListener('contextmenu', e => {"
+    "document.getElementById('portList').addEventListener('contextmenu', e => {",
+    "window._diffCtxNameOf = _diffCtxNameOf;"
    ]
   },
   "js/editor.js": {
@@ -1605,7 +1614,7 @@
     "x",
     "y"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 23,
    "referenced_by": {
     "js/a11y.js": [
@@ -2225,7 +2234,7 @@
     "n",
     "sz"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 4,
    "referenced_by": {
     "js/editor.js": [
@@ -2285,7 +2294,10 @@
      "H"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.dirIconHtml = dirIconHtml;",
+    "window.fileIconHtml = fileIconHtml;"
+   ]
   },
   "js/file-tree.js": {
    "defines": [
@@ -2396,7 +2408,7 @@
     "x",
     "y"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 30,
    "referenced_by": {
     "js/editor.js": [
@@ -9502,6 +9514,7 @@
     "r1",
     "rT",
     "render",
+    "root",
     "row",
     "rowToLine",
     "rows",
@@ -9548,7 +9561,7 @@
     "win",
     "ws"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 54,
    "referenced_by": {
     "js/bit-calc.js": [
@@ -9847,9 +9860,7 @@
      "fetch"
     ]
    },
-   "top_level_exec": [
-    "(function (root) {"
-   ]
+   "top_level_exec": []
   },
   "js/harness/v4main.js": {
    "defines": [
@@ -9865,6 +9876,7 @@
     "mcwd",
     "meta",
     "render",
+    "root",
     "sid",
     "sm",
     "store",
@@ -9881,7 +9893,7 @@
     "v4SubOpen",
     "v4Switch"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 55,
    "referenced_by": {
     "js/harness/chatctl.js": [
@@ -9971,9 +9983,7 @@
      "EventSource"
     ]
    },
-   "top_level_exec": [
-    "(function (root) {"
-   ]
+   "top_level_exec": []
   },
   "js/harness/v4proto.js": {
    "defines": [
@@ -10000,13 +10010,14 @@
     "patch",
     "path",
     "rid",
+    "root",
     "row",
     "s2",
     "snap",
     "up",
     "want"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 52,
    "referenced_by": {
     "js/file-tree.js": [
@@ -10071,9 +10082,7 @@
      "push"
     ]
    },
-   "top_level_exec": [
-    "(function (root) {"
-   ]
+   "top_level_exec": []
   },
   "js/harness/v4store.js": {
    "defines": [
@@ -10091,11 +10100,12 @@
     "now",
     "qs",
     "r",
+    "root",
     "rows",
     "self",
     "still"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 53,
    "referenced_by": {
     "js/harness/v4main.js": [
@@ -10128,9 +10138,7 @@
      "EventSource"
     ]
    },
-   "top_level_exec": [
-    "(function (root) {"
-   ]
+   "top_level_exec": []
   },
   "js/hex-diff.js": {
    "defines": [
@@ -10220,7 +10228,7 @@
     "wrap",
     "yA"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 21,
    "referenced_by": {
     "js/diff-viewer.js": [
@@ -10333,7 +10341,9 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.buildHexDiffTab = buildHexDiffTab;"
+   ]
   },
   "js/hex-viewer.js": {
    "defines": [
@@ -10463,7 +10473,7 @@
     "z",
     "zeroCk"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 20,
    "referenced_by": {
     "js/diff-viewer.js": [
@@ -10610,7 +10620,9 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.buildHexViewerTab = buildHexViewerTab;"
+   ]
   },
   "js/highlight.js": {
    "defines": [
@@ -10637,7 +10649,7 @@
     "totalRows",
     "v"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 8,
    "referenced_by": {
     "js/history.js": [
@@ -10693,7 +10705,10 @@
      "init"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.highlightNewKw = highlightNewKw;",
+    "window.scheduleKwHighlight = scheduleKwHighlight;"
+   ]
   },
   "js/history.js": {
    "defines": [
@@ -10715,7 +10730,7 @@
     "topRowBefore",
     "vp"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 9,
    "referenced_by": {
     "js/highlight.js": [
@@ -10768,7 +10783,10 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.jumpToBottom = jumpToBottom;",
+    "window.loadBuffer = loadBuffer;"
+   ]
   },
   "js/icons.js": {
    "defines": [
@@ -10989,7 +11007,7 @@
     "r2",
     "v"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 75,
    "referenced_by": {},
    "references": {
@@ -11227,7 +11245,7 @@
     "wantStart",
     "wrap"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 18,
    "referenced_by": {
     "js/backend-log.js": [
@@ -11485,7 +11503,7 @@
     "sort",
     "sortSel"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 12,
    "referenced_by": {
     "js/backend-log.js": [
@@ -11616,7 +11634,7 @@
     "uri",
     "want"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 2,
    "referenced_by": {
     "js/diff-viewer.js": [
@@ -11696,7 +11714,9 @@
     ]
    },
    "top_level_exec": [
-    "window.detectLangByShebang = detectLangByShebang;"
+    "window.detectLangByShebang = detectLangByShebang;",
+    "window.monacoInit = monacoInit;",
+    "window.monacoCreate = monacoCreate;"
    ]
   },
   "js/nav.js": {
@@ -12228,7 +12248,7 @@
     "v",
     "walker"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 24,
    "referenced_by": {
     "js/diff-viewer.js": [
@@ -12609,7 +12629,7 @@
     "zip",
     "zoomEl"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 42,
    "referenced_by": {
     "js/a11y.js": [
@@ -12988,7 +13008,9 @@
     ]
    },
    "top_level_exec": [
-    "window.openOfficeFile = openOfficeFile;"
+    "window.openOfficeFile = openOfficeFile;",
+    "window._officeKindOf = _officeKindOf;",
+    "window._ovRevokeBlobs = _ovRevokeBlobs;"
    ]
   },
   "js/proxy-panel.js": {
@@ -13124,7 +13146,7 @@
     "urlEl",
     "wrap"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 38,
    "referenced_by": {
     "js/backend-log.js": [
@@ -13308,7 +13330,11 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._pxFnum = _pxFnum;",
+    "window._pxTok = _pxTok;",
+    "window.buildProxyTab = buildProxyTab;"
+   ]
   },
   "js/proxy-usage.js": {
    "defines": [
@@ -13450,7 +13476,7 @@
     "ts",
     "v"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 13,
    "referenced_by": {
     "js/harness/main.js": [
@@ -13751,7 +13777,7 @@
     "top",
     "total"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 14,
    "referenced_by": {
     "js/ctx-menu.js": [
@@ -13857,7 +13883,7 @@
     "toolsKey",
     "ts"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 15,
    "referenced_by": {
     "js/backend-log.js": [
@@ -14036,7 +14062,10 @@
      "fetch"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window.connectAiSSE = connectAiSSE;",
+    "window.refreshMcpInfo = refreshMcpInfo;"
+   ]
   },
   "js/settings.js": {
    "defines": [
@@ -14284,7 +14313,7 @@
     "z",
     "zoomVal"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 27,
    "referenced_by": {
     "js/analyze.js": [
@@ -14764,7 +14793,7 @@
     "webUrlDesc",
     "x"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 10,
    "referenced_by": {
     "js/a11y.js": [
@@ -15073,7 +15102,7 @@
     "toggleNoGpuMode",
     "togglePerfMode"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 6,
    "referenced_by": {
     "js/analyze.js": [
@@ -15338,7 +15367,7 @@
     "src",
     "t"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 25,
    "referenced_by": {
     "js/bit-calc.js": [
@@ -15406,7 +15435,10 @@
      "drawerBar"
     ]
    },
-   "top_level_exec": []
+   "top_level_exec": [
+    "window._initTabDrag = _initTabDrag;",
+    "window._tabManualOrder = _tabManualOrder;"
+   ]
   },
   "js/terminal-core.js": {
    "defines": [
@@ -15493,7 +15525,7 @@
     "wrap",
     "y"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 7,
    "referenced_by": {
     "js/claude.js": [
@@ -15789,7 +15821,7 @@
     "v",
     "viaTag"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 28,
    "referenced_by": {
     "js/editor.js": [
@@ -15933,7 +15965,7 @@
     "v",
     "wantLight"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 5,
    "referenced_by": {
     "js/bit-calc.js": [
@@ -16105,7 +16137,8 @@
    },
    "top_level_exec": [
     "(async function initTheme() {",
-    "})();"
+    "})();",
+    "window.LIGHT_THEMES = LIGHT_THEMES;"
    ]
   },
   "js/tree-fileops.js": {
@@ -16192,7 +16225,7 @@
     "vh",
     "yes"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 31,
    "referenced_by": {
     "js/analyze.js": [
@@ -16367,10 +16400,7 @@
      "fetch"
     ]
    },
-   "top_level_exec": [
-    "(function () {",
-    "})();"
-   ]
+   "top_level_exec": []
   },
   "js/tree-search.js": {
    "defines": [
@@ -17475,6 +17505,7 @@
     "_addH",
     "_applyQ",
     "_brb",
+    "_can",
     "_chg",
     "_chgTxt",
     "_core",
@@ -17483,6 +17514,7 @@
     "_debounced",
     "_errCleared",
     "_fab",
+    "_gbtn",
     "_gen0",
     "_j1ok",
     "_known",
@@ -18078,7 +18110,7 @@
     "x",
     "z"
    ],
-   "is_module": false,
+   "is_module": true,
    "load_index": 37,
    "referenced_by": {
     "js/analyze.js": [

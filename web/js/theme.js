@@ -367,3 +367,16 @@ function _customPickCurrent() {
   });
   _customData = d;
 }
+
+// 模块化一期：转 ES module——跨文件/Python 裸引用消费名挂 window。
+// 清单由 eslint no-undef 神谕反推（零启发式）：本文件转模块后，其余
+// 文件/Python 推送的裸标识符引用全部经 window 解析。
+window.LIGHT_THEMES = LIGHT_THEMES;
+window.THEMES = THEMES;
+window._customData = _customData;
+window._isLight = _isLight;
+window._openCustomPanel = _openCustomPanel;
+window._termThemeFor = _termThemeFor;
+window.applyFontSettings = applyFontSettings;
+window.termFontSize = termFontSize;
+window.uiZoom = uiZoom;

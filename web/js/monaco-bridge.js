@@ -232,3 +232,18 @@ function monacoWarmup() {
   const idle = window.requestIdleCallback || (cb => setTimeout(cb, 4000));
   idle(() => { try { monacoInit().catch(() => {}); } catch (_) {} }, { timeout: 15000 });
 }
+
+// 模块化一期（js-modularization 分支）：以上为原经典脚本的裸顶层声明，
+// 转 ES module 后为模块作用域——跨文件消费名显式挂 window（消费者全部
+// 是运行时 typeof 守卫调用：editor.js:570、nav.js、diff-viewer.js、theme.js:132）。
+window.monacoInit = monacoInit;
+window.monacoCreate = monacoCreate;
+window.monacoLangFor = monacoLangFor;
+window.monacoSyncTheme = monacoSyncTheme;
+window.monacoWarmup = monacoWarmup;
+window._monacoThemeName = _monacoThemeName;
+window.detectLangByShebang = detectLangByShebang;
+// 自预热：init.js:21 的 typeof 守卫调用发生在解析期（早于模块执行），
+// 挂载到位前会被静默跳过——模块尾部自己补一次（monacoWarmup 幂等，
+// requestIdleCallback 空闲期才动，不抢首屏）。
+monacoWarmup();

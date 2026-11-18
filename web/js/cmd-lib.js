@@ -239,3 +239,7 @@ document.querySelectorAll('.cmd-sheet-tab').forEach(tab => {
 // ============================================================
 // 复用 connections[port_id] 模型，kind='log'。每个日志 tab 独立 logState（替代旧全局 histState）。
 // 虚拟列表算法不变：inner 钳制 MAX_SCROLL_H 突破 Chrome 33.5M 上限，viewport 跟随 scrollTop 平移。
+
+// 模块化一期：转 ES module——跨文件裸引用消费名挂 window（eslint 神谕）。
+window.renderCmdPane = renderCmdPane;
+window.sendCmd = sendCmd;

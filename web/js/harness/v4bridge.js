@@ -18,7 +18,8 @@
  * 禁止：本层不创建任何消息行 DOM（全部经 V3 渲染函数）、不读不写 V3 状态
  * 机之外的旁路状态。V3 账本（histAll/histCursor）即渲染账本，v4 不另设。
  */
-(function (root) {
+// 模块化一期：已转 ES module——IIFE 壳换成 const root = window。
+const root = window;
   'use strict';
 
   function _g(name) { return typeof root[name] !== 'undefined' ? root[name] : null; }
@@ -2140,4 +2141,3 @@
   };
 
   root.V4Bridge = V4Bridge;
-})(window);

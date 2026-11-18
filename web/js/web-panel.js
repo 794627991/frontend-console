@@ -1470,4 +1470,3 @@ function _webFavSaveNote(list, anchor, idx, val) {
   list.remove();
   _webFavMenu(anchor);
 }
-
