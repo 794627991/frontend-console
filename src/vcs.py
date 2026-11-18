@@ -712,6 +712,8 @@ _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 # git --author 是 BRE 正则——仅转义这 6 个元字符（GNU BRE 里转义 +?(){}| 反而
 # 制造元字符，切不可用 re.escape，designer D10）
 _BRE_META = "\\.*[]^$"
+# a650：git log --graph 的行首 ASCII 连线列（"* "、"| * "、"|/ "、"|\\ "）
+_GRAPH_COL_RE = re.compile(r"^[\s|*\\/]+")
 
 
 def _bre_lit(s):
@@ -750,11 +752,29 @@ def _log_plan(vcs, data):
     if since and until and since > until:
         return (("起始日期不能晚于结束日期"), 400), None, None, None, skip, limit
     before_rev = str(data.get("before_rev") or "").strip()
+    # a650：图形视图的两个开关（缺省关闭，保持既有线性列表行为不变）
+    graph = bool(data.get("graph"))
+    all_refs = bool(data.get("all"))
+    rev_target = str(data.get("rev") or "").strip()
 
     if vcs == "git":
         argv = ["git", "log", "-n", str(limit), "--date=iso-strict",
                 "--decorate=short", "--shortstat",
                 "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%d"]
+        if graph:
+            # --graph 会插入 ASCII 连线列，解析时按 \x1f 分隔仍成立（列在
+            # 行首，不影响字段切分）；前端按首段是否只含图形字符判定
+            argv.append("--graph")
+        if all_refs:
+            argv.append("--all")
+        if before_rev:
+            if not _git_ref_ok(before_rev):
+                return (("修订引用非法"), 400), None, None, None, skip, limit
+            argv.append(before_rev if all_refs else rev_target or "HEAD")
+        elif rev_target:
+            if not _git_ref_ok(rev_target):
+                return (("修订引用非法"), 400), None, None, None, skip, limit
+            argv.append(rev_target)
         cargv = ["git", "rev-list", "--count", "HEAD"]
         if skip:
             argv += ["--skip", str(skip)]
@@ -812,13 +832,23 @@ def vcs_log():
                 return jsonify({"ok": True, "commits": []})
             return jsonify({"ok": False, "err": e or "git log 失败"}), 500
         for line in out.splitlines():
+            # a650：--graph 会在行首插 ASCII 连线列（"* "、"| * "、"|/" 等），
+            # 不剥掉的话 rev 字段会被污染成「| * abc123」。只剥行首——subject
+            # 里的同样字符不受影响。无 graph 时行首是 hex，正则不匹配。
+            gpre = ""
+            if data.get("graph"):
+                m = _GRAPH_COL_RE.match(line)
+                if m:
+                    gpre = m.group(0)
+                    line = line[m.end():]
             parts = line.split("\x1f")
             # v2 D9：5 字段放宽为 ≥5（第 6 可选 deco，带前导空格须 trim）
             if len(parts) >= 5:
                 commits.append({"rev": parts[0], "short": parts[1],
                                 "author": parts[2], "date": parts[3],
                                 "msg": parts[4],
-                                "deco": (parts[5].strip() if len(parts) > 5 else "")})
+                                "deco": (parts[5].strip() if len(parts) > 5 else ""),
+                                **({"graph": gpre} if gpre else {})})
             elif commits and " changed" in line:
                 # v3.5.198（用户需求「提交列表加增减数字」）：--shortstat 追加行
                 # 「 N files changed, N insertions(+), N deletions(-)」配对上一条
@@ -1380,3 +1410,480 @@ def vcs_remote_delete():
     _clear_remote_err(_wc)
     _clear_remote_err(root)
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# a650：分支 / 标签 / stash / 撤销 / 推送 / 图形历史（全功能一期）
+#
+# 设计边界（与既有口径一致）：
+#   · 切换分支前必须「干净工作区」——有未提交改动时返回 409 并给出三条
+#     可选路径（提交 / stash / 丢弃）。绝不静默 stash：用户不知道 stash
+#     存在时那些改动等于消失。
+#   · 丢弃改动（git restore / svn revert）是唯一不可逆操作：强制 confirm=true，
+#     且服务端先做一次自动快照（落到数据目录），响应里回报路径。
+#   · svn 无分支/标签/stash 概念 → 对应接口一律 400 + 明确文案，
+#     前端据此隐藏入口（不留「点了没反应」的空洞）。
+# ---------------------------------------------------------------------------
+
+_SNAP_DIR_NAME = "vcs_discard_snapshots"
+
+
+def _git_ref_ok(name):
+    """分支/标签名校验（git check-ref-format 的子集，足够挡误操作）。"""
+    if not name or len(name) > 200:
+        return False
+    if re.search(r"[\s~^:?*\[\]\\]", name):
+        return False
+    if ".." in name or name.startswith("-") or name.endswith("/"):
+        return False
+    if name.startswith("/") or "//" in name:
+        return False
+    return True
+
+
+def _snap_discard(wc, rels):
+    """丢弃改动前把当前内容快照到数据目录（尽力而为，失败不阻断）。
+    返回快照目录绝对路径；没有可快照内容时返回空串。"""
+    import datetime as _dt
+    try:
+        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        base = os.path.join(_st.DATA_DIR, _SNAP_DIR_NAME)
+        d = os.path.join(base, stamp + "-" + hashlib.md5(
+            wc.encode("utf-8", "replace")).hexdigest()[:8])
+        n = 0
+        for rel in rels:
+            src = os.path.join(wc, *rel.split("/"))
+            if not os.path.isfile(src):
+                continue
+            dst = os.path.join(d, *rel.split("/"))
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                n += 1
+            except OSError:
+                continue
+        if n:
+            return d
+        if os.path.isdir(d):
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+    return ""
+
+
+def _git_current_branch(wc):
+    """当前分支名；detached HEAD 时返回空串（UI 显示「游离 HEAD」）。"""
+    rc, out, _e = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], wc, 10)
+    if rc != 0:
+        return ""
+    b = out.strip()
+    return "" if b in ("HEAD", "") else b
+
+
+def _git_is_clean(wc):
+    """工作区是否干净（未跟踪文件也算脏——切换分支前要让用户知情）。"""
+    rc, out, _e = _run(["git", "-c", "core.quotepath=false", "status",
+                        "--porcelain=v1"], wc, VCS_TIMEOUT_RO)
+    return rc == 0 and not out.strip()
+
+
+@vcs_bp.route("/api/vcs/branches", methods=["POST"])
+def vcs_branches():
+    """列出本地/远程分支 + 当前分支 + 是否游离。
+
+    返回 {ok, current, detached, local:[{name, rev, subject, upstream,
+          ahead, behind, current}], remote:[{name, rev, subject}]}
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False,
+                        "err": "svn 没有分支概念（可查看历史 / 修订号）"}), 400
+    fmt = ("%(refname:short)%1f%(objectname:short)%1f"
+           "%(upstream:short)%1f%(upstream:track)%1f%(contents:subject)")
+    cur = _git_current_branch(wc)
+    detached = not cur
+    local, remote = [], []
+
+    def _refs(ns, is_local):
+        rc, out, e = _run(["git", "for-each-ref", "--format=" + fmt, ns],
+                          wc, VCS_TIMEOUT_RO)
+        if rc != 0:
+            return e or "读取分支失败"
+        for line in out.splitlines():
+            parts = line.split("\x1f")
+            if len(parts) < 5:
+                continue
+            name, rev, up, track, subject = parts[:5]
+            item = {"name": name, "rev": rev, "subject": subject}
+            if is_local:
+                ahead = behind = 0
+                ma = re.search(r"ahead (\d+)", track or "")
+                mb = re.search(r"behind (\d+)", track or "")
+                if ma:
+                    ahead = int(ma.group(1))
+                if mb:
+                    behind = int(mb.group(1))
+                item.update({"upstream": up or "", "ahead": ahead,
+                             "behind": behind, "current": (name == cur)})
+                local.append(item)
+            elif not name.endswith("/HEAD"):   # origin/HEAD 是别名
+                remote.append(item)
+        return None
+
+    # a650：必须按命名空间分别取——refs/heads 的分支名可以带 "/"
+    # （feature/x），拿名字里有没有 "/" 判本地/远程会把它们全扔进远程列表。
+    err2 = _refs("refs/heads", True) or _refs("refs/remotes", False)
+    if err2:
+        return jsonify({"ok": False, "err": err2}), 500
+    return jsonify({"ok": True, "current": cur, "detached": detached,
+                    "local": local, "remote": remote})
+
+
+@vcs_bp.route("/api/vcs/branch/create", methods=["POST"])
+def vcs_branch_create():
+    """新建分支（不切换）。body: {root, name, from?}"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False, "err": "svn 不支持分支操作"}), 400
+    name = str(data.get("name") or "").strip()
+    frm = str(data.get("from") or "").strip()
+    if not name or not _git_ref_ok(name):
+        return jsonify({"ok": False,
+                        "err": "分支名非法（不能含空格 / .. / ~ ^ : ? * [ \\）"}), 400
+    if frm and not _git_ref_ok(frm):
+        return jsonify({"ok": False, "err": "起点引用非法"}), 400
+    argv = ["git", "branch", "--", name] + ([frm] if frm else [])
+    with _root_lock(wc):
+        rc, out, e = _run(argv, wc, VCS_TIMEOUT_RW)
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "创建分支失败").strip()[:2000]}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True, "name": name})
+
+
+@vcs_bp.route("/api/vcs/branch/switch", methods=["POST"])
+def vcs_branch_switch():
+    """切换分支。body: {root, name, dirty?(fail|ignore)}
+
+    dirty 语义：
+      · 缺省 / "fail"：工作区不干净 → 409，附脏文件清单（前端据此提示
+        先提交或 stash）
+      · "ignore"：把决定权交给 git，失败原样回报
+    绝不静默 stash。
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False, "err": "svn 不支持分支切换"}), 400
+    name = str(data.get("name") or "").strip()
+    if not name or not _git_ref_ok(name):
+        return jsonify({"ok": False, "err": "分支名非法"}), 400
+    dirty_mode = str(data.get("dirty") or "fail")
+    with _root_lock(wc):
+        if dirty_mode != "ignore" and not _git_is_clean(wc):
+            rc, out, _e = _run(["git", "-c", "core.quotepath=false", "status",
+                                "--porcelain=v1"], wc, VCS_TIMEOUT_RO)
+            files = [ln[3:] for ln in out.splitlines() if len(ln) > 3]
+            return jsonify({
+                "ok": False, "dirty": True, "files": files[:200],
+                "err": "工作区有 %d 个未提交改动，切换分支可能冲突或丢失。"
+                       "请先提交或 stash；确认要让 git 自行处理时带 "
+                       "dirty=ignore 重试。" % len(files)}), 409
+        rc, out, e = _run(["git", "switch", "--", name], wc, VCS_TIMEOUT_RW)
+        if rc != 0:
+            low = (e or "") + (out or "")
+            if "not a git command" in low or "unknown subcommand" in low:
+                # 老 git（< 2.23）没有 switch
+                rc, out, e = _run(["git", "checkout", "--", name],
+                                  wc, VCS_TIMEOUT_RW)
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "切换分支失败").strip()[:4000]}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True, "branch": _git_current_branch(wc)})
+
+
+@vcs_bp.route("/api/vcs/branch/delete", methods=["POST"])
+def vcs_branch_delete():
+    """删除分支。body: {root, name, force?}
+    当前分支拒绝；未合并分支需 force。"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False, "err": "svn 不支持分支操作"}), 400
+    name = str(data.get("name") or "").strip()
+    if not name or not _git_ref_ok(name):
+        return jsonify({"ok": False, "err": "分支名非法"}), 400
+    if name == _git_current_branch(wc):
+        return jsonify({"ok": False,
+                        "err": "不能删除当前所在分支，请先切换到其它分支"}), 400
+    flag = "-D" if data.get("force") else "-d"
+    with _root_lock(wc):
+        rc, out, e = _run(["git", "branch", flag, "--", name], wc, VCS_TIMEOUT_RW)
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "删除分支失败").strip()[:2000]}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True})
+
+
+@vcs_bp.route("/api/vcs/stash", methods=["POST"])
+def vcs_stash():
+    """stash。body: {root, action: list|push|pop|apply|drop, message?, index?}"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False, "err": "svn 无 stash（svn shelve 另说）"}), 400
+    act = str(data.get("action") or "list")
+    with _root_lock(wc):
+        if act == "list":
+            rc, out, e = _run(["git", "stash", "list", "--format=%gd\x1f%s"],
+                              wc, VCS_TIMEOUT_RO)
+            if rc != 0:
+                return jsonify({"ok": False, "err": e or "stash list 失败"}), 500
+            items = []
+            for ln in out.splitlines():
+                p = ln.split("\x1f")
+                if len(p) >= 2:
+                    items.append({"ref": p[0], "msg": p[1]})
+            return jsonify({"ok": True, "stashes": items})
+        if act == "push":
+            msg = str(data.get("message") or "").strip()
+            argv = ["git", "stash", "push", "--include-untracked"]
+            if msg:
+                argv += ["-m", msg]
+            rc, out, e = _run(argv, wc, VCS_TIMEOUT_RW)
+        elif act in ("pop", "apply", "drop"):
+            try:
+                idx = int(data.get("index") or 0)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "err": "index 非法"}), 400
+            if idx < 0 or idx > 200:
+                return jsonify({"ok": False, "err": "index 越界"}), 400
+            rc, out, e = _run(["git", "stash", act, "stash@{%d}" % idx],
+                              wc, VCS_TIMEOUT_RW)
+        else:
+            return jsonify({"ok": False, "err": "未知 action"}), 400
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "stash 失败").strip()[:4000]}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True, "out": (out or "").strip()[:4000]})
+
+
+@vcs_bp.route("/api/vcs/unstage", methods=["POST"])
+def vcs_unstage():
+    """撤销暂存（git restore --staged）。body: {root, paths[]}"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False, "err": "svn 没有暂存区概念"}), 400
+    paths = [str(p).replace("\\", "/") for p in (data.get("paths") or []) if p]
+    if not paths or any(_bad_rel(p) for p in paths):
+        return jsonify({"ok": False, "err": "未选择文件或路径非法"}), 400
+    with _root_lock(wc):
+        rc, out, e = _run(["git", "restore", "--staged", "--"] + paths,
+                          wc, VCS_TIMEOUT_RW)
+        if rc != 0:
+            # 老 git（< 2.23）没有 restore
+            rc, out, e = _run(["git", "reset", "HEAD", "--"] + paths,
+                              wc, VCS_TIMEOUT_RW)
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "撤销暂存失败").strip()[:2000]}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True})
+
+
+@vcs_bp.route("/api/vcs/discard", methods=["POST"])
+def vcs_discard():
+    """丢弃工作区改动（**不可逆**）。body: {root, paths[], confirm:true}
+
+    必须 confirm=true；执行前把当前内容快照到数据目录并在响应里回报路径。
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if not data.get("confirm"):
+        return jsonify({"ok": False,
+                        "err": "丢弃改动不可逆，需带 confirm=true 明确确认"}), 400
+    paths = [str(p).replace("\\", "/") for p in (data.get("paths") or []) if p]
+    if not paths or any(_bad_rel(p) for p in paths):
+        return jsonify({"ok": False, "err": "未选择文件或路径非法"}), 400
+    snap = _snap_discard(wc, paths)
+    removed = []
+    with _root_lock(wc):
+        # a650：未纳管文件（git ?? / svn ?）没有可恢复的基线，checkout /
+        # revert 对它们要么报错要么整体失败。快照已落盘，这里直接删文件。
+        if vcs == "git":
+            rc, out, _e = _run(["git", "-c", "core.quotepath=false", "ls-files",
+                                "--others", "--exclude-standard", "--"] + paths,
+                               wc, VCS_TIMEOUT_RO)
+            untracked = set(out.splitlines()) if rc == 0 else set()
+        else:
+            untracked = set()
+            # 一次 svn status 覆盖全部目标（逐文件调 svn 会起 N 个进程）
+            rc, out, _e = _run(["svn", "status", "-q"] + [
+                os.path.join(wc, *p.split("/")) for p in paths],
+                wc, VCS_TIMEOUT_RO)
+            if rc == 0:
+                for ln in out.splitlines():
+                    if not ln.startswith("?"):
+                        continue
+                    ap = ln[1:].strip().replace("\\", "/")
+                    rel = os.path.relpath(ap, wc).replace("\\", "/")
+                    untracked.add(rel)
+        for p in list(paths):
+            if p not in untracked:
+                continue
+            try:
+                os.remove(os.path.join(wc, *p.split("/")))
+                removed.append(p)
+                paths.remove(p)
+            except OSError:
+                pass
+        if not paths:
+            _st_memo_inval(wc)
+            return jsonify({"ok": True, "removed": removed,
+                            **({"snapshot": snap} if snap else {})})
+        if vcs == "git":
+            rc, out, e = _run(["git", "checkout", "--"] + paths,
+                              wc, VCS_TIMEOUT_RW)
+            if rc != 0:
+                rc, out, e = _run(["git", "restore", "--"] + paths,
+                                  wc, VCS_TIMEOUT_RW)
+        else:
+            rc, out, e = _run(["svn", "revert"] + [
+                os.path.join(wc, *p.split("/")) for p in paths],
+                wc, VCS_TIMEOUT_RW)
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "丢弃改动失败").strip()[:2000],
+                            "removed": removed,
+                            **({"snapshot": snap} if snap else {})}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True, "removed": removed,
+                    **({"snapshot": snap} if snap else {})})
+    _st_memo_inval(wc)
+    return jsonify({"ok": True, **({"snapshot": snap} if snap else {})})
+
+
+@vcs_bp.route("/api/vcs/tags", methods=["POST"])
+def vcs_tags():
+    """标签。body: {root, action: list|create|delete, name?, message?, rev?}"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False,
+                        "err": "svn 用 tags 目录约定，没有标签命令"}), 400
+    act = str(data.get("action") or "list")
+    if act == "list":
+        rc, out, e = _run(["git", "for-each-ref",
+                           "--format=%(refname:short)\x1f%(objectname:short)"
+                           "\x1f%(contents:subject)", "refs/tags"],
+                          wc, VCS_TIMEOUT_RO)
+        if rc != 0:
+            return jsonify({"ok": False, "err": e or "读取标签失败"}), 500
+        tags = []
+        for ln in out.splitlines():
+            p = ln.split("\x1f")
+            if len(p) >= 3:
+                tags.append({"name": p[0], "rev": p[1], "msg": p[2]})
+        return jsonify({"ok": True, "tags": tags})
+    name = str(data.get("name") or "").strip()
+    if not name or not _git_ref_ok(name):
+        return jsonify({"ok": False, "err": "标签名非法"}), 400
+    with _root_lock(wc):
+        if act == "create":
+            msg = str(data.get("message") or "").strip()
+            rev = str(data.get("rev") or "").strip()
+            if rev and not _git_ref_ok(rev):
+                return jsonify({"ok": False, "err": "修订引用非法"}), 400
+            if msg:
+                argv = ["git", "tag", "-a", name, "-m", msg] + ([rev] if rev else [])
+            else:
+                argv = ["git", "tag", name] + ([rev] if rev else [])
+            rc, out, e = _run(argv, wc, VCS_TIMEOUT_RW)
+        elif act == "delete":
+            rc, out, e = _run(["git", "tag", "-d", "--", name], wc, VCS_TIMEOUT_RW)
+        else:
+            return jsonify({"ok": False, "err": "未知 action"}), 400
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "标签操作失败").strip()[:2000]}), 500
+    return jsonify({"ok": True})
+
+
+@vcs_bp.route("/api/vcs/push", methods=["POST"])
+def vcs_push():
+    """推送到远端（只在用户显式点击时执行）。body: {root, remote?, branch?, set_upstream?}"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False, "err": "svn 由 commit 直接入库，无 push"}), 400
+    cur = _git_current_branch(wc)
+    remote = str(data.get("remote") or "origin").strip()
+    branch = str(data.get("branch") or cur).strip()
+    if not branch:
+        return jsonify({"ok": False, "err": "当前处于游离 HEAD，请指定分支"}), 400
+    if not _git_ref_ok(remote) or not _git_ref_ok(branch):
+        return jsonify({"ok": False, "err": "远端名或分支名非法"}), 400
+    argv = ["git", "push"]
+    if data.get("set_upstream"):
+        argv.append("-u")
+    argv += [remote, branch]
+    with _root_lock(wc):
+        rc, out, e = _run(argv, wc, VCS_TIMEOUT_NET)
+        if rc != 0:
+            text = (e or out or "").strip()
+            hint = ""
+            if "rejected" in text or "non-fast-forward" in text:
+                hint = ("远端有你本地没有的提交——请先 Pull"
+                        "（本工具只做 --ff-only，分叉需命令行合并）")
+            return jsonify({"ok": False,
+                            "err": hint or text[:4000] or "推送失败",
+                            "out": text[:4000]}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True, "out": (out or "").strip()[:4000]})
+
+
+@vcs_bp.route("/api/vcs/fetch", methods=["POST"])
+def vcs_fetch():
+    """只取远端引用不合并（update 是 pull --ff-only）。body: {root, remote?}"""
+    data = request.get_json(force=True, silent=True) or {}
+    vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
+    if err:
+        return err
+    if vcs != "git":
+        return jsonify({"ok": False, "err": "svn 用 update"}), 400
+    remote = str(data.get("remote") or "").strip()
+    if remote and not _git_ref_ok(remote):
+        return jsonify({"ok": False, "err": "远端名非法"}), 400
+    argv = ["git", "fetch", "--prune"] + ([remote] if remote else [])
+    with _root_lock(wc):
+        rc, out, e = _run(argv, wc, VCS_TIMEOUT_NET)
+        if rc != 0:
+            return jsonify({"ok": False,
+                            "err": (e or out or "fetch 失败").strip()[:4000]}), 500
+    _st_memo_inval(wc)
+    return jsonify({"ok": True, "out": (out or "").strip()[:4000]})

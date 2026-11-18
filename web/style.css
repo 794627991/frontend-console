@@ -3422,7 +3422,8 @@ html {
   border: 1px solid var(--border); border-radius: 12px; padding: 16px;
   box-shadow: 0 10px 40px rgba(0,0,0,.5); }
 .hg-modal-title { font-size: var(--fs-xl); font-weight: 600; color: var(--fg-bright, var(--fg)); margin-bottom: 10px; }
-.hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7; }
+.hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7;
+  white-space: pre-wrap; }
 .hg-modal-body label { display: block; font-size: var(--fs-cap); color: var(--muted); margin-bottom: 5px; }
 /* a452（审计 P1：复选框看不见勾选态）：全文通用选择器会把 checkbox/radio
    的原生绘制一并抹掉（勾/未勾长得一样，三角色弹窗的「启用三角色」就是
@@ -5109,6 +5110,13 @@ html {
 .hg-vcs-badge.svn { background: rgba(80,140,220,.15); color: #6a9fe0; }
 .hg-vcs-badge.none { background: rgba(150,150,150,.15); color: var(--muted); }
 .hg-vcs-branch { font-weight: 600; }
+/* a650：分支按钮（点击开分支管理）；svn 也渲染但点了只提示 */
+.hg-vcs-branchbtn { background: transparent; border: 1px solid transparent; color: inherit;
+  font: inherit; font-weight: 600; padding: 2px 7px; border-radius: 6px; cursor: pointer; }
+.hg-vcs-branchbtn:hover { background: rgba(128,128,128,.12); border-color: var(--border); }
+/* a650：丢弃改动 = 危险操作，红色描边提示 */
+.hg-vcs-danger { color: #d96a6a; border-color: rgba(230,90,90,.45); }
+.hg-vcs-danger:hover:not(:disabled) { background: rgba(230,90,90,.12); }
 .hg-vcs-count { margin-left: auto; color: var(--muted); font-size: 11px; flex-shrink: 0; }
 /* a455：执行方式芯片（版本头右侧，点击开 SSH 配置） */
 .hg-vcs-rmchip { flex-shrink: 0; margin-left: 8px; padding: 2px 9px; border-radius: 10px;
@@ -5142,6 +5150,35 @@ html {
 .hg-vcs-rdlg-msg.ok { background: rgba(80,200,120,.12); color: #4caf7d; }
 .hg-vcs-rdlg-msg.err { background: rgba(230,90,90,.12); color: #d96a6a; }
 .hg-vcs-rdlg-msg.info { background: rgba(120,120,120,.12); color: var(--muted); }
+/* a650：分支 / stash / 标签弹窗（复用 .hg-vcs-rdlg 外壳） */
+.hg-vcs-rdlg-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+.hg-vcs-rdlg-sub2 { font-size: 11px; font-weight: 400; color: var(--muted);
+  font-family: var(--font-mono); word-break: break-all; }
+.hg-vcs-rdlg-x { margin-left: auto; padding: 0 7px; }
+.hg-vcs-rdlg-msg.warn { background: rgba(230,160,60,.12); color: #d99a3a; }
+.hg-vcs-rdlg-acts { justify-content: flex-start; flex-wrap: wrap; align-items: center; }
+.hg-vcs-rdlg-input { flex: 1 1 150px; min-width: 110px; background: var(--bg-input);
+  color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; font-size: 12px; }
+.hg-vcs-brlist { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.hg-vcs-brrow { display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); font-size: 12px; }
+.hg-vcs-brrow:last-child { border-bottom: none; }
+.hg-vcs-brrow:hover { background: rgba(128,128,128,.07); }
+.hg-vcs-brrow.cur { background: rgba(80,200,120,.08); }
+.hg-vcs-brname { font-family: var(--font-mono); font-weight: 600; flex-shrink: 0; }
+.hg-vcs-brrev { font-family: var(--font-mono); color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.hg-vcs-brab { font-size: 11px; color: #6a9fe0; flex-shrink: 0; }
+.hg-vcs-brsub { flex: 1; min-width: 0; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-vcs-brgo, .hg-vcs-brdel { padding: 1px 8px; font-size: 11px; flex-shrink: 0; }
+.hg-vcs-brsec { font-size: 11px; color: var(--muted); margin: 12px 0 6px; }
+.hg-vcs-strow { display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); font-size: 12px; }
+.hg-vcs-strow:last-child { border-bottom: none; }
+.hg-vcs-strow:hover { background: rgba(128,128,128,.07); }
+.hg-vcs-strow .btn { padding: 1px 8px; font-size: 11px; flex-shrink: 0; }
 .hg-vcs-warn { color: var(--muted); font-size: 11px; }
 .hg-vcs-acts { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
 .hg-vcs-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
@@ -5298,6 +5335,9 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
   border-radius: 6px; background: var(--bg-card); color: var(--fg); }
 .hg-vcs-chip { font-size: var(--fs-2xs); padding: 3px 8px; }
 .hg-vcs-chip.on { color: var(--accent); border-color: var(--accent); }
+/* a650：图形视图的 ASCII 连线列（--graph），等宽 + 不换行 */
+.hg-vcs-graph { font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  white-space: pre; flex-shrink: 0; }
 .hg-vcs-hsep { font-size: var(--fs-2xs); color: var(--muted); }
 .hg-vcs-hpager { display: flex; gap: 8px; align-items: center;
   padding: 6px 12px; border-top: 1px solid var(--border); }

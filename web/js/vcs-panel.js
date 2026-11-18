@@ -34,6 +34,8 @@ const _VCS_ST_TXT = { M: '改', A: '增', D: '删', R: '移', '?': '未纳管', 
 // 与本功能无关的 harness 状态（_sub/_hgWrap）已全部解耦，Claude 页面不开也能用。
 function vcsPanelTeardown() {
   _vcsHistClose();                 // v3.5.133（designer D10）：弹窗防御性关闭
+  // a650：分支/Stash/标签弹窗是自建浮层（不进收口表），面板关了必须显式收掉
+  try { _vcsDlgClose(); } catch (_) {}
   // a438（审计 P1）：挂 body 的确认弹窗没有宿主可跟随销毁——面板已关但
   // 弹窗还盖在全窗上，误点「执行」会对已销毁面板发真实 git add / pull。
   // a456（第二轮审计 P2）：必须限定 owner。收口表改成按 owner 归组后，
@@ -181,6 +183,9 @@ function _vcsHistBusy() {
   return _vcsHist.querying ? _vcsHist.qbusy : _vcsLogBusy;
 }
 function _vcsHistTotal() {
+  // a650：图形视图带 --all，后端 total 仍是 rev-list --count HEAD 的口径
+  // （不含其它分支），拿它判终点会提前截断——图形模式下当「未知」处理。
+  if (_vcsHist && _vcsHist.graph) return undefined;
   return _vcsHist.querying ? _vcsHist.qtotal : VCS.total;
 }
 
@@ -201,6 +206,7 @@ function _vcsHistFetch(reset, cb) {
   // 选了也只按 100 拉，默认只显示 100 条的观感来源之一）
   const _lim = H.size || 100;
   const body = { root: VCS.root, limit: _lim, skip: isSvn ? 0 : skip };
+  if (H.graph && !isSvn) { body.graph = 1; body.all = 1; }
   if (isSvn && !reset && oldest) body.before_rev = String(parseInt(oldest, 10) - 1 || 0);
   Object.assign(body, H.q);
   fetch('/api/vcs/log', { method: 'POST',
@@ -292,7 +298,8 @@ function _vcsHistOpen() {
   _vcsHist = { ov, sel: null, seq: 0, files: new Map(), escFn,
                q: { text: '', author: '', since: '', until: '' },
                qlog: [], qbusy: false, qtotal: undefined, querying: false, exhausted: false,
-               page: 1, size, lseq: 0, rounds: 0, fetchErr: null, debT: null };
+               page: 1, size, lseq: 0, rounds: 0, fetchErr: null, debT: null,
+               graph: false };   // a650：图形视图（--graph --all，合并分叉可见）
   const dateInp = (k, ph) =>
     `<input type="date" name="hg_vcs_hdate_${k}" class="hg-vcs-hdate" data-vcs-hq="${k}" title="${ph}">`;
   ov.innerHTML =
@@ -307,6 +314,7 @@ function _vcsHistOpen() {
         `<button class="btn ghost hg-vcs-chip" data-vcs-chip="7d">近7天</button>` +
         `<button class="btn ghost hg-vcs-chip" data-vcs-chip="30d">近30天</button>` +
         dateInp('since', '起始日期') + `<span class="hg-vcs-hsep">~</span>` + dateInp('until', '结束日期') +
+        (isSvn ? '' : `<button class="btn ghost hg-vcs-chip" data-vcs-graph title="显示分叉 / 合并连线（--graph --all）">图形</button>`) +
         `<button class="btn ghost" data-vcs-hclear style="display:none;">✕ 清除筛选</button>` +
       `</div>` +
       `<div class="hg-vcs-hbody">` +
@@ -388,6 +396,16 @@ function _vcsHistOpen() {
     clearTimeout(_vcsHist.debT);
     _vcsHist.debT = setTimeout(_applyQ, 400);
   };
+  // a650：图形视图开关——只影响新拉取的查询，就地切换不串数据
+  const _gbtn = ov.querySelector('[data-vcs-graph]');
+  if (_gbtn) _gbtn.onclick = () => {
+    const H = _vcsHist; if (!H) return;
+    H.graph = !H.graph;
+    _gbtn.classList.toggle('on', H.graph);
+    _gbtn.title = H.graph ? '图形视图已开（--graph --all）——点击关闭'
+                          : '显示分叉 / 合并连线（--graph --all）';
+    _vcsHistFetch(true);
+  };
   ov.querySelectorAll('[data-vcs-hq]').forEach(inp => {
     const k = inp.dataset.vcsHq;
     if (k === 'text' || k === 'author') inp.addEventListener('input', () => { _vcsHist.q[k] = inp.value.trim(); _debounced(); });
@@ -466,6 +484,7 @@ function _vcsHistPaintList(keepSel) {
   const pg = arr.slice((H.page - 1) * H.size, H.page * H.size);
   listEl.innerHTML = pg.map(c =>
     `<div class="hg-vcs-hlrow${c.rev === H.sel ? ' on' : ''}" data-hrev="${esc(c.rev || '')}">` +
+      (c.graph ? `<span class="hg-vcs-graph">${esc(c.graph)}</span>` : '') +
       `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}${c.deco ? `<span class="hg-vcs-deco">${esc(c.deco)}</span>` : ''}</span>` +
       `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 44))}</span>` +
       (c.ins != null ? `<span class="hg-vcs-stat" title="${esc(c.ins || 0)} 增 / ${esc(c.del || 0)} 删">` +
@@ -884,6 +903,21 @@ function _vcsPaint() {
     `<div class="hg-vcs-acts">` +
     `<button class="btn ghost" name="hg_vcs_commit" ${canOp && nSel ? '' : 'disabled'}>☑ 提交（${nSel}）</button>` +
     `<button class="btn ghost" name="hg_vcs_update" ${canOp ? '' : 'disabled'}>⇩ ${D.vcs === 'git' ? 'Pull' : 'Update'}</button>` +
+    // a650：git 专属操作组（svn 无对应概念，按 D.vcs 隐藏而不是置灰）
+    (D.vcs === 'git' ? `<button class="btn ghost" name="hg_vcs_push" ${canOp ? '' : 'disabled'} ` +
+      `title="推送到远端（不自动执行）">⇧ Push</button>` : '') +
+    // a650：勾选相关操作常驻渲染（勾选时只切 disabled，不重绘——否则
+    // 条件渲染的按钮要等下次整块刷新才出现）
+    (D.vcs === 'git' ? `<button class="btn ghost" name="hg_vcs_unstage" ${canOp && nSel ? '' : 'disabled'} ` +
+      `title="把勾选文件移出暂存区（相当于 git restore --staged）">撤销暂存</button>` : '') +
+    `<button class="btn ghost hg-vcs-danger" name="hg_vcs_discard" ${canOp && nSel ? '' : 'disabled'} ` +
+    `title="${D.vcs === 'git' ? '丢弃勾选文件的工作区改动（不可逆，会先自动快照）' : 'revert 勾选文件（不可逆，会先自动快照）'}">丢弃改动</button>` +
+    (D.vcs === 'git' ? `<button class="btn ghost" name="hg_vcs_stash" ${canOp ? '' : 'disabled'} ` +
+      `title="暂存管理（stash 列表 / 存入 / 取出）">Stash</button>` +
+      `<button class="btn ghost" name="hg_vcs_fetch" ${canOp ? '' : 'disabled'} ` +
+      `title="只取远端更新不合并，先看清再决定">Fetch</button>` : '') +
+    (D.vcs === 'git' ? `<button class="btn ghost" name="hg_vcs_tags" ${canOp ? '' : 'disabled'} ` +
+      `title="标签管理（创建 / 删除）">标签</button>` : '') +
     `<span class="hg-vcs-hint">勾选后提交；点行看改动</span></div>` +
     (_coreN
       ? `<div class="hg-vcs-files">` + (_svn
@@ -972,7 +1006,10 @@ function _vcsHeadHtml(D) {
       (_svnU.length || D.truncated_unv ? `（另有 ${_svnU.length}${D.truncated_unv && _svnU.length ? '+' : ''} 个未版本控制）` : '') +
       (D.symlink_hidden ? `（已隐藏 ${D.symlink_hidden} 项网络盘符号链接误报）` : '');
   return `<div class="hg-vcs-head"><span class="hg-vcs-badge ${esc(D.vcs)}">${esc(D.vcs)}</span>` +
-    `<span class="hg-vcs-branch">⎇ ${esc(D.branch || '(未知)')}${esc(rev)}${esc(ab)}</span>` +
+    // a650：分支名从只读文本改成可点击下拉（git 才有分支；svn 维持只读）
+    `<button class="hg-vcs-branch hg-vcs-branchbtn" name="hg_vcs_branch" ` +
+    `title="${D.vcs === 'git' ? '点击切换 / 管理分支' : 'svn 无分支概念'}">` +
+    `⎇ ${esc(D.branch || '(游离 HEAD)')}${esc(rev)}${esc(ab)}</button>` +
     `<span class="hg-vcs-count">${_chgTxt}</span>` +
     _vcsRemoteChip(D) + `</div>`;
 }
@@ -1102,10 +1139,67 @@ function _vcsBind(paintRoots) {
   // a455：执行方式芯片 → SSH 配置弹窗
   const _rmc = _vpEl.querySelector('[name="hg_vcs_remote"]');
   if (_rmc) _rmc.onclick = (e) => { e.stopPropagation(); _vcsRemoteDialog(); };
+  // a650：分支 / stash / 标签 / push / fetch / 撤销暂存 / 丢弃改动
+  const _brb = _vpEl.querySelector('[name="hg_vcs_branch"]');
+  if (_brb) _brb.onclick = (e) => {
+    e.stopPropagation();
+    if ((VCS.data || {}).vcs === 'git') _vcsBranchDialog();
+    else showBanner('svn 没有分支概念（可查看历史 / 修订号）', 3000, true);
+  };
+  const _stb = _vpEl.querySelector('[name="hg_vcs_stash"]');
+  if (_stb) _stb.onclick = () => _vcsStashDialog();
+  const _tgb = _vpEl.querySelector('[name="hg_vcs_tags"]');
+  if (_tgb) _tgb.onclick = () => _vcsTagsDialog();
+  const _fab = _vpEl.querySelector('[name="hg_vcs_fetch"]');
+  if (_fab) _fab.onclick = () => {
+    hgModal('Fetch 只取不合并',
+      `<div class="hg-modal-body">在 ${esc(VCS.root)}\n执行 git fetch --prune\n\n` +
+      `只更新远端引用，不动工作区和当前分支；看完 ahead/behind 再决定 Pull。</div>`,
+      [{ label: '取消', value: false }, { label: '执行', primary: true, value: true }])
+      .then(ok => {
+        if (!ok) return;
+        _vcsApi('/api/vcs/fetch', {}, 'Fetch', (ok2, j) => {
+          if (j && j.out) VCS.out = j.out;
+          _vcsReload();
+        });
+      });
+  };
+  const _psb = _vpEl.querySelector('[name="hg_vcs_push"]');
+  if (_psb) _psb.onclick = () => {
+    const D = VCS.data || {};
+    const br = D.branch || '';
+    hgModal('Push 推送到远端',
+      `<div class="hg-modal-body">将把本地${br ? '分支 ' + esc(br) + ' ' : ''}推送到 origin\n` +
+      `（git push origin ${esc(br || '(当前分支)')}）\n\n远端若已有本地没有的提交会被拒绝——先 Fetch/Pull 看清。</div>`,
+      [{ label: '取消', value: false }, { label: '推送', primary: true, value: true }])
+      .then(ok => {
+        if (!ok) return;
+        _vcsApi('/api/vcs/push', {}, 'Push', (ok2, j) => {
+          if (j && j.out) VCS.out = j.out;
+          _vcsReload();
+        });
+      });
+  };
+  const _unb = _vpEl.querySelector('[name="hg_vcs_unstage"]');
+  if (_unb) _unb.onclick = () => {
+    const files = ((VCS.data || {}).files) || [];
+    const sel = files.filter(f => VCS.sel.has(f.rel));
+    if (!sel.length) return;
+    _vcsApi('/api/vcs/unstage', { paths: sel.map(f => f.rel) }, '撤销暂存', () => _vcsReload());
+  };
+  const _dcb = _vpEl.querySelector('[name="hg_vcs_discard"]');
+  if (_dcb) _dcb.onclick = () => _vcsDiscardSelected();
   _vpEl.querySelectorAll('.hg-vcs-ck').forEach(ck => ck.onchange = () => {
     if (ck.checked) VCS.sel.add(ck.dataset.rel); else VCS.sel.delete(ck.dataset.rel);
+    // a650：提交/撤销暂存/丢弃改动共用勾选态——只切 disabled，不整块重绘
+    const n = VCS.sel.size;
+    const _can = !!((VCS.data || {}).tool) && !VCS.busy;
     const cb = _vpEl.querySelector('[name="hg_vcs_commit"]');
-    if (cb) { cb.textContent = '☑ 提交（' + VCS.sel.size + '）'; cb.disabled = !VCS.sel.size; }
+    if (cb) { cb.textContent = '☑ 提交（' + n + '）'; cb.disabled = !(n && _can); }
+    ['hg_vcs_unstage', 'hg_vcs_discard'].forEach(nm => {
+      const b = _vpEl.querySelector('[name="' + nm + '"]');
+      if (b) b.disabled = !(n && _can);
+    });
   });
   // v3.5.292：未版本控制折叠条展开/收起（? 文件行自身有点击开 diff，冒泡到此按 frow 放行）
   const _uv = _vpEl.querySelector('[data-vcs-unv]');
