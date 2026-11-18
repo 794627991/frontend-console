@@ -700,6 +700,24 @@ window.__fcHardReload = function () {
 <script type="module" src="web/js/win-controls.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/backend-log.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/init.js?v=__HG_VER__"></script>
+<script>
+/* a664：启动自检自愈——资源请求偶发失败（并发/瞬时网络）会让 util.js 半执行，
+   后续全部 module 连锁 ReferenceError（ICO16→$→各功能未初始化），页面卡死只能
+   手动刷新。load 后确认关键全局就绪；缺失则带 cache-bust 整页重载一次。
+   sessionStorage 防循环；回归测试页不自动重载（由测试失败暴露真实问题）。 */
+(function () {
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      try {
+        if (window.ICO16 && window.$) { sessionStorage.removeItem('__fc_boot_reload'); return; }
+        if (window.__FC_REGRESSION || sessionStorage.getItem('__fc_boot_reload')) return;
+        sessionStorage.setItem('__fc_boot_reload', '1');
+        location.replace(location.pathname + '?v=' + Date.now());
+      } catch (e) {}
+    }, 0);
+  });
+})();
+</script>
 <!-- a59x 边缘 resize 热区（inset=0 白框终局方案配套）：四边+四角 6px
      隐形条，mousedown 报方向/鼠标起点，mousemove 报绝对坐标，后端 GUI
      批次 SetWindowPos（幂等无累积误差）。is-max 态隐藏（最大化不可缩放） -->

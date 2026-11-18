@@ -628,8 +628,10 @@ def _supervisor(prefer_port):
                 if not _health_ok():
                     _hung += 1
                     logging.getLogger("claude_worker").warning(
-                        "worker health 探活失败 %d/3", _hung)
-                    if _hung >= 3:
+                        "worker health 探活失败 %d/6（90s 内全无响应才判挂死）", _hung)
+                    # a664：失败代价是掐断所有会话，必须保守——6 连败≈90s
+                    # 完全不响应才重启；繁忙/压缩/长流导致的短时无响应只告警。
+                    if _hung >= 6:
                         try:
                             p.kill()
                         except Exception:

@@ -2,6 +2,7 @@
 // 全局状态
 // ============================================================
 const $ = id => document.getElementById(id);
+window.$ = $;   // a664：经典脚本的全局 const 对 module 不可靠；显式挂 window 防连锁未定义
 const banner = $('banner');
 const portList = $('portList');
 const tabs = $('tabs');
