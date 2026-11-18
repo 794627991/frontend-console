@@ -50,14 +50,25 @@ def run():
         pg.clear_errs()
         # ---- E1-5 编辑器保存（Ctrl+S 链路） ----
         try:
+            expr_monaco = ("Object.values(connections).some("
+                           "c=>c.meta&&c.meta.label==='sample.txt'&&!!c.monaco)")
             pg.ev("(async()=>{await window.openFileSmart(%s,'auto');return 1;})()"
                   % json.dumps(FIX + "/sample.txt"), await_promise=True, timeout=60)
-            ok_monaco = pg.wait_until(
-                "Object.values(connections).some(c=>c.meta&&c.meta.label==='sample.txt'&&!!c.monaco)",
-                timeout=45, interval=0.5)   # headless 冷启动首次加载 Monaco 可能 >15s，避免偶发假 FAIL
+            # headless 首次加载 Monaco 偶发失败：关 tab 重开一次再等（45s 仅为加载窗口）
+            ok_monaco = pg.wait_until(expr_monaco, timeout=45, interval=0.5)
+            if not ok_monaco:
+                pg.ev("(function(){var c=Object.values(connections).find("
+                      "x=>x.meta&&x.meta.label==='sample.txt');"
+                      "if(c)window.closeEditorTab(c.portId);return 1;})()")
+                time.sleep(0.5)
+                pg.ev("(async()=>{await window.openFileSmart(%s,'auto');return 1;})()"
+                      % json.dumps(FIX + "/sample.txt"), await_promise=True, timeout=60)
+                ok_monaco = pg.wait_until(expr_monaco, timeout=45, interval=0.5)
             marker = "回归保存验证-" + str(int(time.time()))
+            # Ctrl+S 只对当前活动 tab 生效（editor.js: activePortId!==portId 直接返回），
+            # 全量回归时前序用例可能留下别的活动 tab——必须显式激活本文件 tab。
             pg.ev("(function(){var c=Object.values(connections).find(x=>x.meta&&x.meta.label==='sample.txt');"
-                  "if(!c)return 'no-conn';c.monaco.setValue(c.monaco.getValue()+'\\n%s');"
+                  "if(!c)return 'no-conn';switchTab(c.portId);c.monaco.setValue(c.monaco.getValue()+'\\n%s');"
                   "return 'set';})()" % marker)
             time.sleep(0.5)
             pg.ev("document.dispatchEvent(new KeyboardEvent('keydown',{key:'s',code:'KeyS',"

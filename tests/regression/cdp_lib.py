@@ -107,6 +107,24 @@ class Page(object):
         url = _app_url()
         if not url:
             raise RuntimeError("无法解析应用地址（9222/endpoint.json/REGRESSION_APP_URL 均不可用）")
+        # headless 冷启动偶发失败（新 profile 被杀软扫描/首次启动慢），
+        # 重试自愈；每次用全新端口与 profile，绝不复用半死进程。
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                self._start_headless_once(chrome, url)
+                return
+            except Exception as e:
+                last_err = e
+                self._cleanup_proc()
+                if self._profile:
+                    shutil.rmtree(self._profile, ignore_errors=True)
+                    self._profile = None
+                if attempt < 3:
+                    time.sleep(0.8)
+        raise RuntimeError("headless 启动失败（3 次）：%r" % last_err)
+
+    def _start_headless_once(self, chrome, url):
         # 测试模式标记：页面据此禁用 pagehide 断开真实连接、禁用 recent 落盘
         url += ("&" if "?" in url else "?") + "regression=1"
         self.port = _free_port()
@@ -133,7 +151,9 @@ class Page(object):
         except Exception:
             self._cleanup_proc()
             raise
-        # 等待页面就绪（后端页面有 _HG_VER）
+        # 等待页面就绪：_HG_VER 只是 inline 标记，模块/经典脚本仍可能未执行完
+        # （实测整套 L2 连跑时偶发 connections/_HG 未定义——就绪判定过宽）。
+        # 要求真正的全局入口就绪：base.js 的 window._HG + util.js 的 connections。
         end = time.time() + 25
         while time.time() < end:
             try:
@@ -141,7 +161,10 @@ class Page(object):
                 cs.__enter__()
                 try:
                     r = cs.send("Runtime.evaluate", {
-                        "expression": "document.readyState==='complete' && !!window._HG_VER",
+                        # connections 是经典脚本顶层 let（全局词法绑定，非 window 属性）
+                        "expression": "document.readyState==='complete' && !!window._HG_VER"
+                                      " && typeof window._HG==='object'"
+                                      " && typeof connections==='object'",
                         "returnByValue": True}, timeout=5)
                     if (r.get("result") or {}).get("value"):
                         cs.__exit__(None, None, None)
