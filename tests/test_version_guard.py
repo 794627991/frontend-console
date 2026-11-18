@@ -78,15 +78,20 @@ def test_retitle_ignores_unversioned_message():
 
 
 def test_pre_commit_bumps_future_num_only(repo):
-    """暂存的新增行里出现未来号 → 改成本次号并重新 add；小号引用不动。"""
+    """暂存的新增行里出现未来号 → 改成本次号并重新 add；小号引用不动。
+
+    未来号用运行时拼出来（`"a%d" % 700`）而不是字面量：否则本文件自身的
+    新增行会被 pre-commit 钩子改写成当前号，测试自我矛盾。
+    """
+    fut = "a%d" % 700
     p = os.path.join(repo, "f.py")
     with open(p, "w", encoding="utf-8") as f:
-        f.write("# a5 历史引用\nX = 1  # a645 笔误\n")
+        f.write("# a5 历史引用\nX = 1  # " + fut + " 笔误\n")
     _git(repo, "add", "f.py")
     V.hook_pre_commit(repo)
     s = open(p, encoding="utf-8").read()
     assert "a5 " in s, s
-    assert "a645" not in s, s
+    assert fut not in s, s
     assert s.count("a%d" % V.next_version(repo)) == 1, s
 
 
