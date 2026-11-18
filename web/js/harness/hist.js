@@ -31,6 +31,23 @@
     if (l.tid) {
       _HG.rowById = _HG.rowById || {};
       _HG.rowById[l.tid] = d;
+      // 陈年老 bug 兜底（live 流偶发丢 input，转写恒完整）：重建路径同样要
+      // 登记补令账——旧实现只覆盖 live 建卡（renderToolUse），刷新/切会话
+      // 从快照重建后命令永久缺失。260ms 防抖合并整窗成批登记为一次 fetch
+      //（自愈内部有重入闸，重复触发零成本）
+      const _cfgB = _H_TOOL_CFG[l.text] || {};
+      const _inpB = l.input || {};
+      if (_cfgB.kind === 'bash'
+          && !String(_inpB.command || _inpB.cmd || '').trim()) {
+        (_HG.noInputTids || (_HG.noInputTids = new Set())).add(l.tid);
+        try {
+          clearTimeout(_HG.noInputPatchT);
+          _HG.noInputPatchT = setTimeout(function () {
+            if (typeof window._hgPatchMissingCmds === 'function')
+              window._hgPatchMissingCmds();
+          }, 260);
+        } catch (_) {}
+      }
     }
     return d;
   }

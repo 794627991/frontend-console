@@ -36,9 +36,7 @@ let quoteEl;
 let quoteBodyEl;
 let qDrag;
 let dynEl;              // v3.3：动态页伪 tab sc（_subDynOpen 懒建赋值；未建=null）
-let _hgRolesCache;
 let _dynRaf;
-let _agentModelsTried;
 let _subPaneEl;
 let _subTabsEl;
 let _subBodyEl;
@@ -127,8 +125,6 @@ window._hgHasHistory = _hgHasHistory;
 window._hgSseResetLocal = _hgSseResetLocal;
 window._hgSyncAudit = _hgSyncAudit;
 window.saveCache = saveCache;
-Object.defineProperty(window, '_agentModelsTried', { configurable: true,
-  get() { return _agentModelsTried; }, set(v) { _agentModelsTried = v; } });
 Object.defineProperty(window, '_codeIO', { configurable: true,
   get() { return _codeIO; }, set(v) { _codeIO = v; } });
 Object.defineProperty(window, '_dynRaf', { configurable: true,
@@ -169,8 +165,6 @@ Object.defineProperty(window, '_hgQ', { configurable: true,
   get() { return _hgQ; }, set(v) { _hgQ = v; } });
 Object.defineProperty(window, '_hgRailEl', { configurable: true,
   get() { return _hgRailEl; }, set(v) { _hgRailEl = v; } });
-Object.defineProperty(window, '_hgRolesCache', { configurable: true,
-  get() { return _hgRolesCache; }, set(v) { _hgRolesCache = v; } });
 Object.defineProperty(window, '_hgScrollBottom', { configurable: true,
   get() { return _hgScrollBottom; }, set(v) { _hgScrollBottom = v; } });
 Object.defineProperty(window, '_hgSearchEl', { configurable: true,

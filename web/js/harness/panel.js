@@ -253,8 +253,8 @@
     if (_hgInput.placeholder !== ph) _hgInput.placeholder = ph;
   }
   function _hgAgentModelsFetch() {
-    if (_agentModelsTried) return;
-    _agentModelsTried = true;
+    if (HgState.get('agentModelsTried')) return;
+    HgState.set('agentModelsTried', true);
     fetch('/api/harness/agent_models').then(r => r.json())
       .then(j => {
         if (!j || !j.ok) return;
@@ -271,7 +271,7 @@
         }
         renderSideStatus();              // 面板 C 区/详情卡的模型预显示跟随
         _subTabsPaint();                 // 已开 tab 的模型角标补显
-      }).catch(() => { _agentModelsTried = false; });
+      }).catch(() => { HgState.set('agentModelsTried', false); });
   }
   function _hgAgentModelPre(type) {
     _hgAgentModelsFetch();
@@ -481,7 +481,7 @@
       const q = _HG.sid ? ('?sid=' + encodeURIComponent(_HG.sid)) : '';
       const j = await (await fetch('/api/harness/roles' + q)).json();
       if (mySeq !== _rolesFetchSeq) return j;   // 已有更新的请求在途——丢弃
-      if (j && j.ok) { _hgRolesCache = j; renderSideStatus(); }
+      if (j && j.ok) { HgState.set('rolesCache', j); renderSideStatus(); }
       return j;
     } catch(_) { return null; }
   }
@@ -603,14 +603,15 @@
     const cx = sec.querySelector('[data-hg-d-ctx]');
     cx.textContent = ctxTxt;
     cx.closest('.hg-dyn-kv').classList.toggle('warn', warn);
-    const r = _hgRolesCache && _hgRolesCache.roles;
+    const _rc = HgState.get('rolesCache');
+    const r = _rc && _rc.roles;
     const rEl = sec.querySelector('[data-hg-d-roles]');
     // 形态正确 + 模型名可读。/roles 响应自带 mode（v3.5.0 三态
     // light/mid/heavy）与 resolved（designer/reviewer 各自实模型），按形态
     // 出对应角色行；三形态主会话都直干——轻主力=设计+审核两代理，中主力
     // =只留审核兜底，重主力=派发自由零强制(v3.5.16+)
-    const _mode = _hgRolesCache && _hgRolesCache.mode;
-    const _res = (_hgRolesCache && _hgRolesCache.resolved) || {};
+    const _mode = _rc && _rc.mode;
+    const _res = (_rc && _rc.resolved) || {};
     if (r) {
       if (r.enabled) {
         // v3.5.0：旧 strong ≡ 新 mid；称谓轻主力/中主力/重主力

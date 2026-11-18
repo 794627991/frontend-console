@@ -29,10 +29,13 @@ async function openLogFile(name) {
 async function loadLogsList() {
   const list = $('logsList');
   list.innerHTML = '加载中…';
+  // D2 修复：令牌必须在 try 外声明——原 const 在 try 块内，catch 引用必抛
+  // ReferenceError，「加载失败」提示永远显示不出来。
+  let _myReq = 0;
   try {
     const sortSel = $('logsSort');
     const sort = sortSel ? sortSel.value : 'time_desc';
-    const _myReq = ++window._logsLseq || (window._logsLseq = 1);   // a239 B3-P3: 响应乱序令牌——连续切排序时旧响应晚到不再覆盖新结果
+    _myReq = ++window._logsLseq || (window._logsLseq = 1);   // a239 B3-P3: 响应乱序令牌——连续切排序时旧响应晚到不再覆盖新结果
     const r = await fetch('/api/logs?sort=' + encodeURIComponent(sort));
     const j = await r.json();
     if (_myReq !== window._logsLseq) return;

@@ -703,6 +703,9 @@ const root = window;
       // 孤儿组（用户实测截图实锤，372-380 区间 marker 行触发）
       if (row.kind === 'marker'
           && (row.mkind === 'exit' || row.mkind === 'interrupted')) {
+        // D1 修复（a653）：本回合已出现中断痕迹——turn_header 的 result
+        // 终态（CLI 停止时常仍是 success）不得把「已停止」覆盖回「已工作」。
+        if (row.mkind === 'interrupted') this._sawInterrupted = true;
         var _fin = _g('endThinking');
         if (_fin) { try { _fin(); } catch (e) {} }
         var _vs = _g('_hgVisionSweep');
@@ -992,6 +995,8 @@ const root = window;
       return;
     }
     if (row.kind === 'turn_header') {
+      // 新回合（running 帧）开始——清除上一回合的中断痕迹标记
+      if (row.state === 'running') this._sawInterrupted = false;
       if (row.state === 'running'
           && !(typeof _HG !== 'undefined' && _HG && _HG.grp)) {
         // a147：reopened=后端并回背书（machine_turn 机器续接的 un-finalize，
@@ -1024,7 +1029,27 @@ const root = window;
           this._lastFinRoot = null;   // a147：摘组即失身份记忆（防陈旧匹配）
         } else if (fin && hasWork) {
           this._lastFinRoot = (g && g.root) || null;   // 供并回身份校验
+          // D1 修复：被停回合（state=cancelled）的终态收口必须带 interrupted——
+          // 旧写法只传 turnEnd，会把 stopGen/中断 marker 已定格的「已停止」
+          // 覆盖回「已工作」（marker 先到、终态后到即复现）。
+          // D1 修复（a653 第二版）：主动停止的回合 CLI result 常仍是
+          // success（停止≠错误），且 marker 的 grpFinalize 可能因活组已
+          // 定稿提前早退——终态收口是最后一笔，必须自己认「刚停止过」：
+          // ①投影层 interrupted marker（_sawInterrupted）
+          // ②stopGen 本地停止标记（_stopLocalAt/_stopLocalSid，同会话且
+          //   终态时间在停止点附近 15s 内；新回合不会这么快完成）
+          var _stopLocal = false;
+          try {
+            if (typeof _HG !== 'undefined' && _HG && _HG._stopLocalAt
+                && _HG._stopLocalSid === _HG.sid) {
+              var _eAt = row.endedAt || Date.now();
+              _stopLocal = _eAt >= (_HG._stopLocalAt - 3000)
+                && (_eAt - _HG._stopLocalAt) < 15000;
+            }
+          } catch (e) {}
           try { fin(false, { turnEnd: true,
+                             interrupted: row.state === 'cancelled'
+                               || !!this._sawInterrupted || _stopLocal,
                              endTs: row.endedAt || Date.now() }); } catch (e) {}
           // 对抗审 P2-3/P2-5（a142）：正常回合收口补回合记账与识图清算
           // （V3 _hgTurnWrapup 的职责，随其删除丢失）——dur 优先事件值，

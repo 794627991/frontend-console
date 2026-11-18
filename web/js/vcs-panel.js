@@ -220,7 +220,11 @@ function _vcsHistQfp() {
   return JSON.stringify([q.text, q.author, q.since, q.until]);
 }
 function _vcsHistActive() {          // 活动数据（浏览累积 / 查询累积）
-  return _vcsHist.querying ? _vcsHist.qlog : VCS.log;
+  // a653（回归 VCS-10）：图形视图数据独立存 H.graphLog——曾直接写回
+  // VCS.log，关闭图形后主缓存残留 --graph --all 顺序且 deco 全空
+  // （「排序不对 / 装饰消失」直到下次回补才自愈）。
+  return _vcsHist.querying ? _vcsHist.qlog
+    : (_vcsHist.graph ? (_vcsHist.graphLog || []) : VCS.log);
 }
 function _vcsHistBusy() {
   return _vcsHist.querying ? _vcsHist.qbusy : _vcsLogBusy;
@@ -241,7 +245,8 @@ function _vcsHistFetch(reset, cb) {
   _vcsLogSeq++;   // v3.5.265（Q2-3）：作废在途回补响应（同数组双写者互斥）
   const fp = _vcsHistQfp();
   if (H.querying) H.qbusy = true;
-  const arr = H.querying ? H.qlog : (VCS.log = VCS.log || []);
+  const arr = H.querying ? H.qlog
+    : (H.graph ? (H.graphLog = H.graphLog || []) : (VCS.log = VCS.log || []));
   const skip = reset ? 0 : arr.length;
   const oldest = arr.length ? arr[arr.length - 1].rev : '';
   const isSvn = ((VCS.data || {}).vcs === 'svn');
@@ -260,14 +265,15 @@ function _vcsHistFetch(reset, cb) {
       if (H.querying) H.qbusy = false;
       if (!j.ok) {
         H.fetchErr = j.err || '获取失败';
-        if (!H.querying) { VCS.log = null; VCS.total = undefined; }
+        if (!H.querying && !H.graph) { VCS.log = null; VCS.total = undefined; }
         _vcsHistPaintList(true);
         if (cb) cb();
         return;
       }
       H.fetchErr = null;
       if (reset) H.exhausted = false;
-      const tgt = H.querying ? H.qlog : VCS.log;
+      const tgt = H.querying ? H.qlog
+        : (H.graph ? (H.graphLog = H.graphLog || []) : VCS.log);
       // a650（用户实锤「任意切一下 git 排序就不对」）：HEAD 指纹变化 =
       // 上下文已切换（换分支/rebase/重置）——已载数组是旧上下文的，追加
       // 只会产出「旧块在前新块在后」的两段拼接。整表作废重建。
@@ -278,8 +284,9 @@ function _vcsHistFetch(reset, cb) {
         tgt.length = 0;
         tgt.push(...(j.commits || []));
         H.exhausted = false;
-        if (!H.querying) VCS.total = j.total;
-        else H.qtotal = j.total;
+        if (!H.querying && !H.graph) VCS.total = j.total;
+        else if (H.querying) H.qtotal = j.total;
+        else H.graphTotal = j.total;
         H.page = 1;
         H.rounds = 0;
         _vcsHistPaintList(true);
@@ -295,6 +302,7 @@ function _vcsHistFetch(reset, cb) {
       //（旧写法 undefined 覆盖 → 翻一页「共523条」降级「已载200条」）
       if (j.total !== undefined) {
         if (H.querying) H.qtotal = j.total;
+        else if (H.graph) H.graphTotal = j.total;
         else VCS.total = j.total;
       }
       // P4：svn 无 total 的终点信号——追加响应去重后零新增=已到最早
@@ -891,9 +899,15 @@ function _vcsReloadLog() {
       else {
         if (j.head) VCS.head_fp = j.head;
         const _oldL = VCS.log || [];
-        const _known = new Set(_oldL.map(c => c.rev));
-        const _addH = (j.commits || []).filter(c => c.rev && !_known.has(c.rev));
-        VCS.log = _addH.concat(_oldL);
+        // a653：新数据优先拼接——旧实现只把「新增 rev」拼到头，若旧数组
+        // 顺序已被污染（图形模式 --all 交错）且 rev 集合相同，_addH 为空，
+        // 错序永久残留（HEAD 装饰消失/排序不对直到重启）。现按新响应顺序
+        // 重建头部，旧数组中不在新集合的条目保留在尾（翻页已载的更早提交）。
+        const _newL = (j.commits || []).filter(c => c.rev);
+        const _newSet = new Set(_newL.map(c => c.rev));
+        const _oldRest = _oldL.filter(c => c.rev && !_newSet.has(c.rev));
+        const _addH = _newL;
+        VCS.log = _newL.concat(_oldRest);
         // v3.5.268（复核轻微项）：svn 拼头后 rev 相邻性校验——两轮回补间隔
         // 新增 >100 时新头与旧头间有中段空洞，r 差>1 整体重建（git 是 sha
         // 无序不可判，维持拼头——空洞自愈出口在查询态 reset）

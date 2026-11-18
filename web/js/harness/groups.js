@@ -364,10 +364,24 @@
     _hgScrollBottom();
   }
   function grpFinalize(auto, opt) {
-    const g = _HG.grp;
+    opt = opt || {};
+    let g = _HG.grp;
+    // a653（D1 根治）：中断收尾常发生在活组已随 result 终态定稿/置空之后
+    // （停止→CLI result success 先到→组定稿、_HG.grp 清空→本地收尾/中断
+    // marker 后到）。旧实现在此早退，「已停止」永远写不上——最终头停在
+    // 「已工作」。中断语义下回退定位最后一个组重新定格（幂等：只重写
+    // 组头文案/亮头，不改 DOM 结构）。
+    if (!g && opt.interrupted && typeof _hgFlow !== 'undefined' && _hgFlow) {
+      try {
+        const _root = [..._hgFlow.querySelectorAll('.h-grp')].pop() || null;
+        const _tb = _root && _root.querySelector('.h-drawer.think');
+        const _eb = _root && _root.querySelector('.h-drawer.exec');
+        if (_root && _tb && (_eb || _root.querySelector('.h-tl')))
+          g = grpFromDom(_root, _tb, _eb);
+      } catch (_) {}
+    }
     if (!g) return;
     phRemove(g);
-    opt = opt || {};
     // v3.2R1(P0 审计)：回放态判据（opt.hist 或重建期 openState 在场）前置——
     // _tlExpFlush 与工时分级共用；尾组定稿发生在 _histRender 的 finally 之后
     // （openState 已清空），必须靠 hist:true 显式传递才不丢回放语义
@@ -866,7 +880,7 @@
     // 消息全烙旧形态章；且切会话时 hist 渲染与 roles 拉取竞态（渲染先完成）
     // 用的是旧缓存。每条消息自带实跑模型，按它映射才是正确归属；映射不中
     // （旧模型已不在任何槽）回退会话级形态
-    const rj = _hgRolesCache;
+    const rj = (window.HgState && HgState.get('rolesCache')) || null;
     let roleB = '';
     if (rj && rj.ok && rj.roles && rj.roles.enabled) {
       const _n = m => String(m || '').split('[')[0].trim().toLowerCase();

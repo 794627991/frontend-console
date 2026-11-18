@@ -34,6 +34,7 @@ js/proxy-usage.js
 js/snip.js
 js/a11y.js
 js/office-viewer.js
+js/harness/hgstate.js
 js/harness/state.js
 js/harness/base.js
 js/harness/ask-md.js

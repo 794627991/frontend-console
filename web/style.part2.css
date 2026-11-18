@@ -1,0 +1,764 @@
+  /* ---- a59x 自绘窗控（zcode DesktopWindowControls 逐值复刻）----
+     原生标题栏已由后端摘除（main.py _strip_window_caption），顶栏即窗顶。
+     28×28 圆角钮 / 16px 图形 / 2px 间距 / 关闭红 hover = zcode 原值；
+     颜色全走变量（skins 铁律③），无标题栏后拖拽区在 topbar 上由
+     win-controls.js 托管（WebView2 不认 app-region: drag）。 */
+  .win-controls { display: flex; align-items: center; gap: 2px;
+    margin-left: 4px; flex-shrink: 0; }
+  .win-controls .wc-btn { width: 28px; height: 28px; padding: 0;
+    border: none; border-radius: 6px; background: transparent;
+    color: var(--fg); cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease; }
+  .win-controls .wc-btn svg { width: 16px; height: 16px; display: block; }
+  .win-controls .wc-btn:hover { background: var(--bg-input); color: var(--fg-bright); }
+  .win-controls .wc-btn:active { background: var(--border); }
+  .win-controls .wc-close:hover { background: var(--neon-red); color: var(--on-danger); }
+  /* 最大化↔还原字形切换（win-controls.js 驱动 data-max；zcode 同构） */
+  .win-controls .wc-btn .ic-restore { display: none; }
+  .win-controls .wc-btn[data-max="true"] .ic-max { display: none; }
+  .win-controls .wc-btn[data-max="true"] .ic-restore { display: block; }
+
+  /* 顶栏即标题栏：整条可拖拽（交互元素由 win-controls.js 放行），
+     禁选防拖拽时拖出蓝选区（pywebview text_select=True 的反制） */
+  .topbar { user-select: none; -webkit-user-select: none; }
+  .topbar input, .topbar textarea { user-select: text; -webkit-user-select: text; }
+
+  /* 最大化越界补偿（main.py 实测下发 --wv-overhang）：无题窗最大化时
+     边框被推到屏外会裁掉顶栏/两侧，Electron 内部做了这事，我们自理 */
+  /* 审计 P1 + 复审 P1（snap 残留）：padding 补偿与 is-max 拆类——
+     .hg-overhang 由 overhang>0 驱动（最大化经 MaximizedBounds 钉 workarea
+     后恒 0；Aero snap 半屏等非 max 越界态也补），body.is-max 专管 logo 定调 */
+  body.hg-overhang { padding-top: var(--wv-overhang, 0px);
+    padding-left: var(--wv-overhang, 0px);
+    padding-right: var(--wv-overhang, 0px);
+    padding-bottom: var(--wv-overhang, 0px); }
+  .topbar select, .topbar input {
+    background: var(--bg-input); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 12px; font-family: var(--font-ui);
+    outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .topbar select { min-width: 130px; cursor: pointer; }
+  .topbar select:focus, .topbar input:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+  .btn {
+    background: var(--bg-card); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 14px; font-size: 12px; cursor: pointer;
+    font-family: var(--font-ui); transition: all 0.2s; white-space: nowrap;
+    /* a308 全站统一：含图标按钮 inline-flex 垂直居中（用户实锤 54 处
+       vertical-align hack 导致字体贴底/不居中——删 hack 后由此规则接管） */
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .btn svg { display: block; flex-shrink: 0; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: var(--on-accent); border: none; font-weight: 600;
+  }
+  .btn.primary:hover { box-shadow: 0 0 14px var(--accent-glow); filter: brightness(1.1); }
+  .btn.danger { color: var(--neon-red); }
+  .btn.danger:hover { border-color: var(--neon-red); box-shadow: 0 0 8px rgba(255,64,96,0.3); }
+  .btn.ghost { background: transparent; }
+  .btn.icon-btn { padding: 6px 8px; min-width: 30px; text-align: center; }
+  .topbar .spacer { flex: 1; }
+  .topbar .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 20px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    font-size: 11px; color: var(--muted);
+  }
+  .topbar .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .topbar .status-pill .dot.on { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .topbar .status-pill .dot.rec { display: none; }  /* 「录制中」指示器已移除（无实际功能） */
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ===== 主布局 ===== */
+  .main {
+    flex: 1; display: flex; min-height: 0; position: relative; z-index: 1;
+  }
+
+  /* ===== 左侧串口列表 ===== */
+  /* a219：侧栏宽度可拖拽（3px 命中区 + hover 显形——同 tftp resizer 语言） */
+  .sidebar-resizer { width: 4px; flex-shrink: 0; cursor: col-resize;
+    background: transparent; margin-left: -1px; z-index: 5; }
+  .sidebar-resizer:hover, .sidebar-resizer.dragging {
+    background: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  /* ---- a59x 侧栏最小化（VSCode Activity Bar 语义，用户定调）----
+     .mini：44px 竖排图标条独占，sheets/面板/TFTP 全隐；点图标展开到
+     对应面板，底部条 » 恢复上次面板；状态存 localStorage 跨启动。
+     隐藏规则必须 !important：`.sidebar-sheet-pane[data-sheet=search].active`
+     （三选择子+靠后，style.css:5409 同级翻车），面板泄漏用户实锤 */
+  .sidebar.mini { width: 44px !important; }   /* !important 压 1336px 窄窗 130px 媒体查询 */
+  .sidebar.mini .sidebar-sheets,
+  .sidebar.mini .sidebar-sheet-pane,
+  .sidebar.mini .tftp-resizer,
+  .sidebar.mini .tftp-pane { display: none !important; }
+  .sidebar-rail { display: none; }
+  .sidebar.mini .sidebar-rail { display: flex; flex-direction: column;
+    align-items: center; padding: 8px 0; gap: 4px; flex: 1; }
+  .sidebar-rail .rail-btn { width: 32px; height: 32px; padding: 0;
+    border: none; border-radius: 6px; background: transparent;
+    color: var(--muted); cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; transition: background 0.15s ease, color 0.15s ease; }
+  .sidebar-rail .rail-btn:hover { background: var(--bg-input); color: var(--fg-bright); }
+  .sidebar-rail .rail-btn.active { color: var(--accent); }
+  .sidebar-rail .rail-btn.active::before { content: ''; position: absolute;
+    left: -6px; top: 7px; width: 2px; height: 18px;
+    background: var(--accent); border-radius: 1px; }
+  /* 侧栏收放钮在顶栏 conn-area 尾（v3：底部条占一整排，用户实锤撤除）；
+     mini 态箭头翻转成 » 并贴 rail 底（rail-expand margin-top:auto） */
+  .sidebar-rail .rail-expand { margin-top: auto; }
+  /* 侧栏收放手柄（v4，用户定调位置：侧栏右缘垂直居中，VSCode 折叠手柄
+     同位；v1 底部条占一排 / v2 顶栏钮不和谐，均用户实锤撤除）。挂
+     sidebar-resizer 内随宽度/mini 跟随；常隐 hover 显形（同 resizer
+     显形语言），mini 态常显+箭头翻转成 » */
+  .sidebar-resizer { position: relative; }
+  .sidebar-resizer .sb-edge { position: absolute; left: 2px; top: 50%;
+    transform: translate(-50%, -50%); width: 18px; height: 44px;
+    border: 1px solid var(--border); border-radius: 9px;
+    background: var(--bg-panel); color: var(--muted);
+    cursor: pointer; padding: 0; display: flex;
+    align-items: center; justify-content: center;
+    opacity: 0; transition: opacity 0.15s ease, color 0.15s ease,
+      border-color 0.15s ease, background 0.15s ease; z-index: 6; }
+  .sidebar-resizer:hover .sb-edge, .sidebar-resizer .sb-edge:hover {
+    opacity: 1; }
+  /* 审计P2：opacity:0 不禁命中测试——隐形钮吞侧栏右缘/main 左缘点击；
+     默认禁命中，hover resizer 或自身时恢复 */
+  .sidebar-resizer .sb-edge { pointer-events: none; }
+  .sidebar-resizer:hover .sb-edge, .sidebar-resizer .sb-edge:hover {
+    pointer-events: auto; }
+  .sidebar-resizer .sb-edge:hover { color: var(--fg-bright);
+    border-color: var(--border-glow); background: var(--bg-card); }
+  /* mini 态手柄整个隐藏：恢复入口=rail 底 »（用户实锤：中间常显 + 双入口
+     重复）；展开态手柄 hover 才显，是唯一收起入口，无重复 */
+  body.sb-mini .sidebar-resizer .sb-edge { display: none; }
+
+  /* ===== 侧栏双 sheet：打开 / 最近 ===== */
+  .sidebar-sheets {
+    flex-shrink: 0; display: flex; gap: 4px; padding: 10px 10px 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-sheet-tab {
+    flex: 1; text-align: center; font-size: 11px; font-weight: 600; letter-spacing: 1px;
+    color: var(--muted); padding: 6px 0; border-radius: 6px; cursor: pointer;
+    border: 1px solid transparent; transition: all 0.2s; text-transform: uppercase;
+    /* a216：第 4 个 tab 后均宽变窄——文字+计数换行把 tab 撑高（用户实锤）。
+       flex 单行居中永不折行；计数徽标随窄宽自动收缩 */
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    white-space: nowrap; min-width: 0; overflow: hidden;
+  }
+  .sidebar-sheet-tab:hover { color: var(--fg); background: var(--bg-card); }
+  .sidebar-sheet-tab.active {
+    color: var(--accent); background: var(--bg-card); border-color: var(--border-glow);
+  }
+  /* a224：计数改右上角角标（绝对定位不占行宽——4 tab 均分后 ~52px 塞不下
+     「打开+徽标」，flex-shrink 收缩会把徽标裁一半，用户实锤截图）。
+     tab 需 position:relative 承载；徽标 ≥3 位数时缩字距自适配 */
+  .sidebar-sheet-tab { position: relative; }
+  .sidebar-sheet-tab .count {
+    position: absolute; top: -4px; right: 2px;
+    background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0 4px; font-size: 9px; line-height: 14px;
+    min-width: 14px; text-align: center; color: var(--muted);
+  }
+  .sidebar-sheet-tab.active .count {
+    color: var(--accent); border-color: var(--accent-glow);
+  }
+  .sidebar-sheet-pane { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .sidebar-sheet-pane.active { display: flex; }
+
+  .sidebar-head {
+    padding: 12px 16px 8px;
+    font-size: 11px; font-weight: 600; letter-spacing: 1px;
+    color: var(--muted); text-transform: uppercase;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-head .count {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1px 8px; font-size: 10px; color: var(--accent);
+  }
+  .port-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  .port-item {
+    padding: 10px 12px; border-radius: 8px; cursor: pointer;
+    margin-bottom: 4px; transition: all 0.2s;
+    border: 1px solid transparent;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .port-item:hover { background: var(--bg-card); }
+  .port-item.active {
+    background: linear-gradient(135deg, rgba(0,212,255,0.12), rgba(0,153,204,0.05));
+    border-color: var(--border-glow);
+    box-shadow: inset 0 0 10px rgba(0,212,255,0.08);
+  }
+  .port-item .led {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--muted); transition: all 0.3s;
+  }
+  .port-item.connected .led { background: var(--neon-green); box-shadow: 0 0 8px var(--neon-green); }
+  .port-item .info { flex: 1; min-width: 0; }
+  /* a59x（用户实锤：vcs 对比条目超长名「A@HEAD ↔ B」把卡片顶穿）：name 补
+     单行截断（与下方 desc/.recent-item .name 同款防护——name 漏了多年） */
+  .port-item .name { font-size: 12px; font-weight: 600; color: var(--fg-bright); font-family: var(--font-mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .port-item .desc { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .port-item .baud { font-size: 10px; color: var(--accent); font-family: var(--font-mono); }
+  .port-item .actions { display: none; gap: 4px; }
+  .port-item:hover .actions { display: flex; }
+  .port-item .actions button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 14px; padding: 0 2px; border-radius: 3px;
+  }
+  .port-item .actions button:hover { color: var(--neon-red); background: rgba(255,64,96,0.1); }
+
+  /* ===== 最近打开列表（SSH/串口/文件 分组呈现，快捷重开）===== */
+  .recent-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px 8px; }
+  .recent-group-head {
+    font-size: 10px; font-weight: 600; letter-spacing: 1px; color: var(--muted);
+    padding: 8px 6px 4px; text-transform: uppercase; display: flex; align-items: center; gap: 6px;
+  }
+  .recent-group-head .g-line { flex: 1; height: 1px; background: var(--border); }
+  .recent-group-head.t-ssh { color: var(--neon-purple); }
+  .recent-group-head.t-serial { color: var(--accent); }
+  .recent-group-head.t-file { color: var(--neon-orange); }
+  .recent-empty { padding: 14px 10px; font-size: 11px; color: var(--muted); text-align: center; line-height: 1.6; }
+  .recent-item {
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;
+    border: 1px solid transparent; display: flex; align-items: center; gap: 8px;
+    transition: all 0.2s;
+  }
+  .recent-item:hover { background: var(--bg-card); border-color: var(--border-glow); }
+  .recent-item .ric { font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
+  /* Claude 官方星形标志（品牌色 D97757，内联 SVG 免请求）——顶栏按钮/tab/面板/最近列表共用 */
+  .claude-ico { display: inline-block; width: 1em; height: 1em; vertical-align: -0.125em;
+    background: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTQiIGZpbGw9IiNEOTc3NTciLz4KICA8ZyBmaWxsPSIjRkZGN0VEIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgzMiwzMikiPgogICAgPHBhdGggZD0iTSAwIC0yMS41IEMgMS4yIC0xOS40IDUuOCAtMTEuNCA3LjEgLTkuMiBMIDIuOSAtNy45IEMgMS42IC0xMC4xIC0yLjkgLTE4LjEgLTQuMSAtMjAuMiBaIiB0cmFuc2Zvcm09InJvdGF0ZSgwKSIvPgogICAgPHBhdGggZD0iTSAwIC0yMS41IEMgMS4yIC0xOS40IDUuOCAtMTEuNCA3LjEgLTkuMiBMIDIuOSAtNy45IEMgMS42IC0xMC4xIC0yLjkgLTE4LjEgLTQuMSAtMjAuMiBaIiB0cmFuc2Zvcm09InJvdGF0ZSg0NSkiLz4KICAgIDxwYXRoIGQ9Ik0gMCAtMjEuNSBDIDEuMiAtMTkuNCA1LjggLTExLjQgNy4xIC05LjIgTCAyLjkgLTcuOSBDIDEuNiAtMTAuMSAtMi45IC0xOC4xIC00LjEgLTIwLjIgWiIgdHJhbnNmb3JtPSJyb3RhdGUoOTApIi8+CiAgICA8cGF0aCBkPSJNIDAgLTIxLjUgQyAxLjIgLTE5LjQgNS44IC0xMS40IDcuMSAtOS4yIEwgMi45IC03LjkgQyAxLjYgLTEwLjEgLTIuOSAtMTguMSAtNC4xIC0yMC4yIFoiIHRyYW5zZm9ybT0icm90YXRlKDEzNSkiLz4KICAgIDxwYXRoIGQ9Ik0gMCAtMjEuNSBDIDEuMiAtMTkuNCA1LjggLTExLjQgNy4xIC05LjIgTCAyLjkgLTcuOSBDIDEuNiAtMTAuMSAtMi45IC0xOC4xIC00LjEgLTIwLjIgWiIgdHJhbnNmb3JtPSJyb3RhdGUoMTgwKSIvPgogICAgPHBhdGggZD0iTSAwIC0yMS41IEMgMS4yIC0xOS40IDUuOCAtMTEuNCA3LjEgLTkuMiBMIDIuOSAtNy45IEMgMS42IC0xMC4xIC0yLjkgLTE4LjEgLTQuMSAtMjAuMiBaIiB0cmFuc2Zvcm09InJvdGF0ZSgyMjUpIi8+CiAgICA8cGF0aCBkPSJNIDAgLTIxLjUgQyAxLjIgLTE5LjQgNS44IC0xMS40IDcuMSAtOS4yIEwgMi45IC03LjkgQyAxLjYgLTEwLjEgLTIuOSAtMTguMSAtNC4xIC0yMC4yIFoiIHRyYW5zZm9ybT0icm90YXRlKDI3MCkiLz4KICAgIDxwYXRoIGQ9Ik0gMCAtMjEuNSBDIDEuMiAtMTkuNCA1LjggLTExLjQgNy4xIC05LjIgTCAyLjkgLTcuOSBDIDEuNiAtMTAuMSAtMi45IC0xOC4xIC00LjEgLTIwLjIgWiIgdHJhbnNmb3JtPSJyb3RhdGUoMzE1KSIvPgogIDwvZz4KPC9zdmc+") no-repeat center / contain; }
+  .recent-item .info { flex: 1; min-width: 0; }
+  .recent-item .name { font-size: 11px; font-weight: 600; color: var(--fg-bright); font-family: var(--font-mono);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .recent-item .desc { font-size: 9px; color: var(--muted); }
+  .recent-item.t-ssh .desc { color: var(--neon-purple); }
+  .recent-item.t-serial .desc { color: var(--accent); }
+  .recent-item.t-file .desc { color: var(--neon-orange); }
+  .recent-item .actions { display: none; }
+  .recent-item:hover .actions { display: block; }
+  .recent-item .actions button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 12px; padding: 0 2px; border-radius: 3px;
+  }
+  .recent-item .actions button:hover { color: var(--neon-red); background: rgba(255,64,96,0.1); }
+
+  /* ===== 文件树面板（类 VSCode 工作区：多根 + 懒加载）===== */
+  .tree-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  /* 工具条主样式见下方 a258 两行式块（此处仅保留历史锚点注释） */
+  /* a258（用户定调）：两行式工具条——主钮「打开文件夹」独占一行全宽，
+     五枚图标钮等宽分布一行（VSCode Explorer 同款节奏）。任何宽度零裁切：
+     图标条内部可换行（等宽钮成排落位，不散乱）；<148px 主钮丢文字保图标 */
+  .tree-actions { padding: 8px 8px 4px; display: flex; flex-direction: column; gap: 5px;
+    container-type: inline-size; }
+  .tree-actions .btn { font-size: 11px; }
+  .tree-actions .btn#treeAddRoot { width: 100%; }
+  .ta-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .ta-row .btn { flex: 1 1 0; min-width: 34px; padding: 6px 4px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; }
+  .ta-row .btn svg { display: block; }
+  .ta-row .btn.on { color: var(--accent); border-color: var(--accent-glow); }
+  @container (max-width: 148px) {
+    .tree-actions .btn#treeAddRoot .lbl { display: none; }
+  }
+  /* 键盘焦点环（a256 快捷键配套）：Tab 聚到树面板时内描边提示键盘导航可用 */
+  #treeRoots:focus-visible { box-shadow: inset 0 0 0 1px var(--border-glow); border-radius: 8px; }
+  .tree-scroll-wrap { flex: 1; min-height: 0; position: relative; }
+  /* 面包屑是 absolute 定位的「顶部条」，树视口让位下移——不用覆盖层。
+     a437（用户实锤：覆盖层压住首行，点不到）：覆盖层虽然零布局参与，但
+     会白吃掉视口顶部 22px，被压的那行点不到。改成让位式：crumbs 显示时
+     .tree-roots 的 top 下移到 22px，视口整体缩 22px，一行不少。 */
+  .tree-roots { position: absolute; inset: 0; overflow-y: auto; overflow-x: auto; padding: 4px 8px 8px; }
+  .tree-scroll-wrap.has-crumbs .tree-roots { top: 22px; }
+  /* 目录面包屑（VSCode sticky scroll 同款）：滚动后仍能看出当前这屏文件
+     属于哪个目录。显隐只由 scrollTop / 顶部行类型决定，**不读 clientHeight
+     ／scrollHeight**——读它们才能形成「显隐 → 高度变 → 重算 → 显隐」的
+     抽搐反馈环。让位式的 top 变化只会触发一次 ResizeObserver 重绘，收敛。 */
+  .tree-crumbs { position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+    display: flex; align-items: center; gap: 1px; height: 22px; padding: 0 8px;
+    background: var(--bg-panel); border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+    white-space: nowrap; overflow: hidden;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.35); }
+  .tree-crumbs[hidden] { display: none; }
+  .tree-crumb { display: inline-flex; align-items: center; gap: 4px; min-width: 0;
+    flex-shrink: 1; padding: 2px 4px; border-radius: 4px; cursor: pointer; max-width: 220px; }
+  /* 最末一级（当前所在的直接父目录）永不被挤掉：层数多时压前面的 */
+  .tree-crumb:last-child { flex-shrink: 0; }
+  .tree-crumb:hover { background: var(--bg-card); color: var(--accent); }
+  .tree-crumb span { overflow: hidden; text-overflow: ellipsis; }
+  .tree-crumb svg { flex-shrink: 0; }
+  .tree-crumb-sep { flex-shrink: 0; color: var(--muted); opacity: 0.7; font-size: 10px; }
+  .tree-empty { padding: 30px 10px; font-size: 10px; color: var(--muted); text-align: center; line-height: 1.8; }
+  /* 根行：文件夹名 + hover 删根 ✕（仿 .recent-item .actions 显隐模式） */
+  /* 不能加 overflow:hidden —— 它会让本行自己成为 sticky 的滚动容器，下面 .root-x 的
+     position:sticky 就再也钉不住了。行宽是 max-content，本来也裁不到任何东西。 */
+  .tree-root-head { padding: 0 6px; height: 22px; border-radius: 6px; cursor: pointer; display: flex;
+    align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+    color: var(--fg-bright); font-family: var(--font-mono); white-space: nowrap; }
+  .tree-root-head:hover { background: var(--bg-card); }
+  /* 删根 ✕：sticky + right 钉在【可视右缘】。
+     根目录名很长时行宽是 max-content，margin-left:auto 会把 ✕ 推到整行最右端，
+     必须横滚到名字末尾才够得着（用户实锤：长名文件夹的删除键够不到）。
+     显隐用 visibility 而非 display：保留占位，hover 时整行不抖。 */
+  .tree-root-head .root-x { visibility: hidden; margin-left: auto; color: var(--muted);
+    font-size: 11px; padding: 3px 6px; border-radius: 4px; flex-shrink: 0; line-height: 1;
+    position: sticky; right: 4px; background: var(--bg-card); }
+  .tree-root-head:hover .root-x { visibility: visible; }
+  .tree-root-head .root-x:hover { color: var(--neon-red); background: rgba(255,64,96,0.1); }
+  /* 树节点行（含根行展开复用同结构）；箭头 ▶ 旋转 90° 成 ▼（transform 免字符切换重排）。
+     white-space:nowrap + 不截断——横向超宽交给 .tree-roots overflow-x 滚动（深层名字
+     完整可见，用户实锤 6~7 层被尾部省略号裁掉） */
+  /* v3 虚拟化：行定高 22px（_TV.ROW_H 锚，改动需同步 JS）+ absolute
+     （top=i*22 由 JS），left:0；min-width:100% 保 hover 背景撑满列宽 */
+  .tree-row { padding: 0 6px; height: 22px; border-radius: 6px; cursor: pointer; display: flex;
+    align-items: center; gap: 5px; font-size: 11px; font-family: var(--font-mono);
+    white-space: nowrap; width: max-content; min-width: 100%; position: absolute; }
+  .tree-row:hover { background: var(--bg-card); }
+  .tree-row.active { background: linear-gradient(135deg, rgba(0,212,255,0.14), transparent); }
+  /* a209批1 decorations：dirty 橙点（右缘，与编辑器 tab 同色系）、已打开文件名着色 */
+  .tree-row .tree-dot-dirty { margin-left: auto; padding-left: 12px; color: var(--neon-orange);
+    font-size: 9px; flex-shrink: 0; }
+  .tree-row.tree-open .t-name { color: var(--accent); }
+  .tree-row.tree-open .tree-dot-dirty { margin-left: 0; padding-left: 6px; }
+  .tree-row .arrow { width: 10px; flex-shrink: 0; font-size: 8px; color: var(--muted);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: transform 0.15s; user-select: none; }
+  .tree-row .t-name { min-width: 0; }
+  .tree-root-head { width: max-content; min-width: 100%; }
+  .tree-row svg, .tree-root-head svg { flex-shrink: 0; }
+  
+  .tree-more { padding: 0 8px; height: 22px; display: flex; align-items: center;
+    font-size: 10px; color: var(--muted); font-family: var(--font-mono);
+    white-space: nowrap; width: max-content; min-width: 100%; position: absolute; }
+  /* v3 虚拟化：sizer 撑总高/总宽（宽度=全树最深行估算，横滚可达） */
+  .tree-sizer { position: relative; }
+  .tree-children { display: grid; }
+  /* 缩进：v3 虚拟化起全部由 _tvRowHtml 行内 style 提供（a206C：原 20 条
+     padding 梯度选择器被行内永久覆盖成死规则，删除；data-depth 属性仍被
+     下方 ::before 层级参考线消费，属性保留） */
+  /* 层级参考线：每条树行在名字左侧画 depth 条竖线（VSCode indent guides 同款语义），
+     10% 亮度不抢焦点，层级归属一眼可辨 */
+  .tree-row[data-depth="1"]::before, .tree-row[data-depth="2"]::before,
+  .tree-row[data-depth="3"]::before, .tree-row[data-depth="4"]::before,
+  .tree-row[data-depth="5"]::before, .tree-row[data-depth="6"]::before,
+  .tree-row[data-depth="7"]::before, .tree-row[data-depth="8"]::before,
+  .tree-row[data-depth="9"]::before, .tree-row[data-depth="10"]::before,
+  .tree-row[data-depth="11"]::before, .tree-row[data-depth="12"]::before,
+  .tree-row[data-depth="13"]::before, .tree-row[data-depth="14"]::before,
+  .tree-row[data-depth="15"]::before, .tree-row[data-depth="16"]::before,
+  .tree-row[data-depth="17"]::before, .tree-row[data-depth="18"]::before,
+  .tree-row[data-depth="19"]::before, .tree-row[data-depth="20"]::before {
+    content: ''; width: 14px; height: 100%; position: absolute; left: 0; top: 0;
+    background: repeating-linear-gradient(to right,
+      var(--border) 0 1px, transparent 1px 14px);
+    pointer-events: none;
+  }
+
+  /* ===== 程序员计算器（仿 Marvell Register Analyzer + 计算器）===== */
+  .bc-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  /* 计算器里的按钮：lv-btn 全局样式限定在 .log-viewer-toolbar 下，此处不继承——
+     裸 lv-btn 是浏览器白底默认样式（铁律2 实锤），补同款暗色描边 */
+  .bc-body .lv-btn, .log-viewer-toolbar.bc-tools .lv-btn { background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: var(--font-mono); }
+  .bc-body .lv-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .bc-body .lv-btn:focus { outline: none; }
+  /* 位格区：MSB 在左、按字节分组（组间间隙=分域辨识；奇偶组底色区分） */
+  .bc-bits { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+  .bc-bit-group { display: flex; gap: 2px; padding: 4px; border-radius: 6px; }
+  .bc-bit-group:nth-child(odd) { background: rgba(255,255,255,0.02); }
+  .bc-bit { width: 34px; height: 42px; border: 1px solid var(--border); border-radius: 5px;
+    cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--bg-input); transition: all 0.12s; user-select: none; }
+  .bc-bit:hover { border-color: var(--accent); }
+  .bc-bit .bc-bit-n { font-size: 8px; color: var(--muted); font-family: var(--font-mono); }
+  .bc-bit .bc-bit-v { font-size: 14px; font-weight: 700; color: var(--muted);
+    font-family: var(--font-mono); line-height: 1.1; }
+  .bc-bit.on { border-color: var(--accent); background: rgba(0,212,255,0.16);
+    box-shadow: 0 0 6px rgba(0,212,255,0.2); }
+  .bc-bit.on .bc-bit-v { color: var(--accent); }
+  /* 整值区：HEX/DEC/OCT/BIN 四行。每行自身是 grid（标签 38px + 输入框 1fr），
+     整行占满外层（1/-1）——之前残留 :first-child{grid-column:1} 把 HEX 行
+     钉死在标签列，框挤成 40px 小框，用户实锤 */
+  .bc-values { display: grid; grid-template-columns: 1fr; gap: 6px 0;
+    max-width: 640px; margin: 0 auto; width: 100%; align-items: center; }
+  .bc-vrow { display: grid; grid-template-columns: 38px 1fr; gap: 0 8px; align-items: center;
+    font-size: 10px; font-family: var(--font-mono); font-weight: 600; color: var(--muted); }
+  .bc-vrow input { grid-column: 2; background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; color: var(--fg-bright); font-family: var(--font-mono); font-size: 12px;
+    outline: none; width: 100%; }
+  .bc-vrow input:focus { border-color: var(--accent); }
+  .bc-vrow:focus-within { color: var(--accent); }
+  /* 运算条：操作数+AND/OR/XOR/NOT/移位 */
+  .bc-opbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .bc-op2 { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 8px; color: var(--fg-bright); font-family: var(--font-mono); font-size: 11px;
+    outline: none; width: 160px; }
+  .bc-op2:focus { border-color: var(--accent); }
+  .bc-shift-n { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--muted); }
+  .bc-shift-n input { background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+    padding: 3px 4px; color: var(--fg-bright); font-family: var(--font-mono); font-size: 11px; outline: none; }
+  /* 表达式计算器行 */
+  .bc-calc { display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    border-top: 1px solid var(--border); padding-top: 10px; }
+  .bc-expr { flex: 1; min-width: 260px; background: var(--bg-input); border: 1px solid var(--border);
+    border-radius: 5px; padding: 7px 10px; color: var(--fg-bright); font-family: var(--font-mono);
+    font-size: 12px; outline: none; }
+  .bc-expr:focus { border-color: var(--accent); }
+  .bc-expr-res { font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    word-break: break-all; max-width: 100%; }
+  .bc-expr-res.err { color: var(--neon-red); }
+
+  /* ===== 计算器扩展区：点按键盘 + 时间戳 + 历史（仿 Windows 计算器）===== */
+  .bc-extra { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  .bc-keypad-wrap { flex: 1 1 360px; min-width: 320px; display: flex; flex-direction: column; gap: 6px; }
+  .bc-kp-modes { display: flex; gap: 6px; }
+  .bc-kp-mode {
+    border: 1px solid var(--border); border-radius: 5px; background: var(--bg-input);
+    color: var(--muted); font-size: 11px; padding: 4px 12px; cursor: pointer;
+    transition: border-color .1s, color .1s;
+  }
+  .bc-kp-mode:hover { border-color: var(--accent); color: var(--accent); }
+  .bc-kp-mode.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .bc-keypad {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px;
+  }
+  .bc-key {
+    border: 1px solid var(--border); border-radius: 5px; background: var(--bg-input);
+    color: var(--fg); font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+    text-align: center; padding: 7px 0; cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color .1s, color .1s;
+  }
+  /* 数字/字母键微亮底色——数字区一眼可辨（学官方数字区与功能区分色） */
+  .bc-key[data-bc-key="7"], .bc-key[data-bc-key="8"], .bc-key[data-bc-key="9"],
+  .bc-key[data-bc-key="4"], .bc-key[data-bc-key="5"], .bc-key[data-bc-key="6"],
+  .bc-key[data-bc-key="1"], .bc-key[data-bc-key="2"], .bc-key[data-bc-key="3"],
+  .bc-key[data-bc-key="0"], .bc-key[data-bc-key="."],
+  .bc-key[data-bc-key="A"], .bc-key[data-bc-key="B"], .bc-key[data-bc-key="C"],
+  .bc-key[data-bc-key="D"], .bc-key[data-bc-key="E"], .bc-key[data-bc-key="F"] {
+    background: var(--bg-card);
+  }
+  .bc-key:hover { border-color: var(--accent); color: var(--accent); }
+  .bc-key-dim { display: none; }
+  .bc-key[data-bc-key="="] { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .bc-key[data-bc-key="CE"], .bc-key[data-bc-key="⌫"] { color: var(--neon-red); }
+  .bc-side { flex: 1 1 300px; min-width: 280px; display: flex; flex-direction: column; gap: 10px; }
+  .bc-box {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    background: var(--bg-card);
+  }
+  .bc-box-title { font-weight: 600; font-size: 12px; }
+  .bc-sheets { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .bc-sheet-tab {
+    font-size: 11px; font-weight: 600; color: var(--muted); cursor: pointer;
+    padding: 3px 10px; border-radius: 10px; border: 1px solid transparent;
+    transition: color .1s, border-color .1s;
+  }
+  .bc-sheet-tab:hover { color: var(--accent); }
+  .bc-sheet-tab.active { color: var(--accent); border-color: var(--accent); }
+  .bc-sheet-pane { display: none; }
+  .bc-sheet-pane.active { display: block; }
+  .bc-ts-out { margin-top: 8px; font-family: var(--font-mono); line-height: 1.8; }
+  .bc-dt { background: var(--bg-input); border: 1px solid var(--border); border-radius: 5px;
+    color: var(--fg); font-family: var(--font-mono); font-size: 12px; padding: 4px 8px;
+    color-scheme: dark; }
+  .bc-dt:focus { border-color: var(--accent); outline: none; }
+  .bc-hlist { margin-top: 8px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .bc-hitem {
+    border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px;
+    cursor: pointer; display: flex; flex-direction: column; gap: 1px;
+    transition: border-color .1s;
+  }
+  .bc-hitem:hover { border-color: var(--accent); }
+  .bc-hitem-e { font-family: var(--font-mono); font-size: 11px; color: var(--fg);
+    word-break: break-all; }
+  .bc-hitem-r { font-family: var(--font-mono); font-size: 11px; color: var(--accent); }
+
+  /* ===== 侧边栏底部 TFTP 面板（高度可拖拽）===== */
+  .tftp-resizer {
+    flex-shrink: 0; height: 7px; cursor: row-resize;
+    background: var(--bg-panel); border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 9px; line-height: 1;
+    user-select: none; transition: background 0.15s, color 0.15s;
+  }
+  .tftp-resizer:hover, .tftp-resizer.dragging {
+    background: var(--accent); color: var(--on-accent);
+  }
+  .tftp-pane {
+    height: 50%; flex-shrink: 0;  /* 默认占侧边栏一半，拖拽后 JS 用 px 覆盖并记忆 */
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    background: var(--bg-panel); overflow: hidden;
+  }
+  .tftp-head {
+    padding: 10px 14px 8px; flex-shrink: 0;
+    display: flex; align-items: center;
+    /* a59x 二修（用户实锤两张截图）：space-between 三子项（::before 折叠
+       箭头 + 标题 + 徽章）宽侧栏时标题被挤去中间「不贴左」——改 flex-start
+       + 徽章 margin-left:auto 钉右；gap 保窄侧栏不重叠。单行契约：标题
+       可省略截断，徽章恒整行（同 tftp-dir .path 防护） */
+    justify-content: flex-start; gap: 8px;
+    font-size: 11px; font-weight: 600; letter-spacing: 1px;
+    color: var(--muted); text-transform: uppercase;
+    white-space: nowrap; min-width: 0;
+    padding-right: 14px;   /* a59x 四修：溢出已由收缩链根治，回 14 与左对称（用户实锤不对称丑） */
+  }
+  /* 收缩链（a59x 五修）：a564 的折叠指示 span 是 JS prepend 的第一个 span，
+     旧 span:first-of-type 选择器命中它——窄宽度 ▶ 被 ellipsis 缩没（用户实锤
+     「▶ 没了左边显宽」）。改用 .tftp-title 精准命中标题；指示符 flex-shrink:0
+     恒显（1285 行既有规则不再被覆盖） */
+  .tftp-head .tftp-title { min-width: 0; flex-shrink: 1;
+    display: block; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .tftp-head .tftp-collapse-ind { flex-shrink: 0; }
+  .tftp-head .tftp-toggle { flex-shrink: 0; white-space: nowrap;
+    margin-left: auto; }
+  /* a564：折叠态（VSCode 面板语义）——只剩标题栏；点击标题栏展开 */
+  .tftp-pane.collapsed { height: auto; min-height: 0; }
+  .tftp-pane.collapsed .tftp-dir,
+  .tftp-pane.collapsed .tftp-list { display: none; }
+  .tftp-head:hover { color: var(--fg); }
+  .tftp-collapse-ind { flex-shrink: 0; }
+  .tftp-collapse-ind::before { content: '▾'; display: inline-block;
+    transition: transform .15s; }
+  .tftp-pane.collapsed .tftp-collapse-ind::before { content: '▸'; }
+  .tftp-toggle {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    font-size: 10px; font-weight: 500; letter-spacing: 0;
+    text-transform: none; padding: 3px 10px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--bg-card);
+    color: var(--muted); transition: all 0.2s; user-select: none;
+  }
+  .tftp-toggle.on {
+    color: var(--neon-green); border-color: rgba(0,255,136,0.4);
+    background: rgba(0,255,136,0.08);
+    box-shadow: 0 0 8px rgba(0,255,136,0.15);
+  }
+  .tftp-toggle .led { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: all 0.3s; }
+  .tftp-toggle.on .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  .tftp-dir {
+    padding: 0 14px 8px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .tftp-dir .path {
+    flex: 1; min-width: 0; font-family: var(--font-mono); font-size: 10px;
+    color: var(--fg); background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 5px; padding: 5px 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    cursor: pointer; title: '点击选择 TFTP 目录';
+  }
+  .tftp-dir .path:hover { border-color: var(--accent); }
+  .tftp-dir .btn {
+    flex-shrink: 0; font-size: 11px; padding: 4px 8px;
+  }
+  .tftp-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; min-height: 0; }
+  /* 两个独立滚动区：最近传输固定上限，目录文件占余下空间 */
+  .tftp-transfers { flex: 0 0 auto; max-height: 188px; overflow-y: auto; padding: 0 8px 4px; min-height: 0; }  /* 标题24px + 5行×~32px ≈ 184px */
+  .tftp-files { flex: 1; overflow-y: auto; padding: 0 8px 8px; min-height: 0; }
+  .tftp-item {
+    font-size: 11px; padding: 6px 8px 8px; border-radius: 5px;
+    display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+    font-family: var(--font-mono); color: var(--muted);
+    position: relative;  /* 进度条绝对定位到此行底部 */
+  }
+  /* 传输进度条：进行中显示，done/error 隐藏（CSS 控制） */
+  .tftp-item .bar {
+    position: absolute; left: 8px; right: 8px; bottom: 2px; height: 2px;
+    background: var(--bg-card); border-radius: 1px; overflow: hidden;
+    display: none;
+  }
+  .tftp-item .bar > i { display: block; height: 100%; width: 0%;
+    background: var(--accent); border-radius: 1px; transition: width 0.3s; }
+  .tftp-item.active .bar { display: block; }  /* 进行中才显示进度条 */
+  .tftp-item.error .bar > i { background: var(--neon-red); }
+  /* 不确定进度条（WRQ 设备上传，未知 total）：条纹滚动，表明在传输 */
+  .tftp-item .bar.indeterminate > i { width: 40% !important; transition: none;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    background-size: 200% 100%; animation: tftp-bar-slide 1.2s linear infinite; }
+  @keyframes tftp-bar-slide { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  /* 分区标题（目录文件 / 最近传输）：sticky 吸顶，长列表滚动时始终可见 */
+  .tftp-sec {
+    font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+    margin: 8px 2px 4px; display: flex; justify-content: space-between;
+    position: sticky; top: 0; background: var(--bg-panel);
+    padding: 3px 2px; z-index: 1;
+    cursor: pointer; user-select: none;
+    transition: color 0.15s;
+  }
+  .tftp-sec:hover { color: var(--fg-bright); }
+  .tftp-file {
+    font-size: 11px; padding: 5px 8px; border-radius: 5px;
+    display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+    font-family: var(--font-mono); color: var(--muted); overflow: hidden;
+    cursor: default;
+  }
+  .tftp-file:hover { background: var(--bg-card); }
+  .tftp-file .icon { flex-shrink: 0; font-size: 12px; }
+  .tftp-file .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+  .tftp-file .size { flex-shrink: 0; font-size: 10px; color: var(--muted); }
+
+  .tftp-item .icon { flex-shrink: 0; font-size: 12px; }
+  /* 来源标签：TFTP/HFS 传输区分（小胶囊，等宽小字） */
+  .tftp-via { flex-shrink: 0; font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+    padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); }
+  .tftp-via.via-tftp { color: var(--accent); border-color: rgba(0,180,255,0.35); }
+  .tftp-via.via-hfs { color: var(--neon-green); border-color: rgba(0,255,136,0.35); }
+  .tftp-item .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+  .tftp-item .size { flex-shrink: 0; font-size: 10px; color: var(--muted); }
+  .tftp-item.done .icon { color: var(--neon-green); }
+  .tftp-item.error .icon { color: var(--neon-red); }
+  .tftp-item.error .name { color: var(--neon-red); }
+  .tftp-empty {
+    padding: 14px 10px; text-align: center; font-size: 11px; color: var(--muted);
+  }
+  .tftp-empty .hint { font-size: 10px; margin-top: 4px; color: var(--muted); opacity: 0.7; }
+
+  /* ===== 中央终端区 ===== */
+  /* 注意选择器作用域：.center 是中央终端区容器，但 Monaco 折叠条内部也有
+     .diff-hidden-lines .center（height:24px 的文字层）——裸 .center 曾把
+     display:flex/flex-direction:column 泄漏进去，文字层被列布局重排，
+     字形下移溢出 24px 盒被 overflow:hidden 裁掉下半截（用户"折叠条文字
+     被裁"两个版本的真凶）。改用 #main .center 限定作用域。 */
+  /* 第2轮盲测实锤（高）：min-width:0 让 center 在窄视口被固定宽侧栏(220)+AI面板(340)
+     挤到 0~16px——tab 栏（含固定 tab/抽屉/⋮ 唯一逃生口）整体不可见不可点。
+     保底 300px：极窄时 AI 面板右侧让位被裁（用户可折叠它换空间），tab 栏始终可用；
+     正常宽度（≥900px）不触发，零影响。html/body overflow:hidden 兜底不出横滚动条 */
+  .main > .center { flex: 1; display: flex; flex-direction: column; min-width: 300px; }
+  /* 极窄视口（<560px）侧栏也参与让位：侧栏 JS 拖拽写的是内联宽，必须 !important
+     才能压住；130px 侧栏 + 260px center = 390px，400px 视口也能装下完整 tab 栏。
+     恢复宽度后本块失效，内联拖拽宽度自动回来，侧栏拖拽体验不受影响 */
+  @media (max-width: 560px) {
+    /* a59x：130px 是 3-tab 时代旧值——4 tab（+搜索）后 130px 必换行（用户
+       实锤「缩最小全换行」）。底线提到 200px（4 tab+徽标不换行的实测安全值）；
+     mini 图标条恒 44px：本块 !important 靠后会压过 a59x 的 mini 规则，不补
+     这条窄窗下 mini 态会变 130px 空白条 */
+    .sidebar { width: 200px !important; }
+    .sidebar.mini { width: 44px !important; }
+    .main > .center { min-width: 260px; }
+  }
+  .tabs {
+    display: flex; align-items: center; gap: 2px;
+    padding: 6px 8px 0; background: var(--bg-panel);
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+    overflow: hidden;   /* a285：优雅方案——不滚动不滚动条，tab 自动收缩+溢出进 ⋮ 下拉 */
+  }
+  /* a291：draggable 由 CSS 统一（buildTerminal 造的终端 tab 从不调
+     _initTabDrag——v1 时代串口/claude tab 根本拖不了；容器级 v2 只需可拖+一次绑定） */
+  .tab, .tab-drawer { -webkit-user-drag: element; user-select: none; }
+  .tab {
+    display: flex; align-items: center; gap: 6px;
+    /* 第6轮盲测 B1（高）：固定开销账——padding28+led6+gap24+✕15≈73px，tab 压到
+       ~83px 时 ✕ 卡死、75px 时归零（点 ✕ 误中相邻 tab）。gap 8→6 + padding 14→10
+       省 14px：✕ 保位阈值从 ~10tab 降到 ~14tab；更窄进入图标态（手册已声明范围） */
+    padding: 8px 10px; border-radius: 7px 7px 0 0;
+    cursor: pointer; font-size: 12px; color: var(--muted);
+    border: 1px solid transparent; border-bottom: none;
+    transition: color 0.2s; white-space: nowrap;
+    /* a285：Chrome 同款自动收缩——tab 多时逐个压缩宽度，压到 min-width 后
+       溢出部分被 overflow:hidden 剪掉，⋮ 按钮始终提供完整分类列表 */
+    flex-shrink: 1; min-width: 28px; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .tab .label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  /* 第8轮盲测缺陷1（高·终修）：✕ 占 flex 流位 → tab 压到 42~48px（固定开销
+     59px 装不下）时 ✕ 被挤出 tab 边界——图标可见（透明背景透出）但点击命中
+     右邻 tab（后兄弟绘制在上层），点 ✕ 关不掉还切走视图。终修：✕ 退出 flex
+     流改绝对定位钉右上——任何宽度都钉在 tab 内、永不溢出、点击永远命中自身 */
+  .tab { position: relative; }
+  .tab .close { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); z-index: 1; }
+  /* 第4轮盲测问题2（第二凶手）：终端 tab 的 baud span（@9600）同为 flex item
+     却无收缩约束——空间不足时和旧 label 一样把 ✕ 顶出 tab。空间不足优先
+     压缩 baud（次要信息），label 已有 .label 省略号 */
+  .tab .baud { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* 第7轮盲测P6：label 收缩到 6px 时连"…"都装不下——保底 8px 渲染省略号。
+     第8轮缺陷1 配套：✕ 改 overlay 后 label 区右侧预留 ✕ 位，宽 tab 防叠字 */
+  .tab .label { min-width: 8px; }
+  .tab .label, .tab .baud, .tab .tab-ico { padding-right: 0; }
+  .tab { padding-right: 22px; }
+  .tab:hover { color: var(--fg); background: var(--bg-card); }
+  .tab.active {
+    color: var(--accent); background: var(--bg);
+    border-color: var(--border); border-bottom-color: var(--bg);
+    position: relative;
+  }
+  /* a294：bottom -1px 悬挑被 overflow:hidden 的容器裁剪——用户实锤"claude 拖进
+     抽屉中间后 active 不高亮"（drawerBar overflow:hidden 裁掉底边线）。内贴 bottom:0
+     任何容器里都完整渲染 */
+  .tab.active::after {
+    content: ""; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+  }
+  .tab .led { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .tab.active .led { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+  /* tab 图标（📝/📜/🔢）：独立于 led——旧版把 emoji 塞进 .led 里，撑满圆点位置
+     挡住状态灯；拆开后 led 恢复圆点语义 */
+  /* 第7轮盲测P1 终修：原 flex-shrink:0 在同权重后位覆盖了新加的可缩规则
+     （顺序坑）——直接在本条放开收缩：图标纯装饰让位功能键 ✕（a285 原值 0） */
+  .tab .tab-ico { font-size: 12px; flex-shrink: 1; min-width: 0; overflow: hidden; line-height: 1; display: inline-flex; align-items: center; }
+  /* 文件类型 SVG 图标(file-icons.js):随文字基线对齐 */
+  svg.fi { vertical-align: -2px; flex-shrink: 0; }
+  /* tab 拖拽排序视觉态（tab-drag v2 容器级吸附）：拖动中半透明+缩起，
+     落点指示线加粗发光脉冲（用户实锤：v1 细线无动画手感差） */
+  .tab.dragging { opacity: 0.4; }
+  .tab.drop-before, .tab.drop-after { position: relative; }
+  /* a293：指示线改画在元素【内部边缘】——v2 的 -3px 悬挑被 .tabs 的
+     overflow:hidden 裁剪（用户实锤"多数时候不高亮"）。内缘 + 内发光不裁剪 */
+  .tab.drop-before::after, .tab.drop-after::after,
+  .tab-drawer.drop-before::after, .tab-drawer.drop-after::after {
+    content: ""; position: absolute; top: 2px; bottom: 2px; width: 3px;
+    border-radius: 2px; background: var(--accent);
+    box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 65%, transparent);
+    animation: tabDropPulse 0.9s ease-in-out infinite; pointer-events: none; z-index: 6; }
+  .tab.drop-before::after, .tab-drawer.drop-before::after { left: 0; }
+  .tab.drop-after::after, .tab-drawer.drop-after::after { right: 0; }
+  @keyframes tabDropPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 65%, transparent); }
+    50% { opacity: 0.55; box-shadow: 0 0 4px 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+  }
+  /* 未保存视觉态（编辑器/笔记/hex tab）：led 变橙色 + 标题着色——比纯 * 更显眼，
+     tab 与左栏列表同一套（.dirty 类由 _edMarkTab / refreshSidebar 同步维护） */
+  .tab.dirty .led { background: var(--neon-orange, #f5a623); box-shadow: 0 0 6px var(--neon-orange, #f5a623); }
+  .tab.dirty .label { color: var(--neon-orange, #f5a623); }
+  .port-item.dirty .led { background: var(--neon-orange, #f5a623); box-shadow: 0 0 8px var(--neon-orange, #f5a623); }
+  .port-item.dirty .name { color: var(--neon-orange, #f5a623); }
+  .tab .close { opacity: 0.4; font-size: 14px; padding: 0 2px; border-radius: 3px; }
+  /* 编辑器 tab 原地改名输入框：融入 tab 外观，宽度随内容自适应 */
+  .tab-rename-input {
+    background: var(--bg-input); border: 1px solid var(--accent); border-radius: 4px;
+    color: var(--fg); font-size: 12px; font-family: inherit;
+    padding: 1px 4px; outline: none; min-width: 8ch; max-width: 240px;
+  }
+  .tab .close:hover { opacity: 1; color: var(--neon-red); }
+  .tab-bar-actions { margin-left: auto; display: flex; gap: 5px; padding-right: 8px; padding-bottom: 6px; align-items: center; }
+  /* 终端快捷按钮组（暂停/清屏/^C/^D/跳底）—— 紧凑科技风 */
+  .tab-bar-actions .icon-btn {
+    padding: 5px 9px; min-width: 28px; font-size: 12px; border-radius: 7px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--muted); transition: all 0.18s ease;
+    line-height: 1;
+  }
+  .tab-bar-actions .icon-btn:hover {
+    color: var(--accent); border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-glow), 0 2px 8px rgba(0,212,255,0.15);
+    transform: translateY(-1px);
+  }
+  .tab-bar-actions .icon-btn:active { transform: translateY(0); }
+  /* ^C ^D 控制键按钮用警示色区分 */
+  .tab-bar-actions .icon-btn#btnCtrlC:hover { color: var(--neon-orange); border-color: var(--neon-orange); box-shadow: 0 0 0 1px rgba(255,165,0,0.25); }
+  .tab-bar-actions .icon-btn#btnCtrlD:hover { color: var(--neon-red); border-color: var(--neon-red); box-shadow: 0 0 0 1px rgba(255,64,96,0.25); }
+

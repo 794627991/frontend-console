@@ -221,7 +221,10 @@
   // live 丢 input 是 CLI/网关流异常（转写恒完整），行存令失不再靠「重开会话
   // 自愈」。一次 fetch 修补当回合全部缺令行；行已不在（切会话/被 cap）静默跳过
   async function _hgPatchMissingCmds() {
+    // 重入闸：重建期逐行登记 + 防抖触发可能追尾，进行中只留账不重复 fetch
+    if (_HG.noInputBusy) return;
     if (!_HG.noInputTids || !_HG.noInputTids.size || !_HG.sid) return;
+    _HG.noInputBusy = true;
     const tids = [..._HG.noInputTids];
     _HG.noInputTids = new Set();
     const sidAt = _HG.sid;
@@ -241,7 +244,12 @@
         row._rin = ln.input || null;
         row._rawHint = cmd;
         // v3.3.7R（轻审一般）：空 arg span（input 丢时 renderToolUse 恒输出）原位填
-        const arg = row.querySelector(':scope > .h-tool-arg');
+        // 结构兼容：hgToolCard（合一构造）的 arg/name 都在 button.h-tool-head
+        // **内部**，旧 `:scope >` 直查恒 null——命令被插到卡片外面用户看不见，
+        // 这是本自愈对现渲染结构失效的根因（陈年老 bug「少数不恢复」的一支）
+        const _head = row.querySelector(':scope > .h-tool-head');
+        const arg = row.querySelector(':scope > .h-tool-arg')
+                 || (_head && _head.querySelector(':scope > .h-tool-arg'));
         if (arg && !(arg.textContent || '').trim()) {
           arg.title = cmd;
           arg.textContent = cmd.slice(0, 80);
@@ -250,8 +258,11 @@
           narg.className = 'h-tool-arg';
           narg.title = cmd;
           narg.textContent = cmd.slice(0, 80);
-          const name = row.querySelector(':scope > .h-tool-name');
+          const name = _head
+            ? _head.querySelector(':scope > .h-tool-name')
+            : row.querySelector(':scope > .h-tool-name');
           if (name) name.insertAdjacentElement('afterend', narg);
+          else if (_head) _head.appendChild(narg);
           else row.insertBefore(narg, row.firstChild);
         }
         // 查阅组判定补账：只读命令（此前 input 空判定断组直挂的）不再追改分组
@@ -269,7 +280,10 @@
           _hgPatchMissingCmds();
         }, 5000);
       } else _HG.noInputMiss = 0;
-    } catch(_) {}
+    } catch(_) {
+    } finally {
+      _HG.noInputBusy = false;   // 重入闸复位（异常路径同样要放行下一次）
+    }
   }
   function _tlOneclickify(row) {
     // v3.2：one-line 工具行（Bash 等）升级为可展开卡——加 col+oneclick 类，
@@ -819,7 +833,10 @@
           _hgAgentSlotPaint(_row2, t0);
         }, 1000);
       }
-      if (cfg.kind === 'bash' && !Object.keys(b.input || {}).length && b.id)
+      // 放宽判据（陈年老 bug 兜底）：CLI 流式偶发丢 input，形态不一定是全空
+      // 对象——残缺 input（只剩 description 等）同样命令缺失，旧判据
+      // `!Object.keys(input).length` 不登记 → 自愈永不触发（极少数复现的那批）
+      if (cfg.kind === 'bash' && !String(_row2._rawHint || '').trim() && b.id)
         (_HG.noInputTids || (_HG.noInputTids = new Set())).add(b.id);
       _HG.rowById[id] = _row2;
       drawerCount(name);

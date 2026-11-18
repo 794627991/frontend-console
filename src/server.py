@@ -570,6 +570,11 @@ def _no_cache_static(resp):
     if resp.mimetype in ("text/html", "application/javascript",
                          "text/css", "text/javascript"):
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    # D4 修复：Monaco worker 由 data: URL 创建（origin=null），其
+    # importScripts('/vendor/monaco/...') 属跨源请求，缺 CORS 头必被浏览器
+    # 拒绝（语言服务/语法高亮静默失效）。仅对 vendor 静态资源放开。
+    if request.path.startswith("/vendor/"):
+        resp.headers["Access-Control-Allow-Origin"] = "*"
     return resp
 
 def _mem_web(rel):
@@ -2273,6 +2278,47 @@ _web_proxy_register(app)
 # 非 iframe）。装配在 main._patched_ready（需 UI 线程的 Form）。
 from src import web_tabs as _wt
 _wt.register(app)
+
+
+# ---- 客户端错误黑匣子（a654）：纯内存，不落盘 ----
+_clientlog_lock = _threading.Lock()
+_clientlog_budget = {"minute": -1, "count": 0}
+
+
+@app.route("/api/clientlog", methods=["POST"])
+def api_clientlog():
+    """前端 error/unhandledrejection → backend_log 内存环形缓冲。
+
+    用户定调：不落盘（磁盘 IO / 寿命）。日志只驻本进程内存，随
+    backend_log 的 deque 上限自动淘汰，进程退出即失。
+    限流：每分钟全域最多 60 条，单批最多 20 条——页面异常风暴不能把
+    日志缓冲或请求通道拖垮。
+    """
+    from src import backend_log
+    data = request.get_json(force=True, silent=True) or {}
+    errs = data.get("errors")
+    if not isinstance(errs, list):
+        return jsonify({"ok": False, "err": "errors 必须是数组"}), 400
+    import time as _t
+    minute = int(_t.time() // 60)
+    with _clientlog_lock:
+        if _clientlog_budget["minute"] != minute:
+            _clientlog_budget["minute"] = minute
+            _clientlog_budget["count"] = 0
+        room = max(0, 60 - _clientlog_budget["count"])
+        take = [e for e in errs[:min(len(errs), 20, room)] if isinstance(e, dict)]
+        _clientlog_budget["count"] += len(take)
+    ver = str(data.get("ver") or "")[:40]
+    url = str(data.get("url") or "")[:120]
+    sid = str(data.get("sid") or "")[:40]
+    for e in take:
+        msg = str(e.get("m") or "")[:500]
+        stack = str(e.get("stack") or "").replace("\n", " ⏎ ")[:1500]
+        backend_log.error(
+            "client", "[%s] %s | ver=%s sid=%s url=%s | %s"
+            % (str(e.get("t") or "error")[:12], msg, ver, sid, url, stack))
+    return jsonify({"ok": True, "accepted": len(take),
+                    "dropped": len(errs) - len(take)})
 
 
 # ---- 升级功能（v2.1.0）：客户端检查/应用 + 发布端分发服务控制 ----

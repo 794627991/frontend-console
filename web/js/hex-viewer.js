@@ -25,9 +25,11 @@ async function buildHexViewerTab(path, name) {
     const r = await fetch('/api/hex/meta', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
     const j = await r.json();
-    if (!j.ok) { notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:j.err || '文件不可读', ms:5000}); return; }
+    if (!j.ok) { console.warn('[hex] meta 失败', path, j.err);
+      notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:j.err || '文件不可读', ms:5000}); return; }
     size = j.size; isIhex = j.ihex;
-  } catch(e) { notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:'读取文件信息失败: ' + e, ms:5000}); return; }
+  } catch(e) { console.warn('[hex] meta 请求异常', path, e);
+    notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:'读取文件信息失败: ' + e, ms:5000}); return; }
 
   const portId = 'hex:' + path + ':' + Date.now();
   const tab = document.createElement('div');
@@ -162,6 +164,9 @@ async function buildHexViewerTab(path, name) {
       conn.chunkCache = new Map();   // 只读窗口模式：当前渲染窗口的字节
     }
   } catch(e) {
+    // D5：失败必须留控制台痕迹——旧实现只弹 5s 通知即静默回收 tab，
+    // 校验和错误/分块读取失败时排障零线索。
+    console.warn('[hex] 数据加载失败', path, e);
     notifyTaskDone(nid, {ok:false, title:'hex 打开失败', detail:(e.message || e), ms:6000});
     _edCloseNow(conn);
     return;

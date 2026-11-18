@@ -20,6 +20,7 @@ window.__fcHardReload = function () {
 </script>
 <script src="web/js/workerbase.js?v=__HG_VER__"></script>
 <script src="web/js/icons.js?v=__HG_VER__"></script>   <!-- a261：全站 SVG 图标库（先于一切 UI 脚本） -->
+<script src="web/js/clientlog.js?v=__HG_VER__"></script>   <!-- a654：客户端错误黑匣子（纯内存日志） -->
 <script>
 /* v3.5.187 DevTools console 环形缓冲 hook（designer 方案 5.3）：
    供 MCP devtools_console 读取历史 console/error——head 内联早于一切
@@ -73,7 +74,14 @@ window.__fcHardReload = function () {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>前端控制台</title>
-<link rel="stylesheet" href="web/style.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part1.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part2.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part3.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part4.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part5.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part6.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part7.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style.part8.css?v=__HG_VER__">
 <link rel="stylesheet" href="web/skins.css?v=__HG_VER__">
 <link rel="stylesheet" href="vendor/xterm.min.css">
 <link rel="stylesheet" href="vendor/hljs/atom-one-dark.min.css">
@@ -641,6 +649,7 @@ window.__fcHardReload = function () {
 <script type="module" src="web/js/office-viewer.js?v=__HG_VER__"></script>
 <!-- v3.0:claude-harness.js 拆分为 harness/ 21 文件(编号锁加载顺序,不得调换;
      state/base 提供共享状态与基础表,main 最后组装 builder,shell 挂顶层外壳) -->
+<script type="module" src="web/js/harness/hgstate.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/harness/state.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/harness/base.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/harness/ask-md.js?v=__HG_VER__"></script>

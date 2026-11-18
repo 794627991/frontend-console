@@ -94,3 +94,9 @@ src/_fcpk_key.py
 /tests/js/eslint-raw.json
 /tests/js/loaded.txt
 /tests/js/orphans.txt
+
+
+# 回归测试运行产物（截图/临时日志不入库；保留 .gitkeep）
+tests/regression/artifacts/*
+!tests/regression/artifacts/.gitkeep
+tests/regression/__pycache__/

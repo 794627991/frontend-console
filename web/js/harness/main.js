@@ -1311,7 +1311,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // 分屏伪 tab __dyn__ 懒建（14-subpane _subDynOpen，旧 index.html 静态节点/
   // #aiPanel 换装形态整体废止）——dynEl 在 _subDynOpen 里赋值，此处不绑。
   // 事件驱动 rAF 合并全量重渲；秒表是全局单例 interval 只改 textContent。
-  _hgRolesCache = null;   // 最近一次 /roles 响应（动态页三角色行与左侧按钮同源）
+  HgState.set('rolesCache', null);   // 最近一次 /roles 响应（动态页三角色行与左侧按钮同源）
 
   // ---- 派生态与入口 ----
   _dynRaf = 0;
@@ -1326,7 +1326,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // 主 flow 仍有灰行），不再伪装能点开实况。
   // （v2.53：「重」角标已按用户要求移除，_HEAVY_AGENTS 随之删除）
   // ---- P1-4：子代理模型名（起跑预显示；实跑模型由子代理 assistant 事件覆盖）----
-  _agentModelsTried = false;         // 只拉一次（失败允许重试）
+  HgState.set('agentModelsTried', false);   // 只拉一次（失败允许重试）
   // P0-2：手动重开子代理实时窗格（面板运行中条目 / 消息流子代理行点击入口）
   // v2.38：已完成且带 agentId 的代理 → 回放窗格（数据源转写，历史也能看）；
   // 切会话后档案丢失 → 提示语更新为回放口径
@@ -1986,7 +1986,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // v2.38：「三角色」快捷开关按钮删除（与配置面板重复，用户实锤「这俩
   // 配置重复了」）——启用/停用统一走「三角色」配置面板里的开关（保存
   // POST /roles 全量含 enabled）。这里只做启动缓存预热：主气泡的角色
-  // 徽章（重主力/轻主力）渲染要读 _hgRolesCache。
+  // 徽章（重主力/轻主力）渲染要读 HgState.get('rolesCache')。
   _hgRolesFetch();
 
   // ==================== 识图配置（v2.28.2：MCP 后端）====================
