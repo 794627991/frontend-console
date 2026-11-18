@@ -56,6 +56,46 @@ def _new(pg):
     time.sleep(0.8)
 
 
+# 测试会话标题前缀（自动清理时二次确认，绝不碰用户原有会话）
+TEST_TITLE_PREFIXES = ("只回复", "从 1 数到", "数到二十", "用 Bash 执行",
+                       "先思考再回答", "派一个子代理", "第一问", "第二问")
+
+
+def _session_list(pg):
+    try:
+        return json.loads(pg.ev(
+            "(async()=>{const r=await fetch('/api/harness/sessions');"
+            "const j=await r.json();"
+            "return JSON.stringify((j.sessions||[]).map(s=>({sid:s.sid,title:s.title||''})));})()",
+            await_promise=True, timeout=15) or "[]")
+    except Exception:
+        return []
+
+
+def _cleanup_test_sessions(pg, orig_sids):
+    """删除本次测试新建的**测试会话**（sid 不在 orig_sids 且标题匹配前缀）。
+
+    安全边界：只删新增 + 标题匹配；失败静默（清理不掩盖测试结论）。
+    """
+    removed = []
+    for s in _session_list(pg):
+        sid = s.get("sid") or ""
+        if not sid or sid in orig_sids:
+            continue
+        title = s.get("title") or ""
+        if not any(title.startswith(p) for p in TEST_TITLE_PREFIXES):
+            continue
+        try:
+            pg.ev("(async()=>{await fetch('/api/harness/delete',{method:'POST',"
+                  "headers:{'Content-Type':'application/json'},"
+                  "body:JSON.stringify({sid:%s})});return 1;})()" % json.dumps(sid),
+                  await_promise=True, timeout=20)
+            removed.append(sid[:12])
+        except Exception:
+            pass
+    return removed
+
+
 def g_h1(pg):
     """H1-1 发极简消息；H1-5 空输入不发送；H1-2 排队（快速连发两条）。"""
     out = []
@@ -292,8 +332,10 @@ def run(groups=None):
     except Exception as e:
         return [result("L3-ENV", "L3 环境", "L3", "P0", "SKIP", "应用未运行: %r" % e)]
     orig = None
+    orig_sids = set()
     out = []
     try:
+        orig_sids = {s.get("sid") for s in _session_list(pg)}
         orig = pg.ev("(window._HG&&window._HG.sid)||null")
         # 前置：headless 页面是独立实例，harness 面板懒构建——先按真实用户
         # 路径点 Claude 入口，避免「面板未构建时直调 newChat」的伪异常。
@@ -321,6 +363,13 @@ def run(groups=None):
                 pg.ev("window.switchTo(%s)" % json.dumps(orig), await_promise=True, timeout=60)
         except Exception:
             pass
+        try:
+            removed = _cleanup_test_sessions(pg, orig_sids)
+            out.append(result("L3CLEAN", "自动清理本次测试会话", "L3", "P2",
+                              "PASS", "已删除 %d 个：%s" % (len(removed), removed[:8])))
+        except Exception as e:
+            out.append(result("L3CLEAN", "自动清理本次测试会话", "L3", "P2",
+                              "CHECK", repr(e)))
         pg.close()
     return out
 

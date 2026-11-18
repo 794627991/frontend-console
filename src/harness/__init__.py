@@ -27,21 +27,63 @@ def _parse_harness_version(subjects):
     return ""
 
 
-def _git_harness_version():
-    """git 提交史取版本；无 git/无 .git/任何异常返回空（走回落）。"""
+def _repo_head_sig(root):
+    """快速读仓库 HEAD 指纹（纯文件读，零子进程）：'ref:sha' / 'detached:sha'。
+    读不到（packed-refs 等异常形态）返回空 → 调用方走同步 git 慢路径。"""
     import os
-    import subprocess
-    d = os.path.dirname(os.path.abspath(__file__))
-    for _ in range(6):                    # src/harness → 仓库根
-        if os.path.isdir(os.path.join(d, ".git")):
-            break
-        d = os.path.dirname(d)
-    else:
+    try:
+        with open(os.path.join(root, ".git", "HEAD"), encoding="utf-8") as f:
+            head = f.read().strip()
+        if not head:
+            return ""
+        if head.startswith("ref:"):
+            ref = head[4:].strip()
+            p = os.path.join(root, ".git", ref.replace("/", os.sep))
+            if os.path.isfile(p):
+                with open(p, encoding="utf-8") as f:
+                    return ref + ":" + f.read().strip()
+            return ""                  # packed-refs 形态：放弃快速路径
+        return "detached:" + head
+    except Exception:
         return ""
+
+
+def _version_cache_path():
+    import os
+    return os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                        "harness_version.cache")
+
+
+def _read_version_cache():
+    try:
+        with open(_version_cache_path(), encoding="utf-8") as f:
+            sig = f.readline().strip()
+            ver = f.readline().strip()
+        return (sig, ver) if sig and ver else ("", "")
+    except Exception:
+        return ("", "")
+
+
+def _write_version_cache(sig, ver):
+    try:
+        import os
+        p = _version_cache_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        tmp = p + ".%d.tmp" % os.getpid()
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(sig + "\n" + ver + "\n")
+        os.replace(tmp, p)             # 原子替换：并发 worker/测试实例互不撕裂
+    except Exception:
+        pass
+
+
+def _git_version_sync(root):
+    """同步跑 git 取版本串（慢路径，仅 HEAD 指纹变化/缓存缺失时）。"""
+    import subprocess
     try:
         out = subprocess.run(
             ["git", "log", "--format=%s", "-n", "400"],
-            cwd=d, capture_output=True, timeout=5,
+            cwd=root, capture_output=True, timeout=5,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
         ver = _parse_harness_version(
             out.decode("utf-8", "replace").splitlines())
@@ -52,7 +94,7 @@ def _git_harness_version():
         # 成空格）
         head = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=d, capture_output=True, timeout=5,
+            cwd=root, capture_output=True, timeout=5,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
         h = head.decode("utf-8", "replace").strip()
         if h:
@@ -60,6 +102,35 @@ def _git_harness_version():
         return ver
     except Exception:
         return ""
+
+
+def _git_harness_version():
+    """git 提交史取版本；无 git/无 .git/任何异常返回空（走回落）。
+
+    启动性能（用户实锤「启动还是慢」）：pythonw 冷启动下 git 子进程可达
+    秒级（main.py 终审 P2-5 注释同款实锤），而版本号只是显示串/?v= 破缓存
+    参数。改为「HEAD 指纹缓存优先」——纯文件读（µs 级）比对上次记录：
+      · 指纹一致（仓库没提交/拉取过）→ 直接用缓存版本串，零子进程；
+      · 指纹不一致/缓存缺失 → 同步跑 git 并刷新缓存（每次仓库变化只付一次）。
+    正确性：git log 主题史是 HEAD sha 的函数——sha 不变历史必不变。
+    打包版无 .git 依旧走回落常量。"""
+    import os
+    d = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(6):                    # src/harness → 仓库根
+        if os.path.isdir(os.path.join(d, ".git")):
+            break
+        d = os.path.dirname(d)
+    else:
+        return ""
+    sig = _repo_head_sig(d)
+    if sig:
+        csig, cver = _read_version_cache()
+        if csig == sig and cver:
+            return cver                   # 快路径：仓库自上次启动未变
+    ver = _git_version_sync(d)
+    if ver and sig:
+        _write_version_cache(sig, ver)
+    return ver
 
 
 HARNESS_VERSION = _git_harness_version() or _HARNESS_FALLBACK

@@ -1086,6 +1086,26 @@ def _is_skip_logged(path):
     return False
 
 
+# ---- source map / devtools 探针静默（2026-11-19 用户问「这些 404 咋回事」）----
+# cdp=True 时 DevTools 自动拉取 vendor 的 .map（vendor 不发货 sourcemap）
+# 和 /.well-known/appspecific/com.chrome.devtools.json（工作区探针）——
+# 全部 404 刷日志面板 + DevTools 控制台同步报「Could not load SourceMap」。
+# 回一份**合法空 sourcemap**：浏览器不再告警，GET 200 也不进 api 日志
+# （_log_api_outcome 只记非 2xx GET）。vendor 无真实 .map 文件，无遮蔽风险。
+_EMPTY_SOURCEMAP = {"version": 3, "sources": [], "sourcesContent": [],
+                    "names": [], "mappings": ""}
+
+
+@app.route("/.well-known/appspecific/com.chrome.devtools.json")
+def _fc_devtools_probe():
+    return jsonify({})
+
+
+@app.route("/<path:_p>.map")
+def _fc_empty_sourcemap(_p):
+    return jsonify(_EMPTY_SOURCEMAP)
+
+
 @app.after_request
 def _log_api_outcome(resp):
     try:

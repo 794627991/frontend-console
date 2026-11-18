@@ -263,10 +263,20 @@ def probe_claude():
 
 def probe_onlyoffice():
     """OnlyOffice DS 探测：80 口 healthcheck（服务在装好的机器常驻）。
-    a309R：DS 是 Windows 服务，装了即监听 80——比查目录/注册表可靠"""
+    a309R：DS 是 Windows 服务，装了即监听 80——比查目录/注册表可靠。
+    性能（启动闸门实测 4041ms 的元凶）：urllib 对 "localhost" 先试 ::1
+    再试 127.0.0.1，每个地址族各吃满 2s 超时——未装 DS 的机器白等 4s。
+    先 socket 直连 127.0.0.1:80 快速判端口（未监听=立即 ECONNREFUSED），
+    端口通了才发 HTTP。"""
+    import socket
+    try:
+        _s = socket.create_connection(("127.0.0.1", 80), timeout=0.6)
+        _s.close()
+    except Exception:
+        return "missing", "", ""
     import urllib.request
     try:
-        with urllib.request.urlopen("http://localhost/healthcheck", timeout=2) as r:
+        with urllib.request.urlopen("http://127.0.0.1/healthcheck", timeout=2) as r:
             if r.status == 200:
                 return "ok", "Document Server", ""
     except Exception:
@@ -377,10 +387,13 @@ class _VerUnknown(Exception):
     """
 
 
-def probe_all(use_cache=True):
+def probe_all(use_cache=True, kinds=None):
     """统一检测入口。返回
         {"ok": bool, "items": [...], "hard_missing": [...], "soft_missing": [...]}
     每项：{kind, name, hard, ok, state, ver, detail, fix}
+
+    kinds：只探指定子集（None=全部）。启动闸门必须只传硬项（_HARD）——
+    软项探测含 HTTP/子进程（onlyoffice 实测 4s），不能进开窗关键路径。
     """
     state_file = _state_file()
     cache = _read_state() if use_cache else {}
@@ -388,6 +401,8 @@ def probe_all(use_cache=True):
     items, hard_miss, soft_miss = [], [], []
     for m in MANIFEST:
         k = m["kind"]
+        if kinds is not None and k not in kinds:
+            continue
         c = cached.get(k)
         if c and time_ok(c.get("ts")):
             st, ver, detail = c["state"], c.get("ver", ""), c.get("detail", "")
@@ -491,7 +506,10 @@ def preflight_gate(force=False):
     force=True 走「测试模式」：环境变量 FC_FORCE_MISSING 可强制把指定
     kind 判成缺失（本机 WebView2/.NET 都齐全时，用它验证引导链路）。
     """
-    res = probe_all(use_cache=False)
+    # 只探硬项（webview2/dotnet）——闸门判的就是这两项能不能建窗；
+    # 软项（node/git/claude/pydeps/onlyoffice…）与启动无关，探测含子进程
+    # 和 HTTP（onlyoffice 实测 4s），拖慢开窗 4s+（启动打点实锤）
+    res = probe_all(use_cache=False, kinds=_HARD)
     forced = [x.strip() for x in
               (os.environ.get("FC_FORCE_MISSING") or "").split(",") if x.strip()]
     if forced:

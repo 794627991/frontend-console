@@ -10,6 +10,40 @@
 import os, sys, threading, json, time
 import urllib.request
 
+
+# a675（用户定调「非必要不写 IO」）：入口级兜底——模块顶层未捕获异常（如
+# a663 漏 import atexit 的 NameError）在 pythonw 下完全无痕，进程直接蒸发。
+# 装最小 excepthook：**仅异常时**写 boot_error.log（正常启动零写盘）；
+# 下次成功启动由 main() 的提示逻辑读入内存日志并改名 .seen。
+def _fatal_hook(et, ev, tb):
+    try:
+        import time as _t
+        import traceback as _tb
+        d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, "boot_error.log")
+        try:
+            if os.path.exists(p) and os.path.getsize(p) > 64 * 1024:
+                os.replace(p, p + ".1")
+        except Exception:
+            pass
+        with open(p, "a", encoding="utf-8", errors="replace") as f:
+            f.write("[%s] 顶层未捕获异常: %s" % (
+                _t.strftime("%Y-%m-%d %H:%M:%S"), repr(ev)))
+            f.write(chr(10) + "".join(_tb.format_exception(et, ev, tb)) + chr(10))
+    except Exception:
+        pass
+    try:
+        sys.__excepthook__(et, ev, tb)
+    except Exception:
+        pass
+
+
+try:
+    sys.excepthook = _fatal_hook
+except Exception:
+    pass
+
 # a242（用户实锤「运行中自己重启」取证）：faulthandler 全程挂载——native 层
 # 崩溃（C 扩展/WebView2/ctypes）无 Python traceback 直接蒸发进程，此后任何
 # 致命信号都会把全线程栈写到 crash_dump.log，现场不再丢失
@@ -1378,7 +1412,68 @@ def _kill_child_processes():
         pass
 
 
+# ---- 启动阶段计时（诊断）——用户定调「保留留待后续再用，只是不写磁盘」----
+# 打点只进 backend_log 的**内存**环形缓冲（界面点版本号可视），另存模块级
+# 列表供后续调试直接读取；全程零磁盘 IO。异常全静默（诊断不影响启动）。
+_BOOT_T0 = time.perf_counter()
+_BOOT_MARKS = []          # [(ms, label), ...] 本进程启动打点
+_BOOT_ERRORS = []         # 启动链异常现场（日志/钩子安装失败等，供诊断）
+_BOOT_FLUSHED = 0         # 已补进 backend_log 的条数（install 前的先缓存）
+
+
+def _boot_flush():
+    """把 install 前缓存的打点补进内存日志；未 install 则不动（下次再补）。"""
+    global _BOOT_FLUSHED
+    try:
+        from src import backend_log
+        if not backend_log.installed():
+            return
+        while _BOOT_FLUSHED < len(_BOOT_MARKS):
+            _ms, _label = _BOOT_MARKS[_BOOT_FLUSHED]
+            backend_log.log("boot", "+%6.0fms  %s" % (_ms, _label))
+            _BOOT_FLUSHED += 1
+    except Exception:
+        pass
+
+
+def _write_boot_error(exc):
+    """安装链完全失败时的最后现场：异常才写的小文件（IO 可忽略）。
+
+    pythonw 下 stderr 无控制台、_BOOT_ERRORS 仅进程内——完全失败时用户
+    没有任何可见通道。这里按退出审计同款折中：仅异常写 <64KB 小文件，
+    下次成功启动时提示进内存日志。
+    """
+    try:
+        import os
+        import time as _t
+        import traceback as _tb
+        d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, "boot_error.log")
+        try:
+            if os.path.exists(p) and os.path.getsize(p) > 64 * 1024:
+                os.replace(p, p + ".1")
+        except Exception:
+            pass
+        with open(p, "a", encoding="utf-8", errors="replace") as f:
+            f.write("[%s] 安装链失败: %s" % (_t.strftime("%Y-%m-%d %H:%M:%S"),
+                                             repr(exc)))
+            f.write(chr(10) + _tb.format_exc() + chr(10))
+        return p
+    except Exception:
+        return ""
+
+
+def _boot_mark(label):
+    try:
+        _BOOT_MARKS.append(((time.perf_counter() - _BOOT_T0) * 1000, label))
+        _boot_flush()
+    except Exception:
+        pass
+
+
 def main():
+    _boot_mark("===== boot =====")
     # 用户需求（2.4.4）：启动不再弹 cmd 黑框——日志由进程内环形缓冲接管
     # （src/backend_log.py，只驻内存不写盘），界面点标题栏版本号即可查看。
     # 必须在任何 print 之前装（此处之前只有 import，无输出）。子模式
@@ -1418,8 +1513,52 @@ def main():
                 pass
             backend_log.log("main", "[harness] boot 工具 v%s%s [%s]（worker 端口见后续就绪日志）"
                             % (APP_VERSION, _hv, _harness_mode))
-        except Exception:
-            pass          # 日志缓冲装不上不该挡启动
+        except Exception as _e:
+            # a672（用户实锤「启动横幅凭空消失」）：原静默 pass 把安装链内
+            # 任何异常（如 a663 的 UnboundLocalError）全吞掉——横幅与退出
+            # 审计一起无声失效。改为留现场：stderr + 模块级记录；仍不阻塞启动。
+            _berr_path = _write_boot_error(_e)
+            try:
+                import traceback as _tb
+                sys.stderr.write("[警告] 日志/异常钩子安装失败: " + repr(_e)
+                                 + ("（详见 %s）" % _berr_path if _berr_path else "")
+                                 + chr(10))
+                _tb.print_exc(file=sys.stderr)
+                sys.stderr.flush()
+            except Exception:
+                pass
+            try:
+                _BOOT_ERRORS.append(repr(_e))
+            except Exception:
+                pass
+            # 日志面板可见性：backend_log 若已可用（部分失败场景），把异常
+            # 写进内存日志（[boot] 行）；完全装不上时只能 stderr。
+            try:
+                from src import backend_log as _bl
+                if _bl.installed():
+                    _bl.error("boot", "日志/异常钩子安装失败: " + repr(_e))
+            except Exception:
+                pass
+    _boot_mark("backend_log 就绪")
+    # 上次启动若安装链彻底失败（写了 boot_error.log），本次成功时提示一行
+    # 进内存日志并改名为 .seen（保留证据、不重复提示）。
+    try:
+        import os as _os
+        _be = _os.path.join(_os.path.expanduser("~"), ".serialconsole_pro",
+                            "boot_error.log")
+        if _os.path.exists(_be):
+            try:
+                from src import backend_log as _bl3
+                if _bl3.installed():
+                    _bl3.warn("boot", "上次启动日志初始化失败，详见 " + _be)
+            except Exception:
+                pass
+            try:
+                _os.replace(_be, _be + ".seen")
+            except Exception:
+                pass
+    except Exception:
+        pass
     # 用户实锤（内网）：程序退出后主进程残留+rg.exe 占用——Job Object 绑杀
     # 全部子进程（rg/ctags/codegraph/worker 等）：主进程一退（含强杀），
     # Windows 内核自动 TERMINATE 全部子进程，零孤儿
@@ -1509,16 +1648,41 @@ def main():
     # 缺 pip 库时弹引导窗自动安装（同款 UI + 进度动画），装完 execv 重启进程。
     # exe 分发时全部库已打进 exe，自检恒通过、零开销（import 探测 <50ms）。
     from src.deps_bootstrap import bootstrap_if_needed, selftest_once
+    _boot_mark("依赖自检 开始")
     if not bootstrap_if_needed():
         return
+    _boot_mark("依赖自检 完成")
+    # 并行预导入：server 模块（Flask+serial）在这里就起子线程加载——与
+    # 资源闸门/自检/webview patch 全部并行。实测启动打点：Flask 就绪段
+    # 1811ms 中大头是冷态 import src.server，而旧实现把线程建在 import
+    # webview 前一刻（只并行了 ~1ms）、随即 wait 等满额 = 白跑。
+    # 依赖自检已通过 → import 不会因缺库失败（缺库会在 bootstrap 阶段
+    # 装完并 execv 重启，轮不到这里）。
+    _server_ready = threading.Event()
+    _server_mod = {}
+
+    def _preload_server():
+        try:
+            from src.server import app, start_background
+            _server_mod["app"] = app
+            _server_mod["start_background"] = start_background
+        except Exception as e:
+            _server_mod["err"] = e
+        finally:
+            _server_ready.set()
+
+    threading.Thread(target=_preload_server, daemon=True,
+                     name="server-preload").start()
     # v4.1（用户拍板）：硬资源闸门——必须在 `import webview` 之前。
     # WebView2 缺失/过旧、.NET Framework < 4.8.1 时窗口根本建不出来（后者
     # 连 import webview 都抛异常），所以这里用 Win32 原生对话框引导用户装
     # 离线资源包，装完自动重启；用户取消或安装失败则本进程退出。
     try:
         from src.res_boot import preflight_gate
+        _boot_mark("资源闸门 开始")
         if not preflight_gate():
             return
+        _boot_mark("资源闸门 完成")
     except Exception as _e:
         # 全审 B3：早前这里是「吞异常放行」，最坏链路是用户选了半截包 →
         # 抛异常 → 放行 → 走到「窗口建不出来」的莫名状态。改为：先自己
@@ -1549,23 +1713,10 @@ def main():
     # 前端——每次启动都提醒哪些功能不可用，直到用户用离线包补装
     # （exe 分发恒通过，标记写过后零开销）
     _deps_missing = selftest_once()
-
-    # 并行预导入：server 模块（Flask+serial，~600ms）与 webview（~270ms）并行加载，
-    # 在主线程 import webview 的同时，子线程预 import server，省 ~270ms 启动时间。
-    _server_ready = threading.Event()
-    _server_mod = {}
-    def _preload_server():
-        try:
-            from src.server import app, start_background
-            _server_mod["app"] = app
-            _server_mod["start_background"] = start_background
-        except Exception as e:
-            _server_mod["err"] = e
-        finally:
-            _server_ready.set()
-    threading.Thread(target=_preload_server, daemon=True).start()
+    _boot_mark("selftest_once 完成")
 
     import webview
+    _boot_mark("import webview 完成")
     # 摘除 pywebview 全 URL 拦截（串口卡顿第一现场，见函数注释）——
     # 必须在 webview.start 之前：拦截器在窗口创建时注册
     _unhook_webview_intercept()
@@ -2056,6 +2207,7 @@ def main():
         return
     # Flask 已就绪，写 endpoint 供 Claude Code 跨会话发现（写早了 MCP 会探活到未就绪的服务）
     write_endpoint(port)
+    _boot_mark("Flask 就绪")
 
     # Claude 子系统 worker：进程隔离（harness/hiklink 重负载移驻独立进程，
     # 见 src/worker_app.py 模块注释）。失败不阻塞主工具（Claude 面板不可用，
@@ -2064,7 +2216,9 @@ def main():
     # 端口动态随机，worker 侧硬编码必拦（用户实锤「重启后全挂/会话空」）
     try:
         from src import worker_app
+        _boot_mark("worker 拉起 开始")
         worker_app.manage_start(main_port=port)
+        _boot_mark("worker 就绪（等待结束）")
     except Exception as _we:
         print(f"[警告] Claude worker 拉起失败: {_we}", file=sys.stderr)
 
@@ -2694,6 +2848,7 @@ def main():
     #   注入 event.dataTransfer.files[i].pywebviewFullPath）。需用 pywebview DOM API
     #   注册 drop 监听（_dnd_state.num_listeners>0 才捕获路径），回调里 evaluate_js 调前端。
     def on_loaded():
+        _boot_mark("窗口 loaded（页面可见）")
         # 页面加载完成即激活并置前窗口：从托盘/后台/快捷方式启动时窗口可能不在
         # 前台，用户打开工具就是为了敲命令——不等先点一下
         try:
@@ -2884,6 +3039,7 @@ def main():
         pass
     webview.start(debug=_wv_debug, private_mode=False,
                   storage_path=os.path.join(DATA_DIR, "webview_cache"))
+    _boot_mark("即将 webview.start（窗口创建）")
 
 
 def _selftest():

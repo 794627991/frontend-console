@@ -26,6 +26,7 @@ import atexit
 import collections
 import io
 import itertools
+import os
 import re
 import sys
 import threading
@@ -860,7 +861,6 @@ def audit_exit():
     if _normal:
         return
     try:
-        import os
         path = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
                             "exit_reason.log")
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -892,7 +892,6 @@ def _install_exit_hooks():
     except Exception:
         pass
     try:
-        import os
         import signal as _sig
 
         def _on_signal(signum, _frame):
