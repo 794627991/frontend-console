@@ -1,0 +1,9 @@
+js/sidebar-resize.js
+js/nav.js
+js/tree-search.js
+js/proxy-usage.js
+js/snip.js
+js/a11y.js
+js/resources.js
+js/win-controls.js
+js/backend-log.js

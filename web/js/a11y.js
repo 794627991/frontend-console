@@ -9,8 +9,12 @@
 // 新增（每 tab 的搜索框、xlsx 单元格输入、Monaco/xterm 内部 input——
 // 后者是 99+ 累积的大头）。
 // ============================================================
-(function () {
-  const CLS_HINT = [
+// 模块化一期（js-modularization 分支）：本文件已转 ES module（index.html
+// type="module"）——IIFE 壳已剥。零对外表面（无 window 挂载、无任何文件
+// 引用其内部名），是全部 75 个文件里最安全的叶片。模块自动 strict：本文件
+// 全部 const/let 声明，无隐式全局风险。执行时机后移到解析完成，scan() 的
+// 初始全量扫描照常覆盖（MutationObserver 兜底动态新增不受时机影响）。
+const CLS_HINT = [
     [/ts-q|search-q|term-search/, '搜索'],
     [/cmd-add-name/, '备注名'],
     [/cmd-add-cmd|cmdInput/, '命令'],
@@ -91,4 +95,3 @@
       }
     }
   }).observe(document.body, { childList: true, subtree: true });
-})();

@@ -9,8 +9,9 @@
 // 「常驻」是刻意的：不用 showBanner（3 秒淡出），用户可以点「忽略」，
 // 忽略后写 config，不再打扰，但设置里仍可查看。
 
-(function () {
-  'use strict';
+// 模块化一期（js-modularization 分支）：已转 ES module——IIFE 壳已剥。
+// 对外表面仅 window.ResPanel（settings.js:1143/1236 运行时调用）。
+'use strict';
 
   var _resState = null;      // 最近一次 /api/resources/status
   var _resPollTimer = null;
@@ -496,4 +497,3 @@
 
   window.ResPanel = { open: resOpenPanel, refresh: resRefresh,
                       install: _resRun, cancel: resCancel };
-})();

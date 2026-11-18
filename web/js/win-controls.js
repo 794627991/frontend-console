@@ -7,8 +7,12 @@
 // 状态回推：后端 maximized/restored 事件 → window._hgWinState({max,overhang})；
 // 启动时再 GET /api/window/state 拉初态兜底（zcode GetDesktopWindowChromeState
 // 同构——冷启最大化时事件早于页面就绪，推不住）。
-(function () {
-  'use strict';
+// 模块化一期（js-modularization 分支）：本文件已转 ES module
+// （index.html type="module"）——IIFE 壳已剥（模块自身隔离），缩进保持
+// 原样使 diff 最小。执行时机由「解析到 :668 处」变为「解析完成后」（defer
+// 语义），对本文件只会更稳（DOM 必然就绪）；对外表面 window._hgWinState
+// 挂载不变，Python 推送（main.py:2534/2554）不受影响。
+'use strict';
 
   // 窗控是 fire-and-forget：窗口本体即反馈，失败静默——apiPost 的义务化
   // banner（util.js v3.5.109）在这里只会刷屏（teardown 期拖拽失败弹红条
@@ -217,4 +221,3 @@
   } else {
     init();
   }
-})();

@@ -7,8 +7,11 @@
 //  - pxUsageInit(wrap)   绑定范围切换按钮（面板创建时调一次）
 //  - pxUsageLoad(wrap)   切到用量页时拉数据渲染
 // ============================================================
-(function () {
-  'use strict';
+// 模块化一期（js-modularization 分支）：已转 ES module——IIFE 壳已剥。
+// 对外表面仅 window.pxUsageInit / pxUsageLoad（proxy-panel.js:199-202 的
+// window 守卫调用，面板创建/切页时触发，均为运行时）；_pxFnum/_pxTok/esc
+// 等 proxy-panel 的全局在函数体内晚解析，模块 defer 语义无碍。
+'use strict';
   let wrap = null;
   let uRange = 'hour';
 
@@ -127,4 +130,3 @@
     });
   };
   window.pxUsageLoad = function () { loadUsage(); };
-})();

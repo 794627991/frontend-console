@@ -3,8 +3,10 @@
 // 返回 uri 只会得到空白/无反应。改自定义跳转：Ctrl+Click/F12 → 查询 →
 // 唯一可信候选 openFileSmart 直跳；多候选弹带徽标的候选面板（原批 2
 // 提前落地）。provider 注册保留但恒返回 null（防 Monaco 原生空跳干扰）。
-(function () {
-  'use strict';
+// 模块化一期（js-modularization 分支）：已转 ES module——IIFE 壳已剥。
+// 对外表面仅 window.NavJump（settings.js:170 window 守卫 + tree-fileops
+// 菜单 action，均为运行时调用）。
+'use strict';
 
   function monacoWordAt(model, position) {
     // 实测部分列位/语言下 getWordAtPosition 返回空——行内容手动提词兜底
@@ -1662,4 +1664,3 @@
                      getKeys: () => ({ ...NAV_KEYS }), keyLabel: keyLabel,
                      // a336：导航历史（设置页/右键菜单可直接触发）
                      goBack: navigateBack, goForward: navigateForward };
-})();

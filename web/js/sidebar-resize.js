@@ -3,10 +3,14 @@
 // 条：JS 动态插入 sidebar 右缘（不动 index.html 结构——div 配平铁律）
 // 持久化：/api/theme 顺车 sidebar_w（localStorage 按端口隔离不可用）
 // ============================================================
-(function () {
-  'use strict';
+// 模块化一期（js-modularization 分支）：已转 ES module。
+// 零对外表面（无挂载、无引用方）；自带 _wzInit 幂等守卫。defer 语义下
+// #sidebar 必然已存在（原经典时序还依赖 :605 时 DOM 就绪，模块化更稳）。
+'use strict';
   const sb = document.getElementById('sidebar');
-  if (!sb || sb._wzInit) return;
+  // 模块化注：顶层裸 return 在 ESM 里非法（eslint 门禁当场抓获 Parsing
+  // error），用守卫块包裹，行为等价。
+  if (sb && !sb._wzInit) {
   sb._wzInit = true;
   const bar = document.createElement('div');
   bar.className = 'sidebar-resizer';
@@ -78,4 +82,4 @@
     const cap = Math.min(maxW(), window.innerWidth - 120);
     if (sb.offsetWidth > cap) apply(cap);
   });
-})();
+  }   // 守卫块收口（模块顶层不允许裸 return，见上注）

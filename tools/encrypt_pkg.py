@@ -13,7 +13,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.secure_boot import _MAGIC, _VER, _derive_key   # noqa: E402
 
 _TARGET_DIRS = ("web", "src")       # _internal 下要加密的自有目录
-_TARGET_EXT = (".html", ".js", ".css", ".json", ".blob", ".md", ".txt")
+# 模块化一期：补 .mjs——web/ 当前无 .mjs，纯未来保险（模块文件保持 .js 后缀，
+# 万一引入 .mjs 不能在加密清单外裸奔）
+_TARGET_EXT = (".html", ".js", ".mjs", ".css", ".json", ".blob", ".md", ".txt")
 # v2.3.2：.pyc 不再外置（Cython .pyd 路线，机器码无需加密）；pyd 后缀也不加密
 _SKIP_NAMES = {"_internal"}         # 目录级排除（src/ 下无子目录场景无此问题）
 

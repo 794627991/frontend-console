@@ -9,8 +9,9 @@
 // 点击组头 → 切文件树 sheet + treeReveal 定位。
 // 渲染限额：DOM 最多 ~600 节点（200 match × 3），超出仅计数（红线）。
 // ============================================================
-(function () {
-  'use strict';
+// 模块化一期（js-modularization 分支）：已转 ES module——IIFE 壳已剥。
+// 对外表面仅 window.tsSearchIn（tree-fileops 菜单 action 回调，运行时）。
+'use strict';
   const $s = (sel) => document.querySelector(sel);
   const qEl = document.querySelector('[data-ts-q]');
   const caseEl = document.querySelector('[data-ts-case]');
@@ -349,4 +350,3 @@
       window.tsSearchIn('');
     }
   });
-})();

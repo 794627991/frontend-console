@@ -17,10 +17,18 @@
 - src/tftp.py：TFTP 服务器 + Blueprint 路由
 """
 import os, sys, time, threading, json, glob, re, base64, subprocess, collections
+import mimetypes
 from queue import Queue
 
 from flask import Flask, Response, request, jsonify, send_from_directory, g, redirect
 import threading as _threading
+# 模块化一期（js-modularization 分支）：type="module" 脚本对 MIME 严格——
+# 服务器必须回 JavaScript MIME 类型，octet-stream 会被浏览器整文件拒绝。
+# Windows 下 guess_type 受注册表影响（.js 可能被映射成 application/octet-stream），
+# 两条 serve 路径（_mem_web 的 guess_type + DEBUG 的 send_from_directory 内部
+# 同样走 mimetypes）统一在进程内钉死。
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
 # a346/R21-6：/api/theme 的 nav_keys 段 read-modify-write 并发锁
 _nav_keys_lock = _threading.Lock()
 

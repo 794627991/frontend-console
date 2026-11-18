@@ -10,8 +10,12 @@
 //   · 按级别过滤（全部 / 仅错误 / 仅警告+错误）、按来源标签过滤
 //   · 「清空」只清内存缓冲，不影响任何磁盘文件
 //   · 自动滚到底；用户手动往上翻时暂停自动滚动
-(function () {
-  let panel = null;
+// 模块化一期（js-modularization 分支）：本文件已转 ES module（index.html
+// type="module"）——IIFE 壳已剥，缩进保持原样。对外表面仅
+// window.__backendLogToggle 挂载（无任何 JS/Python 调用方，排障直调用途
+// 照旧）；ICO16/showBanner 等全局读在模块里照常解析（模块执行时经典
+// 脚本已全部就位）。
+let panel = null;
   let timer = null;
   let lastSeq = 0;
   let autoScroll = true;
@@ -583,4 +587,3 @@
     wire();
   }
   window.__backendLogToggle = toggle;   // 排障/自动化可直调
-})();

@@ -19,6 +19,20 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JS_DIR = os.path.join(ROOT, "web", "js")
 OUT = os.path.join(ROOT, "tests", "js", "app-globals.json")
+# 模块化一期：modules.txt 由 js_script_manifest.py 从 index.html 派生
+# （单一真源）。模块文件（type="module"）的内部声明是模块作用域、不再
+# 是全局——继续收进清单只会让 no-undef 的全局面虚胖；但其 window.xxx =
+# 显式挂载仍是真全局（Python 推送/经典脚本都靠它），照收。
+MODULES_FILE = os.path.join(ROOT, "tests", "js", "modules.txt")
+
+
+def _module_files():
+    try:
+        with open(MODULES_FILE, encoding="utf-8") as f:
+            return {ln.strip().replace("\\", "/")
+                    for ln in f if ln.strip()}
+    except OSError:
+        return set()
 
 # a644：不能只匹配行首无缩进的声明。大量模块写在 IIFE 里：
 #     (function () {
@@ -74,15 +88,16 @@ FUNC_PATCH_ALLOW = {
 }
 
 
-def scan(path):
+def scan(path, collect_decls=True):
     names = set()
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
-                m = DECL_RE.match(line)
-                if m:
-                    names.add(m.group("fn") or m.group("vn"))
-                    continue
+                if collect_decls:
+                    m = DECL_RE.match(line)
+                    if m:
+                        names.add(m.group("fn") or m.group("vn"))
+                        continue
                 m = WIN_RE.match(line)
                 if m:
                     names.add(m.group(1))
@@ -93,11 +108,16 @@ def scan(path):
 
 def main():
     all_names = set(EXTERNAL_GLOBALS)
+    modules = _module_files()
     count = 0
     for root, _dirs, files in os.walk(JS_DIR):
         for fn in files:
             if fn.endswith(".js"):
-                all_names |= scan(os.path.join(root, fn))
+                p = os.path.join(root, fn)
+                rel = os.path.relpath(p, os.path.join(ROOT, "web"))
+                rel = rel.replace(os.sep, "/")
+                # 模块文件：只收 window 挂载，内部声明不再进全局清单
+                all_names |= scan(p, collect_decls=(rel not in modules))
                 count += 1
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     import json

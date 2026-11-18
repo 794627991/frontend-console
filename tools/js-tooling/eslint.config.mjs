@@ -23,6 +23,19 @@ const ROOT = path.resolve(HERE, '..', '..');
 const appGlobals = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'tests/js/app-globals.json'), 'utf8'));
 
+// 模块化一期：index.html 里 type="module" 加载的文件（单一真源
+// tests/js/modules.txt，由 tools/js_script_manifest.py 派生）。这些文件按
+// ESM 解析——import/export 语法合法、顶层 this 为 undefined、自动 strict。
+let moduleFiles = [];
+try {
+  // modules.txt 里的路径相对 web/（js/a11y.js），eslint 的 files 匹配相对
+  // 仓库根——必须加 web/ 前缀，否则这块静默不生效（模块文件仍按 script
+  // 解析，import/export 直接报语法错，且自动 strict 口径全丢）。
+  moduleFiles = fs.readFileSync(path.join(ROOT, 'tests/js/modules.txt'), 'utf8')
+    .split('\n').map((s) => s.trim()).filter(Boolean)
+    .map((s) => 'web/' + s);
+} catch { /* modules.txt 不存在 = 尚无模块文件 */ }
+
 export default [
   {
     files: ['web/js/**/*.js'],
@@ -59,6 +72,20 @@ export default [
         argsIgnorePattern: '^_',
         caughtErrors: 'none',         // catch(e) 不用很常见，不报
       }],
+    },
+  },
+  {
+    // 模块化一期：已转 ES module 的前端文件（清单来自 modules.txt）。
+    // 仍是传统全局互调——globals 全量保留（模块读全局照常解析）；这里只把
+    // 解析模式切成 module：import/export 合法化 + 自动 strict 的语法口径。
+    files: moduleFiles.length ? moduleFiles : ['tools/__never__.js'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+        ...Object.fromEntries(appGlobals.map((g) => [g, 'writable'])),
+      },
     },
   },
   {

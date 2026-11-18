@@ -5,12 +5,14 @@
 // → 完成 → 主进程收图（uploads+剪贴板）→ SSE snip_done → 挂附件。
 // 工具窗口只当触发器，不参与显示。
 // ============================================================
-(function () {
-  'use strict';
+// 模块化一期（js-modularization 分支）：已转 ES module——IIFE 壳已剥。
+// 对外表面仅 window.harnessSnipStart（harness/main.js:1800 的 onclick
+// 守卫调用，运行时）；showBanner 是 util.js 全局，fetch 回调期解析，
+// 模块执行时经典脚本已全部就位。
+'use strict';
   window.harnessSnipStart = async function () {
     try {
       const j = await (await fetch('/api/snip/start', {method: 'POST'})).json();
       if (!j.ok) showBanner(j.info || '截图窗启动失败', 3000, true);
     } catch (e) { showBanner('截图窗启动失败：' + e, 3000, true); }
   };
-})();
