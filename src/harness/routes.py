@@ -1211,11 +1211,23 @@ def harness_sessions():
     不切模型）时 meta 停在上次落盘时刻，列表时间冻结（用户实锤「一直在
     对话却显示 1 小时前」）。"""
     _meta_load()
+    # a650（用户实锤「没登录怎么蹦出小助手」）：HikLink 专属会话是此前登录
+    # 期收到消息时创建并持久化的——登出/重启不清记录，列表恒挂。机器人未
+    # 运行时从列表隐藏（登录后自动回来；只是不展示，历史元数据不删）。
+    _bot_running = False
+    try:
+        from src import hiklink_bot as _hb
+        _ctl = getattr(_hb, "_controller", None)
+        _bot_running = bool(_ctl and _ctl.status().get("running"))
+    except Exception:
+        _bot_running = False
     with _sessions_lock:
         live = {sid: (s.alive, s.busy, s.busy_since,
                       getattr(s, "last_active", 0)) for sid, s in _sessions.items()}
     items = []
     for sid, m in _meta.items():
+        if not _bot_running and (m.get("title") or "") == "前端小助手（HikLink）":
+            continue
         alive, busy, busy_since, live_la = live.get(sid, (False, False, None, 0))
         if not busy:
             busy_since = None
