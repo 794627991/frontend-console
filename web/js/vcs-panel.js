@@ -148,6 +148,49 @@ function _vpModalHost() { return document.body; }
 let _vcsHist = null;               // {ov, sel, seq, files:Map, escFn, q, qlog, ...}
 let _vcsHistLseq = 0;              // L2：模块级单调——重开窗口期间旧响应不可穿透
 
+// a650（用户实锤「前缀太长把内容挤走」）：deco 原文（如
+// "(HEAD → js-modularization, origin/js-modularization)"）在窄行里挤掉
+// 日期/标题。特殊标记改 SVG 符号：含 HEAD → 分支图标（悬停看全名）；
+// 其余（tag 等）保留缩略文本。
+function _vcsDecoBadge(deco) {
+  let d = String(deco || '').trim();
+  if (d.charAt(0) === '(' && d.charAt(d.length - 1) === ')') {
+    d = d.slice(1, -1);
+  }
+  if (!d) return '';
+  // a650（用户实锤「还有啊」）：origin/… 远端装饰同样占位——所有装饰全部
+  // 符号化，悬停看全名。图标分型：HEAD=分支（accent）/ 远端=云 / tag=标签。
+  // 注意：HEAD 检测用 indexOf（不用 word-boundary 正则——转义层曾把 wb
+  // 简写成退格控制符写进正则，永远匹配不上，实锤见提交历史）。
+  const parts = d.split(', ').filter(Boolean);
+  const hasHead = d.indexOf('HEAD') !== -1;
+  const isRemote = parts.some(function (x) { return x.indexOf('origin/') === 0; });
+  const isTag = parts.some(function (x) { return x.indexOf('tag:') === 0; });
+  const cls = hasHead ? 'hg-vcs-decoic on' : 'hg-vcs-decoic';
+  let body;
+  if (hasHead) {
+    body = '<circle cx="4" cy="3.5" r="1.6"/><circle cx="4" cy="12.5" r="1.6"/>' +
+      '<circle cx="12" cy="5" r="1.6"/><path d="M4 5.1v5.8"/>' +
+      '<path d="M12 6.6c0 2.2-1.7 3.2-3.4 3.6"/>';          // 分支
+  } else if (isRemote) {
+    body = '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>';  // 云
+  } else if (isTag) {
+    body = '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172' +
+      'a2 2 0 0 0 .586 1.414l5.704 5.704a2 2 0 0 0 2.828 0l7.586-7.586' +
+      'a2 2 0 0 0 .586-1.414V4a2 2 0 0 0-2-2h-7.172z"/>' +
+      '<circle cx="7.5" cy="7.5" r=".5"/>';                   // 标签
+  } else {
+    return '<span class="hg-vcs-deco" title="' + esc(d) + '">' +
+      esc(d.length > 14 ? d.slice(0, 13) + '…' : d) + '</span>';
+  }
+  let tip = esc(d);
+  if (hasHead) tip = 'HEAD: ' + tip;
+  return '<span class="' + cls + '" title="' + tip + '">' +
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' + body + '</svg></span>';
+}
+
 function _vcsFmtDt(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return String(iso || '');
@@ -225,6 +268,25 @@ function _vcsHistFetch(reset, cb) {
       H.fetchErr = null;
       if (reset) H.exhausted = false;
       const tgt = H.querying ? H.qlog : VCS.log;
+      // a650（用户实锤「任意切一下 git 排序就不对」）：HEAD 指纹变化 =
+      // 上下文已切换（换分支/rebase/重置）——已载数组是旧上下文的，追加
+      // 只会产出「旧块在前新块在后」的两段拼接。整表作废重建。
+      const jHead = j.head || '';
+      const ctxChanged = !isSvn && jHead && VCS.head_fp && jHead !== VCS.head_fp;
+      if (jHead) VCS.head_fp = jHead;
+      if (ctxChanged) {
+        tgt.length = 0;
+        tgt.push(...(j.commits || []));
+        H.exhausted = false;
+        if (!H.querying) VCS.total = j.total;
+        else H.qtotal = j.total;
+        H.page = 1;
+        H.rounds = 0;
+        _vcsHistPaintList(true);
+        if (!H.querying) _vcsPaint();
+        if (cb) cb();
+        return;
+      }
       const known = new Set(tgt.map(c => c.rev));
       const add = (j.commits || []).filter(c => c.rev && !known.has(c.rev));
       if (reset) { tgt.length = 0; tgt.push(...(j.commits || [])); }
@@ -485,7 +547,7 @@ function _vcsHistPaintList(keepSel) {
   listEl.innerHTML = pg.map(c =>
     `<div class="hg-vcs-hlrow${c.rev === H.sel ? ' on' : ''}" data-hrev="${esc(c.rev || '')}">` +
       (c.graph ? `<span class="hg-vcs-graph">${esc(c.graph)}</span>` : '') +
-      `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}${c.deco ? `<span class="hg-vcs-deco">${esc(c.deco)}</span>` : ''}</span>` +
+      `<span class="hg-vcs-logrev">${esc(c.short || c.rev || '')}${_vcsDecoBadge(c.deco)}</span>` +
       `<span class="hg-vcs-logmsg">${esc((c.msg || '').slice(0, 44))}</span>` +
       (c.ins != null ? `<span class="hg-vcs-stat" title="${esc(c.ins || 0)} 增 / ${esc(c.del || 0)} 删">` +
         `<b class="up">+${esc(c.ins || 0)}</b> <b class="del">-${esc(c.del || 0)}</b></span>` : '') +
@@ -598,7 +660,7 @@ function _vcsHistDetail(rev) {
   const cached = _vcsHist.files.get(rev);
   const _meta = () =>
     `<div class="hg-vcs-hmeta"><b title="${esc(c.rev)}">${esc(c.short || c.rev)}</b>` +
-    (c.deco ? `<span class="hg-vcs-deco">${esc(c.deco)}</span>` : '') +
+    _vcsDecoBadge(c.deco) +
     `<span>${esc(c.author || '')}</span><span>${esc(_vcsFmtDt(c.date))}</span></div>` +
     `<div class="hg-vcs-hmsg">${esc(c.msg || '')}</div>` +
     `<div class="hg-vcs-sec">改动文件</div>`;
@@ -819,7 +881,15 @@ function _vcsReloadLog() {
       // _vcsHistFetch 已 push 的更早条目
       if (myseq !== _vcsLogSeq) return;
       if (!j.ok) { VCS.log = null; VCS.total = undefined; }
+      else if (j.head && VCS.head_fp && j.head !== VCS.head_fp) {
+        // a650：上下文已切换（换分支等）——旧数组是另一条线的，拼头会把
+        // 新旧两段拼在一起（用户实锤排序错乱）。整表替换。
+        VCS.log = (j.commits || []).slice();
+        VCS.total = j.total;
+        VCS.head_fp = j.head;
+      }
       else {
+        if (j.head) VCS.head_fp = j.head;
         const _oldL = VCS.log || [];
         const _known = new Set(_oldL.map(c => c.rev));
         const _addH = (j.commits || []).filter(c => c.rev && !_known.has(c.rev));
@@ -1153,13 +1223,14 @@ function _vcsBind(paintRoots) {
   const _fab = _vpEl.querySelector('[name="hg_vcs_fetch"]');
   if (_fab) _fab.onclick = () => {
     hgModal('Fetch 只取不合并',
-      `<div class="hg-modal-body">在 ${esc(VCS.root)}\n执行 git fetch --prune\n\n` +
+      `<div class="hg-modal-body hg-pre">在 ${esc(VCS.root)}\n执行 git fetch --prune\n\n` +
       `只更新远端引用，不动工作区和当前分支；看完 ahead/behind 再决定 Pull。</div>`,
       [{ label: '取消', value: false }, { label: '执行', primary: true, value: true }])
       .then(ok => {
         if (!ok) return;
         _vcsApi('/api/vcs/fetch', {}, 'Fetch', (ok2, j) => {
           if (j && j.out) VCS.out = j.out;
+          if (ok2) showBanner('已更新远端引用', 2500);
           _vcsReload();
         });
       });
@@ -1168,14 +1239,15 @@ function _vcsBind(paintRoots) {
   if (_psb) _psb.onclick = () => {
     const D = VCS.data || {};
     const br = D.branch || '';
-    hgModal('Push 推送到远端',
-      `<div class="hg-modal-body">将把本地${br ? '分支 ' + esc(br) + ' ' : ''}推送到 origin\n` +
-      `（git push origin ${esc(br || '(当前分支)')}）\n\n远端若已有本地没有的提交会被拒绝——先 Fetch/Pull 看清。</div>`,
-      [{ label: '取消', value: false }, { label: '推送', primary: true, value: true }])
+    _vcsConfirm('Push 推送到远端',
+      `将把本地${br ? '分支 ' + esc(br) + ' ' : ''}推送到 origin\n` +
+      `（git push origin ${esc(br || '(当前分支)')}）\n\n` +
+      `远端若已有本地没有的提交会被拒绝——先 Fetch/Pull 看清。`, '推送')
       .then(ok => {
         if (!ok) return;
         _vcsApi('/api/vcs/push', {}, 'Push', (ok2, j) => {
           if (j && j.out) VCS.out = j.out;
+          if (ok2) showBanner('已推送', 2500);
           _vcsReload();
         });
       });
@@ -1256,7 +1328,7 @@ function _vcsBind(paintRoots) {
     const v = (VCS.data || {}).vcs;
     const cmd = v === 'git' ? 'git pull --ff-only' : 'svn update（冲突 postpone 保现场）';
     hgModal(v === 'git' ? 'Pull 拉取更新' : 'Update 更新',
-      `<div class="hg-modal-body">将在 ${esc(VCS.root)}\n执行 ${esc(cmd)}</div>`,
+      `<div class="hg-modal-body hg-pre">将在 ${esc(VCS.root)}\n执行 ${esc(cmd)}</div>`,
       [{ label: '取消', value: false }, { label: '执行', primary: true, value: true }])
       .then(ok => {
       if (!ok) return;

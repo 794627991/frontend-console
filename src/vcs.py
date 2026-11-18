@@ -714,6 +714,8 @@ _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _BRE_META = "\\.*[]^$"
 # a650：git log --graph 的行首 ASCII 连线列（"* "、"| * "、"|/ "、"|\\ "）
 _GRAPH_COL_RE = re.compile(r"^[\s|*\\/]+")
+# 行尾的连线列（--graph 与 --shortstat 共用行时出现）
+_GRAPH_TAIL_RE = re.compile(r"[\s|\\/]+$")
 
 
 def _bre_lit(s):
@@ -752,9 +754,10 @@ def _log_plan(vcs, data):
     if since and until and since > until:
         return (("起始日期不能晚于结束日期"), 400), None, None, None, skip, limit
     before_rev = str(data.get("before_rev") or "").strip()
-    # a650：图形视图的两个开关（缺省关闭，保持既有线性列表行为不变）
-    graph = bool(data.get("graph"))
-    all_refs = bool(data.get("all"))
+    # a650：图形视图的两个开关（缺省关闭，保持既有线性列表行为不变）。
+    # 用 _truthy：前端若发字符串 "0"/"false"，bool() 会把它当开。
+    graph = _truthy(data.get("graph"))
+    all_refs = _truthy(data.get("all"))
     rev_target = str(data.get("rev") or "").strip()
 
     if vcs == "git":
@@ -767,15 +770,23 @@ def _log_plan(vcs, data):
             argv.append("--graph")
         if all_refs:
             argv.append("--all")
+        rev_arg = ""
         if before_rev:
             if not _git_ref_ok(before_rev):
                 return (("修订引用非法"), 400), None, None, None, skip, limit
-            argv.append(before_rev if all_refs else rev_target or "HEAD")
+            rev_arg = before_rev
         elif rev_target:
             if not _git_ref_ok(rev_target):
                 return (("修订引用非法"), 400), None, None, None, skip, limit
-            argv.append(rev_target)
-        cargv = ["git", "rev-list", "--count", "HEAD"]
+            rev_arg = rev_target
+        # a650 审计 P3：--all 与指定 rev 互斥（git log --all <rev> 里 --all
+        # 直接压过 rev，等于参数没生效）。带 --all 时不追加 rev。
+        if rev_arg and not all_refs:
+            argv.append(rev_arg)
+        # 总数按日志范围同口径统计（--all / 指定 rev 时不能用 HEAD 计数，
+        # 否则前端分页终点会提前截断）
+        cargv = ["git", "rev-list", "--count"]
+        cargv += (["--all"] if all_refs else [rev_arg or "HEAD"])
         if skip:
             argv += ["--skip", str(skip)]
         if text:
@@ -844,10 +855,13 @@ def vcs_log():
             parts = line.split("\x1f")
             # v2 D9：5 字段放宽为 ≥5（第 6 可选 deco，带前导空格须 trim）
             if len(parts) >= 5:
+                deco = parts[5].strip() if len(parts) > 5 else ""
+                if data.get("graph"):
+                    # --graph 在共用行时行尾也会补连线字符（"(HEAD -> main)|"）
+                    deco = _GRAPH_TAIL_RE.sub("", deco).rstrip()
                 commits.append({"rev": parts[0], "short": parts[1],
                                 "author": parts[2], "date": parts[3],
-                                "msg": parts[4],
-                                "deco": (parts[5].strip() if len(parts) > 5 else ""),
+                                "msg": parts[4], "deco": deco,
                                 **({"graph": gpre} if gpre else {})})
             elif commits and " changed" in line:
                 # v3.5.198（用户需求「提交列表加增减数字」）：--shortstat 追加行
@@ -890,6 +904,13 @@ def vcs_log():
     resp = {"ok": True, "commits": commits}
     if total is not None:
         resp["total"] = total
+    if vcs == "git":
+        # a650：HEAD 指纹——前端据此检测「上下文已切换」（换分支/rebase）
+        # 并整表重建；否则切分支后新页 append 到旧数组尾部 = 新旧两段拼接
+        #（用户实锤「任意切一下 git 排序就不对」）
+        rc_h, out_h, _eh = _run(["git", "rev-parse", "HEAD"], wc, VCS_TIMEOUT_RO)
+        if rc_h == 0 and out_h.strip():
+            resp["head"] = out_h.strip()
     return jsonify(resp)
 
 
@@ -1062,10 +1083,15 @@ def vcs_diff():
 # ---------------------------------------------------------------------------
 
 def _bad_rel(p):
-    """rel 路径统一校验（轻审 P2）：空 / 绝对（/ 或盘符）/ .. 穿越全拒。"""
+    """rel 路径统一校验（轻审 P2）：空 / 绝对（/ 或盘符）/ .. 穿越全拒。
+
+    a650 审计 P3：控制符（含 NUL）也要拒——NUL 会流进 subprocess 触发
+    ValueError，被吞成 rc=-1 的假故障。
+    """
     p = (p or "").replace("\\", "/").strip()
     return (not p or p.startswith("/") or re.match(r"^[A-Za-z]:", p)
-            or ".." in p.split("/"))
+            or ".." in p.split("/")
+            or re.search(r"[\x00-\x1f\x7f]", p) is not None)
 
 
 def _git_add_missing(wc, paths):
@@ -1426,58 +1452,117 @@ def vcs_remote_delete():
 # ---------------------------------------------------------------------------
 
 _SNAP_DIR_NAME = "vcs_discard_snapshots"
+# a650 审计 P2-6：快照是丢弃操作唯一的恢复手段。单个目录树可能很大
+# （编译产物），但为不可逆操作留底优先，这里给一个宽松上限并如实回报截断。
+_SNAP_MAX_BYTES = 512 * 1024 * 1024
 
 
 def _git_ref_ok(name):
-    """分支/标签名校验（git check-ref-format 的子集，足够挡误操作）。"""
+    """分支/标签名校验（对齐 git check-ref-format）。
+
+    a650 审计 P1-1：原版只拒 "-" 开头，放行 "+" 开头——`git push origin +main`
+    里的 `+` 是**强制推送 refspec 前缀**，一个叫 `+main` 的分支会让推送静默
+    变成强推、覆盖远端他人提交。一并补齐 git 实际拒收的名字（`@{`、`@`、
+    首尾 "."、".lock" 结尾），免得这些名字走到 git 才报 500。
+    """
     if not name or len(name) > 200:
         return False
-    if re.search(r"[\s~^:?*\[\]\\]", name):
+    if re.search(r"[\s~^:?*\[\]\\\x00-\x1f\x7f]", name):
         return False
-    if ".." in name or name.startswith("-") or name.endswith("/"):
+    if name.startswith(("-", "+", "/", ".")) or name.endswith(("/", ".")):
         return False
-    if name.startswith("/") or "//" in name:
+    if ".." in name or "@{" in name or "//" in name or name == "@":
+        return False
+    if name.endswith(".lock"):
         return False
     return True
 
 
+def _truthy(v):
+    """请求体布尔的严格解析：字符串 "0"/"false" 不能被当开。"""
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
+
 def _snap_discard(wc, rels):
-    """丢弃改动前把当前内容快照到数据目录（尽力而为，失败不阻断）。
-    返回快照目录绝对路径；没有可快照内容时返回空串。"""
+    """丢弃改动前把当前内容快照到数据目录。
+
+    a650 审计修复：
+      · P2-4 目录名带 pid + uuid，同一秒内两次丢弃不再互相覆盖
+      · P2-6 失败不再静默——返回 (路径, 失败原因) 由调用方如实回报；
+        目录/符号链接目标同样留底（目录递归复制，链接只存目标字符串）
+    返回 (snap_dir, err)；snap_dir 为空串表示没有可快照的内容。
+    """
     import datetime as _dt
+    import uuid
+    err = ""
     try:
         stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         base = os.path.join(_st.DATA_DIR, _SNAP_DIR_NAME)
-        d = os.path.join(base, stamp + "-" + hashlib.md5(
-            wc.encode("utf-8", "replace")).hexdigest()[:8])
+        d = os.path.join(base, "%s-%s-%s" % (
+            stamp, hashlib.md5(wc.encode("utf-8", "replace")).hexdigest()[:8],
+            uuid.uuid4().hex[:8]))
         n = 0
         for rel in rels:
             src = os.path.join(wc, *rel.split("/"))
-            if not os.path.isfile(src):
-                continue
             dst = os.path.join(d, *rel.split("/"))
             try:
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.copy2(src, dst)
-                n += 1
-            except OSError:
+                if os.path.islink(src):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    with open(dst + ".symlink.txt", "w", encoding="utf-8") as f:
+                        f.write(os.readlink(src))
+                    n += 1
+                elif os.path.isdir(src):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+                    n += 1
+                elif os.path.isfile(src):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+                    n += 1
+            except (OSError, shutil.Error) as e:
+                err = "部分文件未能快照：%s" % str(e)[:300]
                 continue
+        try:
+            total = sum(os.path.getsize(os.path.join(dp, f))
+                        for dp, _dn, fn in os.walk(d) for f in fn
+                        if not os.path.islink(os.path.join(dp, f)))
+            if total > _SNAP_MAX_BYTES:
+                err = (err + "；" if err else "") + "快照超过 %d MB，可能有内容未完整留底" % (
+                    _SNAP_MAX_BYTES // (1024 * 1024))
+        except OSError:
+            pass
         if n:
-            return d
+            return d, err
         if os.path.isdir(d):
             shutil.rmtree(d, ignore_errors=True)
-    except Exception:
-        pass
-    return ""
+    except Exception as e:                       # 磁盘满 / 权限 / 数据目录不可写
+        err = "快照失败：%s" % str(e)[:300]
+    return "", err
 
 
 def _git_current_branch(wc):
-    """当前分支名；detached HEAD 时返回空串（UI 显示「游离 HEAD」）。"""
+    """当前分支名；detached HEAD 时返回空串（UI 显示「游离 HEAD」）。
+
+    a650 审计 P3：空仓库（尚无 commit）时 rev-parse rc=128 且 stdout 仍是
+    "HEAD"——原实现返回空串 = 误报「游离 HEAD」。用 symbolic-ref 区分：
+    它能拿到未出生分支名（git ≥2.0 的输出是 refs/heads/master），失败才是真游离。
+    """
+    rc, out, _e = _run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], wc, 10)
+    if rc == 0:
+        b = out.strip()
+        return "" if b in ("HEAD", "") else b
     rc, out, _e = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], wc, 10)
     if rc != 0:
         return ""
     b = out.strip()
     return "" if b in ("HEAD", "") else b
+
+
+def _branch_ref(name):
+    """分支名 → 完整 ref（推送达 refspec 用，杜绝 "+" 被当强制前缀）。"""
+    return name if name.startswith("refs/") else "refs/heads/" + name
 
 
 def _git_is_clean(wc):
@@ -1533,13 +1618,21 @@ def vcs_branches():
                 remote.append(item)
         return None
 
-    # a650：必须按命名空间分别取——refs/heads 的分支名可以带 "/"
-    # （feature/x），拿名字里有没有 "/" 判本地/远程会把它们全扔进远程列表。
-    err2 = _refs("refs/heads", True) or _refs("refs/remotes", False)
-    if err2:
-        return jsonify({"ok": False, "err": err2}), 500
-    return jsonify({"ok": True, "current": cur, "detached": detached,
-                    "local": local, "remote": remote})
+    # a650 审计 P3：本地/远程分开取，互不连坐——远程取失败不该把已拿到的
+    # 本地分支整体丢掉。任一失败时降级返回已取到的部分并附 warn。
+    warns = []
+    for ns, is_local in (("refs/heads", True), ("refs/remotes", False)):
+        e2 = _refs(ns, is_local)
+        if e2:
+            warns.append(e2)
+    body = {"ok": True, "current": cur, "detached": detached,
+            "local": local, "remote": remote}
+    if warns and not local:
+        # 一条都没取到才算失败（部分成功带着 warn 照常可用）
+        return jsonify({"ok": False, "err": "；".join(warns)[:2000]}), 500
+    if warns:
+        body["warn"] = "；".join(warns)[:600]
+    return jsonify(body)
 
 
 @vcs_bp.route("/api/vcs/branch/create", methods=["POST"])
@@ -1598,12 +1691,14 @@ def vcs_branch_switch():
                 "err": "工作区有 %d 个未提交改动，切换分支可能冲突或丢失。"
                        "请先提交或 stash；确认要让 git 自行处理时带 "
                        "dirty=ignore 重试。" % len(files)}), 409
+        # a650 审计 P1-2：老 git（< 2.23）回退**只能**用 `checkout <名称>`。
+        # 旧代码回退成 `git checkout -- <名称>`——`--` 之后是 pathspec 语义，
+        # 会把同名文件的工作区改动还原掉，分支根本没切，还报成功。
         rc, out, e = _run(["git", "switch", "--", name], wc, VCS_TIMEOUT_RW)
         if rc != 0:
             low = (e or "") + (out or "")
             if "not a git command" in low or "unknown subcommand" in low:
-                # 老 git（< 2.23）没有 switch
-                rc, out, e = _run(["git", "checkout", "--", name],
+                rc, out, e = _run(["git", "checkout", name],
                                   wc, VCS_TIMEOUT_RW)
         if rc != 0:
             return jsonify({"ok": False,
@@ -1648,18 +1743,19 @@ def vcs_stash():
     if vcs != "git":
         return jsonify({"ok": False, "err": "svn 无 stash（svn shelve 另说）"}), 400
     act = str(data.get("action") or "list")
+    if act == "list":
+        # 只读，不占写锁（写锁只用于和同仓库写操作互斥）
+        rc, out, e = _run(["git", "stash", "list", "--format=%gd\x1f%s"],
+                          wc, VCS_TIMEOUT_RO)
+        if rc != 0:
+            return jsonify({"ok": False, "err": e or "stash list 失败"}), 500
+        items = []
+        for ln in out.splitlines():
+            p = ln.split("\x1f")
+            if len(p) >= 2:
+                items.append({"ref": p[0], "msg": p[1]})
+        return jsonify({"ok": True, "stashes": items})
     with _root_lock(wc):
-        if act == "list":
-            rc, out, e = _run(["git", "stash", "list", "--format=%gd\x1f%s"],
-                              wc, VCS_TIMEOUT_RO)
-            if rc != 0:
-                return jsonify({"ok": False, "err": e or "stash list 失败"}), 500
-            items = []
-            for ln in out.splitlines():
-                p = ln.split("\x1f")
-                if len(p) >= 2:
-                    items.append({"ref": p[0], "msg": p[1]})
-            return jsonify({"ok": True, "stashes": items})
         if act == "push":
             msg = str(data.get("message") or "").strip()
             argv = ["git", "stash", "push", "--include-untracked"]
@@ -1673,6 +1769,16 @@ def vcs_stash():
                 return jsonify({"ok": False, "err": "index 非法"}), 400
             if idx < 0 or idx > 200:
                 return jsonify({"ok": False, "err": "index 越界"}), 400
+            # a650 审计 P3：index 越界是用户输入错误，不是服务器故障——
+            # 先确认该 stash 存在，不存在回 400。
+            rc0, out0, _e0 = _run(["git", "stash", "list", "--format=%gd"],
+                                  wc, VCS_TIMEOUT_RO)
+            if rc0 == 0:
+                refs = [x.strip() for x in out0.splitlines() if x.strip()]
+                if idx >= len(refs):
+                    return jsonify({"ok": False,
+                                    "err": "第 %d 条 stash 不存在（共 %d 条）" % (
+                                        idx, len(refs))}), 400
             rc, out, e = _run(["git", "stash", act, "stash@{%d}" % idx],
                               wc, VCS_TIMEOUT_RW)
         else:
@@ -1699,8 +1805,12 @@ def vcs_unstage():
     with _root_lock(wc):
         rc, out, e = _run(["git", "restore", "--staged", "--"] + paths,
                           wc, VCS_TIMEOUT_RW)
-        if rc != 0:
-            # 老 git（< 2.23）没有 restore
+        if rc != 0 and ("not a git command" in (e or "")
+                        or "unknown subcommand" in (e or "")):
+            # 只在「老 git 不认识 restore」时回退；其它失败原样上报。
+            # a650 审计 P3：旧实现的回退判据是「rc != 0」——勾选未跟踪文件
+            # 时 restore 报 pathspec 不符，reset 却 rc=0 什么都没做，于是
+            # 接口谎报成功。
             rc, out, e = _run(["git", "reset", "HEAD", "--"] + paths,
                               wc, VCS_TIMEOUT_RW)
         if rc != 0:
@@ -1715,6 +1825,9 @@ def vcs_discard():
     """丢弃工作区改动（**不可逆**）。body: {root, paths[], confirm:true}
 
     必须 confirm=true；执行前把当前内容快照到数据目录并在响应里回报路径。
+    语义 = 「回到 HEAD 状态」：工作区 + 暂存区一起还原（a650 审计 P2-1——
+    旧实现只 checkout 工作区，已 add 的内容原样留在 index 里，下一次提交
+    照样带出去，可前端却说「已丢弃」）。
     """
     data = request.get_json(force=True, silent=True) or {}
     vcs, wc, err, _tool_ok = _guard(data.get("root"), need_tool=True)
@@ -1723,65 +1836,109 @@ def vcs_discard():
     if not data.get("confirm"):
         return jsonify({"ok": False,
                         "err": "丢弃改动不可逆，需带 confirm=true 明确确认"}), 400
-    paths = [str(p).replace("\\", "/") for p in (data.get("paths") or []) if p]
+    paths = [str(p).replace("\\", "/").rstrip("/")
+             for p in (data.get("paths") or []) if p]
     if not paths or any(_bad_rel(p) for p in paths):
         return jsonify({"ok": False, "err": "未选择文件或路径非法"}), 400
-    snap = _snap_discard(wc, paths)
-    removed = []
+
+    removed, failed = [], []
     with _root_lock(wc):
-        # a650：未纳管文件（git ?? / svn ?）没有可恢复的基线，checkout /
-        # revert 对它们要么报错要么整体失败。快照已落盘，这里直接删文件。
+        # 快照必须在锁内（P2-5）：否则可能读到别的写操作中途的状态，
+        # 留底内容不等于实际被丢弃的内容。
+        snap, snap_err = _snap_discard(wc, paths)
         if vcs == "git":
             rc, out, _e = _run(["git", "-c", "core.quotepath=false", "ls-files",
-                                "--others", "--exclude-standard", "--"] + paths,
+                                "--others", "--exclude-standard", "-z", "--"] + paths,
                                wc, VCS_TIMEOUT_RO)
-            untracked = set(out.splitlines()) if rc == 0 else set()
+            untracked = [x for x in out.split("\0") if x] if rc == 0 else []
+            uset = set(untracked)
+            for p in list(paths):
+                if p in uset:
+                    try:
+                        os.remove(os.path.join(wc, *p.split("/")))
+                        removed.append(p)
+                        paths.remove(p)
+                        continue
+                    except OSError as e:
+                        failed.append("%s（%s）" % (p, e))
+                        paths.remove(p)
+                        continue
+                # 未纳管**目录**（P2-2）：ls-files 只列目录内文件，目录名
+                # 本身不在集合里。要求目录下全部文件都未纳管才整体删除。
+                pre = p + "/"
+                kids = [x for x in untracked if x.startswith(pre)]
+                if not kids:
+                    continue
+                rc2, out2, _e2 = _run(["git", "ls-files", "-z", "--", p],
+                                      wc, VCS_TIMEOUT_RO)
+                if rc2 != 0 or [x for x in out2.split("\0") if x]:
+                    continue                      # 目录里混有已纳管文件，交给 git
+                try:
+                    shutil.rmtree(os.path.join(wc, *p.split("/")))
+                    removed.append(p)
+                except OSError as e:
+                    failed.append("%s（%s）" % (p, e))
+                paths.remove(p)
+            if paths:
+                rc, out, e = _run(["git", "restore", "--source=HEAD",
+                                   "--staged", "--worktree", "--"] + paths,
+                                  wc, VCS_TIMEOUT_RW)
+                if rc != 0:
+                    # 老 git（< 2.23）没有 restore；checkout HEAD 同时改
+                    # index 与工作区，语义等价（但必须带 HEAD，绝不能是把
+                    # 分支名当 pathspec 的 `checkout -- <name>`）
+                    rc, out, e = _run(["git", "checkout", "HEAD", "--"] + paths,
+                                      wc, VCS_TIMEOUT_RW)
+                if rc != 0:
+                    failed.append((e or out or "git 还原失败").strip()[:1000])
         else:
-            untracked = set()
-            # 一次 svn status 覆盖全部目标（逐文件调 svn 会起 N 个进程）
-            rc, out, _e = _run(["svn", "status", "-q"] + [
+            # P2-3：`svn status -q` 会隐藏 unversioned（? 项），拿它判
+            # 未纳管恒为空集——旧实现因此对 svn 的未纳管文件静默什么都没做。
+            rc, out, _e = _run(["svn", "status"] + [
                 os.path.join(wc, *p.split("/")) for p in paths],
                 wc, VCS_TIMEOUT_RO)
+            untracked = set()
             if rc == 0:
                 for ln in out.splitlines():
                     if not ln.startswith("?"):
                         continue
-                    ap = ln[1:].strip().replace("\\", "/")
-                    rel = os.path.relpath(ap, wc).replace("\\", "/")
+                    ap = ln[1:].strip()
+                    try:
+                        rel = os.path.relpath(ap, wc).replace("\\", "/")
+                    except ValueError:            # 跨盘符（理论上不可达）
+                        continue
                     untracked.add(rel)
-        for p in list(paths):
-            if p not in untracked:
-                continue
-            try:
-                os.remove(os.path.join(wc, *p.split("/")))
-                removed.append(p)
-                paths.remove(p)
-            except OSError:
-                pass
-        if not paths:
-            _st_memo_inval(wc)
-            return jsonify({"ok": True, "removed": removed,
-                            **({"snapshot": snap} if snap else {})})
-        if vcs == "git":
-            rc, out, e = _run(["git", "checkout", "--"] + paths,
-                              wc, VCS_TIMEOUT_RW)
-            if rc != 0:
-                rc, out, e = _run(["git", "restore", "--"] + paths,
-                                  wc, VCS_TIMEOUT_RW)
-        else:
-            rc, out, e = _run(["svn", "revert"] + [
-                os.path.join(wc, *p.split("/")) for p in paths],
-                wc, VCS_TIMEOUT_RW)
-        if rc != 0:
-            return jsonify({"ok": False,
-                            "err": (e or out or "丢弃改动失败").strip()[:2000],
-                            "removed": removed,
-                            **({"snapshot": snap} if snap else {})}), 500
-    _st_memo_inval(wc)
-    return jsonify({"ok": True, "removed": removed,
-                    **({"snapshot": snap} if snap else {})})
-    _st_memo_inval(wc)
-    return jsonify({"ok": True, **({"snapshot": snap} if snap else {})})
+            for p in list(paths):
+                here = os.path.join(wc, *p.split("/"))
+                if p in untracked:
+                    try:
+                        if os.path.isdir(here) and not os.path.islink(here):
+                            shutil.rmtree(here)
+                        else:
+                            os.remove(here)
+                        removed.append(p)
+                    except OSError as e:
+                        failed.append("%s（%s）" % (p, e))
+                    paths.remove(p)
+            if paths:
+                rc, out, e = _run(["svn", "revert"] + [
+                    os.path.join(wc, *p.split("/")) for p in paths],
+                    wc, VCS_TIMEOUT_RW)
+                if rc != 0:
+                    failed.append((e or out or "svn revert 失败").strip()[:1000])
+        _st_memo_inval(wc)
+
+    body = {"ok": not failed, "removed": removed}
+    if snap:
+        body["snapshot"] = snap
+    if snap_err:
+        body["snapshot_err"] = snap_err
+    elif not snap:
+        body["snapshot_err"] = "没有可快照的内容（目标已不存在）"
+    if failed:
+        body["err"] = "；".join(failed)[:2000]
+        return jsonify(body), 500
+    return jsonify(body)
 
 
 @vcs_bp.route("/api/vcs/tags", methods=["POST"])
@@ -1815,7 +1972,10 @@ def vcs_tags():
         if act == "create":
             msg = str(data.get("message") or "").strip()
             rev = str(data.get("rev") or "").strip()
-            if rev and not _git_ref_ok(rev):
+            # a650 审计 P3：tag 的 rev 位置只接受明确的提交/标签引用——
+            # `@{1}` 这类 reflog 写法 _git_ref_ok 放行但语义是「上次 checkout
+            # 的提交」，会把标签打歪。
+            if rev and (not _git_ref_ok(rev) or "@{" in rev):
                 return jsonify({"ok": False, "err": "修订引用非法"}), 400
             if msg:
                 argv = ["git", "tag", "-a", name, "-m", msg] + ([rev] if rev else [])
@@ -1851,7 +2011,10 @@ def vcs_push():
     argv = ["git", "push"]
     if data.get("set_upstream"):
         argv.append("-u")
-    argv += [remote, branch]
+    # a650 审计 P1-1：分支名直接当 refspec 时，以 "+" 开头会被 git 解析成
+    # 「强制推送」。写成完整 ref → ref 的 refspec，`+` 只可能出现在名字中间，
+    # 语义固定；推不上（非快进）由 git 报错，绝不静默强推。
+    argv += [remote, "%s:%s" % (_branch_ref(branch), _branch_ref(branch))]
     with _root_lock(wc):
         rc, out, e = _run(argv, wc, VCS_TIMEOUT_NET)
         if rc != 0:

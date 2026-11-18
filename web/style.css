@@ -3422,8 +3422,12 @@ html {
   border: 1px solid var(--border); border-radius: 12px; padding: 16px;
   box-shadow: 0 10px 40px rgba(0,0,0,.5); }
 .hg-modal-title { font-size: var(--fs-xl); font-weight: 600; color: var(--fg-bright, var(--fg)); margin-bottom: 10px; }
-.hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7;
-  white-space: pre-wrap; }
+.hg-modal-body { font-size: 12.5px; color: var(--fg); line-height: 1.7; }
+/* a650：需要保留换行/缩进的弹窗正文（改动清单、命令预览）单独标 class——
+   pre-wrap 不能上 .hg-modal-body，那会把所有既有弹窗 HTML 源码里的缩进
+   空白渲染成可见空洞。 */
+.hg-modal-body.hg-pre { white-space: pre-wrap; }
+.hg-modal-body.hg-pre code { white-space: normal; }
 .hg-modal-body label { display: block; font-size: var(--fs-cap); color: var(--muted); margin-bottom: 5px; }
 /* a452（审计 P1：复选框看不见勾选态）：全文通用选择器会把 checkbox/radio
    的原生绘制一并抹掉（勾/未勾长得一样，三角色弹窗的「启用三角色」就是
@@ -5179,6 +5183,12 @@ html {
 .hg-vcs-strow:last-child { border-bottom: none; }
 .hg-vcs-strow:hover { background: rgba(128,128,128,.07); }
 .hg-vcs-strow .btn { padding: 1px 8px; font-size: 11px; flex-shrink: 0; }
+/* a650：弹窗内二次确认——必须盖在 .hg-vcs-rdlg 之上（10060），否则确认框
+   被开着的分支/标签弹窗盖住，点了看着像没反应 */
+.hg-vcs-cfm { z-index: 10080; }
+.hg-vcs-cfm .hg-vcs-rdlg-card { width: 460px; }
+.hg-vcs-rdlg-body { font-size: 12px; }
+.hg-vcs-rdlg-body .hg-vcs-rdlg-msg { margin-top: 0; }
 .hg-vcs-warn { color: var(--muted); font-size: 11px; }
 .hg-vcs-acts { display: flex; gap: 8px; align-items: center; margin: 10px 0 6px; }
 .hg-vcs-hint { color: var(--muted); font-size: 11px; margin-left: auto; }
@@ -5307,7 +5317,8 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 .hg-vcs-cfrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* ---- v3.5.133 提交历史弹窗（designer 方案：master-detail，880px/84vh）---- */
-.hg-modal-vcslog { width: min(880px, 94%); max-width: 94%; max-height: 84vh; display: flex; flex-direction: column; }
+/* a650（用户实锤「面板有点窄」）：880 → 1240——master-detail 双栏 + 日期/作者/统计列在旧宽度下互相挤压 */
+.hg-modal-vcslog { width: min(1240px, 96%); max-width: 96%; max-height: 86vh; display: flex; flex-direction: column; }
 .hg-vcs-hbody { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--border); }
 .hg-vcs-hlist { width: 46%; min-width: 280px; overflow-y: auto; border-right: 1px solid var(--border);
   padding: 4px 0; }
@@ -5346,6 +5357,9 @@ span.nn-hl-t { background: color-mix(in srgb, #3fb950 15%, transparent);
 .hg-vcs-hsize { font-size: var(--fs-xs); padding: 2px 4px;
   border: 1px solid var(--border); border-radius: 5px; background: var(--bg-card); color: var(--fg); }
 .hg-vcs-deco { font-size: 9px; color: var(--muted); margin-left: 4px; }
+/* a650：HEAD/分支装饰改 SVG 徽标（原文太长挤掉日期/标题，悬停看全名） */
+.hg-vcs-decoic { display: inline-flex; align-items: center; vertical-align: -2px;
+  margin-left: 4px; color: var(--accent, #2a6db5); cursor: help; flex: none; }
 .hg-vcs-copybtn { flex: none; visibility: hidden; font-size: 11px; cursor: pointer;
   color: var(--muted); padding: 0 2px; }
 .hg-vcs-hlrow:hover .hg-vcs-copybtn { visibility: visible; }

@@ -68,6 +68,10 @@ def main():
            "a[b", "a\\b", "a/", "/a", "a//b", "x" * 201]
     check("非法名全拒", all(not vcs._git_ref_ok(x) for x in bad),
           str([x for x in bad if vcs._git_ref_ok(x)]))
+    # a650 审计 P1-1：+ 开头是强制推送 refspec
+    check("+ 开头被拒（强推前缀）", not vcs._git_ref_ok("+main"))
+    check("reflog / 保留名被拒",
+          all(not vcs._git_ref_ok(x) for x in ("@{1}", "@", ".hidden", "a.", "a.lock")))
     good = ["master", "feature/x", "release-1.0", "v1.0.0", "深/分支"]
     check("正常名全放行", all(vcs._git_ref_ok(x) for x in good),
           str([x for x in good if not vcs._git_ref_ok(x)]))
@@ -80,11 +84,24 @@ def main():
     e, g, c, sv, skip, lim = vcs._log_plan("git", {"limit": 5, "rev": "master"})
     check("rev 目标追加", e is None and g[-1] == "master", str(g))
     check("rev 非法 400", vcs._log_plan("git", {"rev": "a..b"})[0][1] == 400)
+    # a650 审计 P3：--all 压过 rev，两者同给时不该把 rev 塞进 argv；
+    # 计数也要同口径（--all 时不能按 HEAD 数）
+    e, g, c, sv, skip, lim = vcs._log_plan("git",
+                                           {"limit": 5, "all": True, "rev": "master"})
+    check("all+rev 互斥（rev 不追加）", "--all" in g and "master" not in g, str(g))
+    check("all 时总数按 --all 计", "--all" in c and "HEAD" not in c, str(c))
+    e, g, c, sv, skip, lim = vcs._log_plan("git", {"limit": 5, "rev": "dev"})
+    check("指定 rev 时总数同口径", "dev" in c and "HEAD" not in c, str(c))
+    check("字符串 '0' 不当真", not vcs._truthy("0") and vcs._truthy("1")
+          and not vcs._truthy("false") and vcs._truthy(True))
+    e, g, c, sv, skip, lim = vcs._log_plan("git", {"limit": 5, "graph": "0"})
+    check("graph='0' 不启用", "--graph" not in g, str(g))
 
     print("== 3. 分支分类（refs/heads 的斜杠名不当事远程）==")
     fmt_out = ("feature/x\x1fabc123\x1forigin/feature/x\x1f[ahead 2]\x1fdo x\n"
                "master\x1fdef456\x1forigin/master\x1f\x1fmain line")
     fake = _Fake([
+        (("symbolic-ref",), (0, "master", "")),
         (("rev-parse",), (0, "master", "")),
         (("for-each-ref", "refs/heads"), (0, fmt_out, "")),
         (("for-each-ref", "refs/remotes"),
@@ -137,7 +154,9 @@ def main():
     j = r.get_json()
     check("未跟踪文件被删", j.get("ok") and not os.path.exists(newp), str(j)[:200])
     check("回报 removed", "new.txt" in (j.get("removed") or []), str(j)[:200])
-    check("不调用 checkout", not fake.hit("checkout"), str(fake.calls))
+    check("不调用 checkout", not fake.hit("checkout", "--"), str(fake.calls))
+    check("不用裸 checkout --（P1-2 老 git 回退语义）",
+          not [c for c in fake.calls if c[1:3] == ["checkout", "--"]], str(fake.calls))
     snaps = j.get("snapshot") or ""
     check("丢弃前落快照", bool(snaps) and os.path.isfile(
         os.path.join(snaps, "new.txt")), snaps)
@@ -147,6 +166,71 @@ def main():
     _patch_run(fake, guard_root=d)
     r = _client().post("/api/vcs/discard", json={"root": d, "paths": ["x"]})
     check("缺 confirm → 400", r.status_code == 400 and not fake.calls, str(r.get_json()))
+
+    print("== 6.5 discard 已暂存 / 未纳管目录（审计 P2-1 / P2-2）==")
+    t1 = os.path.join(d, "staged.txt")
+    with open(t1, "w", encoding="utf-8") as f:
+        f.write("staged content")
+    fake = _Fake([(("restore",), (0, "", ""))])
+    _patch_run(fake, guard_root=d)
+    j = _client().post("/api/vcs/discard",
+                       json={"root": d, "paths": ["staged.txt"], "confirm": True}).get_json()
+    rs = fake.hit("restore")
+    check("已跟踪文件走 restore --source=HEAD 清 index+工作区",
+          rs and "--source=HEAD" in rs[0] and "--staged" in rs[0]
+          and "--worktree" in rs[0], str(rs)[:200])
+    check("不再用裸 checkout --", not [c for c in fake.calls
+                                       if c[1:3] == ["checkout", "--"]], str(fake.calls))
+
+    ud = os.path.join(d, "udd")
+    os.makedirs(os.path.join(ud, "sub"), exist_ok=True)
+    for rel in ("udd/a.txt", "udd/sub/b.txt"):
+        with open(os.path.join(d, *rel.split("/")), "w", encoding="utf-8") as f:
+            f.write("x")
+    fake = _Fake([
+        (("ls-files", "--others"), (0, "udd/a.txt\0udd/sub/b.txt\0", "")),
+        (("ls-files", "-z"), (0, "", "")),
+    ])
+    _patch_run(fake, guard_root=d)
+    j = _client().post("/api/vcs/discard",
+                       json={"root": d, "paths": ["udd"], "confirm": True}).get_json()
+    check("未纳管目录整体删除", j.get("ok") and not os.path.exists(ud), str(j)[:200])
+    check("目录记入 removed", "udd" in (j.get("removed") or []), str(j)[:200])
+
+    print("== 6.6 快照：同秒不覆盖 + 目录留底 + 失败如实回报（P2-4/P2-5/P2-6）==")
+    f1 = os.path.join(d, "snap1.txt")
+    with open(f1, "w", encoding="utf-8") as f:
+        f.write("v1")
+    fake = _Fake([(("restore",), (0, "", ""))])
+    _patch_run(fake, guard_root=d)
+    s1 = _client().post("/api/vcs/discard",
+                        json={"root": d, "paths": ["snap1.txt"], "confirm": True}).get_json()
+    with open(f1, "w", encoding="utf-8") as f:
+        f.write("v2")
+    s2 = _client().post("/api/vcs/discard",
+                        json={"root": d, "paths": ["snap1.txt"], "confirm": True}).get_json()
+    check("两次快照目录不同", s1.get("snapshot") and s2.get("snapshot")
+          and s1["snapshot"] != s2["snapshot"], "%s / %s" % (
+              s1.get("snapshot"), s2.get("snapshot")))
+    try:
+        v1 = open(os.path.join(s1["snapshot"], "snap1.txt"), encoding="utf-8").read()
+        v2 = open(os.path.join(s2["snapshot"], "snap1.txt"), encoding="utf-8").read()
+        check("快照内容各是本轮之前的状态", v1 == "v1" and v2 == "v2", v1 + "|" + v2)
+    except OSError as e:
+        check("快照内容各是本轮之前的状态", False, str(e))
+
+    os.makedirs(os.path.join(d, "snapdir"), exist_ok=True)
+    with open(os.path.join(d, "snapdir", "in.txt"), "w", encoding="utf-8") as f:
+        f.write("deep")
+    fake = _Fake([
+        (("ls-files", "--others"), (0, "snapdir/in.txt\0", "")),
+        (("ls-files", "-z"), (0, "", "")),
+    ])
+    _patch_run(fake, guard_root=d)
+    j = _client().post("/api/vcs/discard",
+                       json={"root": d, "paths": ["snapdir"], "confirm": True}).get_json()
+    check("目录内容进快照", bool(j.get("snapshot")) and os.path.isfile(
+        os.path.join(j["snapshot"], "snapdir", "in.txt")), str(j.get("snapshot")))
 
     print("== 7. --graph 行首连线列不污染 rev ==")
     g = ("* \x1fa1b2c3d\x1fa1b2c\x1fgaoyi\x1f2026-11-18\x1fa650 版本面板\x1f"

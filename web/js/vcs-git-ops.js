@@ -10,6 +10,7 @@
 let _vcsDlg = null;
 
 function _vcsDlgClose() {
+  _vcsCfmClose();                  // 确认框盖在上面，一起收，避免孤儿浮层
   if (_vcsDlg) { _vcsDlg.remove(); _vcsDlg = null; }
 }
 
@@ -46,6 +47,58 @@ function _vcsPost(path, body) {
     .catch(e => ({ ok: false, err: String(e) }));
 }
 
+// a650：自建对话框里的二次确认**不能**用 hgModal——它的遮罩 z-index 是 40，
+// 而 .hg-vcs-rdlg 是 10060，确认框会被开着的分支/标签弹窗整块盖住，
+// 用户看到的是「点了没反应」。这里给一份同层级（更高）的实现。
+let _vcsCfm = null;
+function _vcsAsk(title, bodyHtml, buttons) {
+  return new Promise((resolve) => {
+    _vcsCfmClose();
+    const ov = document.createElement('div');
+    ov.className = 'hg-vcs-rdlg hg-vcs-cfm';
+    ov.innerHTML =
+      `<div class="hg-vcs-rdlg-card">` +
+      `<div class="hg-vcs-rdlg-title">${esc(title)}</div>` +
+      `<div class="hg-modal-body hg-pre">${bodyHtml}</div>` +
+      `<div class="hg-vcs-rdlg-acts"></div></div>`;
+    document.body.appendChild(ov);
+    _vcsCfm = ov;
+    const acts = ov.querySelector('.hg-vcs-rdlg-acts');
+    let done = false;
+    const fin = (v) => {
+      if (done) return;
+      done = true;
+      try { document.removeEventListener('keydown', onKey); } catch (_) {}
+      try { ov.remove(); } catch (_) {}
+      if (_vcsCfm === ov) _vcsCfm = null;
+      resolve(v);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); fin(null); }
+    };
+    document.addEventListener('keydown', onKey);
+    ov.addEventListener('click', (e) => { if (e.target === ov) fin(null); });
+    (buttons || []).forEach((b) => {
+      const btn = document.createElement('button');
+      btn.className = 'btn' + (b.primary ? ' primary' : '');
+      btn.textContent = b.label;
+      btn.onclick = () => fin(b.value);
+      acts.appendChild(btn);
+    });
+    const first = acts.querySelector('.btn.primary') || acts.querySelector('.btn');
+    if (first) first.focus();
+  });
+}
+function _vcsCfmClose() {
+  if (_vcsCfm) { try { _vcsCfm.remove(); } catch (_) {} _vcsCfm = null; }
+}
+function _vcsConfirm(title, bodyHtml, okLabel, cancelLabel) {
+  return _vcsAsk(title, bodyHtml, [
+    { label: cancelLabel || '取消', value: false },
+    { label: okLabel || '确认', value: true, primary: true },
+  ]);
+}
+
 // ==================== 分支对话框 ====================
 function _vcsBranchDialog() {
   const D = VCS.data || {};
@@ -66,6 +119,7 @@ function _vcsBranchDialog() {
       const local = j.local || [];
       const remote = j.remote || [];
       ui.body.innerHTML =
+        (j.warn ? `<div class="hg-vcs-rdlg-msg warn">${esc(j.warn)}</div>` : '') +
         (j.detached
           ? `<div class="hg-vcs-rdlg-msg warn">当前处于游离 HEAD（未在任何分支上）——切换分支可回到正常状态。</div>`
           : '') +
@@ -99,10 +153,9 @@ function _vcsBranchDialog() {
       });
       ui.body.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
         const name = b.dataset.del;
-        hgModal('删除分支',
-          `<div class="hg-modal-body">将执行 <code>git branch -d ${esc(name)}</code>\n` +
-          `未合并的分支会被拒绝——确需强删请用命令行 -D。</div>`,
-          [{ label: '取消', value: false }, { label: '删除', primary: true, value: true }])
+        _vcsConfirm('删除分支',
+          `将执行 <code>git branch -d ${esc(name)}</code>\n` +
+          `未合并的分支会被拒绝——确需强删请用命令行 -D。`, '删除')
           .then(ok => {
             if (!ok) return;
             _vcsPost('/api/vcs/branch/delete', { name }).then(r => {
@@ -146,12 +199,12 @@ function _vcsBranchSwitch(name, after) {
     }
     if (j._status === 409 && j.dirty) {
       const n = (j.files || []).length;
-      hgModal('工作区有未提交改动',
-        `<div class="hg-modal-body">切换到 <code>${esc(name)}</code> 前需要处理 ` +
+      _vcsAsk('工作区有未提交改动',
+        `切换到 <code>${esc(name)}</code> 前需要处理 ` +
         `<b>${n}</b> 个改动：\n\n` +
         (j.files || []).slice(0, 12).map(f => '· ' + esc(f)).join('\n') +
         (n > 12 ? `\n…另有 ${n - 12} 个` : '') +
-        `\n\n选择处理方式：</div>`,
+        `\n\n选择处理方式：`,
         [
           { label: '取消', value: false },
           { label: '先 Stash', value: 'stash' },
@@ -216,8 +269,7 @@ function _vcsStashDialog() {
       });
       ui.body.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
         const i = +b.dataset.drop;
-        hgModal('删除 stash', '<div class="hg-modal-body">删除后这些改动将无法找回，确认？</div>',
-          [{ label: '取消', value: false }, { label: '删除', primary: true, value: true }])
+        _vcsConfirm('删除 stash', '删除后这些改动将无法找回，确认？', '删除')
           .then(ok => {
             if (!ok) return;
             _vcsPost('/api/vcs/stash', { action: 'drop', index: i }).then(r => {
@@ -251,20 +303,30 @@ function _vcsDiscardSelected() {
   const files = (VCS.data && VCS.data.files) || [];
   const sel = files.filter(f => VCS.sel.has(f.rel));
   if (!sel.length) { showBanner('先勾选要丢弃的文件', 2500, true); return; }
-  hgModal('丢弃工作区改动（不可逆）',
-    `<div class="hg-modal-body">以下 <b>${sel.length}</b> 个文件的未提交改动将被丢弃：\n\n` +
+  _vcsConfirm('丢弃工作区改动（不可逆）',
+    `以下 <b>${sel.length}</b> 个文件的未提交改动将被丢弃：\n\n` +
     sel.slice(0, 15).map(f => '· ' + esc(f.rel)).join('\n') +
     (sel.length > 15 ? `\n…另有 ${sel.length - 15} 个` : '') +
-    `\n\n执行前会自动快照到数据目录，但仍建议先确认。\n继续？</div>`,
-    [{ label: '取消', value: false }, { label: '确认丢弃', primary: true, value: true }])
+    `\n\n执行前会自动快照到数据目录，但仍建议先确认。\n继续？`, '确认丢弃')
     .then(ok => {
       if (!ok) return;
       _vcsPost('/api/vcs/discard', {
         paths: sel.map(f => f.rel), confirm: true,
       }).then(j => {
-        if (!j.ok) { showBanner(j.err || '丢弃失败', 6000, true); return; }
-        showBanner('已丢弃 ' + sel.length + ' 个改动'
-          + (j.snapshot ? '（快照：' + j.snapshot + '）' : ''), 6000);
+        if (!j.ok) {
+          // 部分失败时 removed 可能有内容——如实说清做了什么、没做什么
+          const done = (j.removed || []).length;
+          showBanner('丢弃失败' + (done ? '（已处理 ' + done + ' 项）' : '') +
+            '：' + (j.err || ''), 9000, true);
+          VCS.sel = new Set();
+          _vcsReload();
+          return;
+        }
+        let msg = '已丢弃 ' + sel.length + ' 个改动';
+        if (j.snapshot) msg += '（快照：' + j.snapshot + '）';
+        else if (j.snapshot_err) msg += '（本次没有快照）';
+        showBanner(msg + (j.snapshot_err ? '　注意：' + j.snapshot_err : ''),
+          j.snapshot_err ? 9000 : 6000, !!j.snapshot_err);
         VCS.sel = new Set();
         _vcsReload();
       });
@@ -294,8 +356,7 @@ function _vcsTagsDialog() {
         : '<div class="hg-vcs-rdlg-msg">暂无标签</div>';
       ui.body.querySelectorAll('[data-deltag]').forEach(b => b.onclick = () => {
         const name = b.dataset.deltag;
-        hgModal('删除标签', `<div class="hg-modal-body">删除标签 <code>${esc(name)}</code>？（不删提交）</div>`,
-          [{ label: '取消', value: false }, { label: '删除', primary: true, value: true }])
+        _vcsConfirm('删除标签', `删除标签 <code>${esc(name)}</code>？（不删提交）`, '删除')
           .then(ok => {
             if (!ok) return;
             _vcsPost('/api/vcs/tags', { action: 'delete', name }).then(r => {
