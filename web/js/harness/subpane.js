@@ -800,7 +800,10 @@
       _sub.tabs[tid] = { label: _subTabLabel(_lbType, _lbDesc), type: _lbType, desc: _lbDesc, sc,
                          run: replay ? false : (!('done' in _ag) || !_ag.done),
                          err: !!_ag.err, replay: !!replay,
-                         model: _ag.model || '', t: null, turns: [], tick: null };
+                         model: _ag.model || '', t: null, turns: [], tick: null,
+                         // a638：silent 建壳=后台自愈（可被自动清理）；
+                         // 非 silent=用户主动打开（历史代理也要保留）
+                         _userOpened: !silent };
       _sub.order.push(tid);
       // v3.2：上限 6 个 tab，最旧让位（目录/动态伪 tab 常驻不让位，v3.3 加豁免 __dyn__）
       if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN).length > 6) {
@@ -873,6 +876,22 @@
            补一次 _subSyncChrome，幂等。
   */
   function _subRestoreActive() {
+    // a638（用户要求「已完成的子代理切会话回来应自动关掉对应 tab」）：
+    // 先清掉「已完成且不是用户主动打开」的 tab。切会话回来时 tab 是
+    // _subReset 清空后由自愈/镜像重建的，凡是档案已 done 的都属于历史
+    // 残留——留着只是噪音。用户主动点开的历史代理（_userOpened）保留。
+    try {
+      const _dead = Object.keys(_sub.tabs).filter(t => {
+        if (t === _SUB_DIR || t === _SUB_DYN) return false;
+        const tb = _sub.tabs[t];
+        if (!tb || tb._userOpened) return false;
+        const ag = (_HG.agents || {})[t]
+          || (_HG.agents || {})[(_HG.tidMap || {})[t] || ''] || null;
+        // 档案明确 done，或 tab 自身已定稿且不再运行
+        return !!((ag && ag.done) || (tb.t && tb.t.done && !tb.run));
+      });
+      for (const t of _dead) _subDrop(t);
+    } catch (_) {}
     if (!_sub.active || !_sub.tabs[_sub.active]) {
       let want = null;
       try { want = (_subActiveBySid || {})[_HG.sid] || null; } catch (_) {}
@@ -925,6 +944,14 @@
     const a = (typeof _hgAg === 'function' ? _hgAg(tid) : null) || (_HG.agents || {})[k] || (_HG.agents || {})[tid];
     let tb = _sub.tabs[k];
     if (!tb) {
+      // a638（用户要求「已完成的子代理切会话回来应该自动关掉对应 tab，
+      // 不切就不用管」）：**已结束的代理不再由自愈链自动建 tab**。
+      // 原来这里无条件 _subOpen(k, silent=true)——而 v4bridge._agentFile 在
+      // 每个镜像事件里对每个子代理都调本函数，于是切回会话时所有历史
+      // 子代理（哪怕早就 done、主会话也结束了）全被重新建 tab。
+      // 现在：只有「仍在运行」的代理才自动建壳；已完成的等用户主动点开
+      // （_subReopen，走目录/行卡/胶囊），点开才建。
+      if (a && a.done) return null;
       // silent：后台自愈补建不能抢焦点（用户实锤「切回会话后子代理面板
       // 每 2-5 秒从左往右自动轮换」，根因就是这里逐个 _subOpen 时切界面）
       _subOpen(k, (a && a.type) || 'Task', (a && a.desc) || '', undefined, true);
