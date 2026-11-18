@@ -1337,6 +1337,8 @@ function buildClaudeHarnessTab(opts = {}) {
   // renderSideStatus）是 innerHTML 全量覆盖，插入在行后的详情卡每次都被
   // 冲掉（用户实锤「点击展开后不一会又缩回去」）。展开态记 dyn.agentDetailOpen，
   // _dynAgents 重建后按 id 恢复插回。
+  // a640：动态页的子代理区块已整体删除（用户定调「动态中的子代理协作整个
+  // 删除」）——详情卡、回放按钮、行列表全部移除，上面这条注释仅存历史。
   // v3.3：动态页点击委托迁至 13-panel _hgDynClick（骨架随 _subDynOpen 懒建，绑定随骨架走）
 
   // ---- 渲染（分区独立重建，空区 hidden）----

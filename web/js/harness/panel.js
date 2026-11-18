@@ -499,61 +499,9 @@
     row.classList.add('hg-dyn-jump');
     setTimeout(() => row.classList.remove('hg-dyn-jump'), 1600);
   }
-  function _hgAgentDetailEl(id, a) {
-    const dur = a.done
-      ? (a.t0 ? _hgFmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '—')
-      : (a.t0 ? _hgFmtDur((Date.now() - a.t0) / 1000) + '（进行中）' : '—');
-    // v2.35（P1-4）：模型行——实跑 model（子代理 assistant 事件实报）优先，
-    // frontmatter 预显示兜底，都无=内置代理按 CLI 行为跑主链模型
-    const mdl = a.model || (_HG.agentModels && _HG.agentModels[a.type]) || '';
-    // 用量行——task_progress/task_notification 的 CLI 侧计数（total_tokens/
-    // tool_uses）；网关会把 assistant.message.usage 置零（实测），不作为源
-    const usageTxt = a.tokens
-      ? `${(a.tokens / 1000).toFixed(1)}K tokens · ${a.toolN || 0} 次工具`
-      : '';
-    const d = document.createElement('div');
-    d.className = 'hg-dyn-agdetail';
-    d.innerHTML =
-      (id && !a.replay ? `<div class="hg-dyn-kv"><span class="k">ID</span>` +
-        `<span class="v mono" data-hg-copy="${esc(id)}" title="点击复制">${esc(id)}</span></div>` : '') +
-      (a.replay ? '' :
-        `<div class="hg-dyn-kv"><span class="k">模型</span><span class="v" title="${esc(mdl ? '实跑/frontmatter 模型' : '内置或无定义文件代理，按 CLI 行为跑主链模型')}">${esc(mdl || '主链模型')}${a.bg ? ' · 后台' : ''}</span></div>`) +
-      (a.replay || !usageTxt ? '' :
-        `<div class="hg-dyn-kv"><span class="k">用量</span><span class="v">${esc(usageTxt)}</span></div>`) +
-      `<div class="hg-dyn-kv"><span class="k">起止</span><span class="v">` +
-        `${a.t0 ? new Date(a.t0).toTimeString().slice(0, 8) : '—'} → ` +
-        `${a.doneAt ? new Date(a.doneAt).toTimeString().slice(0, 8) : (a.done ? '历史' : '运行中')}</span></div>` +
-      `<div class="hg-dyn-kv"><span class="k">耗时</span><span class="v">${dur}` +
-        `${a.interrupted ? ' · 已中断' : (a.stopped ? ' · 已停止'
-                                            : (a.err ? ' · 失败' : ''))}</span></div>` +
-      (a.desc ? `<div class="hg-dyn-agres">${esc(a.desc)}</div>` : '') +
-      (a.result ? `<div class="hg-dyn-agres">${esc(a.result)}</div>` : '') +
-      // v2.38：回放入口——带 agentId 的已完成代理（含历史条目）可开回放
-      // 窗格（数据源=子代理转写）；协作代理只回看结论
-      (a.done && !a.collab && (a.taskId || a.agentId)
-        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
-          ` data-hg-replay-aid="${esc(a.taskId || a.agentId || '')}"` +
-          ` data-hg-replay-type="${esc(a.type || '')}">▣ 回放该子代理过程</button>` : '') +
-      (a.collab && a.result
-        ? `<button class="hg-dyn-replay-btn" data-hg-replay="${esc(id)}"` +
-          ` data-hg-replay-collab="1" data-hg-replay-type="${esc(a.type || '')}">▣ 回看协作结论</button>` : '');
-    return d;
-  }
-  function _hgAgentToggle(rowEl) {       // 子代理行展开/收起详情卡（单开）
-    const nxt = rowEl.nextElementSibling;
-    if (nxt && nxt.classList.contains('hg-dyn-agdetail')) {
-      nxt.remove();
-      if (_HG.dyn) _HG.dyn.agentDetailOpen = null;
-      return;
-    }
-    dynEl.querySelectorAll('.hg-dyn-agdetail').forEach(x => x.remove());
-    const id = rowEl.dataset.hgAg || '';
-    const a = (_HG.agents || {})[id]
-      || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === id);
-    if (!a) return;
-    if (_HG.dyn) _HG.dyn.agentDetailOpen = id;
-    rowEl.insertAdjacentElement('afterend', _hgAgentDetailEl(id, a));
-  }
+  // a640（用户定调「动态中的子代理协作整个删除」）：详情卡与「回放该子代理
+  // 过程」按钮一并移除——用户实测「从目录点开是正常状态，动态页点开不显示
+  // 回放」。子代理一律从目录进入（_subDirOpen），不再有这条坏路径。
   function _hgDynRender() {
     if (!dynEl) return;
     for (const fn of [_dynStat, _dynTodos, _dynAgents, _dynActs, _dynTurns, _dynFiles]) {
@@ -743,185 +691,32 @@
       todos.length ? (todos.filter(t => t.status === 'completed').length / todos.length * 100) + '%' : '0%';
     sec.querySelector('[data-hg-d-tlist]').innerHTML = html;
   }
-  function _dynAgents() {                // C 子代理实况：运行中/60s 内完成/回放历史，点击展开
+  // a640（用户定调「动态中的子代理协作整个删除」）：区块内容全删——行列表、
+  // 协作行、运行中胶囊、详情卡、「回放该子代理过程」都不再出现在动态页。
+  // 子代理只从两处进：① 本函数渲染的一条目录入口；② 主消息流里各自的子代理
+  // 行（点击开实况）与胶囊。用户实测「从目录点开是正常状态，动态页点开不
+  // 显示回放」——两套 UI 只留一套，避免再走那条坏路径。
+  function _dynAgents() {
     const sec = _sec('agents');
-    // a93S（用户实锤「4 个子代理只显示了一个」反向——归一显示：同代理的
-    // 派发键+续派键双档案在动态页也重复成行）链去重：按 taskId/agentId
-    // 链键合一，运行中的优先保留（与胶囊 _hgRunChains/目录 _subDirRows
-    // 同口径）
-    const _cidOf = (a) => a.taskId || a.agentId || a.id;
-    const _seenC = new Set();
-    const list = Object.entries(_HG.agents || {})
-      .sort((x, y) => ((x[1].done ? 1 : 0) - (y[1].done ? 1 : 0)))   // 运行中优先保留
-      .filter(([id, a]) => {
-        const cid = _cidOf(a);
-        if (cid && _seenC.has(cid)) return false;
-        if (cid) _seenC.add(cid);
-        return true;
-      })
-      .map(([id, a]) => Object.assign({ id }, a));
-    const running = list.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
-    const finished = list.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
-    const rplAll = (_HG.dyn && _HG.dyn.agentsRpl) || [];
-    // v2.39 修 TDZ：旧写法 map 回调里引用了正在初始化的 rpl 自身（rpl.length）
-    // ——回调同步执行时 const 未赋值，「Cannot access 'rpl' before
-    // initialization」实锤。此前 agentsRpl 恒空、回调不执行埋着不炸；v2.38
-    // 历史回放填充后面板 C 区必炸降级。tail 中转替代自引用，rid 编号语义不变。
-    const rplTail = rplAll.slice(-3);
-    // v3.4.56R1（轻审终审 R1）：运行中 live 档案的同 desc 回放尾巴滤除——
-    // 快照命中路 restore 时序下 restore 侧滤除落空，面板 C 同一运行中代理
-    // 渲染 run 行 + hist「历史」行双条。产出侧一处收口（同 _subDirRows 口径）
-    const _runDescs = new Set(list.filter(a => !a.done && !a.replay && !a.collab && a.desc).map(a => a.desc));
-    // v2.40 修断链：rid 必须写回存档对象。旧写法只把 rid 合进渲染副本
-    // （Object.assign({rid...}, a)），存档条目本身没有 rid——条目点击走
-    // _hgAgentToggle 时按 data-hg-ag 里的 rid 去 agentsRpl.find(x =>
-    // x.rid === id)，存档无 rid 恒 miss → if(!a) return 静默无反应，详情
-    // 卡（含「回放该子代理过程」按钮）整链不可达：副本上的 rid 是无根之
-    // 木。这里给无 rid 的存档条目补发持久 rid 并写回存档（mutate 的是我
-    // 们自己的数据对象，安全）：_HG.rplSeq 模块内自增发号，唯一且跨渲染
-    // 稳定（数组 shift 后同条目 rid 不漂移），已有 rid 不重发；渲染副本
-    // 改 Object.assign({}, a) 平移继承，rid 语义从「数组位置」变「持久
-    // 序号」，rid 值本身无展示/无持久化消费，语义安全。
-    rplTail.forEach(a => {
-      if (!a.rid) a.rid = 'rpl' + ((_HG.rplSeq = (_HG.rplSeq || 0) + 1));
-    });
-    const rplFiltered = rplTail.filter(a => !(a.desc && _runDescs.has(a.desc)));
-    // v2.59：历史条目附 agentId 尾缀——同 desc 的多次派发（如多轮续审各记
-    // 一条是真实记录）不再长得一模一样分不清
-    const rpl = rplFiltered.map(a => Object.assign({}, a, {
-      desc: (a.desc || '') + (a.agentId ? ' · ' + String(a.agentId).slice(-4) : '') }));
-    // v2.35（P1-5）：协作代理（SendMessage 转交的独立会话/识图转交）——从
-    // 消息流「已转交」线派生（dataset.peer/t0/done/psum 随快照序列化），
-    // 带「协作」徽章与 Task 子代理视觉区分：peer 无实况事件流，点击只跳线
-    // v2.37（P1-F①）：显示友好名（task_id→task_started 的 subagent_type 翻译，
-    // 未知类型走 _AGENT_LABEL），裸会话 ID 收 title；同基名多条加委托序号
-    // v2.37（P1-E）：协作包装的 agents 档案（collab 标记）与转交线同源去重
-    // ——同委派已有转交线行的不再出档案行（两套并存会双行打架）
-    const peerLines = _hgPeerLines();
-    const peerIds = new Set(peerLines.map(el => el.dataset.peer));
-    const _pbase = el => (_HG.peerNames && _HG.peerNames[el.dataset.peer])
-      || _AGENT_LABEL[el.dataset.peer] || el.dataset.peer || '其他会话';
-    const peers = peerLines
-      // v2.41：unknown/stale 残留线不再派生面板协作行（用户实锤「一堆疑似
-      // 残留永久挂着」）——它们没有 done 标记，旧过滤拦不住，重启后还随快照
-      // 恢复回来。主 flow 转交线保留作历史记录；迟到的真实回传到达时
-      // _hgPeerLineFreeze 定格（清 unknown/stale + 记 done）后按 60s 完成
-      // 窗正常回面板。连带（正向）：stale 线不再计入「N 运行中」pill。
-      // v3.4.68R（用户实锤「2 运行中怎么回事」）：本地续派线在此统一摘除——
-      // pill 计数/列表渲染同源，不再各处补滤（此前 pill 用未过滤集，列表用
-      // 过滤集，出「2 运行中」但行全历史的口径分裂）
-      .filter(el => el.dataset.unknown !== '1' && el.dataset.stale !== '1'
-        && (!el.dataset.done || Date.now() - +(el.dataset.done) < 60000)
-        && !_hgLocalResendPeer(el.dataset.peer))
-      .slice(-4);
-    // v3.4.68R（轻审实证）：本地续派不建转交线后 peerIds 落空——包装档案
-    // （collab+taskId）不再被线压制，会冒「协作代理·run」假行。同口径用
-    // _hgLocalResendPeer 过滤（live 档案+DOM 取证两级）
-    const list2 = list.filter(a => !(a.collab && a.taskId &&
-      (peerIds.has(a.taskId) || _hgLocalResendPeer(a.taskId))));
-    const running2 = list2.filter(a => !a.done).sort((x, y) => x.t0 - y.t0);
-    const finished2 = list2.filter(a => a.done && Date.now() - a.doneAt < 60000).slice(-5);
-    const show = running2.concat(finished2, rpl);
-    // v3.2：目录入口——区头「⏱ 已结束 N ›」开子代理目录 tab（ZCode 智能体
-    // 区同款入口；有任意档案即可进目录——运行中的也列在目录里）
-    // v3.2R1(P1)：计数与目录同源（_subDirRows 合并 live 档案+回放档案——
-    // 只数 _HG.agents 会在 hist 回放会话上显示「已结束 0」而目录列着 N 条）
-    const _dirBtn = sec.querySelector('[data-hg-agdir]');
-    if (_dirBtn) {
-      let endedN = 0;
-      try { endedN = _subDirRows().ended.length; } catch(_) {}
-      _dirBtn.hidden = false;
-      _dirBtn.innerHTML = `<span style="vertical-align:-2.5px">${ICO16.clock}</span> 已结束 ${endedN} ›`;
-    }
-    sec.hidden = !show.length && !peers.length && !(_dirBtn && (list.length || rplAll.length));
+    if (!sec) return;
+    let nRun = 0, nEnd = 0;
+    try {
+      const rows = _subDirRows();
+      nEnd = (rows.ended || []).length;
+      nRun = (rows.running || []).length;
+    } catch (_) {}
+    const total = nRun + nEnd;
+    sec.hidden = !total;      // 没有任何子代理：整区不出现
     if (sec.hidden) return;
-    const pill = sec.querySelector('[data-hg-d-agrun]');
-    const pendPeers = peers.filter(el => !el.dataset.done);   // v2.41：unknown/stale 已在过滤头排除（R6 判定前移）
-    pill.hidden = !running2.length && !pendPeers.length;
-    pill.textContent = (running2.length + pendPeers.length) + ' 运行中';
-    const _baseCount = {};
-    peers.forEach(el => {
-      const b = _pbase(el);
-      _baseCount[b] = (_baseCount[b] || 0) + 1;
-    });
-    sec.querySelector('[data-hg-d-aglist]').innerHTML = show.map(a => {
-      // v2.37（P1-E）：协作包装档案行——协作徽章 + 独立会话标注；无模型角标
-      // （对端模型不可观测）、不进实况窗格；点击走转交线跳转分支
-      if (a.collab) {
-        // 已结束的协作行点击=详情卡（内含「回看协作结论」）；运行中的=跳转交线
-        return `<div class="hg-dyn-agent peer ${a.done ? (a.err ? 'fail' : 'done') : 'run'}"` +
-          ` ${a.done ? `data-hg-ag="${esc(a.id || '')}"` : 'data-hg-peer-row="1"'}` +
-          ` title="${esc('协作代理（独立会话）· ' + (a.taskId || a.id || ''))}` +
-          `${a.done ? ' · 已结束，点击看结论' : ' · 无实况窗格，点击尝试跳转交线'}">` +
-          `<span class="hg-dyn-adot"></span>` +
-          `<span class="hg-dyn-pbadge">协作</span>` +
-          `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
-          (a.desc ? `<span class="hg-dyn-desc" title="${esc(a.desc)}">${esc(a.desc)}</span>` : '') +
-          (!a.done ? `<b class="hg-dyn-el" data-t0="${a.t0}">${a.t0 ? _hgFmtDur(Math.max(1, Math.round((Date.now() - a.t0) / 1000))) : '0s'}</b>` : '<b class="hg-dyn-el">已结束</b>') +
-          '</div>';
-      }
-      // v2.36：中断态补 halt 修饰类（点/文字/耗时转橙，与失败红区分；仅类名）
-      const cls = a.replay ? 'hist' : !a.done ? 'run'
-        : (a.err ? (a.interrupted ? 'fail halt' : 'fail')
-           : (a.stopped ? 'halt' : 'done'));
-      let el;
-      // v2.59：渲染时即算实际耗时——innerHTML 重建每 3-4s 一批（事件驱动），
-      // 硬编码 '0s' 占位要等下一轮 1s tick 才修正=时间反复归零（用户实锤）
-      if (!a.done) el = `<b class="hg-dyn-el" data-t0="${a.t0}">${a.t0 ? _hgFmtDur(Math.max(1, Math.round((Date.now() - a.t0) / 1000))) : '0s'}</b>`;
-      else if (a.replay) el = '<b class="hg-dyn-el">历史</b>';
-      else if (a.err) el = `<b class="hg-dyn-el">${a.interrupted ? '已中断' : '失败'}</b>`;
-      // v4.0.6（复审实锤）：被停 ≠ 完成——目录行不能画成绿色耗时
-      else if (a.stopped) el = '<b class="hg-dyn-el">已停止</b>';
-      else el = `<b class="hg-dyn-el">${a.t0 ? _hgFmtDur(Math.max(1, Math.round((a.doneAt - a.t0) / 1000))) : '完成'}</b>`;
-      const key = a.replay ? a.rid : a.id;
-      // v2.35（P1-4）：模型角标——实跑 model 优先，frontmatter 预显示兜底，
-      // 内置代理（无定义文件）标「主链模型」；后台代理加「后台」标
-      // a93S（用户定调「模型名太长挤一行不行，分两行」）：模型换行独立成
-      // 行（flex-basis:100% 次行小字），首行=类型+任务名+耗时
-      const mdl = a.model || (_HG.agentModels && _HG.agentModels[a.type]) || '';
-      const mdlTxt = a.replay ? '' :
-        `<span class="hg-dyn-amdl" title="${esc(mdl ? '子代理模型：' + mdl : '内置/无定义文件代理，按 CLI 行为跑主链模型')}">${esc(mdl || '主链模型')}${a.bg ? ' · 后台' : ''}</span>`;
-      return `<div class="hg-dyn-agent ${cls}" data-hg-ag="${esc(key || '')}"` +
-        (a.tokens ? ` title="用量：${a.tokens} tokens · ${a.toolN || 0} 次工具"` : '') + `>` +
-        `<span class="hg-dyn-adot"></span>` +
-        `<span class="hg-dyn-at">${esc(_AGENT_LABEL[a.type] || a.type)}</span>` +
-        mdlTxt +
-        (a.desc ? `<span class="hg-dyn-desc" title="${esc(a.desc)}">${esc(a.desc)}</span>` : '') +
-        el + '</div>';
-    }).join('') + peers.map(el => {
-      const pend = !el.dataset.done;
-      const t0 = +(el.dataset.t0 || 0) || Date.now();
-      const doneAt = +(el.dataset.done || 0);
-      // v2.37（P1-F①）：友好名 + 同基名委托序号——裸会话/任务 ID 永远收 title
-      const raw = el.dataset.peer || '其他会话';
-      const base = _pbase(el);
-      const sameBase = peers.filter(x => _pbase(x) === base)
-        .sort((a, b) => (+(a.dataset.t0 || 0)) - (+(b.dataset.t0 || 0)));
-      const disp = _baseCount[base] > 1 ? `${base}·#${sameBase.indexOf(el) + 1}` : base;
-      const durTxt = doneAt ? _hgFmtDur(Math.max(1, Math.round((doneAt - t0) / 1000))) : '';
-      const sum = el.dataset.psum || '';
-      // v2.41R2：过滤头已排除 unknown/stale 线（不上面板），此处 stale/unknown
-      // 恒 false，「疑似残留/状态未知」分支全不可达，摘除死代码；标记逻辑本身
-      // 保留在 dataset 派生层，供 _hgPeerPending/迟回传定格/verify 等消费
-      return `<div class="hg-dyn-agent peer ${pend ? 'run' : 'done'}" data-hg-peer-row="1"` +
-        ` title="${esc(raw !== disp ? raw + '\n' : '')}${pend ? '协作中：独立会话无实况窗格，点击跳转交线' : '已回传，点击跳转交线'}">` +
-        `<span class="hg-dyn-adot"></span>` +
-        `<span class="hg-dyn-pbadge">协作</span>` +
-        `<span class="hg-dyn-at">${esc(disp)}</span>` +
-        `<span class="hg-dyn-desc">${esc(pend ? '等待结论回传' : (sum ? sum : '已回传'))}</span>` +
-        (pend ? `<b class="hg-dyn-el" data-t0="${t0}">${_hgFmtDur(Math.max(1, Math.round((Date.now() - t0) / 1000)))}</b>` : `<b class="hg-dyn-el">${durTxt}</b>`) + '</div>';
-    }).join('');
-    // v2.39：重渲恢复已展开的详情卡——上面 innerHTML 全量覆盖会把插在行后
-    // 的详情卡冲掉（用户实锤「点击展开后不一会又缩回去」）。条目已滚出列表
-    // （60s 完成窗口/上限 5）则清展开态，不复活孤儿卡。
-    const openId = (_HG.dyn || {}).agentDetailOpen;
-    if (openId) {
-      const row = sec.querySelector(`[data-hg-d-aglist] [data-hg-ag="${CSS.escape(openId)}"]`);
-      const a = (_HG.agents || {})[openId]
-        || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === openId);
-      if (row && a) row.insertAdjacentElement('afterend', _hgAgentDetailEl(openId, a));
-      else if (_HG.dyn) _HG.dyn.agentDetailOpen = null;
+    const _btn = sec.querySelector('[data-hg-agdir]');
+    if (_btn) {
+      _btn.hidden = false;
+      _btn.innerHTML = `<span style="vertical-align:-2.5px">${ICO16.clock}</span> 子代理目录` +
+        (nRun ? ` · <b>${nRun} 运行中</b>` : '') +
+        (nEnd ? ` · 已结束 ${nEnd}` : '') + ' ›';
     }
+    const listEl = sec.querySelector('[data-hg-d-aglist]');
+    if (listEl) listEl.innerHTML = '';
   }
   function _dynActs() {                  // E 最近工具：ring 20 条倒序，点击跳消息流，Bash 可复制
     const sec = _sec('acts');
@@ -987,25 +782,13 @@
       renderSideStatus();
       return;
     }
-    // v3.2：子代理目录入口（区头「⏱ 已结束 N ›」）→ 打开目录伪 tab
+    // v3.2：子代理目录入口（区头按钮）→ 打开目录伪 tab
     const db = e.target.closest('[data-hg-agdir]');
     if (db) { e.stopPropagation(); _subDirOpen(); return; }
-    // v2.38：详情卡「回放该子代理过程」→ 回放窗格（转写数据源）
+    // a640：动态页的详情卡与「回放该子代理过程」按钮已移除，这条分支的 DOM
+    // 不再产生——保留空判只为防御旧快照里残存的节点头。真回放入口在目录。
     const rb = e.target.closest('[data-hg-replay]');
-    if (rb) {
-      e.stopPropagation();
-      const rid = rb.dataset.hgReplay;
-      const a = (_HG.agents || {})[rid]
-        || ((_HG.dyn && _HG.dyn.agentsRpl) || []).find(x => x.rid === rid) || {};
-      if (rb.dataset.hgReplayCollab) {
-        _subReplay(rid, rb.dataset.hgReplayType || a.type || '协作', a.desc || '', '', true);
-      } else {
-        const aid = rb.dataset.hgReplayAid || a.taskId || a.agentId || '';
-        // v4.0.1：无 id 交解析漏斗（_subReplay 内部也会兜一层）
-        _subReplay(rid, rb.dataset.hgReplayType || a.type || 'Task', a.desc || '', aid, true);
-      }
-      return;
-    }
+    if (rb) { e.stopPropagation(); _subDirOpen(); return; }
     const acp = e.target.closest('[data-hg-actcp]');
     if (acp) {
       e.stopPropagation();
@@ -1043,12 +826,10 @@
       }
       return;
     }
+    // a640：动态页不再渲染子代理行（区块已删）。这条分支只为兼容主消息流
+    // 上带同名属性的行卡——统一改走目录，不再有「详情卡 + 回放按钮」这套。
     const ag = e.target.closest('[data-hg-ag]');
-    if (ag) {
-      if (ag.classList.contains('run')) { _subReopen(ag.dataset.hgAg); return; }
-      _hgAgentToggle(ag);
-      return;
-    }
+    if (ag) { _subDirOpen(); return; }
     // v2.37（P1-D）：三角色行点击=打开配置面板（开关进面板管理，防误触；
     // 旧行为是点击直接切开关，用户明确不要）
     if (e.target.closest('[data-hg-d-roles]')) { openRolesCfg(); return; }
