@@ -83,6 +83,10 @@ def _migrate_legacy_dirs():
 # 执行调用必须放在其依赖的全部定义之后，现在在模块底部。
 _PACK_TTL = 1800          # 导入暂存 zip 的有效期（秒）
 _PAGE_TTL = 600           # skills.sh 网页内存缓存（秒）
+# a636（对抗审计 P1-9）：第三方可发布内容，必须有响应大小上限——原来
+# 50MB 的「SKILL.md」被原样接受并装盘（内存/磁盘放大 DoS）。
+_MAX_SKILL_MD_BYTES = 2 * 1024 * 1024      # 单技能主文件 2MB
+_MAX_AUX_BYTES = 10 * 1024 * 1024          # 辅助脚本/字体 10MB
 _LB_CACHE = {}            # path -> (ts, html)；读写仅赋值/取值，GIL 下原子
 _DESC_LOCK = threading.Lock()
 _DESC_CACHE = {}          # skill键 -> {desc, ts}（raw frontmatter description）
@@ -104,21 +108,32 @@ _TOPICS = [
 
 # ---------------------------------------------------------------- 网络层
 
-def _http(url, timeout=20, want_bytes=False, extra_headers=None):
-    """GET → str/bytes；任何失败返回 None（调用方按不可达处理）。"""
+def _http(url, timeout=20, want_bytes=False, extra_headers=None, max_bytes=None):
+    """GET → str/bytes；任何失败返回 None（调用方按不可达处理）。
+
+    a636（对抗审计 P1-9）：支持 max_bytes——超限视为失败。原来无条件
+    `r.read()`，一个 50MB 的响应会整段进内存并可能装进用户目录。
+    """
     try:
         headers = {"User-Agent": UA}
         if extra_headers:
             headers.update(extra_headers)
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            b = r.read()
+            if max_bytes:
+                b = r.read(max_bytes + 1)
+                if len(b) > max_bytes:
+                    _log.warning("响应超过上限 %d 字节，按失败处理: %s",
+                                 max_bytes, url[:120])
+                    return None
+            else:
+                b = r.read()
         return b if want_bytes else b.decode("utf-8", "replace")
     except Exception:
         return None
 
 
-# ---- 多源下载（a632，用户定调「源要多、要安全、可选」）--------------------
+# ---- 多源下载（a634，用户定调「源要多、要安全、可选」）--------------------
 # 实测 2026-11-18（逐台机器可达性不同，本机结论仅供选型参考）：
 #   raw.githubusercontent.com   直连 000（被墙形态）——官方源，恒在候选列内
 #   testingcf.jsdelivr.net      200 真镜像，内容与 api.github.com 逐字节一致
@@ -157,13 +172,23 @@ def source_mode():
 
 
 def set_source_mode(m):
+    """切换技能源档位。返回 (ok, err)——a636（对抗审计 P1-12）：原来忽略
+    cfg_commit 的失败返回值，磁盘满/只读/杀软锁文件时前端仍弹「已切换，
+    即时生效」，用户被明确误导。"""
     from .app_state import cfg_commit
     if m not in _SKILL_SOURCE_MODES:
-        raise ValueError("未知技能源档位：%s" % m)
+        return False, "未知技能源档位：%s" % m
     # cfg_commit：锁内读改写原子（a623R 审计 N9——裸 {**_load_config()} 的
     # 读在锁外，与其它配置写并发可丢更新；全仓 22 处旧调用点同款是历史债，
     # 新代码用更好的既有 API）
-    cfg_commit(lambda d: d.update({"skill_source": m}))
+    try:
+        ret = cfg_commit(lambda d: d.update({"skill_source": m}))
+    except Exception as e:
+        return False, str(e)[:150]
+    # cfg_commit 的契约是 (ok, err)；老调用方/替身可能返回 None（当作成功）
+    if isinstance(ret, tuple) and ret and ret[0] is False:
+        return False, str(ret[1] if len(ret) > 1 else "配置写入失败")[:150]
+    return True, ""
 
 
 def _source_reachability():
@@ -197,12 +222,14 @@ def _raw_url_variants(owner, repo, branch, path):
     return out
 
 
-def _fetch_multi(variants, timeout=15, want_bytes=True):
+def _fetch_multi(variants, timeout=15, want_bytes=True, max_bytes=None):
     """按候选序逐源拉取，成功即返回 (bytes, 源名)；全部失败 (None, None)。
     空响应按失败处理（空 bytes 是断连/污染的常见产物，不能当成功——
-    空内容 sha256 与「真拉到」一致会造成假交叉验证通过）。"""
+    空内容 sha256 与「真拉到」一致会造成假交叉验证通过）。
+    a636：max_bytes 超限按失败处理（第三方内容 = 内存/磁盘放大面）。"""
     for name, url, hdr in variants:
-        b = _http(url, timeout=timeout, want_bytes=want_bytes, extra_headers=hdr)
+        b = _http(url, timeout=timeout, want_bytes=want_bytes,
+                  extra_headers=hdr, max_bytes=max_bytes)
         if b and len(b) > 0:
             return (b, name)
     return (None, None)
@@ -295,7 +322,7 @@ _OFFICIAL_REPO = "anthropics/skills"
 
 
 def _registry_official():
-    """发现面兜底（a632）：skills.sh 不可达时列 anthropics/skills 官方仓库。
+    """发现面兜底（a634）：skills.sh 不可达时列 anthropics/skills 官方仓库。
     contents API（单次调用，60/h 匿名限额内）列 skills/ 目录；API 挂则降级
     _OFFICIAL_SKILLS 常量。卡片结构与 skills.sh 榜单同构（desc 后台补）。"""
     names = []
@@ -316,7 +343,12 @@ def _registry_official():
         via = "official_fallback_static"
     rows = []
     for nm in names:
-        rows.append({"key": "%s/skills/%s" % (_OFFICIAL_REPO, nm),
+        # a636（对抗审计 P0-1）：key 必须是 **3 段** owner/repo/skill——原来
+        # 拼成 "anthropics/skills/skills/pdf"（4 段），前端 skInstall /
+        # skOpenDetail 都做 `parts.length !== 3` 校验 → 直接 return，兜底卡
+        # 点「安装」和点卡片都毫无反应。而兜底正是 skills.sh 不可达时的唯一
+        # 发现面，主路径必踩。
+        rows.append({"key": "%s/%s" % (_OFFICIAL_REPO, nm),
                      "owner": _OFFICIAL_REPO.split("/")[0],
                      "repo": _OFFICIAL_REPO.split("/")[1],
                      "skill": nm,
@@ -330,7 +362,7 @@ def registry(tab="top", q=""):
     """榜单卡片（tab: top=All Time / trending=24h / hot）；q 非空时在榜单
     内存过滤（skills.sh 无匿名搜索 API）。附带缓存的英文 description 与
     本地启发式分类（skills.sh topic 页是 JS 空壳，零网络分桶）。
-    a632：返回 (rows, source)——source ∈ skills.sh / official_fallback /
+    a634：返回 (rows, source)——source ∈ skills.sh / official_fallback /
     official_fallback_static；skills.sh 不可达自动切官方精选兜底。"""
     path = {"trending": "/trending", "hot": "/hot"}.get(tab, "/")
     html = _page(path)
@@ -338,7 +370,7 @@ def registry(tab="top", q=""):
     if rows:
         source = "skills.sh"
     else:
-        # a632R（审计 N8）：不可达**和 200 空壳页（限流/反爬）**都切官方
+        # a634R（审计 N8）：不可达**和 200 空壳页（限流/反爬）**都切官方
         # 精选兜底——限流正是本批立项痛点，只判 None 会漏掉这形态
         rows, source = _registry_official()
     if q:
@@ -377,13 +409,23 @@ def _desc_backfill(keys):
             if not d.get("fail"):
                 continue   # 正常缓存命中
             if time.time() - d["fail"] < 300:
-                continue   # a632R 审计 N7：失败未过 5min，暂不重试
+                continue   # a634R 审计 N7：失败未过 5min，暂不重试
             # 失败超过 5min → 落到下面重拉（负缓存过期）
-        owner, repo, skill = key.split("/")
+        # a636（对抗审计 P0-1）：maxsplit=2——key 契约是 owner/repo/skill，
+        # 但任何多一段的 key（曾经的兜底 4 段形态、或调用方手写）都会让裸
+        # split("/") 抛 ValueError。而本函数是裸 daemon 线程入口，异常直接
+        # 杀死线程且无日志 → desc 永远补不上。maxsplit 让末段容纳多余斜杠，
+        # 再由 _raw_skill_md 内部按真实路径失败处理。
+        try:
+            owner, repo, skill = key.split("/", 2)
+        except ValueError:
+            continue
+        if not owner or not repo or not skill:
+            continue
         md = _raw_skill_md(owner, repo, skill, cache=False)
         desc = _fm_desc(md[:2048]) if md else ""
         with _DESC_LOCK:
-            # a632R（审计 N7）：失败项记 fail 时间戳——registry 兜底期间
+            # a634R（审计 N7）：失败项记 fail 时间戳——registry 兜底期间
             # miss 判据会反复命中无 desc 的官方卡，负缓存 5min 防重拉风暴
             _DESC_CACHE[key] = {"desc": desc, "ts": time.time(),
                                 **({} if md else {"fail": time.time()})}
@@ -462,7 +504,8 @@ def _raw_skill_md(owner, repo, skill, cache=True):
         for br in _RAW_BRANCHES:
             rel = (tpl % {"s": skill}) + "/SKILL.md"
             b, _src = _fetch_multi(
-                _raw_url_variants(owner, repo, br, rel), timeout=15)
+                _raw_url_variants(owner, repo, br, rel), timeout=15,
+                max_bytes=_MAX_SKILL_MD_BYTES)
             if b and len(b) > 32:
                 try:
                     os.makedirs(_CACHE_DIR, exist_ok=True)
@@ -474,8 +517,29 @@ def _raw_skill_md(owner, repo, skill, cache=True):
     return None
 
 
+def _looks_like_skill_md(b):
+    """SKILL.md 内容形态闸（a636，对抗审计 P1-8）。
+
+    原实现只比 sha256 与 `len > 32`：企业代理/网关统一返回 HTML 拦截页时，
+    三个源「天然一致」→ consistent=True → 把错误页当技能装进用户目录，meta
+    还标 cross-verified。这里要求 UTF-8 可解码、不是 HTML、且像 markdown
+    技能文件（frontmatter 或标题开头）。
+    """
+    if not b or len(b) > _MAX_SKILL_MD_BYTES:
+        return False
+    try:
+        s = b.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    head = s.lstrip()[:200].lower()
+    if head.startswith(("<!doctype", "<html", "<?xml")):
+        return False
+    t = s.lstrip()
+    return t.startswith(("---", "#", ">")) or "name:" in t[:400].lower()
+
+
 def _fetch_skill_md_verified(owner, repo, skill):
-    """安装用：SKILL.md 多源交叉验证（a632 安全核心——技能本质是给 Claude
+    """安装用：SKILL.md 多源交叉验证（a634 安全核心——技能本质是给 Claude
     执行的 prompt+脚本，单源被篡改=持久提示注入）。
 
     并发拉全部源（小文件，秒级），成功响应（非空）各算 sha256：
@@ -499,7 +563,7 @@ def _fetch_skill_md_verified(owner, repo, skill):
 
         def _pull(name, url, hdr):
             b = _http(url, timeout=15, want_bytes=True, extra_headers=hdr)
-            if b and len(b) > 32:   # 与 _raw_skill_md 同一非空闸
+            if b and len(b) > 32 and _looks_like_skill_md(b):
                 with lock:
                     results[name] = b
 
@@ -539,30 +603,74 @@ def _fetch_skill_md_verified(owner, repo, skill):
 def skill_files(owner, repo, skill):
     """技能目录内全部文件（GitHub contents API，限额敏感——失败返回 None，
     调用方按「仅 SKILL.md」降级，不阻塞安装）。
-    a632R（审计 S1）：带出 contents API 自带的 git blob sha——install 侧
+    a634R（审计 S1）：带出 contents API 自带的 git blob sha——install 侧
     按公式 sha1("blob %d\\0" % len + content) 校验下载内容（零额外出网），
-    堵「SKILL.md 交叉验证过了、辅助脚本单独被某源毒化」的绕过半边。"""
+    堵「SKILL.md 交叉验证过了、辅助脚本单独被某源毒化」的绕过半边。
+    a636（对抗审计 P1-6）：**递归子目录**。原来 `typ != "file"` 直接丢弃
+    dir 项，而官方技能 17 个里 13 个的辅助文件在子目录（pdf 12 文件 8 个在
+    scripts/、docx 59/55）——装完只剩 SKILL.md，且 partial=False 用户无感。
+    返回项的形式保持 4 元组，name 用相对子路径（`scripts/fill.py`）。
+    """
     for tpl in _RAW_PATHS:
         sub = tpl % {"s": skill}
-        u = "https://api.github.com/repos/%s/%s/contents/%s" % (owner, repo, sub)
-        txt = _http(u, timeout=15)
-        if not txt:
-            continue
-        try:
-            items = json.loads(txt)
-        except ValueError:
-            continue
-        if isinstance(items, list):
-            return [(it.get("name"), it.get("download_url"), it.get("type"),
-                     it.get("sha"))
-                    for it in items if isinstance(it, dict)]
+        found = _walk_contents(owner, repo, sub, depth=0,
+                               seen=set(), budget=[120])
+        if found is not None:
+            return found
     return None
+
+
+def _walk_contents(owner, repo, sub, depth, seen, budget):
+    """递归 contents API。返回 [(relname, download_url, type, sha)] 或 None。
+
+    budget 是**请求数预算**：contents API 匿名 60/h，深度优先会把配额吃光。
+    超预算按「列不全」返回已完成部分（调用方标 partial）。
+    """
+    if depth > 4 or budget[0] <= 0 or sub in seen:
+        return [] if depth else None
+    seen.add(sub)
+    u = "https://api.github.com/repos/%s/%s/contents/%s" % (owner, repo, sub)
+    budget[0] -= 1
+    txt = _http(u, timeout=15, max_bytes=2 * 1024 * 1024)
+    if not txt:
+        return None
+    try:
+        items = json.loads(txt)
+    except ValueError:
+        return None
+    if not isinstance(items, list):
+        return None
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        nm, typ = it.get("name"), it.get("type")
+        if not nm:
+            continue
+        if typ == "file":
+            out.append((nm, it.get("download_url"), "file", it.get("sha")))
+        elif typ == "dir" and depth < 4:
+            child = sub + "/" + nm
+            sub_items = _walk_contents(owner, repo, child, depth + 1,
+                                       seen, budget)
+            for cn, curl, ctyp, csha in (sub_items or []):
+                out.append((nm + "/" + cn, curl, ctyp, csha))
+    return out
 
 
 # ---------------------------------------------------------------- 安装管理
 
 def _safe_skill_dir(name, parent=None):
-    """技能目录路径白名单校验（防 ../ 逃逸）。非法返回 None。"""
+    """技能目录路径白名单校验（防 ../ 逃逸）。非法返回 None。
+
+    a636（对抗审计 P0-5/P2-18）：
+    - 逃逸判定改为 commonpath：原来 `realpath(p) != abspath(p)` 会把**根本身
+      是 junction/符号链接**（`mklink /J skills D:\\D_skills`，用户省 C 盘空间
+      的常见做法）判成非法 → 整页「尚未安装任何技能」。现在只拒「解析后跑出
+      根之外」。
+    - 名字额外拒绝 Windows 保留字符/尾随点空格（`x<y.py` 会让 open 抛
+      WinError 22 中断安装）。
+    """
     name = (name or "").strip()
     if not name or "/" in name or "\\" in name or name in (".", ".."):
         return None
@@ -571,23 +679,79 @@ def _safe_skill_dir(name, parent=None):
     root = parent or _SKILLS_DIR
     p = os.path.join(root, name)
     try:
-        if os.path.realpath(p) != os.path.abspath(p):
-            return None
-    except OSError:
+        rroot = os.path.realpath(root)
+        rp = os.path.realpath(p)
+        if os.path.commonpath([rroot, rp]) != rroot or rp == rroot:
+            return None          # 解析后跑出技能根之外（或等于根本身）
+    except (OSError, ValueError):
         return None
     return p
+
+
+# a636（对抗审计 P0-4）：每技能一把安装锁——Flask threaded=True，两次点击/
+# 两个窗口并发 install 同一技能时，原来会交错写同一目录，实测出现
+# SKILL.md 来自版本 B、run.sh 来自版本 A 的**混合版本**。
+_INSTALL_LOCKS = {}
+_INSTALL_LOCKS_GUARD = threading.Lock()
+
+
+def _install_lock(skill):
+    with _INSTALL_LOCKS_GUARD:
+        return _INSTALL_LOCKS.setdefault(skill, threading.Lock())
+
+
+_BAD_NAME_CHARS = set('<>:"|?*')
+
+
+def _safe_file_name(name):
+    """辅助文件名白名单（a636，对抗审计 P2-10）。
+
+    Windows 上 `payload:hidden.exe` 会被写进 **NTFS 备用数据流**——资源管理器
+    看不见，`partial=False` 还报成功；`aux.py`/`con.py`/`nul.txt` 是保留名；
+    尾随点/空格同样非法。违规项计入 partial 并留痕，不静默跳过。
+    """
+    n = (name or "").strip()
+    if not n or n in (".", ".."):
+        return None
+    if any(ch in _BAD_NAME_CHARS for ch in n):
+        return None
+    if n != os.path.basename(n) or "/" in n or "\\" in n:
+        return None
+    if n.endswith((".", " ")):
+        return None
+    stem = n.split(".")[0].upper()
+    if stem in ("CON", "PRN", "AUX", "NUL") or (
+            len(stem) == 4 and stem[:3] in ("COM", "LPT") and stem[3].isdigit()):
+        return None
+    return n
 
 
 def install(owner, repo, skill, scope="user", confirm_integrity=False):
     """安装技能 → ~/.claude/skills/<skill>/。返回 dict：
     ok / conflict(已存在) / partial(辅助文件缺失) / integrity_conflict(源间
     内容不一致默认拒装) / err。成功后记来源与 sha（skill_meta.json——更新
-    检测/卸载对账用），integrity 标注验证级别。"""
+    检测/卸载对账用），integrity 标注验证级别。
+
+    a636（对抗审计 P0-4）：**事务化**。原来直接往正式目录里写，任何一步失败
+    都留下半装状态（SKILL.md 在、辅助文件缺），重装还保留旧版残留文件。
+    现在下载到 `<skill>.tmp-<pid>-<tid>`，全部成功才 `os.replace` 换上去；
+    失败清临时目录并如实返回错误。每技能一把锁防并发交错。
+    """
     if scope != "user":
         return {"ok": False, "err": "仅支持 user 级安装"}
     dst = _safe_skill_dir(skill)
     if not dst:
         return {"ok": False, "err": "非法技能名"}
+    _lk = _install_lock(skill)
+    if not _lk.acquire(timeout=120):
+        return {"ok": False, "err": "同一技能正在安装中，请稍候"}
+    try:
+        return _install_locked(owner, repo, skill, dst, confirm_integrity)
+    finally:
+        _lk.release()
+
+
+def _install_locked(owner, repo, skill, dst, confirm_integrity):
     # 安装一律绕缓存走多源交叉验证（低频操作，多两次拉取换安全；
     # 缓存命中留给详情页展示）
     md, hashes, consistent = _fetch_skill_md_verified(owner, repo, skill)
@@ -605,47 +769,89 @@ def install(owner, repo, skill, scope="user", confirm_integrity=False):
     dis = _safe_skill_dir(skill + ".disabled")
     if dis and os.path.isdir(dis):
         shutil.rmtree(dis, ignore_errors=True)
-    os.makedirs(dst, exist_ok=True)
-    with open(os.path.join(dst, "SKILL.md"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(md)
+    # ---- 下载阶段：全部落到临时目录 ----
+    tmp = "%s.tmp-%d-%d" % (dst, os.getpid(), threading.get_ident())
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        os.makedirs(tmp, exist_ok=True)
+        with open(os.path.join(tmp, "SKILL.md"), "w",
+                  encoding="utf-8", newline="\n") as f:
+            f.write(md)
+        partial = False
+        skipped = []            # a636：被文件名白名单拒掉的项（如实上报）
+        files = skill_files(owner, repo, skill)
+        if files:
+            for name, url, typ, blob_sha in files:
+                if typ != "file" or name == "SKILL.md" or not url:
+                    continue
+                # a636（P1-6）：name 可能是子路径 `scripts/fill.py`——逐段
+                # 过文件名白名单，全段合法才落盘（防 `../` 与/或非法字符）。
+                segs = str(name).replace("\\", "/").split("/")
+                safe_segs = [_safe_file_name(s) for s in segs]
+                if any(s is None for s in safe_segs) or ".." in segs:
+                    skipped.append(name)
+                    partial = True
+                    continue
+                safe_nm = os.path.join(*safe_segs)
+                dest = os.path.join(tmp, safe_nm)
+                if os.path.dirname(dest) != tmp:
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                b, _src = _fetch_multi(_variants_from_raw_url(url), timeout=20,
+                                       max_bytes=_MAX_AUX_BYTES)
+                if not b:
+                    partial = True
+                    continue
+                # a634R（审计 S1）：git blob sha 校验——contents API 给的 sha 是
+                # `sha1("blob <len>\\0" + 内容)`，零额外出网即可验证下载内容与
+                # 上游一致。缺 sha（API 形态变化）跳过校验；不匹配**不落盘**
+                # （记 partial——宁缺一个脚本也不装被毒化的）
+                if blob_sha:
+                    calc = hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
+                    if calc != blob_sha:
+                        _log.warning("辅助文件 sha 校验失败，拒绝落盘: %s (期望 %s 实得 %s)"
+                                     % (name, blob_sha[:12], calc[:12]))
+                        partial = True
+                        continue
+                with open(dest, "wb") as f:
+                    f.write(b)
+        elif files is None:
+            partial = True   # 目录列不了（限额）——SKILL.md 已装上，如实标注
+        # ---- 提交阶段：交换目录（同盘 rename 原子） ----
+        old = None
+        if os.path.isdir(dst):
+            old = "%s.old-%d-%d" % (dst, os.getpid(), threading.get_ident())
+            shutil.rmtree(old, ignore_errors=True)
+            os.replace(dst, old)
+        try:
+            os.replace(tmp, dst)
+        except OSError:
+            # 交换失败：把旧的放回去，别让用户丢技能
+            if old and not os.path.isdir(dst):
+                try:
+                    os.replace(old, dst)
+                except OSError:
+                    pass
+            raise
+        if old:
+            shutil.rmtree(old, ignore_errors=True)
+    except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        _log.warning("技能安装失败（已回滚，未落盘）: %s/%s/%s — %r"
+                     % (owner, repo, skill, e))
+        return {"ok": False, "err": "安装失败（已回滚）：%s" % str(e)[:120]}
     _meta_set(skill, {"key": "%s/%s/%s" % (owner, repo, skill),
                       "sha": hashlib.sha256(md.encode("utf-8", "replace")).hexdigest()[:16],
                       "ts": int(time.time()),
                       "integrity": ("cross-verified" if consistent else
                                     "single-source" if consistent is None else
                                     "user-override")})
-    partial = False
-    files = skill_files(owner, repo, skill)
-    if files:
-        for name, url, typ, blob_sha in files:
-            if typ != "file" or name == "SKILL.md" or not url:
-                continue
-            b, _src = _fetch_multi(_variants_from_raw_url(url), timeout=20)
-            if not b:
-                partial = True
-                continue
-            # a632R（审计 S1）：git blob sha 校验——contents API 给的 sha 是
-            # `sha1("blob <len>\\0" + 内容)`，零额外出网即可验证下载内容与
-            # 上游一致。缺 sha（API 形态变化）跳过校验；不匹配**不落盘**
-            # （记 partial——宁缺一个脚本也不装被毒化的）
-            if blob_sha:
-                calc = hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
-                if calc != blob_sha:
-                    _log.warning("辅助文件 sha 校验失败，拒绝落盘: %s (期望 %s 实得 %s)"
-                                 % (name, blob_sha[:12], calc[:12]))
-                    partial = True
-                    continue
-            sp = _safe_skill_dir(name, parent=dst)
-            if not sp:
-                continue
-            with open(sp, "wb") as f:
-                f.write(b)
-    elif files is None:
-        partial = True   # 目录列不了（限额）——SKILL.md 已装上，如实标注
-    return {"ok": True, "conflict": existed, "partial": partial,
-            "dir": dst, "integrity": ("cross-verified" if consistent else
-                                      "single-source" if consistent is None else
-                                      "user-override")}
+    r = {"ok": True, "conflict": existed, "partial": partial,
+         "dir": dst, "integrity": ("cross-verified" if consistent else
+                                   "single-source" if consistent is None else
+                                   "user-override")}
+    if skipped:
+        r["skipped"] = skipped[:10]
+    return r
 
 
 def uninstall(skill):
@@ -754,7 +960,7 @@ def check_updates():
     """更新检测：对「本工具装的」user 级技能（meta 有 origin）多源拉最新
     SKILL.md（绕缓存）比对 sha。并发 4（串行在离线时 N×6 URL×15s 可挂数
     分钟——全审建议4）。返回 [{skill, has_update, err}]。
-    a632R（审计 S3）：改走 _fetch_skill_md_verified——旧实现单源首达，
+    a634R（审计 S3）：改走 _fetch_skill_md_verified——旧实现单源首达，
     official 被墙 + jsDelivr 12h 旧缓存的常态下会漏报真更新（gh_api 拉到
     新版却被 jsdelivr 旧版抢答），甚至「重装回旧版」静默降级。基准取
     verified 的确定性 pick 版本（与 install/confirm 强制装同一份），闭环
@@ -767,7 +973,7 @@ def check_updates():
         md, _hashes, consistent = _fetch_skill_md_verified(*parts)
         if not md:
             return {"skill": nm, "has_update": False, "err": "拉取失败"}
-        # a632R 四轮（S3 残留终版语义）：pick 已是权威序（official→gh_api→
+        # a634R 四轮（S3 残留终版语义）：pick 已是权威序（official→gh_api→
         # jsdelivr，CDN 沉底）——权威源与已装的差异就是真实差异，has_update
         # 照常判定；「假更新引导降级」链已断（confirm 重装装的正是权威版，
         # 不会再装回镜像旧缓存）。源间不一致降级为 err 警告如实透出。
@@ -777,6 +983,16 @@ def check_updates():
         if consistent is False:
             out["err"] = ("源间内容不一致（镜像缓存延迟或疑似篡改）——"
                           "重装将被拦截确认，确认后安装权威源版本")
+        elif consistent is None:
+            # a636（对抗审计 P1-7）：**单源不得当更新基准**。目标环境里
+            # official raw 被墙 + gh_api 匿名限额 403 是常态，此时只剩
+            # jsdelivr（对 @branch 有 12h 缓存）——它返回的可能是旧版，却
+            # 会被判成「有更新」并引导用户重装回旧版（提交信息声称已断的
+            # 降级链，实测仍可一键复现）。单源时只标「无法判定」，不给
+            # has_update 结论，前端不得据它推荐重装。
+            out["has_update"] = False
+            out["unverified"] = True
+            out["err"] = "仅单一源可达，无法判定是否真有更新（不作重装依据）"
         return out
     items = [(nm, info) for nm, info in _meta_load().items()]
     out = []
@@ -825,9 +1041,14 @@ def installed(cwd=None):
             except OSError:
                 pass
             _zh = _zh_load("meta:local:" + base)   # v3.5.310：已安装卡中文描述
+            _mi = _meta.get(base) or {}
             out.append({"name": base, "desc": desc, "source": "user",
                         "disabled": disabled, "sha": sha,
-                        "origin": (_meta.get(base) or {}).get("key"),
+                        "origin": _mi.get("key"),
+                        # a636（对抗审计 P1-7）：把安装时的验证级别带回前端
+                        # ——原来界面完全不显示，用户看不到装的是「三源互证」
+                        # 还是「单源」。
+                        "integrity": _mi.get("integrity") or "",
                         **({"zh_desc": _zh["zh_desc"]} if _zh else {})})
     for it in list_skills(cwd):
         if it.get("source") == "user":
@@ -1226,7 +1447,7 @@ def translate_body(md):
 
 def status():
     """面板状态条：轻主力模型名 + 数据源可达性（探测结果缓存 5min）。
-    a632：三源探测（官方 raw / jsDelivr 镜像 / GitHub API）+ 源档位。"""
+    a634：三源探测（官方 raw / jsDelivr 镜像 / GitHub API）+ 源档位。"""
     global _STAT
     now = time.time()
     if _STAT.get("ts") and now - _STAT["ts"] < 300:
@@ -1255,10 +1476,14 @@ def status():
     for th in threads:
         th.join(timeout=12)
     ok_sh = _page("/") is not None
+    # a636（对抗审计 P2-16）：原来的重建把 gh_api_ts **整份丢掉**——下一轮
+    # `gh_fresh` 判据失效，于是每 10 分钟又探测一次（注释宣称的 15min 降频
+    # 不成立，匿名限额多耗）。先继承旧值，真探测后再刷新。
+    _prev_ts = _STAT.get("gh_api_ts")
     _STAT = {"ts": now, "skills_sh": ok_sh,
              "official": results.get("official", False),
              "jsdelivr": results.get("jsdelivr", False),
-             # a632R（审计 N12）：gh_api 共享 60/h 匿名限额——探测降频到
+             # a634R（审计 N12）：gh_api 共享 60/h 匿名限额——探测降频到
              # 15min（其余源每次 5min 探测），安装/skill_files 的 API 调用
              # 让额度给真实下载。gh_api_ts 仅**真探测时**刷新——无条件刷
              # 会让降频窗口自我续期，可达性进程生命周期内冻结（四轮实锤）
@@ -1266,6 +1491,8 @@ def status():
                         else _STAT.get("gh_api", False))}
     if "gh_api" in results:
         _STAT["gh_api_ts"] = now
+    elif _prev_ts:
+        _STAT["gh_api_ts"] = _prev_ts      # a636：跳过探测的轮次也要继承
     return {**_STAT, "light_model": light_model(), "source": source_mode()}
 
 

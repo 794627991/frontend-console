@@ -3020,6 +3020,10 @@ def _do_data_dir_migrate(target):
         _sr._CACHE_DIR = os.path.join(target, "skill_cache")
         _sr._ZH_DIR = os.path.join(target, "skill_zh")
         _sr._EXPORT_DIR = os.path.join(target, "skill_exports")
+        # a636（对抗审计 P2-14）：_META_FILE 也是模块级按值固化的路径——
+        # 漏了它，迁移后安装记账仍写旧目录：新目录没有账本、旧目录复活，
+        # 直接导致更新检测/卸载对账失效。
+        _sr._META_FILE = os.path.join(target, "skill_meta.json")
     except Exception:
         pass
     try:
@@ -3883,8 +3887,14 @@ def skills_install():
     if not p:
         return jsonify({"ok": False, "err": "非法 owner/repo/skill"}), 400
     try:
+        # a636（对抗审计 P0-2）：安全闸的布尔判定必须走白名单——原来是
+        # `bool(d.get("confirm_integrity"))`，任何字符串（"false"/"0"）都是
+        # True，脚本/AI/第三方只要传个字符串就能越过「源间不一致默认拒装」。
+        _ci = d.get("confirm_integrity")
+        _ci_ok = _ci is True or _ci == 1 or (
+            isinstance(_ci, str) and _ci.strip().lower() in ("1", "true", "yes"))
         r = install(*p, scope=str(d.get("scope") or "user"),
-                    confirm_integrity=bool(d.get("confirm_integrity")))
+                    confirm_integrity=_ci_ok)
     except Exception as e:   # 落盘意外（盘满/权限）不炸 500，如实回错
         return jsonify({"ok": False, "err": str(e)[:150]}), 500
     return jsonify(r), (200 if r.get("ok") else 502)
@@ -3903,12 +3913,16 @@ def skills_source():
                             {"id": "jsdelivr", "name": "jsDelivr 镜像优先"},
                         ]})
     d = request.get_json(force=True, silent=True) or {}
+    # a636（对抗审计 P1-12）：保存失败必须如实回 500——原来无条件 ok:true，
+    # 磁盘满/只读时前端弹「已切换，即时生效」，用户被明确误导。
     try:
-        sr.set_source_mode(str(d.get("mode") or "").strip())
+        _ok, _err = sr.set_source_mode(str(d.get("mode") or "").strip())
     except ValueError as e:
         return jsonify({"ok": False, "err": str(e)}), 400
     except Exception as e:
         return jsonify({"ok": False, "err": "保存失败：%s" % e}), 500
+    if not _ok:
+        return jsonify({"ok": False, "err": "保存失败：%s" % _err}), 500
     return jsonify({"ok": True, "mode": sr.source_mode()})
 
 

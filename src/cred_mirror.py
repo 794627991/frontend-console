@@ -27,7 +27,7 @@ import time
 import src.app_state as _st
 
 # 有价值的凭据/配置小文件（全部实测 <2KB）
-# a630（用户定调）：skill_meta.json 移出——技能装了哪些丢了顶重重装，不是
+# a631（用户定调）：skill_meta.json 移出——技能装了哪些丢了顶重重装，不是
 # 凭据也不在用户要备份的范围内（此前以「重装后可对账」纳入，撤销）
 _MIRROR_FILES = (
     "hiklink_session.json",       # 机器人 app_id/app_secret/robot_uid（最重要）
@@ -316,23 +316,30 @@ def sync_once():
 
 
 def _cleanup_orphans():
-    """清掉备份目录顶层**白名单外**的存量副本（a630：skill_meta.json 移出
-    白名单，老机器 home 里已躺着的旧副本收掉——备份目录顶层「始终只有
-    白名单文件」是本模块的既有设计约定）。只清顶层文件，.meta/ 子目录
-    （墓碑/pending）不碰；白名单内的照旧。"""
-    try:
-        for entry in os.listdir(BACKUP_DIR):
-            p = os.path.join(BACKUP_DIR, entry)
-            if entry in _MIRROR_FILES or not os.path.isfile(p):
-                continue
-            try:
-                os.remove(p)
-                _last.pop(entry, None)
-                _log.info("凭据镜像清理白名单外存量副本: %s", entry)
-            except OSError as e:
-                _log.warning("凭据镜像清理失败 %s: %s", entry, e)
-    except OSError:
-        pass
+    """收掉**曾经在白名单里、现在被移出**的存量副本（目前只有 skill_meta.json）。
+
+    a636（对抗审计 P0-5）：原实现遍历备份目录顶层，把**所有非白名单文件**
+    都删掉——实测往 `data_backup/` 放「我的凭据副本.json」「README_BU_
+    BACKUP.txt」全部被无声删除；更强的是若 DATA_DIR 被误配成 BACKUP_DIR，
+    `skill_meta.json` 与用户笔记也会被直接删（本文件其它路径都用 _overlaps
+    显式防这个误配置，唯独这里没有）。这与本函数所在模块的承诺
+    「只补拷贝，绝不删除备份」直接矛盾。
+    现在只按**具名清单**清理，且先做重叠短路；绝不遍历删除未知文件。
+    """
+    # a636：备份目录与数据目录重叠（误配置/迁移中）时一律不动手
+    if _overlaps(_st.DATA_DIR, BACKUP_DIR):
+        return
+    _KNOWN_ORPHANS = ("skill_meta.json",)     # 曾经在 _MIRROR_FILES 里
+    for entry in _KNOWN_ORPHANS:
+        p = os.path.join(BACKUP_DIR, entry)
+        if entry in _MIRROR_FILES or not os.path.isfile(p):
+            continue
+        try:
+            os.remove(p)
+            _last.pop(entry, None)
+            _log.info("凭据镜像清理已移出白名单的存量副本: %s", entry)
+        except OSError as e:
+            _log.warning("凭据镜像清理失败 %s: %s", entry, e)
 
 
 def notify(name):

@@ -92,7 +92,7 @@ function _skOnClick(e) {
 function _skOnChange(e) {
   const t = e.target;
   if (t.id === 'skSource') {
-    // a632：源档位保存，即时生效（下轮拉取即按新档排序）
+    // a634：源档位保存，即时生效（下轮拉取即按新档排序）
     _skFetch('/api/skills/source', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode: t.value }) }).then(r => {
@@ -125,7 +125,7 @@ function skLoadStatus() {
   const el = SK.root.querySelector('#skStatus');
   _skFetch('/api/skills/status').then(r => {
     if (!r.ok) { el.innerHTML = '<i class="dot bad"></i>状态未知'; return; }
-    // a632：三源可达性（官方 raw / jsDelivr 镜像 / GitHub API）——技能下载
+    // a634：三源可达性（官方 raw / jsDelivr 镜像 / GitHub API）——技能下载
     // 至少一源可用即可装；skills.sh 只影响发现/榜单（挂了自动切官方精选）
     const dl = [r.official, r.jsdelivr, r.gh_api].filter(Boolean).length;
     const dot = r.skills_sh ? (dl ? 'ok' : 'mid') : (dl ? 'mid' : 'bad');
@@ -137,7 +137,7 @@ function skLoadStatus() {
   skLoadSource();
 }
 
-// a632：源档位下拉（智能/官方优先/镜像优先）——独立于依赖安装的镜像档
+// a634：源档位下拉（智能/官方优先/镜像优先）——独立于依赖安装的镜像档
 function skLoadSource() {
   const sel = SK.root.querySelector('#skSource');
   if (!sel) return;
@@ -235,7 +235,7 @@ function skRenderHome() {
   const grid = SK.loading
     ? '<div class="sk-empty">加载中…</div>'
     : (rows.length ? rows.map(skRowCard).join('')
-      : '<div class="sk-empty">' + (SK.rows ? '没有匹配的技能' : 'skills.sh 不可达（检查外网连通）') + '</div>');
+      : '<div class="sk-empty">' + (SK.rows ? '没有匹配的技能' : '暂时拉不到技能列表（检查外网连通）') + '</div>');
   el.innerHTML =
     '<div class="sk-sec"><div class="sk-sec-h"><b>已安装 ' + inst.length + '</b>' +
       '<span class="sk-sec-ops"><button class="sk-btn sm" data-sk-updates>检查更新</button>' +
@@ -273,6 +273,9 @@ function skInstCard(s) {
     '<div class="sk-card-m"><div class="sk-card-n"><b>' + _skEsc(s.name) + '</b>' +
     (s.disabled ? '<u class="sk-offtag">已禁用</u>' : '') +
     (upd === true ? '<u class="sk-updtag">可更新</u>' : '') +
+    // a636（P1-7）：验证级别如实展示——单源不可当「已验安全」
+    (s.integrity === 'single-source' ? '<u class="sk-srctag" title="只有一个下载源可达，源间一致性未经验证">单源未验证</u>' : '') +
+    (s.integrity === 'user-override' ? '<u class="sk-srctag" title="源间内容不一致，由用户确认后强制安装">强制覆盖</u>' : '') +
     (s.source !== 'user' ? '<u class="sk-srctag">' + _skEsc(s.source) + '</u>' : '') + '</div>' +
     '<div class="sk-card-d">' + _skEsc(s.zh_desc || s.desc || '') + '</div>' +
     (upd === false && s.origin ? '<div class="sk-card-f"><span>已是最新</span></div>' : '') + '</div>' +
@@ -328,7 +331,7 @@ function skInstall(key, btn, confirmIntegrity) {
     .then(r => {
       if (btn) { btn.disabled = false; btn.textContent = '安装'; }
       if (!r.ok && r.integrity_conflict) {
-        // a632（安全核心）：多源内容不一致 = 疑似篡改或镜像缓存延迟——
+        // a634（安全核心）：多源内容不一致 = 疑似篡改或镜像缓存延迟——
         // 默认拒装；展示两源哈希，用户自行判断后可强制
         const hs = Object.entries(r.hashes || {})
           .map(([k, v]) => _skEsc(k + '：' + v)).join('<br>') || '（无哈希）';
@@ -345,7 +348,7 @@ function skInstall(key, btn, confirmIntegrity) {
       }
       if (!r.ok) { showBanner('安装失败：' + (r.err || ''), 4000, true); return; }
       showBanner((r.conflict ? '已覆盖重装：' : '安装成功：') + parts[2] +
-        (r.integrity === 'user-override' ? '（⚠ 你确认了不一致内容，风险自担）' : '') +
+        (r.integrity === 'user-override' ? '（你确认了不一致内容，风险自担）' : '') +
         (r.partial ? '（辅助文件部分缺失——SKILL.md 主体已装）' : ''), 4500);
       SK.updates[parts[2]] = false;
       _skRefreshInst();
@@ -388,13 +391,22 @@ function skCheckUpdates() {
     headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => {
     if (!r.ok) return;
     SK.updates = {};
-    let n = 0;
+    let n = 0, unver = 0;
+    const warns = [];
     for (const u of r.updates || []) {
       SK.updates[u.skill] = u.has_update;
       if (u.has_update) n++;
+      // a636（P1-7/P2-19）：单源 → 无法判定（不推荐重装）；源间不一致 →
+      // 如实透出警告。原来这两个 err 全被丢弃，用户永远看不到。
+      if (u.unverified) unver++;
+      if (u.err) warns.push(u.skill + '：' + u.err);
     }
-    showBanner(n ? '有 ' + n + ' 个技能可更新（卡片已标出，点发现页重装即升）'
-                 : '全部已是最新', 4000);
+    let msg;
+    if (n) msg = '有 ' + n + ' 个技能可更新（卡片已标出，点发现页重装即升）';
+    else if (unver) msg = '有 ' + unver + ' 个技能仅有单一源可达，无法判定是否真有更新';
+    else msg = '全部已是最新';
+    if (warns.length) msg += '；' + warns.slice(0, 2).join('；');
+    showBanner(msg, warns.length ? 6000 : 4000, !!warns.length);
     _skRefreshInst();
   });
 }

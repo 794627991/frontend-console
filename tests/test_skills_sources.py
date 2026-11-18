@@ -28,6 +28,8 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(sr, "DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(sr, "_META_FILE",
                         str(tmp_path / "data" / "skill_meta.json"))
+    # a636：安装锁是模块级表，跨测试残留会让同名技能串行/互等
+    monkeypatch.setattr(sr, "_INSTALL_LOCKS", {})
     # a623R 复审（N2 根修）：mock config 存储本身（读/写同一可变 dict）——
     # 上一轮钉 sr.source_mode=auto 的写法把 roundtrip 测试的读路径也钉死
     # 了（set 写入后读恒 auto，测试假绿都测不出来）；也不再有写穿真实
@@ -96,14 +98,25 @@ def test_variants_mode_jsdelivr(monkeypatch):
 def test_source_mode_config_roundtrip():
     """档位写读闭环（走 fixture 的 mock config 存储——写与读同一可变 dict）。"""
     assert sr.source_mode() == "auto"
-    sr.set_source_mode("jsdelivr")
+    ok, err = sr.set_source_mode("jsdelivr")
+    assert ok is True and err == ""
     assert sr.source_mode() == "jsdelivr"   # 写入即时可读（cfg_commit 原子）
-    # 非法值回退 auto（读侧防御）+ 写侧拒绝
+    # 非法值回退 auto（读侧防御）+ 写侧拒绝（a636：改为返回 (False, err)，
+    # 不再抛 ValueError——调用方要能把失败如实转给前端）
     import src.app_state as _st
     _st._load_config = lambda: {"skill_source": "bogus"}
     assert sr.source_mode() == "auto"
-    with pytest.raises(ValueError):
-        sr.set_source_mode("bogus")
+    ok2, err2 = sr.set_source_mode("bogus")
+    assert ok2 is False and "未知技能源档位" in err2
+
+
+def test_source_mode_reports_write_failure(monkeypatch):
+    """P1-12 回归：cfg_commit 失败时不能谎报成功（原来无条件 ok）。"""
+    import src.app_state as _st
+    monkeypatch.setattr(_st, "cfg_commit",
+                        lambda mutator: (False, "Permission denied"))
+    ok, err = sr.set_source_mode("jsdelivr")
+    assert ok is False and "Permission denied" in err
 
 
 # ---- _fetch_multi --------------------------------------------------------
@@ -146,6 +159,14 @@ def test_variants_from_raw_url(monkeypatch):
 
 # ---- 交叉验证 ------------------------------------------------------------
 
+# a636：内容形态闸要求 SKILL.md 像 markdown 技能文件（frontmatter/标题开头），
+# 纯 "SKILL CONTENT" 这种假数据会被正确拒掉——测试数据要贴近真实形态。
+MD_GOOD = (b"---\nname: s\ndescription: demo\n---\n\n# Skill\n"
+           + b"x" * 40)
+MD_EVIL = (b"---\nname: s\ndescription: evil\n---\n\n# Evil\n"
+           + b"y" * 40)
+
+
 def _md(text):
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
@@ -154,14 +175,14 @@ def test_verified_consistent(monkeypatch):
     """两源内容一致 → 正常装。"""
     def fake_http(url, **kw):
         if "testingcf" in url:
-            return b"SKILL CONTENT" * 4
+            return MD_GOOD
         if "raw.githubusercontent" in url:
-            return b"SKILL CONTENT" * 4
+            return MD_GOOD
         return None
 
     monkeypatch.setattr(sr, "_http", fake_http)
     content, hashes, consistent = sr._fetch_skill_md_verified("o", "r", "s")
-    assert content == "SKILL CONTENT" * 4
+    assert content == MD_GOOD.decode()
     assert consistent is True
     assert len(set(hashes.values())) == 1
 
@@ -170,9 +191,9 @@ def test_verified_conflict(monkeypatch):
     """两源不一致 → consistent=False（默认拒装依据）。"""
     def fake_http(url, **kw):
         if "testingcf" in url:
-            return b"EVIL CONTENT" * 4
+            return MD_EVIL
         if "raw.githubusercontent" in url:
-            return b"SKILL CONTENT" * 4
+            return MD_GOOD
         return None
 
     monkeypatch.setattr(sr, "_http", fake_http)
@@ -181,17 +202,17 @@ def test_verified_conflict(monkeypatch):
     assert set(hashes) == {"official", "jsdelivr"}
     assert hashes["official"] != hashes["jsdelivr"]
     # content = 官方源版本（confirm 强制装时装这份，不由实现替用户选边）
-    assert content == "SKILL CONTENT" * 4
+    assert content == MD_GOOD.decode()
 
 
 def test_verified_single_source(monkeypatch):
     """仅一源可达 → 单源放行（consistent=None）。"""
     def fake_http(url, **kw):
-        return b"SKILL CONTENT" * 4 if "raw.githubusercontent" in url else None
+        return MD_GOOD if "raw.githubusercontent" in url else None
 
     monkeypatch.setattr(sr, "_http", fake_http)
     content, hashes, consistent = sr._fetch_skill_md_verified("o", "r", "s")
-    assert content == "SKILL CONTENT" * 4 and consistent is None
+    assert content == MD_GOOD.decode() and consistent is None
     assert list(hashes) == ["official"]
 
 
@@ -301,11 +322,11 @@ def test_verified_next_combo_on_total_failure(monkeypatch):
             return None
         if "/contents/s/SKILL.md" in url:
             return None
-        return b"FALLBACK COMBO CONTENT" + b"-" * 20
+        return MD_GOOD
 
     monkeypatch.setattr(sr, "_http", fake_http)
     content, hashes, consistent = sr._fetch_skill_md_verified("o", "r", "s")
-    assert content == "FALLBACK COMBO CONTENT" + "-" * 20
+    assert content == MD_GOOD.decode()
     assert consistent is True   # 第二组合两源命中且一致（gh_api 对该路径 404）
     assert set(hashes) == {"official", "jsdelivr"}
 
@@ -330,7 +351,8 @@ def test_install_helper_file_blob_sha_rejects_tampered(monkeypatch, tmp_path):
     evil_sha = hashlib.sha1(b"blob %d\0" % len(evil) + evil).hexdigest()
     calls = {"n": 0}
 
-    def fake_fetch_multi(variants, timeout=20, want_bytes=True):
+    def fake_fetch_multi(variants, timeout=20, want_bytes=True,
+                         max_bytes=None):
         url = variants[0][1]
         if "nohash.py" in url:
             return (b"no-hash-content", variants[0][0])
@@ -385,9 +407,9 @@ def test_verified_pick_deterministic_authoritative(monkeypatch):
     def fake_http(url, **kw):
         b = None
         if "testingcf" in url:
-            b = b"STALE-CDN-VERSION-" + b"-" * 20
+            b = b"---\nname: s\n---\n\n# stale\n" + b"-" * 20
         elif "api.github.com" in url:
-            b = b"FRESH-GHAPI-VERSION" + b"-" * 20
+            b = b"---\nname: s\n---\n\n# fresh\n" + b"-" * 20
         elif "raw.githubusercontent" in url:
             return None   # official 被墙（目标环境常态）
         if b is not None:
@@ -398,7 +420,7 @@ def test_verified_pick_deterministic_authoritative(monkeypatch):
     monkeypatch.setattr(sr, "_http", fake_http)
     for _ in range(3):   # 重复多次：竞速顺序不得影响 pick
         content, hashes, consistent = sr._fetch_skill_md_verified("o", "r", "s")
-        assert content == b"FRESH-GHAPI-VERSION".decode() + "-" * 20, \
+        assert "# fresh" in content, \
             "权威序：gh_api（新鲜）必须压过 jsdelivr（12h 旧缓存）"
         assert consistent is False and set(hashes) == {"jsdelivr", "gh_api"}
 
@@ -420,8 +442,8 @@ def test_check_updates_conflict_warns_but_judges(monkeypatch):
 def test_check_updates_fresh_version_detected(monkeypatch):
     """S3 主链路：权威 pick 拉到新版 → has_update=True（official 被墙、
     jsdelivr 旧缓存 X、gh_api 新版 Y 的目标环境形态）。"""
-    X = "VERSION-X-" + "a" * 24
-    Y = "VERSION-Y-" + "b" * 24
+    X = ("---\nname: s\n---\n\n# X\n" + "a" * 24)
+    Y = ("---\nname: s\n---\n\n# Y\n" + "b" * 24)
     def fake_http(url, **kw):
         if "testingcf" in url:
             return X.encode()
@@ -438,3 +460,176 @@ def test_check_updates_fresh_version_detected(monkeypatch):
     # official 被墙 → results={jsdelivr:X, gh_api:Y} 不一致 → err 带警告
     assert "不一致" in out[0]["err"]
 
+
+
+# ---- a636（对抗审计 P3-21）：补齐三组零覆盖契约 ---------------------------
+
+def test_registry_fallback_key_is_three_segments(monkeypatch):
+    """P0-1 回归：兜底卡的 key 必须是 owner/repo/skill **三段**。
+
+    前端 skInstall / skOpenDetail 都按 `parts.length !== 3` 校验——4 段 key
+    会让「安装」和「详情」全部静默无反应。原测试只断言 skill 名字集合，
+    key 契约零覆盖，所以 4 段的缺陷一路绿到线上。
+    """
+    monkeypatch.setattr(sr, "_page", lambda path: None)
+    monkeypatch.setattr(sr, "_http", lambda url, **kw: None)
+    rows, source = sr.registry()
+    assert source == "official_fallback_static"
+    assert rows
+    for r in rows:
+        assert r["key"].count("/") == 2, r["key"]
+        assert r["key"] == "%s/%s/%s" % (r["owner"], r["repo"], r["skill"])
+
+
+def test_desc_backfill_tolerates_bad_key_segments(monkeypatch):
+    """P0-1 连带：4 段 key 曾让 _desc_backfill 抛 ValueError——而它是裸
+    daemon 线程入口，异常会静默杀死线程，desc 永远补不上。"""
+    sr._DESC_CACHE.clear()
+    called = []
+    monkeypatch.setattr(sr, "_raw_skill_md",
+                        lambda *a, **k: called.append(a) or "")
+    sr._desc_backfill(["a/b/c/d", "a/b/c"])      # 4 段 + 3 段混合
+    assert len(called) >= 1, "合法 key 必须继续处理，不能被一条坏 key 打断"
+
+
+def test_verified_rejects_uniform_error_page(monkeypatch):
+    """P1-8 回归：两源都返回同一张 HTML 错误页 → 不能当成 cross-verified。
+
+    企业代理/网关统一返回拦截页时三源天然一致，原实现只看 sha 相等，会把
+    HTML 404 页当技能装进用户目录。
+    """
+    err = b"<html><body>404: Not Found</body></html>" * 3
+
+    def fake_http(url, **kw):
+        return err
+    monkeypatch.setattr(sr, "_http", fake_http)
+    content, hashes, consistent = sr._fetch_skill_md_verified("o", "r", "s")
+    assert content is None and hashes == {}
+
+    def fake_ok(url, **kw):
+        if "testingcf" in url:
+            return MD_EVIL + b"\n"
+        return MD_GOOD + b"\n"
+    monkeypatch.setattr(sr, "_http", fake_ok)
+    content2, _h2, consistent2 = sr._fetch_skill_md_verified("o", "r", "s")
+    assert content2 is not None and consistent2 is False
+
+
+def test_install_is_atomic_no_partial_dir_on_failure(monkeypatch, tmp_path):
+    """P0-4 回归：安装过程失败不能留半装目录（原来先写 SKILL.md 再拉辅助
+    文件，失败时目录已存在且已落盘）。"""
+    monkeypatch.setattr(sr, "_fetch_skill_md_verified",
+                        lambda *a: (MD_GOOD.decode(), {"official": "a"}, None))
+    monkeypatch.setattr(sr, "skill_files", lambda *a: None)
+    real_open = open
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr("builtins.open", boom)
+    r = sr.install("o", "r", "s")
+    assert r["ok"] is False and "回滚" in r["err"]
+    assert not os.path.isdir(os.path.join(str(tmp_path), "skills", "s"))
+
+
+def test_install_rejects_ntfs_ads_and_reserved_names(monkeypatch, tmp_path):
+    """P2-10 回归：`payload:hidden.exe` 会写进 NTFS 备用数据流（资源管理器
+    看不见），`aux.py`/`con.py` 是保留名。必须拒绝并如实上报。"""
+    monkeypatch.setattr(sr, "_fetch_skill_md_verified",
+                        lambda *a: (MD_GOOD.decode(), {"official": "a"}, None))
+    monkeypatch.setattr(sr, "skill_files",
+                        lambda *a: [("payload:hidden.exe", "https://raw."
+                                     "githubusercontent.com/o/r/main/x", "file", None),
+                                    ("aux.py", "https://raw.githubusercontent."
+                                     ".com/o/r/main/aux.py", "file", None),
+                                    ("ok.py", "https://raw.githubusercontent."
+                                     ".com/o/r/main/ok.py", "file", None)])
+    monkeypatch.setattr(sr, "_fetch_multi",
+                        lambda v, **k: (b"# content\n" * 3, v[0][0]))
+    r = sr.install("o", "r", "s")
+    assert r["ok"] is True and r["partial"] is True
+    d = os.path.join(str(tmp_path), "skills", "s")
+    assert open(os.path.join(d, "ok.py"), "rb").read()
+    assert set(r.get("skipped", [])) >= {"payload:hidden.exe", "aux.py"}
+    # 注意：不能用 os.path.exists('...\aux.py') 判定——Windows 上 AUX 是设备名，
+    # 该表达式恒为 True。改为看真实目录列表。
+    assert sorted(os.listdir(d)) == ["SKILL.md", "ok.py"]
+
+
+def test_skill_files_recurses_subdirs(monkeypatch):
+    """P1-6 回归：子目录里的辅助文件不能被丢弃。
+
+    官方技能 17 个里 13 个的辅助文件在子目录（pdf 的 8 个脚本在 scripts/）。
+    原来 `typ != "file"` 直接跳过 dir 项，装完只剩 SKILL.md 且 partial=False。
+    """
+    pages = {
+        "contents/skills/pdf": [{"name": "SKILL.md", "type": "file",
+                                 "download_url": "u0", "sha": "s0"},
+                                {"name": "scripts", "type": "dir"},
+                                {"name": "README.md", "type": "file",
+                                 "download_url": "u1", "sha": "s1"}],
+        "contents/skills/pdf/scripts": [
+            {"name": "fill.py", "type": "file", "download_url": "u2",
+             "sha": "s2"},
+            {"name": "deep", "type": "dir"}],
+        "contents/skills/pdf/scripts/deep": [
+            {"name": "x.py", "type": "file", "download_url": "u3", "sha": "s3"}],
+    }
+
+    def fake_http(url, **kw):
+        for k, v in pages.items():
+            if url.endswith(k):
+                return json.dumps(v)
+        return None
+    monkeypatch.setattr(sr, "_http", fake_http)
+    out = sr.skill_files("o", "r", "pdf")
+    names = {n for n, _u, _t, _s in out}
+    assert {"SKILL.md", "README.md", "scripts/fill.py",
+            "scripts/deep/x.py"} <= names
+
+
+def test_install_writes_subdir_files(monkeypatch, tmp_path):
+    """P1-6 端到端：子目录文件真的落盘到对应层级。"""
+    monkeypatch.setattr(sr, "_fetch_skill_md_verified",
+                        lambda *a: (MD_GOOD.decode(), {"official": "a"}, None))
+    monkeypatch.setattr(sr, "skill_files",
+                        lambda *a: [("scripts/fill.py",
+                                     "https://raw.githubusercontent.com/o/r/"
+                                     "main/scripts/fill.py", "file", None)])
+    monkeypatch.setattr(sr, "_fetch_multi",
+                        lambda v, **k: (b"print(1)\n", v[0][0]))
+    r = sr.install("o", "r", "s")
+    assert r["ok"] is True
+    p = os.path.join(str(tmp_path), "skills", "s", "scripts", "fill.py")
+    assert open(p, "rb").read() == b"print(1)\n"
+
+
+def test_install_rejects_path_traversal_in_aux(monkeypatch, tmp_path):
+    """P1-6 安全面：子路径里带 `..` 的项必须拒绝（不能写穿技能目录）。"""
+    monkeypatch.setattr(sr, "_fetch_skill_md_verified",
+                        lambda *a: (MD_GOOD.decode(), {"official": "a"}, None))
+    monkeypatch.setattr(sr, "skill_files",
+                        lambda *a: [("../../evil.py",
+                                     "https://raw.githubusercontent.com/o/r/"
+                                     "main/evil.py", "file", None)])
+    monkeypatch.setattr(sr, "_fetch_multi",
+                        lambda v, **k: (b"EVIL\n", v[0][0]))
+    r = sr.install("o", "r", "s")
+    assert r["ok"] is True and r["partial"] is True
+    assert "evil.py" in " ".join(r.get("skipped", []))
+    assert not os.path.exists(os.path.join(str(tmp_path), "skills", "evil.py"))
+
+
+def test_safe_skill_dir_allows_junction_root(monkeypatch, tmp_path):
+    """P2-18 回归：技能根源头是 junction/符号链接时不能整页报「未安装」。"""
+    real = tmp_path / "real_skills"
+    real.mkdir()
+    link = tmp_path / "skills"
+    try:
+        os.symlink(str(real), str(link), target_is_directory=True)
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("当前环境不支持创建目录符号链接")
+    monkeypatch.setattr(sr, "_SKILLS_DIR", str(link))
+    p = sr._safe_skill_dir("foo")
+    assert p is not None, "根源头是链接时技能名仍应合法"
+    # 反例：解析后跑出根外仍然要拒
+    assert sr._safe_skill_dir("..") is None
