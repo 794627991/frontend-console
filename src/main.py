@@ -1978,7 +1978,9 @@ def main():
 
     @app.route("/api/window/close", methods=["POST"])
     def _api_window_close():
-        _exit_reason("api_close")
+        # a667：✕ 默认是「关闭到托盘」并不退出，不能在此锁定退出原因
+        # （否则后续异常退出会被误判为正常 api_close）。真正退出由
+        # _do_real_cleanup 的 cleanup / 托盘退出路径记录。
         # 自绘 ✕ 与原生 X 同语义：destroy→Form.Close→closing 拦截链
         # （close_to_tray 默认驻托盘）。_try_destroy 是托盘「退出」同款
         # 通道（后台线程 + 兜底硬退），此处只走 destroy 不置真退标记。

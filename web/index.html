@@ -7,14 +7,21 @@
    连接——否则句柄滞留后端进程，重开串口报「被占用」（CDP 强刷 COM10
    实锤）。beacon 由浏览器保证在页面卸载后送达；正常关闭工具同样触发=
    顺手全清，无副作用 */
+/* a667：回归测试模式标记。headless 测试页与真实后端共享进程——测试页
+   关闭/导航时绝不能触发 pagehide→reload_disconnect（会关闭用户全部 live
+   连接）。测试 URL 带 ?regression=1；真实窗口无参数，行为不变。 */
+window.__FC_REGRESSION = /[?&]regression=1/.test(location.search);
 window.addEventListener('pagehide', function () {
+  if (window.__FC_REGRESSION) return;
   try { navigator.sendBeacon('/api/reload_disconnect'); } catch (_) {}
 });
 /* a624（用户令：F5/F12 快捷键全部屏蔽，能力挪到日志窗的两个图标按钮）：
    强制刷新 = 先清场（上面的 pagehide 会触发，但为保险这里显式打一次），
    再整页重载。 */
 window.__fcHardReload = function () {
-  try { navigator.sendBeacon('/api/reload_disconnect'); } catch (_) {}
+  if (!window.__FC_REGRESSION) {
+    try { navigator.sendBeacon('/api/reload_disconnect'); } catch (_) {}
+  }
   setTimeout(function () { location.reload(); }, 120);
 };
 </script>

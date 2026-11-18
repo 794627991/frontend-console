@@ -140,6 +140,8 @@ def main():
     except Exception:
         print("[护栏][警告] 应用 CDP 不可达——可能已被外部关闭/重启（测试脚本自身"
               "从不调用关闭）。请检查 crash_dump / 退出原因。")
+    # 门禁退出码：有 FAIL 即非 0（pre-push 依赖；post-commit 只打印提示不阻断）
+    sys.exit(1 if total.get("FAIL") else 0)
 
 
 if __name__ == "__main__":

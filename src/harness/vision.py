@@ -229,7 +229,10 @@ def _mm_probe_model(model):
     base = (["cmd.exe", "/c", exe] if is_shim else [exe])
 
     def _run(prompt, tools):
-        argv = base + ["-p", prompt, "--model", model,
+        # a666：与 session.py 同款——CLI 校验模型注册表，[1m] 类上下文
+        # 后缀会被拒收（unrecognized_model）；仅 argv 剥，缓存键/判定仍用全名。
+        _argv_model = re.sub(r"\[[^\]]+\]$", "", str(model or ""))
+        argv = base + ["-p", prompt, "--model", _argv_model,
                        "--permission-mode", "auto", "--allowedTools", tools]
         try:
             r = subprocess.run(argv, capture_output=True, timeout=120,

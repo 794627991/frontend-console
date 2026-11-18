@@ -415,7 +415,9 @@ function _vcsHistOpen() {
   ov.querySelector('[data-vcs-hrefresh]').onclick = () => {
     // P8：⟳ 统一回补语义——查询态走 fetch(reset)，浏览态走 _vcsReloadLog
     //（回补到已载量 ≤500，不缩回 100）
-    if (_vcsHist && _vcsHist.querying) _vcsHistFetch(true);
+    // a668（审计 P2）：图形模式也必须走 fetch(reset)——_vcsReloadLog 只写
+    // VCS.log，graphLog 无写入口，旧实现点 ⟳ 永远刷不动图形列表。
+    if (_vcsHist && (_vcsHist.querying || _vcsHist.graph)) _vcsHistFetch(true);
     else _vcsReloadLog();
   };
   ov.querySelector('[data-vcs-hprev]').onclick = () => {

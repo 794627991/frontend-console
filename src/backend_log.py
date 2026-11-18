@@ -843,6 +843,11 @@ def audit_exit():
     """幂等收口：写内存日志；非预期退出时额外落一个小文件。"""
     if _EXIT_AUDIT.get("done"):
         return
+    # a668（审计 P2）：测试进程（pytest）与显式开关下不落盘——否则每次
+    # pytest 退出都会往 home 追加 reason=unknown 噪声。
+    if os.environ.get("FC_NO_EXIT_AUDIT") == "1" or "pytest" in sys.modules:
+        _EXIT_AUDIT["done"] = True
+        return
     _EXIT_AUDIT["done"] = True
     why = _EXIT_AUDIT.get("why") or "unknown"
     up = max(0.0, time.time() - _EXIT_AUDIT.get("started", time.time()))
@@ -858,6 +863,7 @@ def audit_exit():
         import os
         path = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
                             "exit_reason.log")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             if os.path.exists(path) and os.path.getsize(path) > 64 * 1024:
                 os.replace(path, path + ".1")
@@ -872,13 +878,15 @@ def audit_exit():
         except Exception:
             pass
         with open(path, "a", encoding="utf-8", errors="replace") as f:
-            f.write(NL.join(lines) + NL)
+            f.write(chr(10).join(lines) + chr(10))
     except Exception:
         pass
 
 
 def _install_exit_hooks():
     """atexit + signal 退出审计安装（幂等）。"""
+    if os.environ.get("FC_NO_EXIT_AUDIT") == "1" or "pytest" in sys.modules:
+        return
     try:
         atexit.register(audit_exit)
     except Exception:

@@ -24,7 +24,8 @@ let panel = null;
   let allRows = [];               // 本地全量（最多保留一个上限，防 DOM/内存无界）
   let droppedLocal = false;       // 本地因上限截断过（界面提示用）
   let gen = 0;
-  let _verLabel = '';   // 导出/复制头部追溯用（界面不显示）                    // 会话代际：show/clear 递增，丢弃在途旧响应
+  let _verLabel = '';   // 导出/复制头部追溯用（界面不显示）
+  // 会话代际：show/clear 递增，丢弃在途旧响应
   let inFlight = false;           // 同一时刻只允许一个请求在途（背压）
   let catchUpMs = 0;              // truncated 追赶的退避间隔
   let tagEvicted = false;         // 所选来源已被本地窗口淘汰（提示用）

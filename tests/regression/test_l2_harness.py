@@ -35,13 +35,14 @@ def run():
     except Exception as e:
         return [result("L2-ENV", "L2 环境", "L2", "P0", "SKIP", "应用未运行: %r" % e)]
     out = []
+    orig = None
     try:
         pg.clear_errs()
         # 前置：headless 页面是独立实例，harness 面板懒构建——先按真实用户
         # 路径点 Claude 入口，避免「面板未构建时直调 newChat」的伪异常。
         pg.ev("(function(){var b=document.querySelector('#btnClaude');"
               "if(b && !window._hgFlow){b.click();return 1;}return 0;})()")
-        pg.wait_until("!!(window._hgFlow)", timeout=15, interval=0.4)
+        panel_ok = pg.wait_until("!!(window._hgFlow)", timeout=15, interval=0.4)
         orig = pg.ev("(window._HG&&window._HG.sid)||null")
         n0 = _groups(pg)
         heads0 = _heads(pg)
@@ -52,9 +53,12 @@ def run():
         note = pg.ev_obj(
             "JSON.stringify({oldFlowRows: (window._HG.flowEl?window._HG.flowEl.children.length:-1),"
             " emptyNote: !!document.querySelector('.h-v4empty,.h-sysnote')})")
+        flow_ok = bool(pg.ev("!!(window._HG&&_HG.flowEl)"))
         out.append(result("H5-4", "新建空会话清空旧 DOM", "L2", "P1",
-                          "PASS" if n_empty == 0 else "FAIL",
-                          "组数=%d %s" % (n_empty, json.dumps(note, ensure_ascii=False))))
+                          "PASS" if (n_empty == 0 and panel_ok and flow_ok) else "FAIL",
+                          "组数=%d panel=%s flow=%s %s" % (
+                              n_empty, panel_ok, flow_ok,
+                              json.dumps(note, ensure_ascii=False))))
         # ---- H5-1 切回原会话：内容完整恢复 ----
         if orig:
             pg.ev("window.switchTo(%s)" % json.dumps(orig), await_promise=True, timeout=60)
@@ -71,8 +75,11 @@ def run():
                 "JSON.stringify((function(){var f=window._HG.flowEl;if(!f)return {};"
                 "return {top:f.scrollTop,h:f.scrollHeight,c:f.clientHeight,"
                 "near:(f.scrollHeight-f.scrollTop-f.clientHeight)<80};})())")
+            _sc_ok = ("h" in sc and "c" in sc and
+                      ((sc.get("near") is True) or
+                       (sc.get("h", 0) <= sc.get("c", 0))))
             out.append(result("H5-5", "切回后滚动贴近底部", "L2", "P2",
-                              "PASS" if sc.get("near") or sc.get("h", 0) <= sc.get("c", 0) else "CHECK",
+                              "PASS" if _sc_ok else "CHECK",
                               json.dumps(sc, ensure_ascii=False)))
             # ---- H4-4 手动展开后不被强制收起（交互：点开再点回） ----
             toggled = pg.ev_obj(
@@ -97,9 +104,16 @@ def run():
             # ---- H7-1 回滚按钮只授予末条回复 ----
             rw = pg.ev_obj(
                 "JSON.stringify({rewindBtns: document.querySelectorAll('[data-hg-rewind]').length,"
-                "asst: document.querySelectorAll('.h-msg.asst').length})")
-            out.append(result("H7-1r", "回滚按钮唯一性", "L2", "P2",
-                              "PASS" if rw.get("rewindBtns", 0) <= max(1, rw.get("asst", 1)) else "CHECK",
+                "asst: document.querySelectorAll('.h-msg.asst').length,"
+                "grps: document.querySelectorAll('.h-grp').length,"
+                "outside: [...document.querySelectorAll('[data-hg-rewind]')]"
+                ".filter(b=>!b.closest('.h-msg.asst')).length})")
+            # 语义：回滚按钮按「回合」授予（每回合末条一个），不是全局唯一；
+            # 断言每个回合最多一个，且按钮都在 asst 气泡内（不悬空）。
+            _rw_ok = (rw.get("rewindBtns", 0) <= max(1, rw.get("grps", 1))
+                      and rw.get("outside", 0) == 0)
+            out.append(result("H7-1r", "回滚按钮按回合唯一且不悬空", "L2", "P2",
+                              "PASS" if _rw_ok else "FAIL",
                               json.dumps(rw, ensure_ascii=False)))
         else:
             for cid, name, pri in [("H5-1", "A→空→A 切回内容完整", "P0"),

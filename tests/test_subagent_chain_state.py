@@ -709,14 +709,14 @@ class TestRoleBadgeNoFabrication(unittest.TestCase):
 const fs = require('fs');
 const src = fs.readFileSync(process.argv[1], 'utf8');
 // 抽出徽章判定那段（if (rj && rj.ok ... 到 meta.innerHTML 之前）
-const i = src.indexOf('const rj = _hgRolesCache;');
+const i = src.indexOf("const rj = (window.HgState && HgState.get('rolesCache')) || null;");
 const j = src.indexOf("meta.innerHTML =", i);
 if (i < 0 || j < 0) { console.log('EXTRACT_FAIL'); process.exit(0); }
 const block = src.slice(i, j);
 const c = JSON.parse(process.argv[2]);
-const fn = new Function('_hgRolesCache', 'bare', block + '\nreturn roleB;');
+const fn = new Function('HgState', 'window', 'bare', block + '\nreturn roleB;');
 const out = {};
-for (const n in c) out[n] = fn(c[n].rj, c[n].bare);
+for (const n in c) out[n] = fn({get: () => c[n].rj}, {HgState: {get: () => c[n].rj}}, c[n].bare);
 console.log(JSON.stringify(out));
 """
         rj = {"ok": True, "mode": "heavy",

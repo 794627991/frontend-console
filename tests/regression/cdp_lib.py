@@ -47,14 +47,27 @@ def _free_port():
 
 
 def _app_url():
-    """用户窗口的地址（headless 用同一后端）。失败回落环境变量。"""
+    """用户窗口的地址（headless 用同一后端）。
+
+    顺序：9222 页面 target → ~/.serialconsole_pro/endpoint.json → 环境变量。
+    绝不硬编码端口（应用每次启动随机端口）。
+    """
     try:
         for t in dc.list_targets(PORT):
             if t.get("type") == "page" and t.get("url", "").startswith("http"):
                 return t["url"]
     except Exception:
         pass
-    return os.environ.get("REGRESSION_APP_URL", "http://127.0.0.1:4415/")
+    try:
+        ep = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
+                          "endpoint.json")
+        with open(ep, encoding="utf-8") as f:
+            u = (json.load(f) or {}).get("url") or ""
+        if u.startswith("http"):
+            return u
+    except Exception:
+        pass
+    return os.environ.get("REGRESSION_APP_URL", "")
 ARTIFACTS = os.path.join(_HERE, "artifacts")
 
 
@@ -92,26 +105,34 @@ class Page(object):
         if not chrome:
             raise RuntimeError("未找到 Chrome/Edge，无法 headless")
         url = _app_url()
+        if not url:
+            raise RuntimeError("无法解析应用地址（9222/endpoint.json/REGRESSION_APP_URL 均不可用）")
+        # 测试模式标记：页面据此禁用 pagehide 断开真实连接、禁用 recent 落盘
+        url += ("&" if "?" in url else "?") + "regression=1"
         self.port = _free_port()
         self._profile = tempfile.mkdtemp(prefix="reg-hl-")
-        self._proc = subprocess.Popen(
-            [chrome, "--headless=new", "--remote-debugging-port=%d" % self.port,
-             "--user-data-dir=%s" % self._profile, "--disable-gpu",
-             "--no-first-run", "--no-default-browser-check", url],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        end = time.time() + 30
-        while time.time() < end:
-            try:
-                pages = [t for t in dc.list_targets(self.port)
-                         if t.get("type") == "page"]
-                if pages:
-                    self.target = pages[0]
-                    break
-            except Exception:
-                pass
-            time.sleep(0.3)
-        else:
-            raise RuntimeError("headless CDP 连接失败")
+        try:
+            self._proc = subprocess.Popen(
+                [chrome, "--headless=new", "--remote-debugging-port=%d" % self.port,
+                 "--user-data-dir=%s" % self._profile, "--disable-gpu",
+                 "--no-first-run", "--no-default-browser-check", url],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            end = time.time() + 30
+            while time.time() < end:
+                try:
+                    pages = [t for t in dc.list_targets(self.port)
+                             if t.get("type") == "page"]
+                    if pages:
+                        self.target = pages[0]
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.3)
+            else:
+                raise RuntimeError("headless CDP 连接失败")
+        except Exception:
+            self._cleanup_proc()
+            raise
         # 等待页面就绪（后端页面有 _HG_VER）
         end = time.time() + 25
         while time.time() < end:
@@ -205,16 +226,16 @@ class Page(object):
         except Exception as e:
             return "截图失败: %r" % (e,)
 
-    def close(self):
-        try:
-            self.cs.__exit__(None, None, None)
-        except Exception:
-            pass
+    def _cleanup_proc(self):
         if self._proc is not None:
             try:
                 self._proc.terminate()
+                self._proc.wait(timeout=5)
             except Exception:
-                pass
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
             self._proc = None
         if self._profile:
             try:
@@ -223,20 +244,34 @@ class Page(object):
                 pass
             self._profile = None
 
+    def close(self):
+        try:
+            self.cs.__exit__(None, None, None)
+        except Exception:
+            pass
+        self._cleanup_proc()
+
 
 # ---- 已知噪声过滤（第三方库/测试自身快速操作的固有报错）----
 NOISE_PATTERNS = (
     "AbstractContextKeyService has been disposed",   # Monaco dispose 竞态（D3）
-    "importScripts",                                 # worker 被快速关闭中止（R2 场景）
 )
 
 
 def filter_known_noise(errs):
-    """返回 (真实异常, 已知噪声)。"""
+    """返回 (真实异常, 已知噪声)。
+
+    噪声白名单必须精确：导入脚本中止仅在「monaco worker + failed to load」
+    组合下放行（R2 快速开关 test 场景）；其余 worker 错误（含 D4 回归）
+    必须 FAIL。
+    """
     kept, noise = [], []
     for e in errs or []:
         sig = str(e.get("m") or "") + str(e.get("stack") or "")
-        (noise if any(p in sig for p in NOISE_PATTERNS) else kept).append(e)
+        known = any(p in sig for p in NOISE_PATTERNS) or (
+            "importScripts" in sig and "vendor/monaco" in sig
+            and "failed to load" in sig)
+        (noise if known else kept).append(e)
     return kept, noise
 
 

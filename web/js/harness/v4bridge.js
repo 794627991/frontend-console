@@ -204,6 +204,7 @@ const root = window;
   // ---- snapshot：V3 整窗原件一次调用（窗口/懒填/归档/定稿/导轨全套） -------
 
   V4Bridge.prototype._rebuild = function (snap) {
+    this._sawInterrupted = false;   // a668：重建=新上下文，中断痕迹复位
     var rows = (snap && snap.rows) || [];
     // a116：整窗权威快照到达——滚动缓冲队列里的增量全部作废（快照已含）
     if (this._pumpQ.length) { this._pumpQ = []; this._pumpQAt = 0; }
@@ -705,7 +706,22 @@ const root = window;
           && (row.mkind === 'exit' || row.mkind === 'interrupted')) {
         // D1 修复（a653）：本回合已出现中断痕迹——turn_header 的 result
         // 终态（CLI 停止时常仍是 success）不得把「已停止」覆盖回「已工作」。
-        if (row.mkind === 'interrupted') this._sawInterrupted = true;
+        // a668：中断痕迹必须**带时间**，否则迟到的 interrupted（新回合已
+        // 开始时才到）会定格/误标新回合（用户常用「停止后立刻续发」实测）。
+        var _iAt = Date.parse(row.at) || 0;
+        if (row.mkind === 'interrupted') {
+          this._sawInterrupted = true;
+          this._interruptAt = _iAt || Date.now();
+          try {
+            if (typeof _HG !== 'undefined' && _HG && _HG.grp && _HG.grp.root
+                && this._lastFinRoot && _HG.grp.root !== this._lastFinRoot
+                && _iAt && _HG.grp.t0 && _HG.grp.t0 > _iAt + 500) {
+              // 迟到 marker：目标是上一已定稿组（走 targetRoot 回退），
+              // 绝不把当前新回合活组定格成「已停止」。
+              _HG.grp = null;
+            }
+          } catch (e) {}
+        }
         var _fin = _g('endThinking');
         if (_fin) { try { _fin(); } catch (e) {} }
         var _vs = _g('_hgVisionSweep');
@@ -715,8 +731,16 @@ const root = window;
         // 无活组早退（grpFinalize 语义）——绝不 grpEnsure 建组
         var _gf = _g('grpFinalize');
         if (_gf) {
+          // a668：marker 常是停止回合的**第一帧**（终态后到时 _HG.grp 可能
+          // 已清空）——先把本组根记为身份，供后续终态/本地收尾的回退定格
+          // （否则 targetRoot 为空，后到的 interrupted 永远改不了头文案）。
+          try {
+            if (typeof _HG !== 'undefined' && _HG && _HG.grp && _HG.grp.root)
+              this._lastFinRoot = _HG.grp.root;
+          } catch (e) {}
           try { _gf(true, { interrupted: row.mkind === 'interrupted',
-                            turnEnd: true }); } catch (e) {}
+                            turnEnd: true,
+                            targetRoot: this._lastFinRoot }); } catch (e) {}
         }
         var _ad = _g('_hgAskDismiss');
         if (_ad) {
@@ -746,6 +770,20 @@ const root = window;
         if (_rsw) { try { _rsw(row.text || ''); } catch (e) {} }
         this._lastRole = null;
         return;
+      }
+      // a668（审计 P1）：正常新回合的 running 头走 row.appended，不走
+      // turn_header 的 upsert 清除点——原清除不可达，停止一次后本 bridge
+      // 内所有后续正常回合都会被误标「已停止」。此处补清，并清 stopGen
+      // 的本地停止标记（跨回合 15s 窗）。
+      if (row.kind === 'turn_header' && row.state === 'running') {
+        this._sawInterrupted = false;
+        this._interruptAt = 0;
+        try {
+          if (typeof _HG !== 'undefined' && _HG) {
+            _HG._stopLocalAt = 0;
+            _HG._stopLocalSid = '';
+          }
+        } catch (e) {}
       }
       var L = rowToLine(row);
       if (!L) return;
@@ -1023,11 +1061,30 @@ const root = window;
           || g.counts.sub)) || (g.root
           && g.root.querySelector('.h-msg.asst:not(.ph), .h-tl > *'))));
         var fin = _g('grpFinalize');
-        if (g && !hasWork && g.root && g.root.parentNode) {
+        // a668（审计回归）：首 token 前停止的「空回合」也必须定格「已停止」，
+        // 不能当幽灵组摘掉——否则 marker 到达时无组可定格，头停在「已工作」。
+        // 判定必须先做**回合身份匹配**（中断时间落在本回合 [startedAt, end]
+        // 内）——用户常用「停止后立刻续发」，迟到 marker / 15s 停止窗都不
+        // 能把下一正常回合误标「已停止」。
+        var _eAt0 = row.endedAt || Date.now();
+        var _stAt = row.startedAt || 0;
+        var _sawIntThis = !!(this._interruptAt && _stAt
+            && _stAt <= this._interruptAt + 500
+            && _eAt0 >= this._interruptAt - 1500);
+        var _wasStopped = (row.state === 'cancelled') || _sawIntThis;
+        try {
+          if (!_wasStopped && typeof _HG !== 'undefined' && _HG
+              && _HG._stopLocalAt && _HG._stopLocalSid === _HG.sid) {
+            _wasStopped = _eAt0 >= (_HG._stopLocalAt - 3000)
+              && (_eAt0 - _HG._stopLocalAt) < 15000
+              && (!_stAt || _stAt <= _HG._stopLocalAt + 500);
+          }
+        } catch (e) {}
+        if (g && !hasWork && g.root && g.root.parentNode && !_wasStopped) {
           try { g.root.parentNode.removeChild(g.root); } catch (e) {}
           if (_HG.grp === g) _HG.grp = null;
           this._lastFinRoot = null;   // a147：摘组即失身份记忆（防陈旧匹配）
-        } else if (fin && hasWork) {
+        } else if (fin && (hasWork || _wasStopped)) {
           this._lastFinRoot = (g && g.root) || null;   // 供并回身份校验
           // D1 修复：被停回合（state=cancelled）的终态收口必须带 interrupted——
           // 旧写法只传 turnEnd，会把 stopGen/中断 marker 已定格的「已停止」
@@ -1038,18 +1095,8 @@ const root = window;
           // ①投影层 interrupted marker（_sawInterrupted）
           // ②stopGen 本地停止标记（_stopLocalAt/_stopLocalSid，同会话且
           //   终态时间在停止点附近 15s 内；新回合不会这么快完成）
-          var _stopLocal = false;
-          try {
-            if (typeof _HG !== 'undefined' && _HG && _HG._stopLocalAt
-                && _HG._stopLocalSid === _HG.sid) {
-              var _eAt = row.endedAt || Date.now();
-              _stopLocal = _eAt >= (_HG._stopLocalAt - 3000)
-                && (_eAt - _HG._stopLocalAt) < 15000;
-            }
-          } catch (e) {}
           try { fin(false, { turnEnd: true,
-                             interrupted: row.state === 'cancelled'
-                               || !!this._sawInterrupted || _stopLocal,
+                             interrupted: _wasStopped,
                              endTs: row.endedAt || Date.now() }); } catch (e) {}
           // 对抗审 P2-3/P2-5（a142）：正常回合收口补回合记账与识图清算
           // （V3 _hgTurnWrapup 的职责，随其删除丢失）——dur 优先事件值，
@@ -1061,8 +1108,8 @@ const root = window;
             if (_tm) { try { _tm(row.activeMs || 0); } catch (e) {} }
           } else {
             var _te = _g('_hgTurnEnd');
-            if (_te) { try { _te(row.state === 'error' ? 'error'
-                              : (row.state === 'cancelled' ? 'interrupt' : 'ok'),
+            if (_te) { try { _te(_wasStopped ? 'interrupt'
+                              : (row.state === 'error' ? 'error' : 'ok'),
                                 row.activeMs || 0); } catch (e) {} }
           }
           var _vs2 = _g('_hgVisionSweep');

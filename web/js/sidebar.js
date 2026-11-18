@@ -28,6 +28,9 @@ async function loadPorts() {
 // 返回后端 j（{ok, err}）；失败不再右下角弹泡——由连接弹窗内联显示，
 // 成功才由调用方关弹窗。异常统一转 {ok:false, err}。
 async function _recentAdd(item) {
+  // a667：回归测试模式不写用户 config（headless 测试会打开 fixtures/终端，
+  // 旧行为每次都把测试条目写进 ~/.serialconsole_pro/config.json）。
+  if (window.__FC_REGRESSION) return;
   // 记录最近打开（失败静默——列表是辅助功能，不能阻塞连接流程）。
   // 后端响应带去重后的最新列表，直接同步进 _recentList 再渲染——
   // 之前渲染的是本地旧数组，导致"打开后不显示、重启才显示"。

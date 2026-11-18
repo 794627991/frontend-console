@@ -49,6 +49,7 @@ const _webPageEpoch = (Date.now() % 1e8) + '-' + Math.random().toString(36).slic
 // 会话水位归零。全模式生效（debug 整 UI 刷新同样要回收网页控件）；后端
 // 按 epoch 只动本页创建的 tab，刷新后新纪元控件不被迟到的 beacon 误杀。
 window.addEventListener('pagehide', function () {
+  if (window.__FC_REGRESSION) return;
   // R9 审计 W40：非 owner 页面卸载不得触发全局回收/会话重置（否则副窗
   // 关闭会把 owner 的 seq 水位/显隐意图打掉）。owner 卸载时 owner 恒真，
   // 自身回收不受影响。

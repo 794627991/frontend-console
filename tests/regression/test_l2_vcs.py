@@ -97,42 +97,50 @@ def run():
             pg.wait_until("!!(window.VCS&&VCS.data&&VCS.data.vcs)", timeout=15, interval=0.5)
 
         # ---- VCS-10 主缓存刷新 + 图形模式不污染 VCS.log ----
+        # 审计修正：图形按钮只存在于 _vcsHistOpen 创建的弹窗内——旧实现
+        # 在弹窗未开时点击（空转）再比较同一份未变化缓存，属自证 PASS。
         try:
-            pg.ev("(function(){if(typeof _vcsReloadLog==='function')_vcsReloadLog();return 1;})()")
+            pg.ev("(function(){if(typeof _vcsHistOpen==='function')_vcsHistOpen();return 1;})()")
+            graph_ok = pg.wait_until(
+                "!!document.querySelector('[data-vcs-graph]')", timeout=10, interval=0.4)
             pg.wait_until(
-                "(function(){var l=(window.VCS&&VCS.log)||[];"
-                "return l.length&&l[0].rev&&l[0].rev.indexOf('cc8b')===0;})()",
+                "(function(){return ((window.VCS&&VCS.log)||[]).length>0;})()",
                 timeout=15, interval=0.5)
             base = pg.ev_obj(
                 "JSON.stringify({first:((window.VCS.log||[])[0]||{}).rev||'',"
                 "deco:((window.VCS.log||[])[0]||{}).deco||'',"
                 "len:((window.VCS.log||[]).length)})")
-            # 打开图形 → 关闭，主缓存必须保持不变
-            pg.ev("(function(){var b=document.querySelector('[data-vcs-graph]');"
-                  "if(b&&!b.classList.contains('on'))b.click();return 1;})()")
-            time.sleep(2.0)
-            pg.ev("(function(){var b=document.querySelector('[data-vcs-graph]');"
-                  "if(b&&b.classList.contains('on'))b.click();return 1;})()")
-            time.sleep(2.0)
-            after = pg.ev_obj(
-                "JSON.stringify({first:((window.VCS.log||[])[0]||{}).rev||'',"
-                "deco:((window.VCS.log||[])[0]||{}).deco||'',"
-                "len:((window.VCS.log||[]).length)})")
+            if not graph_ok:
+                out.append(result("VCS-10", "图形模式不污染主缓存（首行/装饰）", "L2", "P0",
+                                  "FAIL", "历史弹窗/图形按钮不可用（未真正执行切换）"))
+            else:
+                pg.ev("(function(){document.querySelector('[data-vcs-graph]').click();return 1;})()")
+                time.sleep(2.0)
+                on = bool(pg.ev("!!document.querySelector('[data-vcs-graph].on')"))
+                pg.ev("(function(){var b=document.querySelector('[data-vcs-graph]');"
+                      "if(b&&b.classList.contains('on'))b.click();return 1;})()")
+                time.sleep(2.0)
+                after = pg.ev_obj(
+                    "JSON.stringify({first:((window.VCS.log||[])[0]||{}).rev||'',"
+                    "deco:((window.VCS.log||[])[0]||{}).deco||'',"
+                    "len:((window.VCS.log||[]).length)})")
+                ok = (on and base.get("first") and after.get("first") == base.get("first")
+                      and after.get("deco") and after.get("len", 0) >= 1)
+                out.append(result("VCS-10", "图形模式不污染主缓存（首行/装饰）", "L2", "P0",
+                                  "PASS" if ok else "FAIL",
+                                  "on=%s base=%s after=%s" % (
+                                      on, json.dumps(base, ensure_ascii=False),
+                                      json.dumps(after, ensure_ascii=False))))
             pg.ev("(function(){var b=document.querySelector('[data-vcs-hclose]');"
                   "if(b)b.click();return 1;})()")
-            ok = (after.get("first") == base.get("first") and after.get("deco")
-                  and after.get("len", 0) >= 1)
-            out.append(result("VCS-10", "图形模式不污染主缓存（首行/装饰）", "L2", "P0",
-                              "PASS" if ok else "FAIL",
-                              "base=%s after=%s" % (json.dumps(base, ensure_ascii=False),
-                                                    json.dumps(after, ensure_ascii=False))))
-            # 重开历史弹窗供后续用例
-            pg.ev("(function(){if(typeof _vcsHistOpen==='function')_vcsHistOpen();return 1;})()")
-            time.sleep(1.2)
+            time.sleep(0.5)
         except Exception as e:
             out.append(result("VCS-10", "图形模式不污染主缓存（首行/装饰）", "L2", "P0", "CHECK", repr(e)))
-            pg.ev("(function(){if(typeof _vcsHistOpen==='function')_vcsHistOpen();return 1;})()")
-            time.sleep(1.2)
+            try:
+                pg.ev("(function(){var b=document.querySelector('[data-vcs-hclose]');"
+                      "if(b)b.click();return 1;})()")
+            except Exception:
+                pass
 
         # ---- VCS-3 提交历史弹窗（列表/搜索/图形/详情） ----
         if not pg.ev("!!(window.VCS&&VCS.data&&VCS.data.vcs)"):
@@ -179,8 +187,16 @@ def run():
             first_before = pg.ev(
                 "(function(){var r=document.querySelector('[data-vcs-hlist] .hg-vcs-logrev');"
                 "return r?r.textContent.trim():'';})()")
+            kw = pg.ev(
+                "(function(){var m=((window.VCS&&VCS.log&&VCS.log[0]&&VCS.log[0].msg)||'');"
+                "var x=String(m).match(/[A-Za-z0-9_]{4,}/);return x?x[0]:'';})()")
+            if not kw:
+                out.append(result("VCS-3b", "关键字筛选提交", "L2", "P2", "SKIP",
+                                  "当前 HEAD 提交消息无可提取关键词"))
+                raise RuntimeError("skip-filter")
             pg.ev("(function(){var i=document.querySelector('[data-vcs-hq=\"text\"]');"
-                  "i.value='a652';i.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()")
+                  "i.value=%s;i.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()"
+                  % json.dumps(kw))
             q = None
             for _ in range(8):
                 time.sleep(0.8)
@@ -194,10 +210,12 @@ def run():
             pg.ev("(function(){var i=document.querySelector('[data-vcs-hq=\"text\"]');"
                   "i.value='';i.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()")
             time.sleep(1.5)
-            hit = bool(q) and q.get("rows", 0) >= 1 and "cc8b" in (q.get("first") or "")
+            hit = bool(q) and q.get("rows", 0) >= 1 and bool(q.get("first"))
             out.append(result("VCS-3b", "关键字筛选提交", "L2", "P2",
                               "PASS" if hit else "CHECK",
                               json.dumps(q, ensure_ascii=False) + " before=" + str(first_before)))
+        except RuntimeError:
+            pass   # SKIP 已在 try 内登记
         except Exception as e:
             out.append(result("VCS-3b", "关键字筛选提交", "L2", "P2", "CHECK", repr(e)))
         # ---- VCS-3c 点提交行 → 详情 ----

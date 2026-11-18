@@ -172,3 +172,7 @@
   color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nn-sug-it:hover { background: var(--hover, rgba(128,138,150,.12)); }
 .nn-sug-it.on { background: var(--accent, #4a9eff); color: #fff; }
+@media (prefers-reduced-motion: reduce) {
+  .hg-enter, .h-think-prev > .exit, .h-think-prev > .enter, .hg-flip { animation: none; }
+  .h-tool.col .h-tool-coll, .h-turn-body { transition: none; }
+}

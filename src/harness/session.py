@@ -358,7 +358,12 @@ class HarnessSession:
         if self.session_id:
             argv += ["--resume", self.session_id]
         if self.model:
-            argv += ["--model", self.model]
+            # a634（用户实锤「claude 进程退出 unrecognized_model deepseek-flash[1m]」
+            # 会话直接死亡）：CLI 新版校验模型注册表，自定义网关模型带 [1m]/[1M]
+            # 上下文后缀被拒收→进程退出→会话死。argv 剥后缀（网关本就不认，
+            # 剥离先例 routes.py:2549）；self.model 保留全名——上下文窗口账本
+            # （session.py:2502 族）仍读后缀定 1M 档
+            argv += ["--model", re.sub(r"\[[^\]]+\]$", "", self.model)]
         env = dict(os.environ)
         env.setdefault("TERM", "dumb")
         # v2.20：思考等级 → CLI 的 MAX_THINKING_TOKENS（透传到网关/模型侧
@@ -1880,7 +1885,10 @@ class HarnessSession:
                     # 的第一依据（settings 名会与实跑名错位，见 _eff_model）。
                     # 只记录不打断：若与注入词的三态分类不一致，下一次 send
                     # 前的 bridge_fp 热更自然发现指纹变化并换词重启
-                    lm = (o.get("message") or {}).get("model")
+                    _om = o.get("message")
+                    if not isinstance(_om, dict):
+                        _om = {}   # a667：legacy 形态 message 为字符串时防崩
+                    lm = _om.get("model")
                     if lm and lm != self.live_model:
                         self.live_model = lm
                         self.sync_meta()

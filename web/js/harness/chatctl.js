@@ -621,13 +621,25 @@
   async function stopGen() {
     if (!_HG.sid) return;
     const sid = _HG.sid;
+    // a668（用户常用「停止后立刻续发」）：记录**停止请求时刻**——本地收尾
+    // 冒 2.3s 超时，期间新回合可能已开始；所有「是否属于停止回合」的判定
+    // 都必须用这个时刻与回合 startedAt 比较，而不是本地收尾执行时刻。
+    _HG._stopReqAt = Date.now();
     // v3.4.79（用户实锤「工作中 6s 头挂着点开空的」）本地收尾：与后端
     // interrupted 帧同构（exit 行入组+定稿中断态+子代理收尾+窗格收起），
     // 防组头永挂「工作中 Ns」。时间戳供 10-sse 侧迟到帧去重（_stopLocalAt）
     function _stopLocalFinish(why) {
+      // a668：停止请求后用户可能已续发（新回合活组已建立）——此时本地
+      // 收尾绝不能定格/记账新回合，也不得把 stopLocalAt 设到未来（会误标
+      // 下一回合）。stale 判定：当前组开始时刻晚于停止请求 500ms。
+      try {
+        const _reqAt = _HG._stopReqAt || 0;
+        const _g = _HG.grp;
+        if (_reqAt && _g && _g.t0 && _g.t0 > _reqAt + 500) return;
+      } catch (_) {}
       try { renderExit('已中断回复'); } catch (_) {}
       try { grpFinalize(true, { interrupted: true, hist: _hgTailAdopt(), turnEnd: true }); } catch (_) {}
-      _HG._stopLocalAt = Date.now();
+      _HG._stopLocalAt = _HG._stopReqAt || Date.now();
       _HG._stopLocalSid = _HG.sid;   // v3.4.79R（复核 R2）：闸按会话归属，跨会话不误吞
       setBusy(false);
       try { showBanner('中断' + why + '，已本地收尾', 3000); } catch (_) {}

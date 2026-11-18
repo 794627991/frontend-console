@@ -7,7 +7,7 @@
 | 文件 | 用途 |
 |---|---|
 | `测试计划.md` | 分层、判据、环境、执行策略、额度预算 |
-| `用例明细.md` | 84 条用例全表（ID / 前置 / 操作 / 断言 / 层 / 脚本映射） |
+| `用例明细.md` | 约 100 条用例全表（ID / 前置 / 操作 / 断言 / 层 / 脚本映射） |
 | `测试报告.md` | 每次执行的结果留档（PASS/FAIL/SKIP + 证据） |
 | `../../tests/regression/` | 可执行测试脚本（L0 静态 / L1 启动 / L2 CDP / L3 真实 CLI） |
 
@@ -26,7 +26,8 @@ python tests\regression\run_all.py --layers L3 --groups H1,H3,H4
 rem 结果自动追加到 docs\modularization-regression\测试报告.md
 ```
 
-前置条件：前端控制台应用正在运行（主 UI CDP 端口 9222 常开）。L0 静态层不需要应用。
+前置条件：前端控制台应用正在运行（主 UI CDP 端口 9222 常开）。L0 静态层不需要应用；
+M05 需要 `tools/js-tooling` 下 `npm install`（eslint/espree）；headless 模式需要 Chrome/Edge。
 
 ## 结构治理工具（a654）
 

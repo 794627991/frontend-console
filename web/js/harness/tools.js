@@ -221,8 +221,20 @@
   // live 丢 input 是 CLI/网关流异常（转写恒完整），行存令失不再靠「重开会话
   // 自愈」。一次 fetch 修补当回合全部缺令行；行已不在（切会话/被 cap）静默跳过
   async function _hgPatchMissingCmds() {
-    // 重入闸：重建期逐行登记 + 防抖触发可能追尾，进行中只留账不重复 fetch
-    if (_HG.noInputBusy) return;
+    // 重入闸：重建期逐行登记 + 防抖触发可能追尾，进行中只留账不重复 fetch。
+    // a668（审计 P3）：fetch 期间新登记不能永久丢失——重新 arm 一个短定时器。
+    if (_HG.noInputBusy) {
+      try {
+        if (_HG.noInputTids && _HG.noInputTids.size) {
+          clearTimeout(_HG.noInputPatchT);
+          _HG.noInputPatchT = setTimeout(function () {
+            if (typeof window._hgPatchMissingCmds === 'function')
+              window._hgPatchMissingCmds();
+          }, 800);
+        }
+      } catch (_) {}
+      return;
+    }
     if (!_HG.noInputTids || !_HG.noInputTids.size || !_HG.sid) return;
     _HG.noInputBusy = true;
     const tids = [..._HG.noInputTids];
@@ -836,7 +848,11 @@
       // 放宽判据（陈年老 bug 兜底）：CLI 流式偶发丢 input，形态不一定是全空
       // 对象——残缺 input（只剩 description 等）同样命令缺失，旧判据
       // `!Object.keys(input).length` 不登记 → 自愈永不触发（极少数复现的那批）
-      if (cfg.kind === 'bash' && !String(_row2._rawHint || '').trim() && b.id)
+      // a668（审计 P2）：判据必须只看 command/cmd——_rawHint 含 description，
+      // 残缺 input 只剩 description 时旧判据不登记，自愈依旧不触发。
+      if (cfg.kind === 'bash'
+          && !String((b.input || {}).command || (b.input || {}).cmd || '').trim()
+          && b.id)
         (_HG.noInputTids || (_HG.noInputTids = new Set())).add(b.id);
       _HG.rowById[id] = _row2;
       drawerCount(name);

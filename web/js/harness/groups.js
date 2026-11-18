@@ -363,6 +363,11 @@
     }
     _hgScrollBottom();
   }
+  // a668：最近一次成功定稿的组根——中断回退的身份锚。grpFinalize 末尾会
+  // 清 _HG.grp，marker/终态/本地收尾的后续调用必须靠它重新定格（空壳被摘
+  // 的组不会写入此处 → 不会误定格上一回合）。
+  let _hgLastFinalizedRoot = null;
+
   function grpFinalize(auto, opt) {
     opt = opt || {};
     let g = _HG.grp;
@@ -373,7 +378,16 @@
     // 组头文案/亮头，不改 DOM 结构）。
     if (!g && opt.interrupted && typeof _hgFlow !== 'undefined' && _hgFlow) {
       try {
-        const _root = [..._hgFlow.querySelectorAll('.h-grp')].pop() || null;
+        // a668（审计 P2）：必须用「本回合」身份（targetRoot=最近定稿组根）。
+        // 旧实现无校验取 flow 末组——空壳被停回合摘组后，会把上一个已完成
+        // 回合的组误改成「已停止」并重算时长。
+        let _root = (opt.targetRoot
+                     && opt.targetRoot.parentNode === _hgFlow)
+          ? opt.targetRoot : null;
+        if (!_root && _hgLastFinalizedRoot
+            && _hgLastFinalizedRoot.parentNode === _hgFlow)
+          _root = _hgLastFinalizedRoot;   // a668：终态/本地收尾不带 target 时兜底
+
         const _tb = _root && _root.querySelector('.h-drawer.think');
         const _eb = _root && _root.querySelector('.h-drawer.exec');
         if (_root && _tb && (_eb || _root.querySelector('.h-tl')))
@@ -522,6 +536,7 @@
       if (g.exec && g.exec.box.dataset.userToggled !== '1' && isNearBottom()) g.exec.box.classList.remove('open');
     }
     g.root.dataset.finalized = '1';   // v2.18.1：已定稿——grpEnsure 回扫不得接回
+    _hgLastFinalizedRoot = g.root;    // a668：中断回退身份锚
     // v3.3.2(D2)：定稿墙钟——_hgTurnReopen 的 30min 护栏事实源（回放态不吃
     // 时钟原则同工时阶梯；老快照无 fTs 时 reopen 放行=宽口径，铁律优先）
     if (!_hist) g.root.dataset.fTs = String(Date.now());

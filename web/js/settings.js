@@ -589,13 +589,6 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-sub">动画降帧（虚机/远程桌面建议开）：补间 100ms、循环动画 16 帧/周期、关毛玻璃——动画照常动，帧账单降一个量级。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
-        <div class="dd-label">AI 网页操作（CDP）</div>
-        <div class="dd-row" style="margin-top:6px;">
-          <div id="tkCdpLive" style="padding:8px 12px;font-size:12px;color:var(--muted);">检测中…</div>
-        </div>
-        <div class="dd-sub">Claude 可用 devtools_* 工具操作内嵌浏览器（读页面/点击/填表/截图）。</div>
-      </div>
-      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">代码跳转快捷键</div>
         <div class="dd-row" style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;align-items:flex-start;" id="stNavKeysRow"></div>
         <div class="dd-sub">转到定义 / 查找引用 / 符号搜索（跨文件找函数）。点输入框按新键即生效。</div>
@@ -772,25 +765,6 @@ async function _stRenderTermKeysPane(pane) {
   _stNavKeysCard(pane);
   _stBoostCard(pane);   // a378：CPU 优先随用户令移入终端设置
   _stNoGpuCard(pane);   // a472：无GPU加速随用户令移入终端设置（性能类归堆）
-  _stCdpLive(pane);      // a624：CDP 常开，此处只显示探活状态
-}
-
-// a624：CDP 常开（main.py 启动必带 --remote-debugging-port=9222），此处只做
-// 探活状态展示——不再提供开关（关不掉，留开关只会误导用户）。
-function _stCdpLive(pane) {
-  const row = pane.querySelector('#tkCdpLive');
-  if (!row) return;
-  const paint = (live) => {
-    row.innerHTML = window.ICO16
-      ? (live ? ICO16.dotOn : ICO16.dotOff) + ' '
-      : '';
-    row.innerHTML += live
-      ? '<span style="color:var(--accent)">可用</span>'
-      : '<span style="color:var(--muted)">未就绪（重启工具试试）</span>';
-  };
-  fetch('/api/theme').then(r => r.json())
-    .then(j => paint(!!(j && j.web_cdp_live)))
-    .catch(() => paint(false));
 }
 
 // a472：无GPU加速开关卡（虚机/远程桌面的动画降帧档）——随用户令从外观页

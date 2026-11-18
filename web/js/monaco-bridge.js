@@ -91,7 +91,7 @@ function monacoInit() {
                 var now = Date.now();
                 if (now - _last < 5000) return;
                 _last = now;
-                fetch('/api/frontend_log', {method:'POST',
+                fetch('${location.origin}/api/frontend_log', {method:'POST',
                   headers:{'Content-Type':'application/json'},
                   body: JSON.stringify({text:'[worker] ' + String(txt).slice(0,800)})}).catch(function(){});
               } catch (e) {}
@@ -110,18 +110,14 @@ function monacoInit() {
         // 即使服务端补了 CORS 头，WebView2/headless 仍实测失败（语言服务
         // 静默不可用）。改用 blob: worker：URL 继承页面 origin，importScripts
         // 走同源，无需 CORS。缓存 URL 避免每次创建新 blob。
-        let _workerBlobUrl = null;
+        // a634（用户实锤 blob worker 间歇性 importScripts fail-to-load）：
+        // 同源场景直接给 monaco 原生 workerMain.js URL——worker 的 location
+        // 就是真实路径，其内置 loader 按 '../../../' 自推导 baseUrl =
+        // /vendor/monaco/min/ ✓（无需 blob 中转、无 importScripts 跨源问题）。
+        // 三形态实测（活实例）：blob+绝对路径间歇 FAIL / 直连 OK / blob+相对 FAIL。
         window.MonacoEnvironment = {
           getWorkerUrl: function() {
-            if (!_workerBlobUrl) {
-              try {
-                _workerBlobUrl = URL.createObjectURL(
-                  new Blob([WORKER_BOOT], { type: 'application/javascript' }));
-              } catch (_) {
-                return `data:text/javascript;charset=utf-8,${encodeURIComponent(WORKER_BOOT)}`;
-              }
-            }
-            return _workerBlobUrl;
+            return location.origin + '/vendor/monaco/min/vs/base/worker/workerMain.js';
           }
         };
         require(['vs/nls.messages.zh-cn', 'vs/editor/editor.main'], () => {

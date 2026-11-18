@@ -65,7 +65,8 @@ def g_h1(pg):
     st = _wait_idle(pg, need_asst=True)
     head_ok = any("已工作" in h["t"] for h in st.get("heads", []))
     out.append(result("H1-1", "新建会话→发消息→回复+工作头", "L3", "P0",
-                      "PASS" if st.get("asst") and head_ok else "FAIL",
+                      "PASS" if (st.get("asst") and head_ok
+                                 and not st.get("busy")) else "FAIL",
                       json.dumps({k: st.get(k) for k in ("asst", "heads", "busy")}, ensure_ascii=False)))
     # H1-5 空输入
     sid_before = pg.ev("(window._HG&&window._HG.sid)||null")
@@ -211,6 +212,53 @@ def g_h7(pg):
                       "clicked=%s exitRow=%s heads=%s" % (
                           stopped, exit_row,
                           json.dumps(_state(pg).get("heads"), ensure_ascii=False)[:220])))
+    # H7-4（用户实锤：停止后继续发是常用路径）：
+    # 先建立一轮正常对话（确保 session_id 可 resume），再停止，再续发——
+    # 断言新回合正常「已工作」、不被误标「已停止」。
+    try:
+        # H7-2 的停止收尾可能仍在走（busy 未清时 newChat/发送会被拦）。
+        pg.wait_until("!((window._HG&&window._HG.busy))", timeout=15, interval=0.4)
+        _new(pg)   # 独立会话：停止后同会话失效，必须先有上下文再测续发
+        time.sleep(0.8)
+        _send(pg, "只回复两个字：收到")
+        _wait_idle(pg, need_asst=True)
+        n_heads0 = len(_state(pg).get("heads") or [])
+        _send(pg, "从 1 数到 200，每个数字一行")
+        for _ in range(40):
+            time.sleep(0.25)
+            if pg.ev("!!(window._HG&&window._HG.busy)"):
+                break
+        pg.ev("(function(){try{window.stopGen();}catch(e){}return 1;})()")
+        # 等停止落定（已停止头出现或超时）
+        end_t = time.time() + 20
+        while time.time() < end_t:
+            hs = (_state(pg).get("heads") or [])
+            if hs and "已停止" in hs[-1]["t"]:
+                break
+            time.sleep(0.5)
+        _send(pg, "只回复两个字：收到")
+        ok4 = False
+        st2 = None
+        end_t = time.time() + 90
+        while time.time() < end_t:
+            time.sleep(1.0)
+            st2 = _state(pg)
+            hs = st2.get("heads") or []
+            if (len(hs) > n_heads0 and hs
+                    and "已工作" in hs[-1]["t"] and "已停止" not in hs[-1]["t"]
+                    and not st2.get("busy")):
+                ok4 = True
+                break
+            if not st2.get("busy") and len(hs) > n_heads0:
+                break
+        hs = (st2 or {}).get("heads") or []
+        out.append(result("H7-4", "停止后继续发送（已有上下文会话）", "L3", "P0",
+                          "PASS" if ok4 else "FAIL",
+                          "heads0=%d %s" % (n_heads0,
+                                            json.dumps(hs[-2:], ensure_ascii=False))))
+    except Exception as e:
+        out.append(result("H7-4", "停止后继续发送（已有上下文会话）", "L3", "P0",
+                          "CHECK", repr(e)))
     out.append(result("H7-1", "回滚到上一回合", "L3", "P1", "SKIP",
                       "破坏性操作（删除后续内容），需手工确认后执行"))
     out.append(result("H7-3", "压缩开始/结束", "L3", "P2", "SKIP",
@@ -226,7 +274,8 @@ def g_smoke(pg):
     st = _wait_idle(pg, need_asst=True)
     head_ok = any("已工作" in h["t"] and h.get("d") != "none" for h in st.get("heads", []))
     out.append(result("SMOKE-1", "真机会话冒烟（发消息→回复→工作头）", "L3", "P0",
-                      "PASS" if st.get("asst") and head_ok else "FAIL",
+                      "PASS" if (st.get("asst") and head_ok
+                                 and not st.get("busy")) else "FAIL",
                       json.dumps({k: st.get(k) for k in ("asst", "heads", "busy")},
                                  ensure_ascii=False)))
     return out

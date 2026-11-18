@@ -6,6 +6,7 @@
 import http.server
 import json
 import os
+import socket
 import shutil
 import socketserver
 import subprocess
@@ -24,6 +25,15 @@ CHROME_CANDIDATES = [
 ]
 REPL = [("__HG_VER__", "reg"), ("__HG_WBASE__", ""),
         ("__HG_WFAMFLAG__", ""), ("__HG_DBGF__", "0")]
+
+
+def _free_port():
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
 
 
 def _find_chrome():
@@ -81,12 +91,13 @@ def probe(timeout_s=10.0):
     chrome = _find_chrome()
     if not chrome:
         return {"ok": False, "skip": "未找到 Chrome/Edge", "exceptions": [], "module_errors": []}
-    port = 18899
-    cdp_port = 19223
+    port = _free_port()
+    cdp_port = _free_port()
     srv = socketserver.ThreadingTCPServer(("127.0.0.1", port), _make_handler(port))
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     profile = tempfile.mkdtemp(prefix="reg-profile-")
+    proc = None
     proc = subprocess.Popen(
         [chrome, "--headless=new", "--remote-debugging-port=%d" % cdp_port,
          "--user-data-dir=%s" % profile, "--disable-gpu", "--no-first-run",

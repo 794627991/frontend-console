@@ -2058,10 +2058,6 @@ html {
   30% { transform: translateY(-5px); opacity: 1; } }
 @keyframes hg-enter-kf { from { opacity: 0; transform: translateY(.4em); } to { opacity: 1; transform: translateY(0); } }
 @keyframes hg-flip-kf { from { transform: translateY(.6em); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .hg-enter, .h-think-prev > .exit, .h-think-prev > .enter, .hg-flip { animation: none; }
-  .h-tool.col .h-tool-coll, .h-turn-body { transition: none; }
-}
 @keyframes hg-think-line-in { from { transform: translateY(0.8em); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @keyframes hg-think-line-out { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-0.8em); opacity: 0; } }
 
@@ -2186,7 +2182,6 @@ html {
   min-height: 30px;   /* 行不低于条：条不溢出戳邻行 */
 }
 /* 窄窗口下别把内容挤没——留白随宽度自适应 */
-@media (max-width: 1100px) { .hg-vcs-pane { padding-left: 20px; padding-right: 20px; } }
 span.nn-hl { border-radius: 3px; padding: 0 2px; }
 span.nn-hl-w { background: color-mix(in srgb, var(--accent, #4a9eff) 16%, transparent);
   color: var(--accent, #4a9eff); font-weight: 600; }
@@ -2649,9 +2644,6 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .bl-head { display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .bl-title { font-size: 12.5px; font-weight: 600; }
-.bl-ver { font-size: 10.5px; font-weight: 600; color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  padding: 1px 7px; border-radius: 9px; flex-shrink: 0; }
 .bl-meta { font-size: 11px; color: var(--muted); }
 .bl-spacer { flex: 1; }
 .bl-sel { font-size: 11px; color: var(--fg); background: var(--bg-card);

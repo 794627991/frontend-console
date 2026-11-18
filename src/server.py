@@ -1067,7 +1067,8 @@ def _ssh_last_disconnect(max_age=3.0):
 #   · 所有 POST 写操作（连接/发送/断开/升级等，行为可追溯）
 # 不记 2xx 的 GET（轮询/状态查询每秒都有，会把缓冲刷满）。werkzeug 的逐
 # 请求访问日志本来就不进缓冲，这里补的是「结果 + 耗时 + 失败原因」。
-_LOGGED_PREFIX_SKIP = ("/api/backend_log", "/api/status", "/api/busy")
+_LOGGED_PREFIX_SKIP = ("/api/backend_log", "/api/status", "/api/busy",
+                       "/api/page_heartbeat")
 
 
 def _is_skip_logged(path):
@@ -1881,7 +1882,8 @@ def api_theme():
                         "web_cdp": bool(cfg.get("web_cdp", False)),
                         # RA12：密码管理器鉴权 token（本机同源可读，其他进程不可预知）
 
-                        "web_cdp_live": _cdp_alive(),
+                        # a668：前端 CDP 状态卡已删除（a664），探活字段无人消费，
+                        # 移除（避免每次 GET /api/theme 白跑 0.5s 探活）。
                         "md_preview_theme": cfg.get("md_preview_theme", "auto"),
                         # a346: 代码跳转快捷键（nav.js 消费；形如 'f12'/'ctrl+t'）
                         # a336：加 back/fwd（导航历史后退/前进）
@@ -2283,14 +2285,22 @@ _wt.register(app)
 # ---- a662 WebView2 页面心跳（日志 P0 盲区②：渲染进程崩溃/卡死）----
 # 前端每 15s 上报一次；>60s 无心跳视为渲染进程异常（页面崩溃/挂死）。
 # 纯内存，不落盘。进程自身退出时线程随之消失，不会误报。
-_page_hb = {"last": 0.0, "t0": time.time()}
+_page_hb = {"last": 0.0, "t0": time.monotonic(), "warned": False}
 _page_hb_lock = _threading.Lock()
 
 
 @app.route("/api/page_heartbeat", methods=["POST"])
 def api_page_heartbeat():
+    import time as _t
     with _page_hb_lock:
-        _page_hb["last"] = time.time()
+        _page_hb["last"] = _t.monotonic()
+        if _page_hb.get("warned"):
+            _page_hb["warned"] = False
+            try:
+                from src import backend_log as _bl
+                _bl.log("ui", "[webview] 页面心跳恢复")
+            except Exception:
+                pass
     return jsonify({"ok": True})
 
 
@@ -2302,9 +2312,13 @@ def _page_hb_watch():
             gap = 0.0
             with _page_hb_lock:
                 last = _page_hb["last"]
-                if last > 0 and _t.time() - last > 60:
-                    gap = _t.time() - last
-                    _page_hb["last"] = _t.time()   # 重置防刷屏
+                # a668（审计 P2）：monotonic + 180s 阈值（托盘隐藏/睡眠时
+                # Chromium 定时器节流到 ~60s，60s 阈值必误报）+ 只告警一次，
+                # 心跳恢复时清 warned（不重复刷屏）。
+                if (last > 0 and not _page_hb.get("warned")
+                        and _t.monotonic() - last > 180):
+                    gap = _t.monotonic() - last
+                    _page_hb["warned"] = True
             if gap:
                 from src import backend_log as _bl
                 _bl.error("ui", "[webview] 页面心跳丢失 %.0f 秒（渲染进程可能崩溃/卡死）" % gap)
