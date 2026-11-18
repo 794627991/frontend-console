@@ -1,0 +1,16 @@
+{
+  "name": "frontend-console-js-tooling",
+  "private": true,
+  "version": "1.0.0",
+  "description": "前端控制台的 JS 静态检查与单元测试工具链（开发期使用，不进打包）",
+  "type": "module",
+  "scripts": {
+    "lint": "node run.mjs lint",
+    "lint:baseline": "node run.mjs lint:baseline",
+    "test": "node run.mjs test"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0"
+  }
+}

@@ -85,3 +85,12 @@ src/_fcpk_key.py
 # 代码索引/设计稿：本地工具数据，不入库（用户令 a592）
 /.codegraph/
 /design/
+
+# 前端 JS 工具链依赖（npm install 生成，不入库）
+/tools/js-tooling/node_modules/
+
+# JS 工具链生成物。app-globals.json 例外——它是 lint 的必需输入（51KB），
+# 入库才能让「克隆下来直接跑 lint」成立；其余都能由 tools/ 下脚本重生成。
+/tests/js/eslint-raw.json
+/tests/js/loaded.txt
+/tests/js/orphans.txt

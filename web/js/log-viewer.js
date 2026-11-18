@@ -65,7 +65,9 @@ function showDragOverlay(show) {
 
 // 对比弹窗开着时拖拽不显示全屏遮罩：A/B 栏位自身 dragover 高亮已是
 // 落点提示（用户反馈：全屏大字水印横跨两栏压内容,还和栏位高亮叠出双框感）。
+// 有意函数解包（monkey-patch）：保留原函数再包装一层加前置判断。
 const _origShowDragOverlay = showDragOverlay;
+// eslint-disable-next-line no-func-assign
 showDragOverlay = function(show) {
   const dm = $('diffPickModal');
   if (show && dm && dm.classList.contains('show')) return;   // 弹窗场景：不出遮罩
