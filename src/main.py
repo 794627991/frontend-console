@@ -526,15 +526,16 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
 
 def _subclass_ncclient(win):
     """给主窗挂 _fc_wndproc（GUI 线程内调；按 hwnd 幂等——同 hwnd 已挂跳过，
-    换 hwnd（句柄重建）则重挂，旧 proc 随旧窗消亡无需恢复）。"""
+    换 hwnd（句柄重建）则重挂，旧 proc 随旧窗消亡无需恢复）。
+    返回 True 表示本次是新挂上的（调用方据此决定是否补一次 FRAMECHANGED）。"""
     global _WNDPROC_CB
     try:
         import ctypes as _ct
         hwnd = _win_hwnd(win)
         if not hwnd:
-            return
+            return False
         if _orig_wndproc["hwnd"] == hwnd and _WNDPROC_CB is not None:
-            return   # 同窗已挂
+            return False   # 同窗已挂
         _u = _ct.windll.user32
         _u.GetWindowLongPtrW.argtypes = [_ct.c_void_p, _ct.c_int]
         _u.GetWindowLongPtrW.restype = _ct.c_longlong
@@ -542,14 +543,16 @@ def _subclass_ncclient(win):
         _u.SetWindowLongPtrW.restype = _ct.c_longlong
         _orig_wndproc["fn"] = _u.GetWindowLongPtrW(hwnd, _GWL_WNDPROC)
         if not _orig_wndproc["fn"]:
-            return   # 审计 P3（存疑项收口）：读到 0 再装子类 = CallWindowProcW(NULL) 吞全部消息
+            return False   # 审计 P3（存疑项收口）：读到 0 再装子类 = CallWindowProcW(NULL) 吞全部消息
         _orig_wndproc["hwnd"] = hwnd
         _orig_wndproc["win"] = win   # NCHITTEST 判最大化用（GUI 线程读安全）
         _WNDPROC_CB = _ct.WINFUNCTYPE(_ct.c_longlong, _ct.c_void_p, _ct.c_uint,
                                       _ct.c_longlong, _ct.c_longlong)(_fc_wndproc)
         _u.SetWindowLongPtrW(hwnd, _GWL_WNDPROC, _ct.cast(_WNDPROC_CB, _ct.c_void_p).value)
+        return True
     except Exception:
         _orig_wndproc["fn"] = None   # 失败回原生态：残留黑条但不炸窗
+        return False
 
 
 def _main_core_webview(win):
@@ -638,10 +641,68 @@ def _invoke_gui(win, fn):
 
 # a596/597 教训实锤：pythonnet 的 .NET 对象不能挂 python 属性（setattr
 # AttributeError——holder._fc_cur 假挂载实锤），状态存模块级 python 容器
-_FC_HOLDER = {"panel": None, "cur": [0], "wv": None}
+_FC_HOLDER = {"panel": None, "cur": [0], "wv": None,
+              # a670：启动期允许的「±1 重提交」次数预算——修顶部黑边用，
+              # 用完即停（否则每次窗口激活都重绘 = 用户实锤的抖动）
+              "repaint_left": 4}
 # a635：上次上报的主题底色（只留内存记账，不落盘——原 theme_color 配置项
 # 已无消费方，见 _set_form_bg 注释）
-_FC_BG = {"last": ""}
+_FC_BG = {"last": "", "applied": False}
+# a669（用户实锤「白屏时间太长」）：窗口创建到页面首帧之间（实测 2~4s）
+# 什么 HTML/CSS 都还没跑，唯一能盖住这段的是 WebView2/Form 自身的底色。
+# 这里给一个与深色主题 --bg 同值的硬编码兜底（#101724）；页面首次上报
+# /api/window/bg 后会用真实主题色覆盖（_FC_BG["applied"] 置位）。
+_FC_BOOT_BG = (16, 23, 36)
+
+
+def _apply_boot_bg(win):
+    """启动期深色底色（幂等）：页面还没上报前先把窗口刷成深色，消掉白屏。
+
+    必须在 GUI 线程执行；用 _invoke_gui 封送。上报过真实主题色后不再覆盖
+    （否则会把用户选的浅色主题又刷回深色）。
+    同时设 Form.BackColor 与 Controller.DefaultBackgroundColor —— 后者是
+    WebView2 呈现层自己的底色，页面没内容时显示的就是它。
+    """
+    if _FC_BG.get("applied"):
+        return
+
+    def _do():
+        try:
+            import clr as _clr
+            _clr.AddReference("System.Drawing")
+            from System.Drawing import Color
+            f = getattr(win, "native", None)
+            if f is None:
+                return
+            col = Color.FromArgb(*_FC_BOOT_BG)
+            f.BackColor = col
+            # WebView2 呈现层底色（页面无内容时露的就是它）
+            try:
+                import System.Reflection as _srf
+                _BF = _srf.BindingFlags
+                holder = None
+                for c in f.Controls:
+                    if getattr(c, "Name", "") == "fc_edge_holder":
+                        holder = c
+                        break
+                wv = holder.Controls[0] if (holder is not None
+                                            and holder.Controls.Count > 0) else None
+                if wv is None:
+                    for c in list(f.Controls):
+                        if getattr(c, "Name", "") != "fc_edge_holder":
+                            wv = c
+                            break
+                if wv is not None:
+                    fld = wv.GetType().GetField("_coreWebView2Controller",
+                                                _BF.NonPublic | _BF.Instance)
+                    ctrl = fld.GetValue(wv) if fld is not None else None
+                    if ctrl is not None:
+                        ctrl.DefaultBackgroundColor = col
+            except Exception:
+                pass
+        except Exception:
+            pass
+    _invoke_gui(win, _do)
 
 
 def _set_edge_pad(win, phys_px):
@@ -709,10 +770,22 @@ def _set_edge_pad(win, phys_px):
                     except Exception:
                         return None
                 def _force_repaint(*_a):
+                    # a670（用户实锤「顶部极小一条黑边、启动时就有，遮蔽罩都盖
+                    # 不住；最大化还原一下就好了」）：
+                    # 黑边在 WebView2 合成层、不在页面里——所以 HTML 启动壳
+                    # 盖不住它。最大化/还原能修，正说明 Controller.Bounds
+                    # 的「+1 → 原值」重提交有效。
+                    # 注意：**不能**用「量 Bounds 与 ClientSize 是否相等」来判
+                    # 断要不要修——Bounds 报的坐标是对的，偏移在合成面，量不
+                    # 出来。所以只能无条件重提交，靠预算次数防抖动：启动期允许
+                    # 修几次，之后不再动（用户实锤的抖动来自每次激活都重绘）。
+                    if _FC_HOLDER["repaint_left"] <= 0:
+                        return
                     try:
                         ctrl = _ctrl()
                         if ctrl is None:
                             return
+                        _FC_HOLDER["repaint_left"] -= 1
                         b2 = ctrl.Bounds
                         ctrl.Bounds = System.Drawing.Rectangle(
                             b2.X, b2.Y, b2.Width + 1, b2.Height)
@@ -723,7 +796,12 @@ def _set_edge_pad(win, phys_px):
                     try:
                         ctrl = _ctrl()
                         if ctrl is not None:
+                            # a669：页面还没上报过主题色时用启动兜底深色
+                            # （Form.BackColor 此刻是 WinForms 默认浅灰，
+                            # 直接把浅灰写进呈现层就是那 2 秒白屏）
                             c2 = f.BackColor
+                            if not _FC_BG.get("applied"):
+                                c2 = System.Drawing.Color.FromArgb(*_FC_BOOT_BG)
                             ctrl.DefaultBackgroundColor = System.Drawing.Color.FromArgb(
                                 c2.R, c2.G, c2.B)
                             _force_repaint()
@@ -748,6 +826,10 @@ def _set_edge_pad(win, phys_px):
                         if w2 > 0 and h2 > 0:
                             holder.Location = Point(b, b)
                             holder.Size = Size(w2, h2)
+                            # a670：子窗（WebView2）尺寸变了，Chromium 呈现面
+                            # 的重算可能晚一拍——顶部露出的那条黑边就是这么来的。
+                            # 布局完立刻校一次（受启动期预算约束，见 _force_repaint）。
+                            _force_repaint()
                     except Exception:
                         pass
                 try:
@@ -788,6 +870,9 @@ def _set_form_bg(win, r, g, b):
             if f is None:
                 return
             f.BackColor = Color.FromArgb(int(r), int(g), int(b))
+            # a669：真实主题色到了——启动兜底让位，此后 _apply_boot_bg 不再刷
+            # （否则浅色主题下又会把窗口刷回深色）
+            _FC_BG["applied"] = True
             # a635（对抗审计 P2-3）：这里原来每次主题变化都整份 config 原子写
             # （_load_config + _save_config，含 .bak 滚动），但注释承诺的读取方
             # create_window(background_color=) 已随 A/B 实验停用——全仓零读取
@@ -910,13 +995,26 @@ def _strip_window_caption(win, _retry=0):
             style = _u.GetWindowLongPtrW(hwnd, _GWL_STYLE)
             if not style:
                 return
-            style = (int(style) & ~_WS_CAPTION) | _WS_SYSMENU | _WS_THICKFRAME \
+            _want = (int(style) & ~_WS_CAPTION) | _WS_SYSMENU | _WS_THICKFRAME \
                 | _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX
-            _u.SetWindowLongPtrW(hwnd, _GWL_STYLE, style)
-            # FRAMECHANGED 让非客户区立即按新样式重算（NOMOVE|NOSIZE|NOZORDER|NOACTIVATE）
-            _u.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0020 | 0x0002 | 0x0001 | 0x0004 | 0x0010)
+            # a670（顶部 8px 黑边根因，外部 Win32 实测）：原来先 SetWindowPos
+            # (SWP_FRAMECHANGED) 再挂 _subclass_ncclient —— 那次 FRAMECHANGED
+            # 触发 WM_NCCALCSIZE 时钩子还没挂，系统按默认 THICKFRAME 留了
+            # 每边 7px 非客户区（实测 client=1280x820 时 win 同尺寸，但未补发
+            # 前 client=1266x806，逐边 7px）。顶部那 8px 黑边即此。之后样式
+            # 已是目标值、不再发 FRAMECHANGED → 内缩永久残留；最大化/还原
+            # 能修是因为系统重算非客户区时钩子已在。
+            # 修法：先挂钩子，再改样式，最后统一补一次 FRAMECHANGED。
+            _newly = _subclass_ncclient(win)
+            if int(style) != int(_want):
+                _u.SetWindowLongPtrW(hwnd, _GWL_STYLE, _want)
+            # FRAMECHANGED 让非客户区立即按新样式重算
+            # （NOMOVE|NOSIZE|NOZORDER|NOACTIVATE）；样式没变但本次新挂了钩子
+            # 也必须补一次——否则旧的 7px 内缩没人重算。
+            if int(style) != int(_want) or _newly:
+                _u.SetWindowPos(hwnd, None, 0, 0, 0, 0,
+                                0x0020 | 0x0002 | 0x0001 | 0x0004 | 0x0010)
             # 非客户区清零（WM_NCCALCSIZE 过滤）：残边在亮色主题露黑条（用户实锤）
-            _subclass_ncclient(win)
             # WebView2 边缘让位：Dock=Fill 子窗盖满客户区会吞 WM_NCHITTEST，
             # 主窗自管边缘命中失效（用户实测「无法调整大小」）——Padding 让
             # 子窗缩进 resize 带，露出 Form 区域收 NCHITTEST
@@ -2897,7 +2995,8 @@ def main():
     # 堆积）——snap/移动场景改由前端 resize 防抖拉取 /api/window/state
     # shown 后摘 WS_CAPTION（GUI 线程 Invoke 封送）；loaded 再补一刀幂等
     # （shown 偶发不触发/句柄重建场景兜底——strip 幂等无副作用）
-    window.events.shown += lambda: _strip_window_caption(window)
+    window.events.shown += lambda: (_apply_boot_bg(window),
+                                    _strip_window_caption(window))
     window.events.loaded += lambda: _strip_window_caption(window)
 
     # 窗口加载完成后注册原生拖拽：pywebview 的 WebView2 后端能拿到文件绝对路径
