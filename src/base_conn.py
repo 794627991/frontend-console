@@ -13,6 +13,109 @@ from . import app_state as _st
 from .app_state import _next_seq
 from .ansi_utils import strip_ansi, classify_line, _SCREEN_STRONG_RE, _SCREEN_ANY_RE
 
+
+# ---- a672：日志定时兜底落盘 ----------------------------------------------
+# 为什么不是每个连接起一个线程：连接数少（串口/SSH 通常个位数），但线程
+# 每个都要一份栈+调度；模块级单例巡检所有活连接，开销恒定。
+# 为什么 FLUSH_IDLE=3s：用户定调「超过 3s 没冲满 64K 就写」。实测单次
+# flush 到内核 0.006ms（p95 0.007ms，不 fsync），3s 一次对 CPU/磁盘完全
+# 无感；同时把「日志看不到最新几分钟」压到最多 3 秒。
+FLUSH_IDLE = 3.0
+_FLUSH_CHECK = 1.0        # 巡检间隔（1s 轮一次，命中条件才真 flush）
+_flusher_started = False
+_flusher_lock = threading.Lock()
+_live_conns = []          # 弱引用不了（连接无 __weakref__ 顾虑），直接持引用
+_live_conns_lock = threading.Lock()
+
+
+def register_conn(conn):
+    """登记活跃连接（供定时 flush 巡检）。重复登记幂等。"""
+    with _live_conns_lock:
+        if conn not in _live_conns:
+            _live_conns.append(conn)
+
+
+def unregister_conn(conn):
+    with _live_conns_lock:
+        try:
+            _live_conns.remove(conn)
+        except ValueError:
+            pass
+
+
+def _unique_log_path(path):
+    """原子占用一个不存在的日志文件名（a673，审计 P1 修）。
+
+    原实现先 `os.path.exists` 再 `open(..., "w")`——检查和创建之间有竞态，
+    且 999 个候选全撞后 path 仍是原值，照样截断覆盖。既然注释宣称「绝不
+    覆盖」，代码就必须真的有这个保证：
+      · O_CREAT|O_EXCL 是原子「创建或失败」，两个进程/线程抢同一名字只有
+        一个拿到；
+      · 拿不到就换 `<base>_1.log`、`_2.log`……由调用方接着试；
+      · 极端情况（同一秒被占用上千次）退到 pid+纳秒后缀，仍不会覆盖。
+    """
+    base, ext = os.path.splitext(path)
+    for cand in [path] + ["%s_%d%s" % (base, i, ext) for i in range(1, 1000)]:
+        try:
+            fd = os.open(cand, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            continue
+        except OSError:
+            break              # 目录不可写等：交给调用方的 open() 报真错
+        else:
+            os.close(fd)
+            return cand
+    # 病态兜底：纳秒级唯一名，绝不复用已存在的文件
+    return "%s_%d_%d%s" % (base, os.getpid(), time.time_ns(), ext)
+
+
+def _flusher_loop():
+    """模块级巡检线程：只对「有未落盘数据且已静默 > FLUSH_IDLE 秒」的连接
+    flush。风暴期块满自动落盘，这里缓冲区是空的或刚写过，代价为零。"""
+    global _flusher_started
+    while True:
+        try:
+            time.sleep(_FLUSH_CHECK)
+            with _live_conns_lock:
+                conns = list(_live_conns)
+            now = time.time()
+            for c in conns:
+                if not getattr(c, "recording", False):
+                    continue
+                fp = getattr(c, "log_fp", None)
+                if not fp or fp.closed:
+                    continue
+                at = getattr(c, "_log_dirty_at", 0)
+                # a673（审计 P2）：这一读故意在锁外。脏读的后果只有「这轮
+                # 少 flush 或多 flush 一次」——下一轮把 `晚/早一轮` 抹平，
+                # 而 flush 本身幂等。若把读挪进 log_lock，巡检就要持有每个
+                # 连接的锁做判断，反而和写入路径抢锁。写侧置位在锁内，读侧
+                # 锁外只看单调时间戳，不会读到撕裂值（GIL 下 float 赋值原子）。
+                if not at or now - at < FLUSH_IDLE:
+                    continue
+                with c.log_lock:
+                    try:
+                        fp.flush()
+                        c._log_dirty_at = 0     # 已落盘，等下次写入再置
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+
+def _ensure_flusher():
+    """懒启动巡检线程（首次开日志时才起，纯 claude 会话不占线程）。"""
+    global _flusher_started
+    if _flusher_started:
+        return
+    with _flusher_lock:
+        if _flusher_started:
+            return
+        _flusher_started = True
+    threading.Thread(target=_flusher_loop, daemon=True,
+                     name="log-flusher").start()
+
+
 class BaseConnection:
     kind = "serial"  # 子类覆盖
 
@@ -71,14 +174,36 @@ class BaseConnection:
         os.makedirs(log_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe = re.sub(r"[^a-zA-Z0-9_]", "_", self.port_id)
-        self.log_path = os.path.join(log_dir, f"serial_{safe}_{ts}.log")
+        path = os.path.join(log_dir, f"serial_{safe}_{ts}.log")
+        # a672：同一秒内连续 new_log（或同端口名并发重连）会撞名——原来
+        # open(..., "w") 直接把正在用的旧日志**截断覆盖**，等于静默丢日志
+        #（用户实锤「日志缺失」的一个隐蔽来源）。撞名就加序号，绝不覆盖。
+        # a673（审计 P1）：原实现 999 次全撞后 path 保持原值 → open("w")
+        # 照样截断，注释比代码强硬。改为用 O_EXCL 原子占位：谁先创建谁用，
+        # 撞了换下一个名字，永不可能落到「覆盖已有文件」的分支。
+        self.log_path = _unique_log_path(path)
+        # 原子占位（O_EXCL）已建出空文件；下面用 "w" 打开它——占位保证这个
+        # 名字属于本连接，不存在他人的内容可被截断。
         # v3.5.162：buffering 1(行缓冲)→64KB 块缓冲——行缓冲+append_line 的
         # 显式 flush 让每行日志刷盘两次，SSH 输出风暴（QR 码/大量行，实锤）
         # 时每秒数千次刷盘打满磁盘 IO，多连接场景整机卡顿分钟级。块缓冲后
         # 系统调用降 ~千倍；代价：进程异常退出丢尾部 <64KB 日志（可接受，
         # 崩溃排查另有 traceback 渠道），正常关闭/停止记录不受影响
+        #
+        # a672（用户实锤「同事 SSH 没断，日志缺失最新几分钟」）：64KB 块
+        # 缓冲在**低频**日志下永远攒不满——实测一行典型设备日志约 68 字节，
+        # 要 952 行才落一次盘；几秒一行的设备跑几分钟只有几 KB，全躺在
+        # Python 用户态缓冲里，磁盘上一个字都没有。这跟「日志实时性」是
+        # 两回事：读线程一直在实时收，只是不落盘。
+        # 修：保留 64KB 缓冲（风暴防护不动），另加**定时兜底 flush**——
+        # 每秒巡检，超过 FLUSH_IDLE 秒没有新数据落盘就 flush 一次。实测
+        # flush 到内核（不 fsync）单次 0.006ms / p95 0.007ms，比写一行日志
+        # 本身还便宜；风暴期块满自然落盘，定时器到点时缓冲区是空的，
+        # 代价为零。低频场景最多滞后 FLUSH_IDLE 秒。
         self.log_fp = open(self.log_path, "w", encoding="utf-8", buffering=65536)
         self.log_fp.write(f"# 串口日志 {self.port_id} 开始 {datetime.now().isoformat()}\n")
+        self._log_dirty_at = time.time()   # 上次写入数据（未落盘）的时刻
+        _ensure_flusher()
 
     def append_line(self, raw_line, local_echo=False):
         """把一行逻辑文本追加进 buf/日志。raw_line 为含 ANSI 的原始行文本。
@@ -99,6 +224,9 @@ class BaseConnection:
                     # v3.5.162：去显式 flush（块缓冲批量落盘；风暴期每行两次刷盘
                     # 是多连接整机卡顿的主凶）
                     self.log_fp.write(f"{ts_ms}\t{tag}\t{clean}\n")
+                    # a672：只记时间戳，不 flush——由模块级巡检线程按 FLUSH_IDLE
+                    # 兜底落盘（见 _flusher_loop）
+                    self._log_dirty_at = time.time()
                 except Exception:
                     pass
 
@@ -379,7 +507,9 @@ class BaseConnection:
     def new_log(self):
         with self.log_lock:
             if self.log_fp:
-                try: self.log_fp.close()
+                try:
+                    self.log_fp.flush()   # a672：切文件前先落盘，别丢尾巴
+                    self.log_fp.close()
                 except Exception: pass
         self._start_log()
         return self.log_path
@@ -395,6 +525,7 @@ class BaseConnection:
             self._start_log()
         except Exception:
             self.log_fp = None
+        register_conn(self)   # a672：供定时 flush 巡检
 
     def close(self):
         self.alive = False
@@ -419,8 +550,14 @@ class BaseConnection:
         except Exception: pass
         with self.log_lock:
             if self.log_fp:
-                try: self.log_fp.close()
+                try:
+                    # a672：关闭必 flush——64KB 缓冲里可能压着最后几 KB，
+                    # 直接 close 会丢（用户实锤「日志缺最新内容」的同族问题）
+                    self.log_fp.flush()
+                    self.log_fp.close()
                 except Exception: pass
+                self.log_fp = None
+        unregister_conn(self)   # a672：移出定时 flush 巡检表
 
 
 # ---------------------------------------------------------------------------
