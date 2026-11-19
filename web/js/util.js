@@ -1382,7 +1382,7 @@ function sortKeyFn(pid) {
   if (pid.startsWith('bitcalc:')) return [3, pid];  // 计算器：编辑器类桶
   if (pid.startsWith('vcs:')) return [3, pid];      // 版本控制：编辑器类桶（a435）
   if (pid.startsWith('web:')) return [8, pid];      // 网页：独立桶（a473 审计修，与抽屉分组序对齐）
-  if (pid.startsWith('proxy:')) return [6, pid];    // 代理面板：最后
+  if (pid.startsWith('proxy:')) return [6, pid];    // 代理面板：最后
   if (pid.startsWith('lanzi:')) return [6, pid];    // Lanzi 专栏：与代理同桶（a672）
   return [1, pid];  // SSH：字典序
 }

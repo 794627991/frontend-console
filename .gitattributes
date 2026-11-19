@@ -1,3 +1,8 @@
+# 源码统一 LF 入库（Windows 工作区仍有 autocrlf，但暂存/提交时不翻转）
+# a675：a673 把 util.js 整文件 LF→CRLF，1437 行全变，diff 不可 review
+# 且让人误以为内容大改。锁死 eol，避免任何工具再翻转。
+* text=auto eol=lf
+
 # v2.3.7b：WebView2 内置运行时一律按二进制——禁换行转换（CRLF 转换会损坏 pak/信任列表等数据件）
 runtime/WebView2Fixed/** -text
 *.exe -text
