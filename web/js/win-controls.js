@@ -136,6 +136,17 @@
         // 用它们同色才无缝；body 底色（--bg-deep）比面板色深会显细框
         var el = document.querySelector('.sidebar') || document.body;
         var c = getComputedStyle(el).backgroundColor;
+        // a669（另一会话排查报告变体 A）：首拍可能在样式还没算好时执行，
+        // 此时 compute 结果是 rgba(0,0,0,0)（透明）。后端正则只取前三个数，
+        // 会把它当成纯黑写进 Form.BackColor → 边缘带变黑框；而下面的同色
+        // 去抖会把透明色缓存住，之后同值不再上报。透明/空一律跳过，等
+        // MutationObserver 或下次 resize 再报真实颜色。
+        if (!c || c === 'transparent') return;
+        var m = /rgba?\(([^)]*)\)/.exec(c);
+        if (m) {
+          var parts = m[1].split(',');
+          if (parts.length >= 4 && parseFloat(parts[3]) === 0) return;  // alpha=0
+        }
         if (c === _lastBg) return;   // focus/resize 风暴去抖：同色不重复 POST
         _lastBg = c;
         fetch('/api/window/bg', { method: 'POST',
@@ -143,7 +154,13 @@
           body: JSON.stringify({ color: c }) }).catch(function () {});
       } catch (_) {}
     }
+    // a669：首拍若因透明被跳过，_syncBg 要自己再试——只靠主题 MutationObserver
+    // 可能永远等不到（主题没变），边缘带就停在默认色。
     _syncBg();
+    (function _bgRetry(n) {
+      if (n > 10 || _lastBg) return;
+      setTimeout(function () { _syncBg(); _bgRetry(n + 1); }, 200);
+    })(0);
     try {
       new MutationObserver(_syncBg).observe(document.documentElement,
         { attributes: true, attributeFilter: ['data-theme'] });

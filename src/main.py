@@ -599,24 +599,26 @@ def _win_hwnd(win):
 
 
 def _edge_border_phys_px(win):
-    """窗缘 resize 命中带宽度（物理 px）= SM_CXSIZEFRAME+SM_CXPADDEDBORDER
-    按窗 DPI（GetSystemMetricsForDpi 精确，避免系统 DPI 双重缩放）。
-    NCCALCSIZE 清非客户区后此带必须由 WebView2 让位（见 _set_edge_pad）。"""
+    """窗缘 resize 命中带宽度（物理 px）。
+
+    a669（用户实锤「四边都有黑边、概率复现」）：这个函数原来有两条路径返回
+    8（句柄未就绪 / 任何异常），而 _set_edge_pad 会按它把 WebView2 面板
+    四边各缩进这么多——露出来的 Form 区域就是黑边。_strip_window_caption
+    由 shown 和 loaded 各触发一次，shown 时句柄常常还没就绪（概率性），
+    于是拿到 8px；若 loaded 那次没能覆盖回来，黑边就永久留下。
+    现在：**取不到宽度一律返回 0**（宁可不做 resize 命中带，也不能留黑边）；
+    且显式不吞异常以外的语义——句柄就绪时也返回 0（试金石实验结论：inset
+    归零，命中暂弃），两条路径统一。
+    """
     try:
-        import ctypes as _ct
         hwnd = _win_hwnd(win)
         if not hwnd:
-            return 8
-        u = _ct.windll.user32
-        try:
-            dpi = u.GetDpiForWindow(hwnd) or 96
-        except Exception:
-            dpi = 96
-        # 【试金石实验】inset 归零：判定白框与 inset 带的因果关系
-        # （命中暂弃；实验完按结论恢复 4px 或重构命中通道）
-        return 0
+            return 0            # 句柄未就绪：不做 inset，绝不留黑边
     except Exception:
-        return 8
+        return 0
+    # 【试金石实验】inset 归零：判定白框与 inset 带的因果关系
+    # （命中暂弃；实验完按结论恢复 4px 或重构命中通道）
+    return 0
 
 
 def _invoke_gui(win, fn):
@@ -729,7 +731,18 @@ def _set_edge_pad(win, phys_px):
                         pass
                 def _lay(_s=None, _a=None):
                     try:
-                        b = 0 if f.WindowState == FormWindowState.Maximized                             else _FC_HOLDER["cur"][0]
+                        # a669：b 恒为 0（inset 已归零）。原来这里读
+                        # _FC_HOLDER["cur"][0]，一旦该值被写成 8（句柄未就绪
+                        # 的兜底路径），四边就各缩 8px = 四边黑边。现在按
+                        # 值判断：非零才让位，且让位值钳在合理范围。
+                        b = 0
+                        try:
+                            _c = int(_FC_HOLDER["cur"][0] or 0)
+                            if not (0 <= _c <= 16):
+                                _c = 0
+                            b = 0 if f.WindowState == FormWindowState.Maximized else _c
+                        except Exception:
+                            b = 0
                         w2 = f.ClientSize.Width - 2 * b
                         h2 = f.ClientSize.Height - 2 * b
                         if w2 > 0 and h2 > 0:
@@ -842,16 +855,47 @@ def _pin_maximized_bounds(win):
         pass
 
 
-def _strip_window_caption(win):
+def _strip_window_caption(win, _retry=0):
     """摘 WS_CAPTION、保 THICKFRAME/SYSMENU/MinBox/MaxBox。
     必须在 GUI 线程动窗体样式（snip.py:319-328 的 SetWindowPos 被弹回教训），
     本函数任意线程可调：内部 Invoke(MethodInvoker) 封送 GUI 线程同步执行。
-    shown/loaded 双挂点幂等重试（shown 偶发不触发/句柄重建场景兜底）。"""
+    shown/loaded 双挂点幂等重试（shown 偶发不触发/句柄重建场景兜底）。
+
+    a669（另一会话排查报告变体 B）：shown 时窗口句柄常常还没就绪，原来的
+    `if not hwnd: return` 直接早退——caption 没摘、subclass 没挂，系统的
+    8px 非客户区边框原样保留，DWM 按暗色画成四边黑框，且 BackColor 管不着。
+    两台钩子（shown/loaded）若都恰好撞上未就绪，黑框就永久留下 = 「概率复现」。
+    现在：句柄取不到时**延迟重试**（最多 6 次，100ms 起递增），确保最终能挂上。
+    """
+    def _schedule_retry():
+        """句柄未就绪：稍后再试（新线程重入，避免 GUI 线程 Invoke 自锁）。"""
+        if _retry >= 6:
+            # 彻底挂不上：至少把原因落到日志，别让黑框无声存在
+            try:
+                import src.backend_log as _bl
+                _bl.warn("window", "窗口句柄始终未就绪：WS_CAPTION 未摘、"
+                                   "WM_NCCALCSIZE 未过滤，系统边框会以黑边显示")
+            except Exception:
+                pass
+            return
+        import threading as _th
+
+        def _again():
+            import time as _t
+            _t.sleep(0.1 * (_retry + 1))
+            try:
+                _strip_window_caption(win, _retry + 1)
+            except Exception:
+                pass
+        _th.Thread(target=_again, daemon=True,
+                   name="strip-caption-retry-%d" % (_retry + 1)).start()
+
     def _do():
         try:
             import ctypes as _ct
             hwnd = _win_hwnd(win)
             if not hwnd:
+                _schedule_retry()
                 return
             _u = _ct.windll.user32
             # 64 位句柄/返回值必须显式声明，否则按 32 位截断
@@ -2537,6 +2581,15 @@ def main():
             _audit_exit()
         except Exception:
             pass
+        # a669（用户令「托盘要等所有都完成了最后才消失」）：quit_tray 原来由
+        # on_closing 在清理链**之前**调用——图标先消失，而 web_tabs.shutdown
+        # 还要等 ~1.2s 让 Chromium 落盘。用户看到的是「图标没了但进程还在」。
+        # 挪到这里：全部清理做完、只差杀子进程之前的最后一步。
+        try:
+            from src.tray import quit_tray
+            quit_tray()
+        except Exception:
+            pass
         try:
             _kill_child_processes()
         except Exception:
@@ -2585,8 +2638,9 @@ def main():
             # a242：脏检查已前移到 _quit_with_check（后台线程）——closing 的
             # UI 线程不再做任何 JS 探测（死锁源）。取消退出时这里也不再有
             # JS 调用，直接阻止销毁
-            from src.tray import quit_tray
-            quit_tray()
+            # a669：托盘图标不在这里清——挪到 _do_real_cleanup 末尾，让图标
+            # 一直留到全部清理完成（用户实锤：先清图标会显得「进程还在但
+            # 托盘没了」）。
             _do_real_cleanup()
             return True   # 放行：真退出
         try:
@@ -2667,8 +2721,8 @@ def main():
                 window.destroy()
             except Exception:
                 # 兜底：窗口已死关不掉就硬退（托盘退出必须有出口）
-                from src.tray import quit_tray
-                quit_tray()
+                # a669：quit_tray 交给 _do_real_cleanup 末尾统一做（它自己也会
+                # 走到那一步），这里不再抢先清图标。
                 _do_real_cleanup()
                 import os
                 os._exit(0)

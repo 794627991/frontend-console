@@ -184,6 +184,11 @@ window._trayNotice = async () => {
 };
 
 _reportPerf();  // 初始化完成，上报计时
+// a669 启动壳退场信号：本文件是最后一个 module 脚本（index.html 里 init.js
+// 之后只剩内联的启动自检），执行到这里说明事件绑定、首屏数据拉取都已发起，
+// 界面可以操作了。body 尾的退场脚本收到这个事件才撤遮罩。
+// dispatch 包 try：启动壳是体验优化，任何情况下都不该影响真实初始化。
+try { window.dispatchEvent(new Event('fc-ui-ready')); } catch (_) {}
 // 轮询降载：连接增删时 refreshSidebar/refreshGlobalStatus 已被事件调用处触发，
 // 周期轮询只作兜底，全部放宽（3s→15s / 5s→30s），减少常态 HTTP + 重排叠加（输入卡顿 Contributor）
 setInterval(refreshGlobalStatus, 15000);

@@ -3,7 +3,7 @@
 集中管理跨模块共享的全局状态（连接表/AI 订阅/日志索引/MCP 调用记录/序列号）
 及路径常量、配置/命令库读写、序列号生成。各功能模块从此 import。
 """
-import os, sys, json, threading, itertools
+import os, sys, json, threading, itertools, time
 
 # ---- 路径常量 ----
 # app_state 在 src/ 下，上溯两层到项目根（server/main 等也从 src/ 以 src.* 引用本模块）
@@ -526,22 +526,92 @@ _migrate_legacy_user_data()
 # _CONFIG_LOCK 串行化全部落盘 + 原子写（tmp+replace，唯一 tmp 名）+ 坏读
 # .bad 隔离（对齐 harness meta.py 惯例）。
 _CONFIG_LOCK = threading.Lock()
+# a669：内存中最后一次成功读到的配置。读取侧 IO 故障时用它兜底——「读不到」
+# 绝不能等价于「空的」，否则下一次任何字段级保存都会把整份配置写没。
+_CFG_LAST = {"d": {}}
+
+# a669（用户实锤 config 被洗成 2 个键）：只有「内容真的坏了」才允许隔离。
+# 判定用 json.JSONDecodeError / UnicodeDecodeError；PermissionError、共享
+# 冲突（WinError 32，另一个进程正持有）、杀软扫描占用等**读取侧 IO 故障
+# 一律不算坏**——文件内容可能是完好的，改个名就永久把它踢出视线。
+_CONFIG_CORRUPT_EXC = (json.JSONDecodeError, UnicodeDecodeError)
+# 读侧 IO 故障重试次数（间隔递增，总计约 0.35s——杀软扫描窗口量级）
+_CONFIG_READ_TRIES = 4
+
+
+def _cfg_read_strict():
+    """读 config.json，区分「不存在 / 内容坏 / 暂时读不到」三种情况。
+
+    返回 (data, state)：
+      · ("ok", dict)        正常
+      · ("missing", {})     文件不存在（首次启动）
+      · ("corrupt", {})     内容确实坏了（解析失败）——只有这种才隔离
+      · ("io_error", None)  暂时读不到（占用/权限/IO 故障）——调用方**不得**
+                            把它当空配置写回，否则就是全量清空
+    """
+    data = None
+    state = "ok"
+    for i in range(_CONFIG_READ_TRIES):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            state = "ok"
+            break
+        except FileNotFoundError:
+            return None, "missing"
+        except _CONFIG_CORRUPT_EXC:
+            state = "corrupt"
+            data = None
+            break                      # 内容坏：重试没有意义
+        except OSError:
+            # 占用/权限/瞬时 IO：等一会儿再试，绝不在这里下结论
+            state = "io_error"
+            if i < _CONFIG_READ_TRIES - 1:
+                time.sleep(0.05 * (i + 1))
+    if state == "io_error":
+        return None, "io_error"
+    if not isinstance(data, dict):
+        return None, "corrupt"
+    return data, state
+
 
 def cfg_read():
-    """读 config.json。FileNotFoundError → {}；损坏（JSONDecodeError/
-    OSError）→ 先改名 .bad 留档供人工找回，再当 {} 起步——坏内容绝不
-    再经保存路径放大成全量清空。"""
-    try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
+    """读 config.json。不存在 → {}；内容坏（JSON 解析失败）→ 隔离 .bad 后
+    返回 {}；**暂时读不到 → 返回内存中最后一次成功读到的那份**（没有就用
+    {}），绝不改名、绝不假装是空配置。
+
+    a669：原实现把所有异常都当损坏——实测用户 config 内容完全合法（39 键），
+    只因某次读取时被占用就走 os.replace 改名 .bad，随后任一写入点
+    `_save_config({**_load_config(), ...})` 拿 {} 落盘 = 全量抹掉 37 个键
+    （用户看到「首次启动」提示）。隔离判据现在只认解析失败。
+    """
+    data, state = _cfg_read_strict()
+    if state == "ok":
+        _CFG_LAST["d"] = data
+        return data
+    if state == "missing":
         return {}
-    except Exception:
+    if state == "io_error":
+        # 读不到 ≠ 空。返回上次成功读到的内容（初始为空，但至少不会主动清盘）
+        import src.backend_log as _bl
         try:
-            os.replace(CONFIG_FILE, CONFIG_FILE + ".bad")
-        except OSError:
+            _bl.warn("config", "读取 config.json 暂时失败（占用/权限），"
+                               "本次按上次成功读取的内容处理")
+        except Exception:
             pass
-        return {}
+        return dict(_CFG_LAST["d"] or {})
+    # state == "corrupt"：内容确实解析不了，隔离留档
+    try:
+        os.replace(CONFIG_FILE, CONFIG_FILE + ".bad")
+    except OSError:
+        pass
+    try:
+        import src.backend_log as _bl
+        _bl.error("config", "config.json 内容损坏（JSON 解析失败），已隔离为 "
+                            "config.json.bad")
+    except Exception:
+        pass
+    return {}
 
 def cfg_commit(mutator):
     """原子读-改-写 config.json（锁内整事务）。mutator(d) 就地修改 d。
@@ -552,13 +622,48 @@ def cfg_commit(mutator):
     上一版的字节在替换前从盘上读（本次写失败不动 .bak）。"""
     import time as _time
     with _CONFIG_LOCK:
-        d = cfg_read()
+        # a669：写前必须确认「读到的是真实内容」——暂时读不到（占用/权限）
+        # 时不做任何写入，直接失败返回。否则以空 dict 为基线落盘 = 全量清空。
+        d, _st = _cfg_read_strict()
+        if _st == "io_error":
+            return False, "config.json 暂时不可读（占用/权限），本次未写入"
         if not isinstance(d, dict):
             d = {}
+        # 护栏基线 = 磁盘上刚读到的内容（不是内存缓存）：要防的是「这一次
+        # 写入把盘上已有的配置写没」，拿盘上的现状比才对得上语义。
+        _before = dict(d)
         try:
             r = mutator(d)
             if isinstance(r, dict):
                 d = r
+            # a669 护栏二：新配置比旧配置少了大量键 → 极可能是灾变（读失败/
+            # 逻辑 bug 把内存配置洗空了），拒绝落盘并留现场。用户实锤场景：
+            # 39 键被写成 2 键。
+            # 判据必须收紧（a669 测试回归实锤）：只有**旧配置本身就健壮**
+            # 才拦——空白配置起步、或本来就是小配置（测试夹具/新用户）时
+            # 删几个键是正常操作，不能误伤。两个下限：旧配置 ≥ 8 键，
+            # 且丢失 ≥ 5 键、≥ 40%。
+            if _st == "ok" and isinstance(d, dict):
+                old = _before
+                if len(old) >= 8:
+                    lost = len(set(old) - set(d))
+                    if lost >= 5 and lost * 10 >= len(old) * 4:
+                        try:
+                            import src.backend_log as _bl
+                            _bl.error(
+                                "config", "拒绝写入：新配置比现有少 %d 个键"
+                                          "（%d → %d），疑似内存配置被清空。"
+                                          "现场：config.json.reject-%d"
+                                          % (lost, len(old), len(d), int(_time.time())))
+                        except Exception:
+                            pass
+                        try:
+                            import shutil as _sh
+                            _sh.copy2(CONFIG_FILE, CONFIG_FILE + ".reject-%d"
+                                      % int(_time.time()))
+                        except Exception:
+                            pass
+                        return False, "配置骤减 %d 键，拒绝写入" % lost
             os.makedirs(HOME_DIR, exist_ok=True)
             _prev = None
             try:
@@ -580,6 +685,8 @@ def cfg_commit(mutator):
                         f.write(_prev)
                 except OSError:
                     pass
+            if isinstance(d, dict):
+                _CFG_LAST["d"] = d
             return True, None
         except Exception as e:
             return False, str(e)

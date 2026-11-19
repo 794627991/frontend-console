@@ -4405,8 +4405,14 @@ else:
 
     @app.route("/api/worker_endpoint")
     def worker_endpoint():
-        """前端/诊断用：worker 是否分离、基址是什么（workerbase.js 的对账口）。"""
-        return jsonify({"ok": True, "offload": True, "base": WORKER_BASE})
+        """前端/诊断用：worker 是否分离、基址是什么（workerbase.js 的对账口）。
+
+        a669：offload 原来写死 True——CLAUDE_INLINE=1（未分离）时 base 永远
+        是空串，启动壳的「等 worker 就绪」判据会白等到超时。如实回报本进程
+        是否真的跑分离模式，前端据此决定要不要等。
+        """
+        return jsonify({"ok": True, "offload": bool(CLAUDE_OFFLOAD),
+                        "base": WORKER_BASE})
 
 
 if __name__ == "__main__":

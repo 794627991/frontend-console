@@ -89,6 +89,27 @@ window.__fcHardReload = function () {
 })();
 </script>
 <meta charset="utf-8">
+<style>
+/* a669 启动壳（内联，不依赖 web/style/*.css——那些文件此刻可能还没下载完） */
+.startup-splash {
+  position: fixed; inset: 0; z-index: 2147483647;
+  display: flex; align-items: center; justify-content: center;
+  background: #101724;                 /* = base.css 的 --bg，与主题一致 */
+  opacity: 1; transition: opacity .22s ease;
+}
+.startup-splash-logo {
+  width: 96px; height: 96px; display: block;
+  animation: fc-splash-in .5s cubic-bezier(.22,1,.36,1) both;
+}
+@keyframes fc-splash-in {
+  from { opacity: 0; transform: scale(.88); }
+  to   { opacity: 1; transform: scale(1); }
+}
+html.fc-ui-ready .startup-splash { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .startup-splash-logo { animation: none; }
+}
+</style>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>前端控制台</title>
 <link rel="stylesheet" href="web/style/base.css?v=__HG_VER__">
@@ -108,6 +129,17 @@ window.__fcHardReload = function () {
      highlight 等消费者），首屏不再等它们。 -->
 </head>
 <body>
+
+<!-- a669（参考 ZCode 启动壳）：首屏遮罩。全套内联 style + 内联 img，不依赖
+     任何外部 CSS/JS——HTML 解析到这里立刻绘制，把「页面在解析、脚本在跑」
+     这段时间盖住，用户看到的是 logo 而不是半截界面。
+     退场条件（见文件尾脚本）：DOM 就绪 + init.js 派发 fc-ui-ready，双条件
+     齐了淡出；另有 3s 兜底强制退场（init.js 报错也不会死在壳上）。
+     不显示进度条——用户定调「就只 logo，简单简约」。
+     回归测试页（?regression=1）不显示：测试要立刻操作 DOM 控件，壳会挡路。 -->
+<div id="startupSplash" class="startup-splash" role="status" aria-busy="true" aria-label="正在启动">
+  <img src="/ico/app.png" alt="" class="startup-splash-logo">
+</div>
 
 <!-- 顶栏 -->
 <div class="topbar">
@@ -729,5 +761,62 @@ window.__fcHardReload = function () {
 <div class="edge-hot" data-edge="nw"></div>
 <div class="edge-hot" data-edge="se"></div>
 <div class="edge-hot" data-edge="sw"></div>
+<script>
+/* a669 启动壳退场：三个条件都满足才淡出。
+   ① 本脚本在 body 尾执行 → DOM 骨架（顶栏/主布局/弹窗）已解析完
+   ② init.js 跑完派发 fc-ui-ready → 事件绑定完成，界面可操作
+   ③ worker 真正就绪 → /api/worker_endpoint 的 base 非空
+   用户定调（a669 实测）：只等①②时壳一闪而过，界面看着能点但 Claude 面板
+   还在 503（worker 后台握手通常比前端初始化晚 1s 左右）。③ 把这段等齐。
+   超时各自兜底，绝不能永久盖住界面：
+     · ② 3s        init.js 抛异常也要放行
+     · ③ 8s        单飞锁拦截/worker 崩溃时不至于让用户干等
+   CLAUDE_INLINE=1（未分离）时 base 恒空 —— 由后端 offload 字段识别，
+   直接视为就绪，不白等。
+   回归测试页直接摘掉：测试要立刻操作控件，壳会挡点击区域。 */
+(function () {
+  var el = document.getElementById('startupSplash');
+  if (!el) return;
+  if (window.__FC_REGRESSION) { el.parentNode.removeChild(el); return; }
+  // a669 实测修正：三个条件在前端启动时几乎同一瞬间全满足（worker 就绪
+  // 11:16:57.28、前端 init 11:16:58、页面 loaded 11:16:58），于是壳从能画的
+  // 第一帧就直接淡出——用户看到的是「一闪而过」。加最短展示时长：
+  // 条件齐了也至少显示 MIN_MS，之后才淡出。这是品牌感知问题，不是加载问题。
+  // 用户定调：至少 3 秒。
+  var MIN_MS = 3000;
+  var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  var uiOk = false, wkOk = false, gone = false;
+  function tryExit() {
+    if (gone || !uiOk || !wkOk) return;
+    gone = true;
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    var rest = MIN_MS - (now - t0);
+    if (rest < 0) rest = 0;
+    setTimeout(function () {
+      try { document.documentElement.classList.add('fc-ui-ready'); } catch (e) {}
+      setTimeout(function () {
+        try { if (el.parentNode) el.parentNode.removeChild(el); } catch (e) {}
+      }, 600);
+    }, rest);
+  }
+  window.addEventListener('fc-ui-ready', function () { uiOk = true; tryExit(); });
+  setTimeout(function () { uiOk = true; tryExit(); }, 3000);
+
+  // ③ worker 就绪：轮询后端，拿到非空 base 即放行
+  var tries = 0;
+  (function poll() {
+    if (gone || wkOk) return;
+    if (++tries > 16) { wkOk = true; tryExit(); return; }   // ~8s 兜底
+    fetch('/api/worker_endpoint').then(function (r) { return r.json(); })
+      .then(function (j) {
+        // offload=false = CLAUDE_INLINE 未分离，没有 worker 可等
+        if (!j || j.offload === false) { wkOk = true; tryExit(); return; }
+        if (j.base) { wkOk = true; tryExit(); return; }
+        setTimeout(poll, 500);
+      })
+      .catch(function () { setTimeout(poll, 500); });
+  })();
+})();
+</script>
 </body>
 </html>
