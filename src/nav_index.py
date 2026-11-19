@@ -1291,6 +1291,63 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
                 return cand
         return None
 
+    # a562（MCU/CubeMX/Keil 工程实锤：索引建立但「完全不能跳转」）：
+    # 这类工程没有 .cmd/.o → -I 提取为空 → 除「同目录」外一律找不到
+    # 头文件。实测 MCU_IPC 有 173 个头文件，只收进 19 个（11%），
+    # App/Drivers/inc、App/Middle/inc、Firmware/Peripherals/inc 全灭。
+    # 头文件不进 tags 就等于宏/原型/typedef/结构体全部不可跳转。
+    #
+    # 修法：按 GCC 在这些工程里的实际行为补「邻近目录」解析——单元
+    # 的 inc//include/ 同名兄弟目录。用 listdir 缓存做大小写无关
+    # 匹配（Windows 上 `Inc`/`inc` 混用很常见）。放在全局 -I 之前，
+    # 天然带「就近优先」语义，同名头文件不会跨模块串车。
+    _HDIR_NAMES = ("inc", "include", "includes", "header", "headers")
+    _prox_cache = {}        # curdir -> [(inc_dir, {小写名: 真实名}), ...]
+
+    def _prox_dirs(curdir):
+        v = _prox_cache.get(curdir)
+        if v is not None:
+            return v
+        out = []
+        seen = set()
+        for base in (curdir, os.path.dirname(curdir)):
+            idx = _list_dir(base)
+            if not idx:
+                continue
+            for nm in _HDIR_NAMES:
+                real = idx.get(nm)
+                if not real:
+                    continue
+                d = os.path.normpath(os.path.join(base, real))
+                if d in seen or not os.path.isdir(d):
+                    continue
+                seen.add(d)
+                sub = _list_dir(d)
+                if sub:
+                    out.append((d, sub))
+        if len(_prox_cache) > 20000:
+            _prox_cache.clear()
+        _prox_cache[curdir] = out
+        return out
+
+    def _lookup_prox(nm, curdir):
+        nl = nm.replace("\\", "/")
+        if "/" in nl:
+            for d, _sub in _prox_dirs(curdir):
+                cand = os.path.normpath(os.path.join(d, nm))
+                if _isfile(cand):
+                    return cand
+            return None
+        leaf = nl.lower()
+        for d, sub in _prox_dirs(curdir):
+            real = sub.get(leaf)
+            if not real:
+                continue
+            cand = os.path.normpath(os.path.join(d, real))
+            if _isfile(cand):
+                return cand
+        return None
+
     reach = set()
     # a434：初始队列必须**排序**——units_abs 来自 set，迭代顺序受 Python
     # 字符串 hash 随机化影响；访问顺序不同会让 max_depth 截断掉不同分支，
@@ -1344,7 +1401,11 @@ def _resolve_includes(units_abs, inc_dirs, max_depth=32,
                     _queued.add(_cl)
                     queue.append((cand, depth + 1))
                 continue
-            hit = _lookup(nm)
+            # a562：邻近 inc//include/ 兄弟目录优先于全局 -I——MCU 工程
+            # 无 .cmd 时 -I 恒空，不走这条整条 include 链就断在这里
+            hit = _lookup_prox(nm, curdir)
+            if not hit:
+                hit = _lookup(nm)
             if hit:
                 _hl = hit.lower()
                 if _hl not in _queued and _hl not in scanned:
@@ -1912,9 +1973,20 @@ def build(root, log=None, progress=None, should_cancel=None,
     if sc:
         _has_artifact = bool(compiled) or o_count > 0 or cmd_files > 0 \
             or bool(_aux_n) or wstat.get("artifact_dirs", 0) > 0
-        if _has_artifact and (compiled or cmd_files or o_count):
-            # C/C++ 白名单可推导（.cmd/.o）→ 必走白名单，tier（含显式
-            # full）不放行——"决不允许私自全建"
+        # a563（用户实锤「我手动选全量都没用了」）：下面这段原来无条件
+        # 覆盖 sc["tier"]，把前端显式选的 full 也吃掉——下拉里「全量」
+        # 形同虚设。区分「用户显式选择」与「自动推算」：
+        #   · tier=full   ← 用户在下拉里明确选了全量（nav.js 传
+        #                    {tier:'full', include:['.']}）或导入 JSON
+        #                    写了 tier:"full" → **必须尊重**，不覆盖；
+        #   · tier=auto/whitelist ← detect_scope 隐式范围、或手选目录
+        #                    （manual=true 且 tier=auto）→ 保持 a409 的
+        #                    「白名单优先，决不允许私自全建」。
+        _explicit_full = (sc.get("tier") == "full")
+        if _explicit_full:
+            say("  收录档位：全量（用户显式选择——不受白名单优先判档约束）")
+        elif _has_artifact and (compiled or cmd_files or o_count):
+            # C/C++ 白名单可推导（.cmd/.o）→ 必走白名单，自动档不放行全量
             sc["tier"] = "whitelist"
             say("  收录档位：白名单（发现 %d 个 .cmd · %d 个 .o · %d 个其他"
                 "中间文件）" % (cmd_files, o_count, _aux_n))
@@ -2058,6 +2130,29 @@ def build(root, log=None, progress=None, should_cancel=None,
                         if os.path.isdir(_p) and _p not in _inc_dirs:
                             _inc_dirs.append(_p)
             say("  ⚠ -I 提取为空，退回标准 include 路径 %d 个" % len(_inc_dirs))
+            # a562（MCU/CubeMX/Keil 实锤）：MCU 工程没有 .cmd/.o 构建描述
+            # → 上面两条兜底（arm/include 等）一条都不存在 → -I 恒为 0，
+            # 跨模块头文件（App/User/inc、App/Middle/inc、Firmware/*/inc）
+            # 全部解析不到，索引里只剩「同目录 .h」，跳转基本瘫痪。
+            # 补一条：收录集内所有名为 inc/include 的目录并入 -I（等价于
+            # 构建系统里那条 -I 集合，按路径排序保确定性）。只在本分支
+            # 生效——有真 -I 的工程（内核/sbuilder）完全不受影响。
+            _pool = []
+            # all_dirs 只含「出现过文件及其祖先」，空 inc 目录会漏——按
+            # dirs_files 的目录键再兜一遍，最后按真实存在性过滤
+            _cand_dirs = set(all_dirs) | set(dirs_files)
+            for _d in sorted(_cand_dirs):
+                if _d.rpartition("/")[2].lower() not in (
+                        "inc", "include", "includes", "header", "headers"):
+                    continue
+                _p = os.path.normpath(
+                    os.path.join(root, _d.replace("/", os.sep)))
+                if os.path.isdir(_p) and _p not in _inc_dirs:
+                    _pool.append(_p)
+            if _pool:
+                _inc_dirs.extend(_pool)
+                say("  · 无构建描述：并入工程内 %d 个 inc/include 目录作 -I"
+                    % len(_pool))
         _units_abs = [os.path.join(root, u.replace("/", os.sep))
                       for u in _units]
         _t0 = time.time()
