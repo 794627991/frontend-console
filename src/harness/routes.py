@@ -1224,6 +1224,14 @@ def harness_sessions():
     with _sessions_lock:
         live = {sid: (s.alive, s.busy, s.busy_since,
                       getattr(s, "last_active", 0)) for sid, s in _sessions.items()}
+        # a676：各会话是否有「待回答的提问」——用户在 B 会话时也能看到 A 在等。
+        # 判据取 s.ask 的未答状态（ask_open 登记、ask_answer/ask_cancel 收尾），
+        # 与 ask_snapshot 同源，前端不必再逐会话轮询 /ask/poll。
+        pending = {}
+        for sid, s in _sessions.items():
+            a = getattr(s, "ask", None)
+            if a and not a.get("done"):
+                pending[sid] = a.get("req_id") or ""
     items = []
     for sid, m in _meta.items():
         if not _bot_running and (m.get("title") or "") == "前端小助手（HikLink）":
@@ -1239,6 +1247,7 @@ def harness_sessions():
                       "session_id": m.get("session_id"), "has_history": bool(m.get("session_id")),
                       "created": m.get("created", 0), "last_active": last_active,
                       "alive": alive, "busy": busy, "busy_since": busy_since,
+                      "ask_pending": pending.get(sid, ""),
                       "scheme": m.get("scheme") or ""})   # 会话**最近一次运行**的方案名（前端标注用；v4.1.0-a590 起非拦截依据）
     items.sort(key=lambda x: -x["last_active"])
     _cur_scheme = ""

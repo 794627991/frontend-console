@@ -156,6 +156,8 @@ function buildClaudeHarnessTab(opts = {}) {
   // busy ● 只在 SSE 特定时机随 refreshSessions 重渲——非当前会话的 busy
   // 变化根本不触发列表刷新。10s 周期对账（本地亚秒级接口，开销可忽略），
   // 配合行首 spinner（renderList）让活跃态可见
+  // a676：待答徽章最多滞后 10s——只在本会话收到 ask 事件时立刷一次（见
+  // ask-md.js 的 askRender 尾部），跨会话仍靠这一拍兜底。
   setInterval(() => { try { refreshSessions(); } catch (_) {} }, 10000);
   // v2.24 大会话 DOM 卸载（见 _hgFlowUnloadInit）：切走 tab 快照清空、切回恢复
   _HG.flowEl = _hgFlow;

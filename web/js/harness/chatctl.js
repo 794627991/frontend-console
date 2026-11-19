@@ -22,6 +22,9 @@
       const multi = g.items.length > 1;
       const closed = (() => { try { return localStorage.getItem('hg-grp:' + proj + ':closed') === '1'; } catch(_) { return false; } })();
       const anyBusy = g.items.some(s => s.busy);
+      // a676：组内有无待回答提问——组折叠时也要能看见（用户可能停在 B 会话）
+      // 当前会话不算——它就摆在眼前，提问卡已渲染，再挂徽章是噪音
+      const anyAsk = g.items.some(s => s.ask_pending && s.sid !== _HG.sid);
       const hasActive = g.items.some(s => s.sid === _HG.sid);
       let h = '';
       // 组头（所有组可折叠；多会话组带计数徽章）
@@ -32,6 +35,7 @@
               <span class="hg-grp-name">${esc(proj)}</span>
               <span class="hg-grp-count">${multi ? g.items.length : ''}</span>
               ${anyBusy ? '<span class="hg-item-busy" title="回复中">●</span>' : ''}
+              ${anyAsk ? '<span class="hg-ask-pend" title="有会话在等你回答">?</span>' : ''}
               <span class="hg-grp-time">${_harnessRelTime(g.latest)}</span>
             </div>`;
       if (!closed) {
@@ -42,6 +46,7 @@
           <div class="hg-item${s.sid === _HG.sid ? ' active' : ''}${s.busy ? ' running' : ''} grp-child" data-sid="${esc(s.sid)}" title="${esc(s.cwd || '')} · ${esc(s.title || '')}">
             <div class="hg-item-row">
               <span class="hg-item-title">${s.busy ? '<span class="hg-item-run" title="回复中"></span>' : ''}${esc(s.title || '新会话')}</span>
+              ${(s.ask_pending && s.sid !== _HG.sid) ? '<span class="hg-ask-pend" title="该会话在等你回答，点击切换过去">待答</span>' : ''}
               <span class="hg-item-acts">
                 <button class="hg-item-act" data-act="rename" data-sid="${esc(s.sid)}" title="重命名">${ICO.pencil}</button>
                 <button class="hg-item-act del" data-act="del" data-sid="${esc(s.sid)}" title="删除会话">✕</button>

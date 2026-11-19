@@ -155,6 +155,13 @@
 .hg-item-acts { display: none; align-items: center; gap: 2px; flex-shrink: 0; }
 .hg-item:hover .hg-item-acts, .hg-item.active .hg-item-acts { display: inline-flex; }
 .hg-item-busy { color: var(--accent); font-size: var(--fs-2xs); }
+/* a676：待答徽章——用户在 B 会话时也能看见 A 在等回答（绿色，与「回复中」
+   的 accent 圆点区分开）。组头用窄问号，会话行用「待答」二字。 */
+.hg-ask-pend { flex-shrink: 0; font-size: var(--fs-2xs); font-weight: 700;
+  color: var(--neon-green, #50fa7b); background: color-mix(in srgb, var(--neon-green, #50fa7b) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--neon-green, #50fa7b) 55%, transparent);
+  border-radius: 8px; padding: 0 6px; line-height: 15px; cursor: pointer; }
+.hg-grp .hg-ask-pend { padding: 0 5px; }
 .hg-item-act { border: none; background: transparent; color: var(--muted); cursor: pointer;
   font-size: 11px; padding: 1px 3px; border-radius: 4px; }
 .hg-item-act:hover { color: var(--fg); background: var(--bg); }

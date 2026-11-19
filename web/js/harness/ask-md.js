@@ -113,6 +113,9 @@ function askRender(it) {
       }
     } catch (_) {}
     _hgAskHeadSync();   // v3.5.241：ask 到达刷副位「待答」
+    // a676：侧栏「待答」徽章数据源在 /sessions，本会话来了提问要立即可见
+    // （否则要等 10s 轮询那一拍）。只刷数据不重画 flow。
+    try { if (typeof refreshSessions === 'function') refreshSessions(); } catch (_) {}
     _hgScrollBottom();
   }
   // v3.4.60：多题分页翻页（ZCode ‹ 1/2 ›）——只切 cur 类不重建 DOM（草稿/选中
@@ -223,6 +226,8 @@ function askRender(it) {
   }
   function askDone(it) {
     _hgAskHeadSync();   // v3.5.241：作答→刷副位去「待答」
+    // a676：答完徽章要立刻消失（同上，不等 10s 轮询）
+    try { if (typeof refreshSessions === 'function') refreshSessions(); } catch (_) {}
     const card = _hgWrap.querySelector(`[data-hg-ask="${CSS.escape(it.req_id || '')}"]`);   // v3.4.61：查重域扩到 dock
     // v3.4.61（ZCode 形态）：card 不在场（ask_done 迟到 / 他窗已答面板已收缩 /
     // SSE snapshot 重放）也继续——结果行按 req_id 幂等，数据走 it.answer
