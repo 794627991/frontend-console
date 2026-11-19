@@ -528,8 +528,26 @@ def _win_set_foreground(window):
         pass
 
 
-def hide_to_tray(window, on_quit):
-    """隐藏主窗口到托盘（首次调用建原生托盘，之后只 hide）。"""
+def _tray_show(window):
+    """（用户定调「记忆窗格大小」）：托盘点开保留隐藏前的窗口态——
+    最大化关闭→回最大化；窗口化关闭→回窗口化。restore() 只在最小化态
+    兜底（对 Maximized 隐藏态调用会把最大化降成普通尺寸）。"""
+    try:
+        window.show()
+        try:
+            from System.Windows.Forms import FormWindowState
+            if window.native.WindowState == FormWindowState.Minimized:
+                window.restore()
+        except Exception:
+            pass
+        _win_set_foreground(window)
+    except Exception:
+        pass
+
+
+def ensure_tray(window, on_quit):
+    """（用户需求「桌面已经启动后就创建任务栏图标」）：启动即建托盘
+    （不隐藏窗口）。幂等——已建只更新回调归属；watchdog 同步拉起。"""
     global _tray, _window, _on_quit, _watchdog
     with _lock:
         _window, _on_quit = window, on_quit
@@ -538,13 +556,17 @@ def hide_to_tray(window, on_quit):
             ico = os.path.join(RES_DIR, "ico", "app.ico")
             _tray = _NativeTray(
                 ico, "前端控制台", _make_menu_provider(window, on_quit),
-                on_default=lambda: (window.show(), window.restore(),
-                                    _win_set_foreground(window)),
+                on_default=lambda: _tray_show(window),
                 on_quit=on_quit)
             _tray.start()
         if _watchdog is None:
             _watchdog = threading.Thread(target=_watchdog_loop, daemon=True)
             _watchdog.start()
+
+
+def hide_to_tray(window, on_quit):
+    """隐藏主窗口到托盘（首次调用建原生托盘，之后只 hide）。"""
+    ensure_tray(window, on_quit)
     try:
         window.hide()
     except Exception:
@@ -578,9 +600,7 @@ def _watchdog_loop():
                     _tray = _NativeTray(
                         ico, "前端控制台",
                         _make_menu_provider(_window, _on_quit),
-                        on_default=lambda w=_window: (
-                            w.show(), w.restore(),
-                            _win_set_foreground(w)),
+                        on_default=lambda w=_window: _tray_show(w),
                         on_quit=_on_quit)
                     _tray.start()
                 else:

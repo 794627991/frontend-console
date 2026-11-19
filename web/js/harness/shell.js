@@ -233,8 +233,24 @@ document.addEventListener('click', ev => {
 // status 同步显示。连接断开时 EventSource 自动重连；首屏状态由页面加载时
 // 的 hgProxyRefreshState() 拉取。
 try {
-  const hgProxyES = new EventSource('/api/proxy/events');
-  hgProxyES.onmessage = () => hgProxyRefreshState();
+  // （用户日志实锤）：启动竞速窗内 worker 未就绪 → /api/proxy/events
+  // 回 503 → EventSource 按规范置 CLOSED 且**不自动重连**——代理状态推送
+  // 整个会话期死掉（刷新页面才活）。CLOSED 态重建（3s 退避）；CONNECTING
+  // 是浏览器自带的断线重连，不干预。
+  var _proxyES = null;
+  var _proxyESRestart = function () {
+    try {
+      _proxyES = new EventSource('/api/proxy/events');
+      _proxyES.onmessage = () => hgProxyRefreshState();
+      _proxyES.onerror = () => {
+        if (_proxyES.readyState === EventSource.CLOSED) {
+          try { _proxyES.close(); } catch (_) {}
+          setTimeout(_proxyESRestart, 3000);
+        }
+      };
+    } catch (_) {}
+  };
+  _proxyESRestart();
 } catch (_) {}
 hgProxyRefreshState();
 

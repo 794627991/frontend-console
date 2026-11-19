@@ -418,8 +418,9 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
                     to_max = bool(_gp_ok and (wp.flags & 2))   # WPF_RESTORETOMAXIMIZED
                     rb = None
                     if _fc_restore.get("from_max"):
-                        # 最大化期间的最小化——还原回最大化（from_max 由
-                        # maximized/restored 事件维护）
+                        # （用户定调「记忆窗格大小」）：最大化期间的最小化
+                        # ——还原**回最大化**；窗口化的最小化走下方 Normal+
+                        # pre_min（记忆各自形态）
                         _fc_restore["from_max"] = False
                         fnat.WindowState = _FS.Maximized
                         return 0
@@ -437,6 +438,8 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
                                        _n[2] - _n[0], _n[3] - _n[1])
                         else:
                             return 0
+                    # to_max（WPF_RESTORETOMAXIMIZED）=记忆语义的
+                    # 系统侧证据，采纳——最大化最小化后还原回最大化
                     fnat.WindowState = _FS.Maximized if to_max else _FS.Normal
                     if not to_max:
                         wa = _Screen.FromHandle(fnat.Handle).WorkingArea
@@ -460,9 +463,14 @@ def _fc_wndproc(hwnd, msg, wparam, lparam):
                 fnat = getattr(f2, "native", None) if f2 is not None else None
                 if fnat is not None:
                     from System.Windows.Forms import FormWindowState as _FS
+                    from System.Drawing import Rectangle as _Rect3
+                    from System.Windows.Forms import Screen as _Screen3
                     _fc_restore["from_max"] = False
                     _fc_restore["fixing_max"] = True
                     try:
+                        # （用户定调「记忆窗格大小」）：最大化期间最小化
+                        # →点开回最大化（from_max 由 maximized/restored 事件
+                        # 维护）；窗口化最小化不进本分支，走系统默认=普通尺寸
                         fnat.WindowState = _FS.Maximized
                     finally:
                         _fc_restore["fixing_max"] = False
@@ -1036,6 +1044,13 @@ def _strip_window_caption(win, _retry=0):
         f.Invoke(MethodInvoker(_do))
     except Exception:
         pass
+
+
+class _WINPLACEMENT(ctypes.Structure):
+    _fields_ = [("length", ctypes.c_uint), ("flags", ctypes.c_uint),
+                ("showCmd", ctypes.c_uint),
+                ("ptMin", ctypes.c_long * 2), ("ptMax", ctypes.c_long * 2),
+                ("rcNormal", ctypes.c_long * 4)]
 
 
 class _tagRECT(ctypes.Structure):
@@ -2386,7 +2401,14 @@ def main():
             try:
                 w = webview.windows[0]
                 w.show()
-                w.restore()
+                # 记忆窗格大小：restore 只在最小化态兜底（对 Maximized
+                # 隐藏态调用会把最大化降成普通）
+                try:
+                    from System.Windows.Forms import FormWindowState
+                    if w.native.WindowState == FormWindowState.Minimized:
+                        w.restore()
+                except Exception:
+                    pass
                 _win_set_foreground(w)
             except Exception:
                 pass
@@ -2828,6 +2850,17 @@ def main():
         threading.Thread(target=_quit_async, daemon=True).start()
 
     window.events.closing += on_closing
+
+    # （用户需求「桌面已经启动后就创建任务栏图标」）：启动即建托盘——
+    # 原来懒建（首次关闭才建），启动后任务栏无图标。_quit_with_check 在上方
+    # 已定义（托盘「退出」同款通道）；建不起不挡启动（关闭路径还有懒建兜底）
+    def _tray_boot():
+        try:
+            from src.tray import ensure_tray
+            ensure_tray(window, lambda: _quit_with_check(window))
+        except Exception:
+            pass
+    threading.Thread(target=_tray_boot, daemon=True).start()
 
     # ---- a59x 无题化 + 状态回推（zcode DesktopWindowChromeStateChanged 同构）----
     # 单飞信号闸（终审 P3 补回）：evaluate_js 无超时，WebView2 尺寸剧变时

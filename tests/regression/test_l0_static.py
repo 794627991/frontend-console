@@ -106,17 +106,36 @@ def m03_accessor_matrix():
 
 
 def m07_module_list_sync():
-    """M07：modules.txt 与 index.html 的 type=module 标签一致。"""
+    """M07：modules.txt 与 index.html 的 type=module 标签一致。
+
+    a674 起 modules.txt 的单一真源=标签 ∪ ESM 可达子模块（生成器
+    js_script_manifest 有意并入，eslint sourceType 依赖它），本门禁曾停留在
+    a658 的严格标签相等，把 4 个 ESM 子模块每次误报成「清单多出」。此处复用
+    生成器同一套解析（parse_script_tags + _scan_esm_imports），单一真源不再
+    两处各写一份。"""
+    tools_dir = os.path.join(ROOT, "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import js_script_manifest as _jsm
     with open(os.path.join(ROOT, "web", "index.html"), encoding="utf-8") as f:
         html = f.read()
-    tagged = {os.path.normpath(re.sub(r"\?.*$", "", m.group(1))).replace(os.sep, "/")
-              for m in re.finditer(r'<script[^>]*type="module"[^>]*src="([^"]+)"', html)}
+    tagged = set()
+    for src, is_module in _jsm.parse_script_tags(html):
+        src = src.split("?")[0]
+        if not src.startswith("web/"):
+            continue
+        if is_module:
+            tagged.add("web/" + os.path.relpath(src, "web").replace(os.sep, "/"))
+    on_disk = {os.path.relpath(p, os.path.join(ROOT, "web")).replace(os.sep, "/")
+               for p in _js_files()}
+    expected = tagged | {"web/" + r for r in _jsm._scan_esm_imports(
+        [os.path.join(ROOT, "web", p[4:]) for p in tagged], on_disk)}
     listed = _module_list()
-    missing = sorted(tagged - listed)
-    extra = sorted(listed - tagged)
+    missing = sorted(expected - listed)
+    extra = sorted(listed - expected)
     return result("M07", "modules.txt ↔ index.html 模块一致", "L0", "P1",
                   "PASS" if not missing and not extra else "FAIL",
-                  "标签多出=%s 清单多出=%s" % (missing[:5], extra[:5]))
+                  "标签+ESM可达多出=%s 清单多出=%s" % (missing[:5], extra[:5]))
 
 
 def m05_strict_no_implicit():
