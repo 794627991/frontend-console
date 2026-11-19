@@ -600,14 +600,20 @@ def _spawn_window(port, armed):
 
 def kill_snip_windows():
     """主进程退出时收编孤儿窗：给所有 fc-snip 窗发 WM_CLOSE。正常退出路径
-    （✕/托盘退出）调；异常崩溃兜底靠子进程 _arm_loop 的 Flask 探活自杀。"""
+    （✕/托盘退出）调；异常崩溃兜底靠子进程 _arm_loop 的 Flask 探活自杀。
+    a681（退出 6s 实测优化）：砍掉每轮 0.15s×4 的 sleep 轮询——PostMessage
+    是异步投递无需等窗消化（重复投递 WM_CLOSE 幂等无害），剩余窗由
+    Job Object（KILL_ON_JOB_CLOSE 内核收编）+ 探活自杀双兜底。
+    a681-R1 取舍记档（审计指出）：零 sleep 的连投在窗口销毁前
+    FindWindowW 返回同句柄——4 次全打第一个窗，多孤儿窗场景「优雅
+    WM_CLOSE 收编」弱化为仅首窗，其余直接走 Job 兜底。为一轮重找加回
+    sleep 违背本次优化初衷，接受该弱化（a382 的零残留语义不受影响）。"""
     u32 = ctypes.windll.user32
     for _ in range(4):
         hwnd = u32.FindWindowW(None, "fc-snip")
         if not hwnd:
             return
         u32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
-        time.sleep(0.15)
 
 
 def launch_window(port):

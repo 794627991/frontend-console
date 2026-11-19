@@ -171,30 +171,49 @@ def build_app():
         """父进程退出链调用（manage_stop）：优雅收尾后自杀——先停 Claude
         proxy（停额度 worker/bili 压缩/重试代理+base_url 回滚直连，否则
         claude CLI 会连着一个死端口），再逐会话 kill_proc（杀 claude 进程
-        + 清 peer 注册，防幽灵会话/孤儿 CLI）、停机器人，半秒后 os._exit。
+        + 清 peer 注册，防幽灵会话/孤儿 CLI）、停机器人，然后 os._exit。
         硬 terminate 是兜底不是首选（硬杀路径 base_url 不回滚，靠会话侧
-        ensure_direct_if_proxy_down 下次启动自愈）。"""
-        try:
-            from src.proxy import proxy_shutdown
-            proxy_shutdown()
-        except Exception:
-            pass
-        try:
-            from src.harness.consts import _sessions, _sessions_lock
-            with _sessions_lock:
-                snaps = list(_sessions.values())
+        ensure_direct_if_proxy_down 下次启动自愈）。
+        a681（退出 6s 实测优化）：响应立即返回（父进程 urlopen 毫秒级），
+        收尾全部后台线程——会话 kill **并行**（每会话 proc.wait(2) 原串行
+        2N 秒，并行后总窗 2.5s 封顶；各会话 proc/peer 独立，快照后无共享
+        写）、bot 停止并入同一窗口、收尾完直接 os._exit（原 Timer(0.5)
+        砍掉）。父进程 p.wait 等到本进程死 = base_url 回滚等收尾已完成，
+        保序语义不变。"""
+        def _fin():
+            try:
+                from src.proxy import proxy_shutdown
+                proxy_shutdown()   # base_url 回滚=可靠性关键，保持最前串行
+            except Exception:
+                pass
+            snaps = []
+            try:
+                from src.harness.consts import _sessions, _sessions_lock
+                with _sessions_lock:
+                    snaps = list(_sessions.values())
+            except Exception:
+                pass
+            ths = []
             for s in snaps:
-                try:
-                    s.kill_proc()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            bot.ensure_stopped()
-        except Exception:
-            pass
-        threading.Timer(0.5, os._exit, (0,)).start()
+                def _k(s=s):
+                    try:
+                        s.kill_proc()
+                    except Exception:
+                        pass
+                t = threading.Thread(target=_k, daemon=True)
+                t.start()
+                ths.append(t)
+            try:
+                t = threading.Thread(
+                    target=lambda: bot.ensure_stopped(), daemon=True)
+                t.start()
+                ths.append(t)
+            except Exception:
+                pass
+            for t in ths:
+                t.join(timeout=2.5)
+            os._exit(0)
+        threading.Thread(target=_fin, daemon=True).start()
         return jsonify({"ok": True})
 
     # ---- CORS：只放行主进程页面来源（父进程注入的真实端口）+ 本 worker 自身 ----
@@ -734,9 +753,30 @@ def manage_stop():
                     headers={"Content-Type": "application/json"},
                     method="POST")
                 urllib.request.urlopen(_req, timeout=3).read()
-                p.wait(timeout=4)
+                # a681：worker 收尾（base_url 回滚/杀会话/停 bot）在
+                # os._exit 调用点之前已全部完成（/worker_shutdown 后台
+                # 线程实测 0.2s 内到 os._exit）。实测 p.wait 仍要 2s+：
+                # os._exit 的 ExitProcess 要跑全部 DLL_PROCESS_DETACH，
+                # worker 某依赖 DLL 的 detach 拖 ~2s（分步探针实锤
+                # urlopen 2ms / wait 2.086s）。detach 阶段无任何数据操作，
+                # 等它不值——wait 预算 1s：正常收尾 0.3s 内返回；detach
+                # 拖延时 1s 超时走 terminate（对已过收尾点的进程无害）。
+                p.wait(timeout=1)
         except Exception:
             pass
+        if p.poll() is None and base:
+            # a681-R1（审计采纳）：1s 超时分不清「收尾中」与「detach 中」
+            # ——/health 探活分流：有响应=Flask 循环活着=收尾线程仍在跑
+            # （_fin 与 Flask 并行，join(2.5) 上限），补等 2s 让优雅收尾
+            # 走完；无响应=进程已进 ExitProcess 的 detach 阶段（收尾必已
+            # 完成，os._exit 已调），直接 terminate 无数据风险。
+            try:
+                import urllib.request
+                _h = urllib.request.Request(base + "/health")
+                urllib.request.urlopen(_h, timeout=0.5).read()
+                p.wait(timeout=2)   # 有响应：收尾中，让 _fin 跑完
+            except Exception:
+                pass
         if p.poll() is None:
             try:
                 p.stdin.close()
@@ -747,7 +787,9 @@ def manage_stop():
             except Exception:
                 pass
             try:
-                p.wait(timeout=3)
+                # a681：terminate 后 Windows 立即 signal 进程对象——
+                # 1s 足够（原来 3s 纯属陪 detach 拖延）
+                p.wait(timeout=1)
             except Exception:
                 try:
                     p.kill()

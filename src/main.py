@@ -1556,8 +1556,15 @@ def _save_file_dialog(default_name):
 
 
 def _kill_child_processes():
-    """显式杀全部子进程（_do_real_cleanup 调——Job Object 是内核兜底，
-    这里是退出链的即时清，防 Job Object 设置失败/子进程逃逸）"""
+    """显式杀全部子进程（_do_real_cleanup 调）。a382 教训（用户内网实锤
+    进程残留+rg.exe 占用）：防 Job Object 设置失败/子进程逃逸——taskkill
+    /T /F 树杀保留为 **Job 不可用时的兜底**。a681（退出 6s 实测优化）：
+    Job 在（_job_handle 非 None=启动时 Assign 成功）时直接返回——
+    os._exit 后 KILL_ON_JOB_CLOSE 由内核收编全树（毫秒级，省 taskkill
+    spawn+树遍历 ~1s，实测退出链尾段 1.24s 的大头）。本项目 Popen 均未
+    用 CREATE_BREAKAWAY，子进程不可能逃出 Job。"""
+    if _job_handle:
+        return
     try:
         import subprocess
         # taskkill /T 树杀：主进程全部子进程+孙进程
@@ -2636,12 +2643,48 @@ def main():
     # v2.1.0：升级重启要跨模块触发真退出——挂模块级（updater._request_quit 用）
     main._real_quit = _real_quit
 
+    _cleanup_started = {"v": False}   # a681：真退出清理只起一次（closing 重入防抖）
+
+    def _spawn_cleanup():
+        """a681（感知优化）：真退出时 closing 只 window.hide()（用户视角
+        秒关）后立即返回 False，清理链整条挪后台 daemon 线程跑完 os._exit。
+        线程安全：_do_real_cleanup 全链无一步依赖 GUI 线程身份
+        （web_tabs.flush_on_exit 用 BeginInvoke 异步投递，窗口 hidden 不
+        影响 GUI 泵；其余步骤本就是子进程/文件/网络操作）。
+        a681-R1（审计采纳·总看门狗）：后台化后 closing 返回 False 挡销毁、
+        幂等锁吞重入——清理链若某步永久阻塞（如 close_all_ports 无上限的
+        串行等待），用户观感「退不掉」。看门狗 8s 硬退：正常链尾
+        os._exit(0) 先到，看门狗线程随进程消亡；8s 未走完=阻塞实锤，
+        os._exit(1) 保住「出口必须有」纪律，exit_reason 落库供排查。"""
+        if _cleanup_started["v"]:
+            return
+        _cleanup_started["v"] = True
+        import threading
+
+        def _watchdog():
+            import time
+            time.sleep(8)
+            try:
+                _exit_reason("cleanup_timeout")
+            except Exception:
+                pass
+            import os
+            os._exit(1)
+        threading.Thread(target=_watchdog, daemon=True).start()
+        threading.Thread(target=_do_real_cleanup, daemon=True).start()
+
     def _do_real_cleanup():
         _exit_reason("cleanup")
         # a582（内网方案·根因2）：网页 tab 的 WebView2 环境必须在后续
         # taskkill /T /F 树杀**之前**优雅关闭——Chromium cookie/密码库是
         # 延迟批量写盘，被强杀则未落盘数据全丢（用户实锤：每次重开工具
-        # 所有网页登录态全丢）。内部 sleep ~1.2s 等浏览器进程 flush。
+        # 所有网页登录态全丢）。内部 sleep 等浏览器进程 flush。
+        # a681（退出 6s 实测优化）：grace 1.2s→0.5s——①Dispose/Stop 已
+        # 通知 WebView2 有序落盘，grace 只是等待浏览器进程自行退出的余量；
+        # ②密码库（Login Data）不依赖该 grace：_pw_del/_edit_flush 在其后
+        # 对 SQLite 直写；③cookie 存储是 SQLite WAL，进程退出时未
+        # checkpoint 的 WAL 留盘，下次打开自动恢复——0.5s 覆盖正常 flush，
+        # 极端掉电场景 WAL 兜底。实测退出链 6s→2s 级的组成部分。
         try:
             from src import web_tabs as _wt
             _wt.shutdown()
@@ -2761,8 +2804,15 @@ def main():
             # a669：托盘图标不在这里清——挪到 _do_real_cleanup 末尾，让图标
             # 一直留到全部清理完成（用户实锤：先清图标会显得「进程还在但
             # 托盘没了」）。
-            _do_real_cleanup()
-            return True   # 放行：真退出
+            # a681：清理链后台化——窗口先藏（用户视角秒关），return False
+            # 保住 GUI 消息循环（后台 flush_on_exit 的 BeginInvoke 要靠它
+            # 泵），进程由后台链尾的 os._exit 终结。
+            try:
+                window.hide()
+            except Exception:
+                pass
+            _spawn_cleanup()
+            return False   # 不销毁窗口：后台清理完 os._exit 终结进程
         try:
             from src.app_state import CONFIG_FILE
             import json as _json
@@ -2776,8 +2826,13 @@ def main():
             # evaluate_js 内部 Invoke 回 UI 线程 = 自锁（窗口挂死被杀 → MCP 拉起
             # 新实例 = 观感「自己重启」）。直退路径不再做 JS 探测（保可用），
             # 脏检查只在托盘退出的后台线程做（_quit_with_check）
-            _do_real_cleanup()
-            return True
+            # a681：与 flag 路径同款——hide + 后台清理（见 _spawn_cleanup）
+            try:
+                window.hide()
+            except Exception:
+                pass
+            _spawn_cleanup()
+            return False
         # 关闭到托盘全流程在后台线程做（closing 回调零阻塞）。
         # 弹提示的条件（用户定的节奏）：每次进程活动期间只弹一次——
         #   进程内已弹过（_prompt_session 置位）→ 直接隐藏；
@@ -2843,8 +2898,12 @@ def main():
                 # 兜底：窗口已死关不掉就硬退（托盘退出必须有出口）
                 # a669：quit_tray 交给 _do_real_cleanup 末尾统一做（它自己也会
                 # 走到那一步），这里不再抢先清图标。
-                _do_real_cleanup()
+                # a681：destroy 失败=closing 链路不可用，这里同步跑清理
+                # （_spawn_cleanup 幂等——若 closing 已起过后台清理则跳过）
                 import os
+                _spawn_cleanup()
+                time.sleep(4)   # 给后台链最多 4s 跑完（worker 收尾窗），
+                                 # 超时硬退（出口必须有）
                 os._exit(0)
         import threading
         threading.Thread(target=_quit_async, daemon=True).start()

@@ -1572,7 +1572,7 @@ class WebTabs:
         return {"ok": True, "recycled": n}
 
     # ---------- 退出前落盘（a582 内网方案·根因2） ----------
-    def flush_on_exit(self, grace_ms=1200):
+    def flush_on_exit(self, grace_ms=500):
         """给 WebView2 有序关闭的机会，让 Chromium 把 cookie/密码库写盘。
         步骤：① UI 线程逐个 Dispose 控件 ② 环境引用置空 ③ sleep 等浏览器
         进程自行 flush 退出。全程 fail-safe（单控件异常不连坐；无
@@ -1859,7 +1859,7 @@ def register(app):
     app.register_blueprint(bp)
 
 
-def shutdown(grace_ms=1200):
+def shutdown(grace_ms=500):
     # RA11（红队）：即使 _tabs 未装配（env 失败），挂起删除也须执行
     """a582：退出前优雅关闭 WebView2（main._do_real_cleanup 在 taskkill
     树杀之前调用）。fail-safe：任何异常吞掉，绝不阻塞退出主流程。"""
