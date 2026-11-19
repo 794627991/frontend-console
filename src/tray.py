@@ -8,8 +8,8 @@ Explorer 清尸体）。不再修它，整个换掉：
 - 专用线程跑 GetMessage 消息循环，全程自己写，死活有日志有栈
 - 退出/线程死 finally 必 NIM_DELETE——不留尸体图标
 - WM_TASKBARCREATED（explorer 重启）→ 重新 NIM_ADD 自愈
-- 菜单每次右键时动态重建 HMENU（原生 Notepad++ 同款），text/checked
-  传函数即每次打开求值，零重建成本
+- 菜单每次右键时动态构建描述树，交给 tray_menu.py 完全自绘（WS_POPUP
+  圆角卡片 + GDI 双缓冲，观感对齐 ZCode）；text/checked 传函数即每次求值
 - tooltip set_tip() 线程安全（PostMessage 到托盘线程执行 NIM_MODIFY）
 
 接口（与旧 pystray 版兼容）：
@@ -45,12 +45,12 @@ WM_DESTROY = 0x0002
 # 调试两小时才在 pystray win32.py 对出真值。教训：ctypes 常量必须核对 SDK 头。
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP = 1, 2, 4
-TPM_RIGHTALIGN, TPM_BOTTOMALIGN, TPM_RETURNCMD = 8, 0x20, 0x0100
-MFS_DISABLED, MFS_CHECKED, MFS_DEFAULT = 3, 8, 0x1000
-MFT_SEPARATOR, MFT_RADIOCHECK = 0x800, 0x200
-MIIM_FTYPE, MIIM_STRING, MIIM_STATE, MIIM_ID, MIIM_SUBMENU = 0x100, 0x40, 1, 2, 4
 IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x10, 0x40
 WS_POPUP = 0x80000000
+# 系统菜单兜底（仅自绘菜单显示失败时走这条保命路径）
+MF_STRING, MF_POPUP, MF_SEPARATOR = 0, 0x10, 0x800
+MF_GRAYED, MF_CHECKED, MF_DEFAULT = 0x1, 0x8, 0x1000
+TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_BOTTOMALIGN = 0x100, 8, 0x20
 
 
 class _NOTIFYICONDATAW(ctypes.Structure):
@@ -73,15 +73,6 @@ class _NOTIFYICONDATAW(ctypes.Structure):
     ]
     _anonymous_ = ["version_or_timeout"]
 
-
-class _MENUITEMINFOW(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", wt.UINT), ("fMask", wt.UINT), ("fType", wt.UINT),
-        ("fState", wt.UINT), ("wID", wt.UINT), ("hSubMenu", wt.HMENU),
-        ("hbmpChecked", wt.HANDLE), ("hbmpUnchecked", wt.HANDLE),
-        ("dwItemData", ctypes.c_void_p), ("dwTypeData", wt.LPWSTR),
-        ("cch", wt.UINT), ("hbmpItem", wt.HANDLE),
-    ]
 
 
 class _WNDCLASSEXW(ctypes.Structure):
@@ -122,13 +113,14 @@ _u32.PostMessageW.argtypes = (wt.HWND, wt.UINT, ctypes.c_void_p, ctypes.c_void_p
 _u32.PostMessageW.restype = wt.BOOL
 _u32.PostQuitMessage.argtypes = (ctypes.c_int,)
 _u32.GetCursorPos.argtypes = (ctypes.c_void_p,)
+_u32.CreatePopupMenu.argtypes = ()
+_u32.CreatePopupMenu.restype = wt.HMENU
+_u32.AppendMenuW.argtypes = (wt.HMENU, wt.UINT, ctypes.c_void_p, wt.LPCWSTR)
+_u32.AppendMenuW.restype = wt.BOOL
+_u32.DestroyMenu.argtypes = (wt.HMENU,)
 _u32.TrackPopupMenuEx.argtypes = (wt.HMENU, wt.UINT, ctypes.c_int,
                                    ctypes.c_int, wt.HWND, ctypes.c_void_p)
 _u32.TrackPopupMenuEx.restype = ctypes.c_int
-_u32.CreatePopupMenu.argtypes = ()
-_u32.CreatePopupMenu.restype = wt.HMENU
-_u32.DestroyMenu.argtypes = (wt.HMENU,)
-_u32.InsertMenuItemW.argtypes = (wt.HMENU, wt.UINT, wt.BOOL, ctypes.c_void_p)
 _u32.RegisterWindowMessageW.argtypes = (wt.LPCWSTR,)
 _u32.RegisterWindowMessageW.restype = wt.UINT
 _u32.ChangeWindowMessageFilterEx.argtypes = (wt.HWND, wt.UINT, wt.DWORD,
@@ -140,6 +132,16 @@ _shell32.Shell_NotifyIconW.argtypes = (wt.DWORD, ctypes.c_void_p)
 _shell32.Shell_NotifyIconW.restype = wt.BOOL
 
 
+def _val(v, *args):
+    """菜单 provider 的 text/checked/enabled 可传函数，打开时求值。"""
+    if callable(v):
+        try:
+            return v(*args)
+        except Exception:
+            return None
+    return v
+
+
 def _log(fmt, *a):
     """托盘自身日志（复用主工具 logging，够定位线程死因）。"""
     try:
@@ -147,16 +149,6 @@ def _log(fmt, *a):
         logging.getLogger("serialconsole.tray").info(fmt, *a)
     except Exception:
         pass
-
-
-def _val(v, *args):
-    """text/checked/enabled 可传函数（打开菜单时求值）——统一求值。"""
-    if callable(v):
-        try:
-            return v(*args)
-        except Exception:
-            return None
-    return v
 
 
 class _NativeTray:
@@ -259,7 +251,13 @@ class _NativeTray:
             self._cleanup_window()
 
     def _cleanup_window(self):
-        """finally 必清：NIM_DELETE（不留尸体图标）→ 销毁窗 → 反注册类。"""
+        """finally 必清：NIM_DELETE（不留尸体图标）→ 菜单弹层 → 销毁窗 →
+        反注册类。"""
+        try:
+            from src import tray_menu
+            tray_menu.close_all()
+        except Exception:
+            pass
         try:
             self._shell_delete()
         except Exception:
@@ -345,6 +343,7 @@ class _NativeTray:
             _log("WndProc 异常 msg=%s: %s", msg, repr(_exc()))
             return 0
 
+
     def _fire(self, fn):
         """菜单/单击回调在托盘线程执行，包 daemon 线程防卡消息循环。"""
         if fn is None:
@@ -357,61 +356,74 @@ class _NativeTray:
                 _log("托盘回调异常: %s", repr(_exc()))
         threading.Thread(target=_safe, daemon=True).start()
 
-    # ---- 右键菜单 ----
+    # ---- 右键菜单（完全自绘弹层，ZCode 同款）----
     def _popup_menu(self):
-        """右键：动态重建 HMENU（每次打开求值 text/checked/enabled）→
-        TrackPopupMenuEx → 按 ID 回调。原生 Notepad++ 同款做法。"""
-        descs = []
+        """右键：自绘弹层优先；构建/显示失败回退系统 HMENU（保命路径，
+        观感打折但菜单永远打得开——本仓「建不起不挡」纪律）。"""
         try:
             descs = self._menu_provider()
         except Exception:
             _log("菜单构建异常: %s", repr(_exc()))
             return
+        tm = None
+        try:
+            from src import tray_menu as tm
+            cb = tm.show_menu(self._hwnd, descs)
+        except Exception:
+            _log("自绘菜单失败，回退系统菜单: %s", repr(_exc()))
+            if tm is not None:
+                try:
+                    tm.close_all()
+                except Exception:
+                    pass
+            try:
+                self._popup_menu_native(descs)
+            except Exception:
+                _log("系统菜单兜底也失败: %s", repr(_exc()))
+            return
+        if cb:
+            self._fire(cb)
+
+    def _popup_menu_native(self, descs):
+        """自绘菜单失败时的保命路径：系统菜单（亮色，无自绘样式）。
+        回调映射按 wID 递增，TPM_RETURNCMD 同步返回选中项。"""
+        callbacks = {}
+        state = {"id": 1}
+
+        def add(parent, items):
+            for it in items or []:
+                if isinstance(it, tuple) and it and it[0] == "sep":
+                    _u32.AppendMenuW(parent, MF_SEPARATOR, None, None)
+                    continue
+                if not (isinstance(it, tuple) and len(it) >= 3):
+                    continue
+                text = str(_val(it[1]) or "")
+                opts = it[3] if len(it) > 3 and isinstance(it[3], dict) else {}
+                sub = opts.get("submenu")
+                flags = MF_STRING
+                if sub:
+                    hsub = _u32.CreatePopupMenu()
+                    add(hsub, sub)
+                    flags |= MF_POPUP
+                    mid = hsub
+                else:
+                    mid = state["id"]
+                    state["id"] += 1
+                    callbacks[mid] = it[2]
+                # 与自绘 _build_rows 同语义：求值异常（None）按禁用处理
+                if not _val(opts.get("enabled", True)):
+                    flags |= MF_GRAYED
+                if _val(opts.get("checked")):
+                    flags |= MF_CHECKED
+                if opts.get("default"):
+                    flags |= MF_DEFAULT
+                _u32.AppendMenuW(parent, flags, mid, text)
+
         hmenu = _u32.CreatePopupMenu()
         if not hmenu:
             return
-        callbacks = {}   # id → fn
-
-        # text/checked/submenu 里的函数项在打开菜单时求值（args 传 None
-        # 即 pystray MenuItem(fn, ...) 同签名兼容）
-        def _add(parent, items):
-            for it in items:
-                if isinstance(it, tuple) and it and it[0] == "sep":
-                    mii = _MENUITEMINFOW()
-                    mii.cbSize = ctypes.sizeof(_MENUITEMINFOW)
-                    mii.fMask = MIIM_FTYPE
-                    mii.fType = MFT_SEPARATOR
-                    _u32.InsertMenuItemW(parent, 0xFFFF, True,
-                                         ctypes.byref(mii))
-                    continue
-                _, text, cb, opts = it
-                mid = len(callbacks) + 1
-                callbacks[mid] = cb
-                mii = _MENUITEMINFOW()
-                mii.cbSize = ctypes.sizeof(_MENUITEMINFOW)
-                mii.fMask = (MIIM_FTYPE | MIIM_STRING | MIIM_STATE |
-                             MIIM_ID | MIIM_SUBMENU)
-                mii.wID = mid
-                mii.dwTypeData = str(_val(text) or "")
-                mii.fType = MFT_RADIOCHECK if opts.get("radio") else 0
-                state = 0
-                if not opts.get("enabled", True):
-                    state |= MFS_DISABLED
-                if opts.get("checked"):
-                    state |= MFS_CHECKED
-                if opts.get("default"):
-                    state |= MFS_DEFAULT
-                mii.fState = state
-                sub = opts.get("submenu")
-                if sub:
-                    mii.hSubMenu = _u32.CreatePopupMenu()
-                    _add(mii.hSubMenu, sub)
-                _u32.InsertMenuItemW(parent, 0xFFFF, True, ctypes.byref(mii))
-
         try:
-            _add(hmenu, descs)
-            # TrackPopupMenu 前必须 SetForegroundWindow（微软文档），
-            # 弹完 PostMessage(WM_NULL) 让菜单正确消失
+            add(hmenu, descs)
             _u32.SetForegroundWindow(self._hwnd)
             pt = wt.POINT()
             _u32.GetCursorPos(ctypes.byref(pt))
@@ -419,7 +431,7 @@ class _NativeTray:
                 hmenu, TPM_RIGHTALIGN | TPM_BOTTOMALIGN | TPM_RETURNCMD,
                 pt.x, pt.y, self._hwnd, None)
             _u32.PostMessageW(self._hwnd, WM_NULL, 0, 0)
-            if cmd and cmd in callbacks:
+            if cmd and callbacks.get(cmd):
                 self._fire(callbacks[cmd])
         finally:
             _u32.DestroyMenu(hmenu)
@@ -489,6 +501,37 @@ def _make_menu_provider(window, on_quit):
             items.extend(_lm.menu_items(_base, _offload))
         except Exception:
             _log("Lanzi 菜单段构建失败: %s", repr(_exc()))
+        # a680（用户定调）：设置/版本入口 + 退出
+        def _open_settings():
+            try:
+                _tray_show(window)
+                window.evaluate_js(
+                    "window.openSettingsPanel && window.openSettingsPanel()")
+            except Exception:
+                _log("打开设置失败: %s", repr(_exc()))
+
+        def _version_line():
+            appv, hv = "?", "?"
+            try:
+                from src.version import APP_VERSION as _av
+                appv = _av
+            except Exception:
+                pass
+            try:
+                from src.harness import HARNESS_VERSION as _hv
+                hv = str(_hv)
+            except Exception:
+                pass
+            # 只取 aNNN 短号，避免把菜单撑宽（完整版本看设置/诊断）
+            import re as _re
+            m = _re.search(r"a\d+", hv)
+            if m:
+                hv = m.group(0)
+            return "关于  v%s · harness %s" % (appv, hv)
+
+        items.append(("sep",))
+        items.append(("item", "打开设置", _open_settings, {}))
+        items.append(("item", _version_line, None, {"enabled": False}))
         items.append(("sep",))
         items.append(("item", "退出", on_quit, {}))
         return items

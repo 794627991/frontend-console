@@ -61,6 +61,11 @@ def menu_items(base="", offload=False):
                 api.fnum(ov.get("internalDailyUsed") or 0),
                 api.fnum(ov.get("internalDailyLimit") or 0))
 
+        # 用户定调（a680）：Lanzi 只对内网有效，未登录/无数据时整段不出现，
+        # 不给外部用户看无意义的灰字占位；登录成功后自动出现。
+        d = _st()
+        if not (d.get("quota_overview") or d.get("quota_user")):
+            return []
         return [
             ("sep",),
             ("item", "Lanzi", None, {"enabled": False}),
@@ -71,8 +76,12 @@ def menu_items(base="", offload=False):
 
     # inline 形态：本进程直接持有状态，零网络
     if offload:
-        # 分离但 worker 未就绪：只给灰字提示（不允许主进程代跑）
-        return [("sep",), ("item", "Lanzi（后端未就绪）", None, {"enabled": False})]
+        # 分离但 worker 未就绪：整段不显示（同上，不给无意义占位）
+        return []
+
+    # 未登录/无额度数据：整段不显示（内网专属功能不打扰其他用户）
+    if not _local_rows():
+        return []
 
     # 与远端形态不同，本进程直接持有完整额度缓存，可给全 4 行
     # （今日汇总 + Lanz-Auto/Flash/Medium）——与原 proxy._tray_quota_items 同构
