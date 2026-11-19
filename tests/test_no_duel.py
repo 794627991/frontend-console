@@ -6,7 +6,7 @@
   递增 300→600→1200→1800s；未认证断线不计踢；健康断线（≥60s）清零
 - hiklink_bot._BotSingleFlight：O_EXCL 原子创建；活进程持锁拒绝；
   死 pid 接管；自残留清理；锁路径动态（迁移不分裂）
-- proxy.LanzQuotaWorker._push_relogin：30 分钟滑窗第 3 次重登熔断
+- lanzi.worker.LanzQuotaWorker._push_relogin：30 分钟滑窗第 3 次重登熔断
 """
 import os
 import sys
@@ -14,8 +14,8 @@ import time
 
 sys.path.insert(0, '.')
 
-from src.hiklink_bot import _BotSingleFlight, _reconnect_wait
-from src.proxy import LanzQuotaWorker
+from src.lanzi.bot import _BotSingleFlight, _reconnect_wait
+from src.lanzi.worker import LanzQuotaWorker
 
 
 # ---------- _reconnect_wait ----------
@@ -79,7 +79,7 @@ def _write_lock(path, pid):
 
 def test_single_flight_blocks_live_holder(tmp_path, monkeypatch):
     """异 pid 持锁且进程活着 → 拒绝启动（互踢防线本体）。"""
-    import src.hiklink_bot as hb
+    import src.lanzi.bot as hb
     monkeypatch.setattr(hb, "_pid_alive", lambda pid: True)
     p = str(tmp_path / "bot.lock")
     _write_lock(p, 424242)
@@ -91,7 +91,7 @@ def test_single_flight_blocks_live_holder(tmp_path, monkeypatch):
 
 def test_single_flight_unknown_liveness_refuses(tmp_path, monkeypatch):
     """a561：pid 查不出（高完整性/权限拒绝）→ 保守拒绝，绝不误接管。"""
-    import src.hiklink_bot as hb
+    import src.lanzi.bot as hb
     monkeypatch.setattr(hb, "_pid_alive", lambda pid: True)
     p = str(tmp_path / "bot.lock")
     _write_lock(p, 777)
@@ -102,7 +102,7 @@ def test_single_flight_unknown_liveness_refuses(tmp_path, monkeypatch):
 
 def test_single_flight_dead_holder_takeover(tmp_path, monkeypatch):
     """持有者 pid 确认不存在 → 原子接管。"""
-    import src.hiklink_bot as hb
+    import src.lanzi.bot as hb
     monkeypatch.setattr(hb, "_pid_alive", lambda pid: False)
     p = str(tmp_path / "bot.lock")
     _write_lock(p, 999999)
@@ -169,17 +169,17 @@ def test_push_relogin_long_gaps_never_trip():
 
 def test_marks_roundtrip(tmp_path, monkeypatch):
     """落盘标记读写回环（F5：滑窗跨进程共享）。"""
-    import src.proxy as px
+    import src.lanzi.state as st
     p = str(tmp_path / "marks.json")
-    monkeypatch.setattr(px, "_MARKS_PATH", p)
-    px._save_marks([100.0, 200.0], trip_ts=300.0)
-    stamps, trip = px._load_marks()
+    monkeypatch.setattr(st, "MARKS_PATH", p)
+    st.save_marks([100.0, 200.0], trip_ts=300.0)
+    stamps, trip = st.load_marks()
     assert stamps == [100.0, 200.0] and trip == 300.0
-    px._save_marks([], 0.0)
-    assert px._load_marks() == ([], 0.0)
+    st.save_marks([], 0.0)
+    assert st.load_marks() == ([], 0.0)
 
 
 def test_marks_missing_file_is_empty(tmp_path, monkeypatch):
-    import src.proxy as px
-    monkeypatch.setattr(px, "_MARKS_PATH", str(tmp_path / "nope.json"))
-    assert px._load_marks() == ([], 0.0)
+    import src.lanzi.state as st
+    monkeypatch.setattr(st, "MARKS_PATH", str(tmp_path / "nope.json"))
+    assert st.load_marks() == ([], 0.0)

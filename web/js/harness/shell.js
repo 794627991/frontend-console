@@ -78,13 +78,7 @@ function _harnessClose(portId) {
   try {
     if (window._hgModalReg) window._hgModalReg.closeAll('harness:gui');
   } catch (_) {}
-  // a452（审计 P2）：悬浮负载卡是模块级状态，必须随 tab 一起收——否则鼠标
-  // 正停在 Proxy 按钮上时关 tab，按钮随 wrap.remove() 消失且不再派生
-  // mouseout，tip 保持 block，20s tick 继续用 detached anchor（rect 全 0）
-  // 把卡片重绘到左上角，永久僵尸。_HG.tps 同理（见 sessions.js 的切换清理）。
-  _hgProxyHoverAnchor = null;
-  try { _hgLoadsStopTick(); } catch(_) {}
-  try { if (_hgLoadsTip) _hgLoadsTip.style.display = 'none'; } catch(_) {}
+  // a672：负载悬浮卡已迁 Lanzi 专栏，harness tab 关闭不再需要清理它
   _HG.tps = null;
   _HG.ctxRing = null;   // a456：上下文圆环同属会话口径，随 tab 一起清
   _HG.rowById = {}; _HG.run = null;   // 批4：subRows/subBlk 段档随段退役删除
@@ -156,409 +150,67 @@ async function claudeButtonAction() {
   else buildClaudeHarnessTab({});
 }
 
-// ---- 统一登录胶囊（侧栏底部）：代理/额度/机器人一次登录全通 ----
-// 登录走共用接口 /api/proxy/credentials（单一事实源 lanz_credentials.json）；
-// 凭据就位后端自动激活机器人（幂等），登出自动停用。未登录机器人不激活。
-// 胶囊点击 → 冒泡弹窗（未登录=登录表单；已登录=状态+登出确认）。
-// 机器人 LED：唯一表达在线/离线的载体（文案里不再重复「在线」）
-// ---- 机器人 LED/文案 ----
-// a594（同事机实锤「机器人能用但显示凭据被拒」）：**在线是最终事实**——
-// 收到过 SERVER_AUTH_REPLY result=true 才会 connected，此时凭据必然已被
-// 服务端接受。而 auth_failed 是实例级的一次性标记（上一次认证失败），
-// 与同一实例后续认证成功之间只有一个赋值，任何重启/换实例的竞态都会让
-// 它残留。原实现把 auth_failed 排在在线之前，于是「在线 + 残留标记」=
-// 界面报错、功能正常。现在一律先判在线。
+// ---- 侧栏「机器人 / 登录」按钮：只做状态显示 + 打开 Lanzi 专栏 ----
+// a672（用户定调）：机器人凭据与内网登录已整体迁到 Lanzi 专栏
+// （web/js/lanzi/panel.js）。这里只保留侧栏按钮的指示灯与用户名显示——
+// 点击行为由 panel.js 的捕获监听接管（直接切/开 Lanzi tab）。
+// 数据源仍是 /api/lanzi/bot_status（后端 status_snapshot 原样）。
 function hgBotOnline(st) { return !!(st.running && st.connected); }
-// a594：机器人在**本机另一进程**里跑（本进程自启被单飞锁拦下）。后端在
-// 该情形下持有锁的 PID 探活成功才给 remote_running=true，语义上等价于在线。
 function hgBotRemote(st) { return !!st.remote_running; }
 function hgBotLed(st) {
-  if (!st.manual) return 'hg-login-dot off';                  // 未配置凭据
-  if (hgBotOnline(st) || hgBotRemote(st)) return 'hg-login-dot on';   // 在线
-  if (st.auth_failed) return 'hg-login-dot err';             // 凭据被拒
-  if (!st.running) return 'hg-login-dot idle';               // 已配置未运行
-  return 'hg-login-dot wait';                                 // 连接中
+  if (!st.manual) return 'hg-login-dot off';
+  if (hgBotOnline(st) || hgBotRemote(st)) return 'hg-login-dot on';
+  if (st.auth_failed) return 'hg-login-dot err';
+  if (!st.running) return 'hg-login-dot idle';
+  return 'hg-login-dot wait';
 }
-// 弹窗内的机器人状态文字（不支持指示灯语义时的一行说明）
-function hgBotPhase(st) {
-  if (!st.manual) return '未配置凭据';
-  if (hgBotOnline(st)) return '';
-  if (hgBotRemote(st)) return '在线（本机另一进程 PID ' + st.remote_pid + '）';
-  if (st.auth_failed) return '凭据被拒，请检查 App ID/Secret';
-  if (!st.running) {
-    // a594：本机另一进程已持有单飞锁时，如实说清楚——否则用户只会看到
-    // 「已保存，未运行」，误以为凭据没生效
-    return st.kick_note || '已保存，未运行';
-  }
-  return '连接中…';
-}
-let _hgLastSt = {};
-// 带超时的 JSON fetch（无超时时 worker 未就绪会永久挂住登录按钮）
-async function _hgFetchJson(url, body, ms) {
-  const ctl = new AbortController();
-  const tid = setTimeout(() => ctl.abort(), ms || 5000);
-  try {
-    const r = await fetch(url, body ? {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body), signal: ctl.signal
-    } : { signal: ctl.signal });
-    return await r.json();
-  } finally { clearTimeout(tid); }
-}
-// keepBaseline=true：乐观渲染不得写回基线，否则 running:true/connected:false
-// 这类假值会被下一次合并沿用（手填胶囊一直显示「连接中…」）
-function hgLoginRender(st, keepBaseline) {
-  if (!keepBaseline) _hgLastSt = st || {};
-  document.querySelectorAll('[data-hg-login-toggle]').forEach(tg => {
-    const dot = tg.querySelector('[data-hg-login-dot]');
-    const txt = tg.querySelector('[data-hg-login-text]');
-    if (!txt) return;
-    // 指示灯只表达机器人状态；用户名用颜色表达登录状态（铁律：不靠文案
-    // 重复「在线/离线」）
-    if (dot) dot.className = hgBotLed(st);
-    if (st.username) {
-      txt.textContent = st.username;
-      txt.className = 'hg-login-userlabel on';
-    } else {
-      txt.textContent = '未登录';
-      txt.className = 'hg-login-userlabel off';
-    }
-  });
-  document.querySelectorAll('[data-hg-login-pop]').forEach(pop => {
-    const off = pop.querySelector('[data-hg-login-off]');
-    const on = pop.querySelector('[data-hg-login-on]');
-    const nameEl = pop.querySelector('[data-hg-login-name]');
-    if (!off || !on) return;
-    if (st.username) {
-      off.style.display = 'none'; on.style.display = '';
-      if (nameEl) {
-        nameEl.textContent = st.username;
-        nameEl.className = 'hg-login-userlabel on';
-      }
-    } else {
-      off.style.display = ''; on.style.display = 'none';
-      if (nameEl) { nameEl.textContent = ''; nameEl.className = 'hg-login-userlabel'; }
-    }
-    // 机器人独立凭据（App ID/Secret）：已填则回显 App ID、secret 留空待改
-    const rid = pop.querySelector('[data-hg-robot-id]');
-    const rstate = pop.querySelector('[data-hg-robot-state]');
-    if (rid) {
-      // 输入即置 dirty；只有用户没动过才回填——否则 30s 轮询会把用户
-      // 刚清空的 App ID 填回旧值，「两项皆空=清除」永远点不到
-      hgRobotWire(rid);
-      if (st.app_id && !rid.dataset.dirty && !rid.value) rid.value = st.app_id;
-      // 服务端值与框内一致（用户改完/保存成功）才复位闸；框内为空而
-      // 服务端有值 = 用户正在清空，「两项皆空=清除」不能被打断
-      if (rid.dataset.dirty && st.app_id && rid.value === st.app_id) {
-        rid.dataset.dirty = '';
-      }
-    }
-    // 状态全由指示灯表达；文字只在不正常时给一句原因（在线不写字）。
-    // 「未配置凭据」必须给文字——灰灯 off/idle 肉眼几乎无差别，用户分不清
-    // 是没配还是配了没跑。a594：另一进程在跑时也要给文字（本进程没有
-    // running=true 可依），由 hgBotPhase 统一产出，这里只判「有没有话要说」
-    const rdot = pop.querySelector('[data-hg-robot-dot]');
-    if (rdot) rdot.className = hgBotLed(st);
-    if (rstate) {
-      rstate.textContent = hgBotPhase(st);
-    }
-    // 密钥真回显：有已存密钥就填进框（type=password 显示为 ******），
-    // 点眼睛立刻能看到明文——不是占位符，用户能确认到底存没存
-    const rsec = pop.querySelector('[data-hg-robot-secret]');
-    if (rsec) {
-      hgSecretWire(rsec);
-      if (st.app_secret && !rsec.dataset.dirty && !rsec.value) {
-        rsec.value = st.app_secret;
-      }
-      if (rsec.dataset.dirty && st.app_secret && rsec.value === st.app_secret) {
-        rsec.dataset.dirty = '';
-      }
-    }
-  });
-}
-// 密码类输入的显隐切换（SSH 同款）
-function hgEyeWire(btn) {
-  if (!btn || btn.dataset.wired) return;
-  btn.dataset.wired = '1';
-  btn.addEventListener('click', ev => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    const inp = btn.parentElement.querySelector('input');
-    if (!inp) return;
-    const show = inp.type === 'password';
-    inp.type = show ? 'text' : 'password';
-    btn.innerHTML = show ? ICO16.eyeOff : ICO16.eye;
-    btn.title = show ? '隐藏' : '显示';
-  });
-}
-document.querySelectorAll('[data-hg-eye]').forEach(hgEyeWire);
-// App ID 输入的 dirty 监听：必须在首次 render 之前就挂上——首屏 status
-// 拉取失败时 render 从未执行，若监听只在 render 里挂，用户清空 App ID
-// 的「清除」意图会被后续回填静默抹掉
-function hgRobotWire(rid) {
-  if (!rid || rid.dataset.wired) return;
-  rid.dataset.wired = '1';
-  rid.addEventListener('input', () => { rid.dataset.dirty = '1'; });
-}
-document.querySelectorAll('[data-hg-robot-id]').forEach(hgRobotWire);
-// 密钥框的 dirty 监听（同款：用户改过就不再被轮询回填覆盖）
-function hgSecretWire(sec) {
-  if (!sec || sec.dataset.wired) return;
-  sec.dataset.wired = '1';
-  sec.addEventListener('input', () => { sec.dataset.dirty = '1'; });
-}
-function hgLoginTogglePop(force) {
-  document.querySelectorAll('[data-hg-login-pop]').forEach(pop => {
-    const opening = (force !== undefined ? force : pop.style.display === 'none');
-    // 每次展开重置回填闸并立即回填：dirty 粘住会让框一直空着；而只清
-    // dirty 不回填则「框空 + 点保存」等价于清除凭据，一次误点就掉线
-    if (opening) {
-      const rid = pop.querySelector('[data-hg-robot-id]');
-      // 状态未知时先补拉一次：否则框空着、用户以为没配置过，误点保存
-      // 就是「清除凭据」
-      if (!Object.keys(_hgLastSt).length) hgLoginRefresh();
-      if (rid) {
-        rid.dataset.dirty = '';
-        if (!rid.value && _hgLastSt.app_id) rid.value = _hgLastSt.app_id;
-      }
-      // 密钥同款：只复位 App ID 会让「清空密钥并保存」后密钥框永久为空，
-      // 与后端实际值（留空即沿用旧密钥）不符
-      const rsec = pop.querySelector('[data-hg-robot-secret]');
-      if (rsec) {
-        rsec.dataset.dirty = '';
-        if (!rsec.value && _hgLastSt.app_secret) rsec.value = _hgLastSt.app_secret;
-      }
-    }
-    pop.style.display = opening ? '' : 'none';
-  });
-}
+
 async function hgLoginRefresh() {
   try {
-    // 必须带超时：worker 半死时裸 fetch 永不 settle，30s 定时器会不断
-    // 累积 pending 请求占满连接池，连「保存机器人」也会被排队拖超时
-    const j = await _hgFetchJson('/api/hiklink/status', null, 4000);
-    if (j && j.ok) hgLoginRender(j);
+    // 带超时：worker 半死时裸 fetch 永不 settle，30s 定时器会累积 pending
+    const ctl = new AbortController();
+    const tid = setTimeout(() => ctl.abort(), 4000);
+    let j;
+    try {
+      const r = await fetch('/api/lanzi/bot_status', { signal: ctl.signal });
+      j = await r.json();
+    } finally { clearTimeout(tid); }
+    if (!j || !j.ok) return;
+    document.querySelectorAll('[data-hg-login-toggle]').forEach(tg => {
+      const dot = tg.querySelector('[data-hg-login-dot]');
+      const txt = tg.querySelector('[data-hg-login-text]');
+      if (dot) dot.className = hgBotLed(j);
+      if (!txt) return;
+      // 指示灯只表达机器人状态；用户名用颜色表达登录状态
+      if (j.username) {
+        txt.textContent = j.username;
+        txt.className = 'hg-login-userlabel on';
+      } else {
+        txt.textContent = '未登录';
+        txt.className = 'hg-login-userlabel off';
+      }
+    });
   } catch (_) {}
 }
-document.addEventListener('click', async ev => {
-  // 冒泡弹窗开合：点胶囊切换；点弹窗内部不关；点其他区域关闭
-  const toggle = ev.target.closest('[data-hg-login-toggle]');
-  if (toggle) { hgLoginTogglePop(); return; }
-  if (!ev.target.closest('[data-hg-login-pop]')) hgLoginTogglePop(false);
-  const loginBtn = ev.target.closest('[data-hg-login-btn]');
-  if (loginBtn) {
-    const pop = loginBtn.closest('[data-hg-login-pop]');
-    const uEl = pop.querySelector('[data-hg-login-user]');
-    const pEl = pop.querySelector('[data-hg-login-pwd]');
-    const u = (uEl.value || '').trim(), p = pEl.value || '';
-    if (!u || !p) { (u ? pEl : uEl).focus(); return; }
-    loginBtn.disabled = true; const old = loginBtn.textContent;
-    loginBtn.textContent = '登录中…';
-    try {
-      const sj = await _hgFetchJson('/api/proxy/credentials',
-        { action: 'save', username: u, password: p }, 8000);
-      // v2.2.2：写盘失败如实报错——旧版静默吞 + 乐观渲染「已登录」，
-      // 凭据实际没落盘，重启就得重登（同事机实锤）
-      if (!sj.ok) { showBanner(sj.msg || '登录保存失败', 4000, true); return; }
-      // 后端会如实回报机器人是否启用（凭证模式下账号登录不激活机器人），
-      // 成功分支也要显示——否则「机器人未启用（…）」这条提示用户看不到
-      if (sj.msg) showBanner(sj.msg, 4000, false);
-      // 凭据就位后端已尝试激活；再显式触发一次（幂等），结果如实使用
-      // （无凭证时不要乐观显示 running:true）
-      const aj = await _hgFetchJson('/api/hiklink/activate', {}, 5000)
-        .catch(() => null);
-      // 乐观渲染只补登录态字段，合并上一次真实状态——整块替换会把
-      // manual/app_id/auth_failed 抹掉。基线为空（首屏状态拉取失败）时
-      // 先补拉一次，否则手填模式这一帧文案整体退回「已登录」。
-      // 两处 fetch 都带超时：worker 未就绪时无超时会永久挂住按钮
-      if (!Object.keys(_hgLastSt).length) {
-        try {
-          const jsStatus = await _hgFetchJson('/api/hiklink/status', null, 4000);
-          if (jsStatus && jsStatus.ok) _hgLastSt = jsStatus;
-        } catch (_) {}
-      }
-      // 乐观渲染只补登录态；机器人 running 只在后端确认激活成功时才置真
-      // （无凭证时置真会让胶囊显示「连接中…」，1.5s 后才被纠偏）
-      const botOn = !!(aj && aj.ok);
-      hgLoginRender(Object.assign({}, _hgLastSt,
-        { username: u, running: botOn, connected: false }), true);
-      pEl.value = '';
-      setTimeout(hgLoginRefresh, 1500);
-    } catch (_) {}
-    loginBtn.disabled = false; loginBtn.textContent = old;
-    return;
-  }
-  const outBtn = ev.target.closest('[data-hg-logout-btn]');
-  if (outBtn) {
-    // 带超时：worker 半死时裸 fetch 会让登出按钮毫无反馈
-    try { await _hgFetchJson('/api/proxy/credentials',
-      { action: 'clear' }, 6000); } catch (_) {}
-    hgLoginRefresh();
-  }
-  // 保存机器人凭据：两项都空=清除（机器人离线），否则保存并重连
-  const rSave = ev.target.closest('[data-hg-robot-save]');
-  if (rSave) {
-    const pop = rSave.closest('[data-hg-login-pop]');
-    const id = (pop.querySelector('[data-hg-robot-id]').value || '').trim();
-    let secret = (pop.querySelector('[data-hg-robot-secret]').value || '').trim();
-    // 密钥框留空 = 沿用已存密钥（仅 App ID 未变时；换 ID 必须重填）
-    const keepSecret = !secret && id && _hgLastSt.manual
-      && _hgLastSt.app_id === id;
-    if (id && !secret && !keepSecret) {
-      showBanner('请填写 App Secret', 3000, true); return;
-    }
-    if (!id && secret) { showBanner('请填写 App ID', 3000, true); return; }
-    // 两项皆空 = 清除凭据并导致机器人掉线。状态未知（首屏 status 没拉到、
-    // _hgLastSt 为空）时按「有风险」处理——undefined 不能当 false 放行
-    if (!id && !secret && _hgLastSt.manual !== false
-        && !confirm('将清除已保存的机器人凭据并断开当前机器人连接，确定吗？')) {
-      return;
-    }
-    rSave.disabled = true; const old = rSave.textContent;
-    rSave.textContent = '保存中…';
-    try {
-      // 用带超时的封装：worker 半死（端口 accept 但不响应）时裸 fetch
-      // 永不 settle，按钮会永久卡在「保存中…」
-      const j = await _hgFetchJson('/api/hiklink/credentials',
-        { app_id: id, app_secret: secret }, 15000);
-      showBanner(j.msg || (j.ok ? '已保存' : '保存失败'), 4000, !j.ok);
-      setTimeout(hgLoginRefresh, 1500);
-    } catch (_) { showBanner('保存请求失败', 3000, true); }
-    rSave.disabled = false; rSave.textContent = old;
-    return;
-  }
-});
-setInterval(hgLoginRefresh, 30000);   // 低频保活（登录态/机器人在线显示）
+setInterval(hgLoginRefresh, 30000);   // 低频保活（机器人/登录态显示）
 hgLoginRefresh();
 
-// ---- Proxy 状态按钮（输入卡上方，原顶部按钮迁入）：显示运行态+端口，点击开代理面板 ----
-// a442（用户需求）：悬浮显示模型负载。后端 status 只在「上游是 lanz」且已登录
-// 时下发 model_loads；有数据才出悬浮卡，不是 lanz 网关时保持原样。
-let _hgProxyLoads = null;     // 最近一次 status 的 model_loads（悬浮时直接用）
-let _hgProxyLoadsErr = '';    // a452：后端下发的 model_loads_err（无数据时给用户原因）
-let _hgProxyLoadsSupported = true;   // a453：上游是否支持负载（非 lanz 网关时 false）
-let _hgLoadsTip = null;
-
-function _hgLoadsTipEl() {
-  if (_hgLoadsTip && document.contains(_hgLoadsTip)) return _hgLoadsTip;
-  const el = document.createElement('div');
-  el.className = 'hg-loads-tip';
-  el.style.display = 'none';
-  document.body.appendChild(el);
-  _hgLoadsTip = el;
-  return el;
-}
-function _hgLoadsPaint(anchor) {
-  const loads = _hgProxyLoads;
-  // a452（审计 P2）：数据未到时也要建 tip 并显示「加载中」——原来直接
-  // return 不建元素，而 hgProxyRefreshState 的回调与 20s tick 都以
-  // 「_hgLoadsTip 非空」为前提，形成永久不自愈的闭环：冷启动首次悬停
-  // 什么都看不到，必须移开再悬停。现在先占位，数据到了原地重绘。
-  const tip = _hgLoadsTipEl();
-  if (!loads || !loads.length) {
-    tip.innerHTML = '<div class="hg-loads-row"><span class="hg-loads-name" ' +
-      'style="color:var(--muted)">' +
-      (_hgProxyLoadsErr ? esc(_hgProxyLoadsErr) : '负载加载中…') + '</span></div>';
-  } else {
-    // a443（用户实锤）：去掉标题行——它在深色背景上是一条突兀的黑条。
-    tip.innerHTML = loads.map(m => {
-      const pct = (m.pct == null) ? null : m.pct;
-      const cls = m.level ? ' px-load--' + m.level : '';
-      return '<div class="hg-loads-row"><span class="hg-loads-name">' + esc(m.name) + '</span>' +
-        '<span class="hg-loads-bar' + cls + '"><i style="width:' + (pct == null ? 0 : pct) + '%"></i></span>' +
-        '<span class="hg-loads-pct' + cls + '">' + (pct == null ? '--' : pct + '%') + '</span></div>';
-    }).join('');
-  }
-  tip.style.display = 'block';
-  const r = anchor.getBoundingClientRect();
-  const tw = tip.offsetWidth, th = tip.offsetHeight;
-  // a443（用户实锤「窗口向下被截断」）：Proxy 按钮贴窗口下沿，向下弹必然
-  // 被裁。优先向上弹（卡片底部对齐按钮顶部上方 6px）；上方也放不下时
-  // 退化为「贴视口顶部、向下弹」。
-  let top = r.top - th - 6;
-  if (top < 8) top = Math.min(r.bottom + 6, Math.max(8, window.innerHeight - th - 8));
-  // a452（审计 P2）：上界兜底——窗口比卡片还矮时上面两条都放不下，
-  // 必须钳到 0（并让卡片自身可滚动），否则底部仍被裁掉。
-  const _avail = window.innerHeight - 16;
-  if (th > _avail) {
-    tip.style.maxHeight = _avail + 'px';
-    tip.style.overflowY = 'auto';
-    top = 8;
-  } else {
-    tip.style.maxHeight = '';
-    tip.style.overflowY = '';
-    top = Math.max(8, Math.min(top, window.innerHeight - th - 8));
-  }
-  tip.style.top = Math.round(top) + 'px';
-  tip.style.left = Math.round(r.left) + 'px';
-  // 右缘防溢出
-  if (r.left + tw > window.innerWidth - 8) {
-    tip.style.left = Math.max(8, window.innerWidth - tw - 8) + 'px';
-  }
-}
-function _hgLoadsHide() {
-  if (_hgLoadsTip) _hgLoadsTip.style.display = 'none';
-  _hgLoadsStopTick();
-}
-// a444（用户实锤「一直悬浮就不更新」）：原来只在 mouseover 拉一次，悬停期间
-// 数值冻住，挪开再回来才变。悬停期间按 20s（后端缓存 TTL）定时重拉，卡片
-// 可见时跟着重绘；鼠标离开即停。
-let _hgLoadsTick = null;
-function _hgLoadsStopTick() {
-  if (_hgLoadsTick) { clearInterval(_hgLoadsTick); _hgLoadsTick = null; }
-}
-function _hgLoadsTickStart(anchor) {
-  _hgLoadsStopTick();
-  _hgLoadsTick = setInterval(() => {
-    if (!_hgLoadsTip || _hgLoadsTip.style.display === 'none') { _hgLoadsStopTick(); return; }
-    _hgProxyHoverAnchor = anchor;
-    hgProxyRefreshState();     // 拉到新数据后由下方 .then 重绘
-  }, 20000);
-}
-let _hgProxyHoverAnchor = null;
-document.addEventListener('mouseover', ev => {
-  const btn = ev.target.closest('[data-hg-proxy-btn]');
-  if (!btn) return;
-  // mouseover 在按钮内子元素间移动会反复触发——只在「进入按钮」这一次
-  // （relatedTarget 不在按钮内）才拉数据 + 重臂定时器，否则悬停时每秒
-  // 好几发请求。
-  if (btn.contains(ev.relatedTarget)) return;
-  // a453：上游不支持负载（非 lanz 网关）时不出卡、不启 tick
-  if (!_hgProxyLoadsSupported) { hgProxyRefreshState(); return; }
-  _hgProxyHoverAnchor = btn;
-  hgProxyRefreshState();
-  _hgLoadsPaint(btn);
-  _hgLoadsTickStart(btn);
-});
-document.addEventListener('mouseout', ev => {
-  const btn = ev.target.closest('[data-hg-proxy-btn]');
-  if (!btn) return;
-  // 同上：移去按钮内部的子元素不算离开
-  if (btn.contains(ev.relatedTarget)) return;
-  _hgProxyHoverAnchor = null;
-  _hgProxyLoadsErr = '';   // a452：离开即清，下次悬停重新取
-  _hgLoadsHide();
-});
+// ---- Proxy 状态按钮：只显示代理运行态 + 点开代理面板 ----
+// a672：模型负载悬浮卡已迁到 Lanzi 专栏（web/js/lanzi/panel.js，挂在
+// Lanzi tab 上）——负载是 lanzi 网关的数据，不是代理转发的数据。
 
 function hgProxyRefreshState() {
   const fetchIt = async () => {
     try {
-      // a452（审计 P2）：后端卡住时 fetch 永不 settle，20s 一次的定时重拉会
-      // 累积 pending 请求占满同域连接池（本文件 289 行已为同类问题加过超时）。
       const _ac = new AbortController();
       const _to = setTimeout(() => { try { _ac.abort(); } catch(_) {} }, 8000);
-      let r, j;
+      let j;
       try {
-        r = await fetch('/api/proxy/status', { signal: _ac.signal });
+        const r = await fetch('/api/proxy/status', { signal: _ac.signal });
         j = await r.json();
       } finally { clearTimeout(_to); }
       let txt = '· 未运行', cls = ' off';
       if (j.already_running || j.running) {
-        // a445（用户实锤「要么运行中要么重试中，不能运行中（重试中）」）：
-        // 重试是「处理中」的独立状态，不与运行中叠加。
-        // a452（审计 P2）：判据改吃后端算好的 status——后端在 in_flight_retries
-        // 之外还有 recent_overload（2s）/recent_fail（5s）也置 RETRY，前端
-        // 只重算第一个会让用户把「退避重试窗口」看成「运行中」。
         const retrying = (j.status === 'RETRY');
         txt = retrying ? '· 37349 重试中' : '· 37349 运行中';
         cls = ' on';
@@ -569,25 +221,6 @@ function hgProxyRefreshState() {
         el.textContent = txt;
         el.className = 'hg-proxy-state' + cls;
       });
-      // a442：悬浮卡的负载数据（无数据时置空，悬浮不出卡）
-      _hgProxyLoads = (j.model_loads && j.model_loads.length) ? j.model_loads : null;
-      _hgProxyLoadsErr = j.model_loads_err || '';
-      // a453（第二轮审计 P2）：上游不支持负载（非 lanz 网关）→ 直接收起卡片，
-      // 不要停在「负载加载中…」空转（fetch 一直成功但没有数据，永不自愈）。
-      _hgProxyLoadsSupported = j.model_loads_supported !== false;
-      if (!_hgProxyLoadsSupported) {
-        _hgProxyLoadsErr = '';
-        try { if (_hgLoadsTip) _hgLoadsTip.style.display = 'none'; } catch(_) {}
-        _hgProxyHoverAnchor = null;
-        try { _hgLoadsStopTick(); } catch(_) {}
-        return;
-      }
-      // a444：卡片在场时跟着刷新（悬停定时器 20s 一拉，数据回来就重绘）
-      // a452：数据未到时也要重绘（显示原因/加载中），不能直接 Hide——
-      // 原来空数据走 _hgLoadsHide 会把卡片收掉，用户看着像卡没弹出来。
-      if (_hgProxyHoverAnchor && _hgLoadsTip && _hgLoadsTip.style.display !== 'none') {
-        _hgLoadsPaint(_hgProxyHoverAnchor);
-      }
     } catch (_) {}
   };
   fetchIt();
@@ -626,9 +259,6 @@ hgProxyRefreshState();
 // let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
 window._harnessClose = _harnessClose;
 window.claudeButtonAction = claudeButtonAction;
-window.hgEyeWire = hgEyeWire;
 window.hgLoginRefresh = hgLoginRefresh;
 window.hgProxyRefreshState = hgProxyRefreshState;
-window.hgRobotWire = hgRobotWire;
-window.hgSecretWire = hgSecretWire;
 window.setClaudeUiMode = setClaudeUiMode;

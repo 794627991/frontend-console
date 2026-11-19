@@ -445,6 +445,10 @@ def _exc():
 def _make_menu_provider(window, on_quit):
     """菜单描述树构建器：显示主窗口 / Proxy 段（动态） / 退出。"""
     def provider():
+        # a672：先给安全初值——下面 Proxy 段的 try 若在 import 阶段失败，
+        # Lanzi 段会读到未定义名而整段静默消失（外层 except 吞掉）
+        _base = ""
+        _offload = False
         items = [
             ("item", "显示主窗口",
              lambda: (window.show(), window.restore(),
@@ -477,6 +481,14 @@ def _make_menu_provider(window, on_quit):
                               {"enabled": False}))
         except Exception:
             _log("Proxy 菜单段构建失败: %s", repr(_exc()))
+
+        # a672：Lanzi 段（额度概览 + 立即刷新）——数据面在 worker 时经 HTTP
+        # 桥读 /api/lanzi/status；inline 形态直接读本地 lanzi 状态槽
+        try:
+            from src.lanzi import menu as _lm
+            items.extend(_lm.menu_items(_base, _offload))
+        except Exception:
+            _log("Lanzi 菜单段构建失败: %s", repr(_exc()))
         items.append(("sep",))
         items.append(("item", "退出", on_quit, {}))
         return items

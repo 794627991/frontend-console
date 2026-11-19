@@ -583,8 +583,11 @@ function switchTab(portId, auto) {
     // 若分析标签正显示，刷新一次（数据源已切到新连接的 buffer）
     const activePane = document.querySelector('.panel-tab.active');
     if (activePane && activePane.dataset.pane === 'analyze') renderAnalyze();
-    // proxy tab：切回时恢复 1s 轮询（切走时面板自己停；conn.onResumePoll 由 proxy-panel 注入）
-    if (conn.meta.kind === 'proxy' && typeof conn.onResumePoll === 'function')
+    // proxy / lanzi tab：切回时恢复轮询（切走时面板自己停；onResumePoll 由
+    // 各自面板注入）。a672：lanzi 是新面板，漏登记会导致切走再切回后
+    // 额度/机器人状态永久冻结。
+    if ((conn.meta.kind === 'proxy' || conn.meta.kind === 'lanzi')
+        && typeof conn.onResumePoll === 'function')
       conn.onResumePoll();
     // 编辑器 tab：启动磁盘改动检测（5s 轮询 mtime；切走时定时器自惰——不可见跳过）
     if (conn.meta.kind === 'editor' && typeof _edOnSwitchEditor === 'function')

@@ -119,6 +119,8 @@
   }
 
   // ---- 挂载接口 ----
+  // a672：概览与用量统计合并为同一页后，不再有「切到用量页才拉」的时机，
+  // 挂载即拉一次（可见性由外层轮询的 tab 检测兜底）。
   window.pxUsageInit = function (w) {
     wrap = w;
     wrap.querySelectorAll('[data-px-u-range]').forEach(btn => {
@@ -128,5 +130,6 @@
         loadUsage();
       };
     });
+    loadUsage();
   };
   window.pxUsageLoad = function () { loadUsage(); };

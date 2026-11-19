@@ -1076,7 +1076,7 @@ def _renew_bot_after_switch():
     """切 API 方案收尾：小助手 harness 进程 kill+resume 换新 token。
     任何一步失败静默——续不上的会话在下次发送时由超窗拒发/自愈兜底。"""
     try:
-        from src import hiklink_bot as hb
+        from src.lanzi import bot as hb
         ctl = hb._controller
         s = ctl._session() if ctl else None
         if s and s.alive and not s.busy:

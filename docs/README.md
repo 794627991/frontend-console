@@ -25,9 +25,8 @@
 │   ├── worker_app.py                Claude 后端独立进程（harness / proxy / hiklink）
 │   ├── mcp_server.py                MCP stdio server（Claude Code 集成）
 │   ├── harness/                     Claude 会话管线（session / routes / v4feed / lifecycle）
-│   ├── proxy.py / proxy_core.py     Claude Proxy（重试代理 + 额度）
-│   ├── lanz_quota.py                Lanz 额度客户端（CAS 登录）
-│   ├── hiklink_bot.py               HikLink 机器人（PC 登录 + WS）
+│   ├── proxy.py / proxy_core.py     Claude Proxy（重试代理，纯转发职责）
+│   ├── lanzi/                       Lanzi 专栏（a672）：机器人 / SSO 登录 / 额度 / 负载
 │   ├── app_state.py                 共享状态 + 路径常量
 │   ├── base_conn.py / serial_conn.py / ssh_conn.py / telnet_conn.py   连接层
 │   ├── log_index.py                 G 级日志行偏移索引

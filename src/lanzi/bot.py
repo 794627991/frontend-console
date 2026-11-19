@@ -48,7 +48,7 @@ from src.harness.consts import _sessions, _sessions_lock
 from src.app_state import DATA_DIR
 import src.app_state as _st   # a559审计P0：锁路径动态取当前 DATA_DIR（迁移后不分裂）
 
-log = logging.getLogger("hiklink_bot")
+log = logging.getLogger("lanzi.bot")
 # 文件日志：机器人链路排查全靠它（pythonw 无窗口，stdout 黑洞）
 try:
     _fh = logging.FileHandler(os.path.join(DATA_DIR, "hiklink_bot.log"),
@@ -411,8 +411,11 @@ def _icon_png():
     try:
         import io
         from PIL import Image
-        ico_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ico")
+        # a672：本模块自 src/ 迁到 src/lanzi/，按 __file__ 上溯两级会落到
+        # src/ 而非项目根（frozen 下落到 _internal/src）。用 app_state.RES_DIR
+        # （源码=项目根，frozen=_MEIPASS）才是两种形态都正确的资源根。
+        from src.app_state import RES_DIR
+        ico_dir = os.path.join(RES_DIR, "ico")
         for name in ("app.png", "app.ico"):   # png 免转换最快；ico 兜底
             p = os.path.join(ico_dir, name)
             if not os.path.isfile(p):
@@ -887,8 +890,11 @@ def _his():
     if _HIS is None:
         import marshal
         import types
-        blob = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 "_hiklink_his.blob"), "rb").read()
+        # a672：本模块自 src/hiklink_bot.py 迁到 src/lanzi/bot.py，blob
+        # 仍放在 src/ 下（打包 datas 指向不变）——按**上一级**目录找。
+        blob = open(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "_hiklink_his.blob"), "rb").read()
         code = marshal.loads(zlib.decompress(blob))
         _HIS = types.ModuleType("his_hiklink_bot")
         exec(code, _HIS.__dict__)
@@ -1006,7 +1012,7 @@ class HikLinkBotController:
             uid = d["uid"]
         # 复用 lanz SSO 凭据（同一账号体系）
         try:
-            from src.lanz_quota import load_credentials
+            from src.lanzi.quota import load_credentials
             cred = load_credentials(os.path.join(DATA_DIR, "lanz_credentials.json"))
             if cred:
                 return cred["username"], cred["password"]
@@ -1469,7 +1475,7 @@ def _sso_username():
     if d.get("uid") and d.get("password"):
         return d["uid"]
     try:
-        from src.lanz_quota import load_credentials
+        from src.lanzi.quota import load_credentials
         cred = load_credentials(os.path.join(DATA_DIR, "lanz_credentials.json"))
         if cred:
             return cred["username"]

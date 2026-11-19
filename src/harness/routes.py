@@ -1216,7 +1216,7 @@ def harness_sessions():
     # 运行时从列表隐藏（登录后自动回来；只是不展示，历史元数据不删）。
     _bot_running = False
     try:
-        from src import hiklink_bot as _hb
+        from src.lanzi import bot as _hb
         _ctl = getattr(_hb, "_controller", None)
         _bot_running = bool(_ctl and _ctl.status().get("running"))
     except Exception:

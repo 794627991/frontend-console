@@ -18,8 +18,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src import lanz_quota as L          # noqa: E402
-from src import proxy as P              # noqa: E402
+from src.lanzi import quota as L        # noqa: E402
+from src.lanzi import worker as P       # noqa: E402
 
 
 # ---- 1. _fetch_all 的返回值语义 ----------------------------------------

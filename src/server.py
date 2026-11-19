@@ -110,7 +110,7 @@ DEBUG_WEB_PAGE = DEBUG_CAPS
 # 串口不能卡」）：harness/hiklink 重负载移驻 src/worker_app.py 独立进程，
 # 本进程只留串口终端与轻量路由。CLAUDE_INLINE=1 回落旧单进程形态（排障）。
 # WORKER_BASE 由 main.py 拉起 worker 后回填（""=未就绪），index 注入 +
-# /api/harness、/api/hiklink 的 307 兜底重定向都在请求时读它。
+# /api/harness、/api/lanzi 的 307 兜底重定向都在请求时读它。
 CLAUDE_OFFLOAD = os.environ.get("CLAUDE_INLINE") != "1"
 WORKER_BASE = ""
 # a558（SSO 锁号实锤）：真应用实例判定——main.py 入口（含打包 exe，frozen）
@@ -215,11 +215,13 @@ else:
 # 重定向（见文件尾 claude_worker_relay）+ 前端 workerbase.js 直连；
 # CLAUDE_INLINE=1 时恢复原位注册（排障通道）
 if CLAUDE_OFFLOAD:
-    _hiklink_bot = None   # /api/hiklink/* 路由不注册（worker 承载）
+    pass   # /api/harness|/api/lanzi 族路由不注册（worker 承载，文件尾 307 兜底）
 else:
-    from src import hiklink_bot as _hiklink_bot
     from src.harness.routes import harness_bp
     app.register_blueprint(harness_bp)
+    # a672：Lanzi 专栏（机器人/登录/额度）统一蓝图，与代理彻底分家
+    from src.lanzi.routes import lanzi_bp
+    app.register_blueprint(lanzi_bp)
 
 # R3 审计 B6（D6，用户拍板）：/api/* 的 404/405 全局 JSON 化——错误方法/
 # 未知 API 路径原先返回 Werkzeug HTML（AI 与脚本消费方解析困难），与全局
@@ -497,17 +499,17 @@ def start_background():
         def _bot_restore():
             time.sleep(8)   # 让端口/网络就绪，避开启动高峰
             try:
-                from src import hiklink_bot as hb
+                from src.lanzi import bot as hb
                 # 机器人只认凭证登录（SSO 自动注册已退役）：没凭证就别调
                 # ensure_started，否则每次开机刷一行「启动自恢复失败」
                 if hb.is_manual_mode():
                     ok, msg = hb.ensure_started()
                     import logging
-                    logging.getLogger("hiklink_bot").info(
+                    logging.getLogger("lanzi.bot").info(
                         "启动自恢复机器人: %s (%s)", "成功" if ok else "失败", msg)
             except Exception as e:
                 import logging
-                logging.getLogger("hiklink_bot").warning(
+                logging.getLogger("lanzi.bot").warning(
                     "启动自恢复机器人异常: %s", e)
         threading.Thread(target=_bot_restore, daemon=True,
                          name="hiklink-bot-restore").start()
@@ -3114,12 +3116,22 @@ def _do_data_dir_migrate(target):
     try:
         import src.proxy as _px
         _px.DATA_DIR = target
-        _px.LANZ_CRED_PATH = os.path.join(target, "lanz_credentials.json")
         _px.PROXY_STATE_PATH = os.path.join(target, "proxy_state.json")
     except Exception:
         pass
+    # a672：lanzi 的凭据/登录标记路径是模块级按值固化的，迁移目录必须同步。
+    # 【形态局限（审计确认，与迁移前 proxy.LANZ_CRED_PATH 同病）】offload 形态
+    # 下 lanzi.state / lanzi.bot 实际活在 worker 进程，这里 patch 的是主进程
+    # 的模块副本——worker 仍读写旧目录。彻底修需要让 worker 重新绑定路径
+    # （重启 worker）或走跨进程接口；当前只在 inline 形态完全生效。
     try:
-        import src.hiklink_bot as _hk
+        import src.lanzi.state as _lz
+        _lz.CRED_PATH = os.path.join(target, "lanz_credentials.json")
+        _lz.MARKS_PATH = os.path.join(target, "lanz_login_marks.json")
+    except Exception:
+        pass
+    try:
+        import src.lanzi.bot as _hk
         _hk.DATA_DIR = target
         _hk.SESSION_PATH = os.path.join(target, "hiklink_session.json")
     except Exception:
@@ -4325,41 +4337,8 @@ def cmd_lib_save():
     return jsonify({"ok": True, "lib": clean})
 
 
-# ---- HikLink 机器人：统一登录状态聚合 + 激活门控（机器人与登录绑定） ----
-# （进程隔离时随 bot 移驻 worker；本进程由 claude_worker_relay 307 兜底）
 if not CLAUDE_OFFLOAD:
-    @app.route("/api/hiklink/status")
-    def hiklink_status():
-        """统一登录 UI 轮询：登录名 + 机器人运行态。"""
-        try:
-            return jsonify({"ok": True, **_hiklink_bot.status_snapshot()})
-        except Exception as e:
-            return jsonify({"ok": False, "msg": str(e)})
-
-    @app.route("/api/hiklink/activate", methods=["POST"])
-    def hiklink_activate():
-        """激活/停用机器人（幂等）。未登录（无统一凭据）时激活会被拒绝。"""
-        j = request.get_json(silent=True) or {}
-        if j.get("stop"):
-            ok, msg = _hiklink_bot.ensure_stopped()
-        else:
-            ok, msg = _hiklink_bot.ensure_started()
-        return jsonify({"ok": ok, "msg": msg})
-
-    @app.route("/api/hiklink/credentials", methods=["POST"])
-    def hiklink_credentials():
-        """保存/清除手填机器人凭据（App ID + App Secret）。本路由与 worker
-        侧同款——inline 排障形态（CLAUDE_INLINE=1）下没有 307 兜底，缺它就
-        只有 status/activate 可用、保存直连 404。"""
-        j = request.get_json(silent=True)
-        if not isinstance(j, dict) or "app_id" not in j or "app_secret" not in j:
-            return jsonify({"ok": False,
-                            "msg": "请求体必须含 app_id 与 app_secret"}), 400
-        ok, msg = _hiklink_bot.set_manual_credentials(
-            j.get("app_id"), j.get("app_secret"))
-        return jsonify({"ok": ok, "msg": msg})
-
-
+    pass   # a672：HikLink/额度端点已并入 lanzi 蓝图（上方已注册）
 else:
     # ---- Claude worker 兜底重定向（307 保方法保 body）----
     # 前端已由 workerbase.js 直连 worker，这里只兜本机子进程（audit-hook /
@@ -4373,8 +4352,8 @@ else:
 
     @app.route("/api/harness", methods=_CW_METHODS)
     @app.route("/api/harness/<path:sub>", methods=_CW_METHODS)
-    @app.route("/api/hiklink", methods=_CW_METHODS)
-    @app.route("/api/hiklink/<path:sub>", methods=_CW_METHODS)
+    @app.route("/api/lanzi", methods=_CW_METHODS)
+    @app.route("/api/lanzi/<path:sub>", methods=_CW_METHODS)
     @app.route("/api/proxy", methods=_CW_METHODS)
     @app.route("/api/proxy/<path:sub>", methods=_CW_METHODS)
     @app.route("/api/usage", methods=_CW_METHODS)

@@ -30,6 +30,7 @@ js/tree-search.js
 js/bit-calc.js
 js/web-panel.js
 js/proxy-panel.js
+js/lanzi/panel.js
 js/proxy-usage.js
 js/snip.js
 js/a11y.js

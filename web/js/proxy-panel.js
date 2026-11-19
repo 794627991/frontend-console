@@ -1,7 +1,8 @@
 // ============================================================
 // Claude Proxy 面板（原 D:\AI\proxy 独立工具合入主窗口）
 // - tab 骨架同 bit-calc（模式 A：单例 + connections 表 + tab/wrap DOM）
-// - 后端 src/proxy.py：/api/proxy/status|start|stop|mode|compression|ccr|quota|credentials
+// - 后端 src/proxy.py：/api/proxy/status|start|stop|mode|compression|ccr|retry
+// - Lanzi 额度/登录已迁出：web/js/lanzi/panel.js + /api/lanzi/*（a672）
 // - 轮询：tab 激活时 1s（面板可见才轮询，切走停止——流畅守则）
 // - 链路：Claude Code → 18788(billion-context 压缩) → 37349(重试代理) → lanz 内网网关
 // ============================================================
@@ -50,14 +51,10 @@ function buildProxyTab() {
         <button class="lv-btn" data-px-mode="proxy" title="base_url 切到代理入口（8787/37349，重启 Claude Code 后生效）">切换为代理模式</button>
         <button class="lv-btn" data-px-mode="direct" title="base_url 切回内网网关直连">切换为直连模式</button>
       </div>
-      <div class="px-tabs">
-        <button class="px-tab px-tab-act" data-px-tab="main">概览</button>
-        <button class="px-tab" data-px-tab="usage">用量统计</button>
-      </div>
       <div class="px-body" data-px-page="main">
         <div class="px-msg" data-px-msg></div>
 
-        <!-- 统计卡行：请求/成功率/重试/失败 + tokens + 免费/收费 -->
+        <!-- 统计卡行：请求/成功率/重试/失败 + tokens -->
         <div class="px-stats" data-px-stats></div>
 
         <!-- 最近请求历史表（后端 snapshot req_history，增量插行） -->
@@ -87,61 +84,34 @@ function buildProxyTab() {
           <div class="px-hint">429/5xx/网络异常自动重试（阶梯退避 1s→封顶，带抖动）。点「重试配置」编辑上限次数/最大时长/退避开关/退避封顶，保存即热生效——正在运行的代理立即应用，无需重启。默认无限重试（0=无限）。</div>
         </div>
 
-        <!-- Lanz 额度区：登录 + 概览 + 三模型明细 + 模型用量排名（老 GUI 同款布局）-->
+
+        <!-- 用量统计（a672：原独立子 tab，现与概览同页——转发数据是一体的） -->
         <div class="px-sec">
-          <div class="px-sec-title">Lanz 额度</div>
-          <div class="px-quota-login" data-px-quota-login>
-            <input autocomplete="off" name="px_q_user" data-px-q-user placeholder="内网 SSO 用户名" spellcheck="false" style="width:150px;">
-            <span class="px-eye-wrap">
-              <input autocomplete="off" name="px_q_pwd" data-px-q-pwd type="password" placeholder="密码（存本地 lanz_credentials.json）" spellcheck="false" style="width:220px;">
-              <button class="px-eye" data-px-q-eye title="显示/隐藏密码" tabindex="-1" aria-label="显示或隐藏密码">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                </svg>
-              </button>
-            </span>
-            <button class="lv-btn" data-px-q-save>登录</button>
-            <button class="lv-btn" data-px-q-refresh title="立即刷新额度（沿用当前登录）">↻ 刷新</button>
-            <button class="lv-btn" data-px-q-relogin title="登录失效（多天不用后获取不到数据）时的自救：丢弃旧会话强制重新登录。只刷新登录状态，代理链路不受影响">强制重登</button>
-            <button class="lv-btn" data-px-q-logout title="删除本地凭据">断开</button>
-            <label class="px-q-auto" title="每 10 分钟自动刷新额度"><input type="checkbox" name="px_q_auto" data-px-q-auto checked> 自动刷新(10min)</label>
-            <label class="px-q-auto" title="开启：登录失败时自动重登。关闭：暂停自动重登，等你在登录页手动点「强制重登」（SSO 锁定期间建议关闭，避免每次重试重置锁定计时）"><input type="checkbox" name="px_q_autologin" data-px-q-autologin checked> 自动重登</label>
+          <div class="px-sec-title">用量统计
+            <span class="px-rank-ago">按模型堆叠 · 保留最近 <span data-px-u-keep>180</span> 天</span>
           </div>
-          <div class="px-q-statrow">
-            <span data-px-q-status style="font-size:12px;"></span>
-            <span class="px-q-last" data-px-q-last>上次刷新 -</span>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+            <div class="px-tabs" style="margin:0;">
+              <button class="px-tab px-tab-act" data-px-u-range="hour">当日按小时</button>
+              <button class="px-tab" data-px-u-range="7d">近 7 日</button>
+              <button class="px-tab" data-px-u-range="30d">近 30 日</button>
+            </div>
           </div>
-          <div data-px-quota-view></div>
-          <div data-px-quota-rank></div>
-          <div id="px-loads"></div>
+          <div class="px-stats" data-px-u-total></div>
+          <div class="px-sec" style="margin:10px 0 0;">
+            <div class="px-sec-title" data-px-u-title>Token 用量（输入+输出）</div>
+            <div class="px-usage-chart" data-px-u-chart></div>
+            <div class="px-usage-x" data-px-u-x></div>
+            <div class="px-legend" data-px-u-legend></div>
+          </div>
+          <div class="px-sec" style="margin:10px 0 0;">
+            <div class="px-sec-title">模型明细</div>
+            <div data-px-u-table></div>
+          </div>
         </div>
 
         <div class="px-hint" data-px-chain>链路：Claude Code → billion-context(18788，/bili/ 前缀压缩代理) → 重试代理(37349，429/5xx 自动重试) → 上游网关。退出工具自动停代理并回滚 base_url；异常退出下次启动自愈。压缩引擎 github.com/ranxianglei/billion-context（MIT，按条款署名）。</div>
         <div class="px-hint" data-px-direct>原 base_url（直连网关）：-</div>
-      </div>
-
-      <!-- 用量统计页：日×小时×模型聚合（180 天内），纯 CSS 堆叠柱状图 -->
-      <div class="px-body" data-px-page="usage" style="display:none;">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          <div class="px-tabs" style="margin:0;">
-            <button class="px-tab px-tab-act" data-px-u-range="hour">当日按小时</button>
-            <button class="px-tab" data-px-u-range="7d">近 7 日</button>
-            <button class="px-tab" data-px-u-range="30d">近 30 日</button>
-          </div>
-          <span class="px-hint">按模型堆叠；保留最近 <span data-px-u-keep>180</span> 天</span>
-        </div>
-        <div class="px-stats" data-px-u-total></div>
-        <div class="px-sec">
-          <div class="px-sec-title" data-px-u-title>Token 用量（输入+输出）</div>
-          <div class="px-usage-chart" data-px-u-chart></div>
-          <div class="px-usage-x" data-px-u-x></div>
-          <div class="px-legend" data-px-u-legend></div>
-        </div>
-        <div class="px-sec">
-          <div class="px-sec-title">模型明细</div>
-          <div data-px-u-table></div>
-        </div>
       </div>
     </div>`;
   const es = termArea.querySelector('.empty-state');
@@ -156,7 +126,6 @@ function buildProxyTab() {
     tab, wrap,
     pollTimer: null,
     tickTimer: null,   // 「上次刷新 Ns 前」倒计时 1s 纯字符串更新（老 GUI 同款）
-    quotaTs: 0,        // 最近一次 quota_ts（毫秒）
     seenHist: 0,     // 历史表增量游标（后端 req_history_total）
   };
   connections[portId] = conn;
@@ -168,37 +137,12 @@ function buildProxyTab() {
   const msgEl = $p('[data-px-msg]');
   const statsEl = $p('[data-px-stats]');
   const histEl = $p('[data-px-hist]');
-  const quotaViewEl = $p('[data-px-quota-view]');
-  const quotaRankEl = $p('[data-px-quota-rank]');
-  const qStatusEl = $p('[data-px-q-status]');
-  const qLastEl = $p('[data-px-q-last]');
-  const qUserEl = $p('[data-px-q-user]');
-  const qPwdEl = $p('[data-px-q-pwd]');
-  const qEyeBtn = $p('[data-px-q-eye]');
-  const qSaveBtn = $p('[data-px-q-save]');
-  const qRefreshBtn = $p('[data-px-q-refresh]');
-  const qReloginBtn = $p('[data-px-q-relogin]');
-  const qLogoutBtn = $p('[data-px-q-logout]');
-  const qAutoEl = $p('[data-px-q-auto]');
-  // a448：独立的自动重登开关（注意不能与「强制重登」按钮同属性——
-  // 原写成 data-px-q-relogin 会与按钮撞车，querySelector 取到的是按钮）
-  const qAutoLoginEl = $p('[data-px-q-autologin]');
   const hrStatsEl = $p('[data-px-hr-stats]');
   const hrCfgBtn = $p('[data-px-hr-cfg]');
   const retryCfgBtn = $p('[data-px-retry-cfg]');
   // ---- 面板内部 tab（概览/用量统计）：仅挂载点——用量逻辑全在
   // proxy-usage.js（独立积木），宿主文件不承载任何用量实现 ----
-  const uPage = $p('[data-px-page="usage"]');
-  const mainPage = $p('[data-px-page="main"]');
-  wrap.querySelectorAll('[data-px-tab]').forEach(btn => {
-    btn.onclick = () => {
-      const page = btn.dataset.pxTab;
-      wrap.querySelectorAll('[data-px-tab]').forEach(b => b.classList.toggle('px-tab-act', b === btn));
-      mainPage.style.display = page === 'main' ? '' : 'none';
-      uPage.style.display = page === 'usage' ? '' : 'none';
-      if (page === 'usage' && window.pxUsageLoad) pxUsageLoad(wrap);
-    };
-  });
+  // a672：概览与用量统计合并为同一页，不再有子 tab 切换
   if (window.pxUsageInit) pxUsageInit(wrap);
 
   const ST_CLS = {
@@ -241,7 +185,6 @@ function buildProxyTab() {
       ['失败', _pxFnum(fails)],
       ['输入 tokens', _pxTok(snap.total_input_tokens)],
       ['输出 tokens', _pxTok(snap.total_output_tokens)],
-      ['免费/收费', _pxFnum(snap.free_requests) + ' / ' + _pxFnum(snap.fee_requests)],
       ['运行', upTxt],
     ];
     statsEl.innerHTML = cards.map(([k, v]) =>
@@ -289,155 +232,6 @@ function buildProxyTab() {
       histEl.innerHTML = '';
     }
     if (!histEl.children.length) histEl.innerHTML = '<div class="px-hint">暂无请求</div>';
-  }
-
-  function _setQStatus(text, cls) {
-    // 状态点统一风格：绿=在线 黄=进行中 红=失败 灰=无（老 GUI 同款语义）
-    qStatusEl.innerHTML = text ? `<span class="px-badge ${cls}">${esc(text)}</span>` : '';   // a239 B3-P3: j.msg 直通统一转义
-  }
-
-  function _setQButtons(state) {
-    // 按钮启停态（老 GUI config(state=) 平移）：
-    // 登录成功/在线 → 启用刷新/断开；登录中禁刷新（防重复提交）；
-    // 登录失败/查询失败禁刷新（GUI 同款：对着失败态反复点刷新无意义）。
-    const online = state === 'online';
-    const busy = state === 'logging';
-    const locked = state === 'locked';
-    qRefreshBtn.disabled = busy || (!locked && (state === 'error' || state === 'fetch_err'));
-    qReloginBtn.disabled = !online && !locked && state !== 'error'
-      && state !== 'fetch_err' && state !== 'logging';
-    qLogoutBtn.disabled = busy;
-  }
-
-  function _qLastText() {
-    // 「上次刷新 HH:MM:SS (Ns 前)」——老 GUI _refresh_quota_age 平移。
-    // quota_ts 是秒级时间戳；无数据显示「-」。
-    if (!conn.quotaTs) return '上次刷新 -';
-    const ago = Math.max(0, Math.round(Date.now() / 1000 - conn.quotaTs));
-    const t = new Date(conn.quotaTs * 1000).toLocaleTimeString('zh-CN', { hour12: false });
-    return `上次刷新 ${t} (${ago}s 前)`;
-  }
-
-  // a442（用户需求「代理主界面也增加模型负载情况」）：模型实时负载表。
-  // 数据由后端 /api/proxy/status 的 model_loads 下发（仅上游是 lanz 时）。
-  // 口径与 lanz 平台一致：pct>85 拥挤 / >70 繁忙 / >=40 正常 / 其余空闲。
-  function _renderModelLoads(j) {
-    const host = document.getElementById('px-loads');
-    if (!host) return;
-    const loads = j.model_loads;
-    if (!loads || !loads.length) {
-      if (host.innerHTML) host.innerHTML = '';
-      return;
-    }
-    const lvTxt = { jam: '拥挤', busy: '繁忙', normal: '正常', idle: '空闲' };
-    host.innerHTML = '<div class="px-sec-title">模型负载' +
-      '<span class="px-rank-ago">' +
-      (j.model_loads_err ? esc(j.model_loads_err)
-        : (j.model_loads_ts ? '更新于 ' + new Date(j.model_loads_ts * 1000).toLocaleTimeString('zh-CN', { hour12: false }) : '')) +
-      '</span></div><div class="px-loads">' + loads.map(m => {
-      const pct = (m.pct == null) ? null : m.pct;
-      const cls = m.level ? ' px-load--' + m.level : '';
-      return '<div class="px-load-row"><span class="px-load-name">' + esc(m.name) + '</span>' +
-        '<span class="px-load-bar' + cls + '"><i style="width:' + (pct == null ? 0 : pct) + '%"></i></span>' +
-        '<span class="px-load-pct' + cls + '">' + (pct == null ? '--' : pct + '%') +
-        (m.level ? ' · ' + lvTxt[m.level] : '') + '</span>' +
-        (m.active != null && m.max != null
-          ? '<span class="px-load-num">' + m.active + '/' + m.max + '</span>' : '') +
-        '</div>';
-    }).join('') + '</div>';
-  }
-
-  function _renderQuota(j) {
-    // 登录态优先用后端独立槽 quota_login（data 事件不再覆盖登录态——
-    // 老版单槽 bug：登录成功后状态永远停在「登录中」）
-    const lg = j.quota_login;
-    const state = lg ? lg.state : null;
-    if (state === 'logging') _setQStatus('● 登录中…', 'px-retry');
-    else if (state === 'online') _setQStatus('● 在线 ' + esc(lg.user || ''), 'px-healthy');
-    else if (state === 'error') _setQStatus('登录失败', 'px-failed');
-    else if (state === 'locked') _setQStatus('账号锁定 · 已停止自动登录', 'px-failed');
-    else if (state === 'fetch_err') _setQStatus('查询失败', 'px-failed');
-    else if (!j.has_credentials) _setQStatus('● 未登录', 'px-stopped');
-    _setQButtons(state || (j.has_credentials ? '' : undefined));
-    // a452（审计 P2）：这批是「状态说明」，每 3s 轮询都会重写 msgEl，会把
-    // 用户刚点「强制重登/刷新」得到的操作反馈立刻盖掉（用户看不到结果，
-    // 容易连点）。规则：操作反馈设置了 dataset.keep 且在 6s 保鲜期内就
-    // 让位——只听状态、不写消息。
-    // a452（审计）：locked 必须无条件覆盖——它能压住操作反馈。否则用户
-    // 刚点完「强制重登」只看到「稍候看登录状态」，3s 后才看到锁定警告，
-    // 期间很可能再点一次，反而把 SSO 锁定计时续期。
-    const _holdMsg = _msgHeld();
-    if (state === 'locked')
-      // a454：锁定后后端已停登，这里必须说清楚「不会再自己试」——
-      // 否则用户会以为还在重试，反复点刷新反而续期锁定。
-      _msg('账号已被 SSO 锁定，已停止自动登录（每次尝试都会重置锁定计时）。'
-           + '请等待 8~30 分钟或联系 itsm@hikvision.com 解锁后再手动刷新。', true);
-    else if (_holdMsg) {
-      // 操作反馈优先，跳过本轮状态文案
-    } else if (state === 'error' || state === 'fetch_err')
-      _msg((state === 'error' ? '登录失败: ' : '查询失败: ') + (lg.msg || ''), true);
-    else if (state === 'online') _msg('');
-
-    // 倒计时基准：data 到了刷新 quotaTs（status 轮询里 quota_ts 不变不动）
-    if (j.quota_ts) conn.quotaTs = j.quota_ts;
-    qLastEl.textContent = _qLastText();
-    // 自动刷新 checkbox 同步（后端是真相源；用户点击瞬间先本地翻转防抖动）
-    if (document.activeElement !== qAutoEl) qAutoEl.checked = j.quota_auto !== false;
-    // a448：自动重登开关同步（独立开关，缺省 true）
-    if (qAutoLoginEl && document.activeElement !== qAutoLoginEl)
-      qAutoLoginEl.checked = j.quota_auto_relogin !== false;
-
-    const ov = j.quota_overview;
-    // a452（审计 P1）：只在**字段没被用户动过**时回填。原判据 `!qPwdEl.value`
-    // 把「用户主动清空」也当成「空着待填」——想换密码时删空后停 3s，旧密码
-    // 被填回；没全选就粘贴则拼成错密码，登录必失败。改用 dirty 标记：用户
-    // 一旦编辑过该字段（input 事件）就不再自动写，直到保存/登出复位。
-    if (!qUserEl._dirty && j.quota_username && !qUserEl.value)
-      qUserEl.value = j.quota_username;
-    if (!qPwdEl._dirty && j.quota_password && !qPwdEl.value)
-      qPwdEl.value = j.quota_password;
-    // a452（审计 P2）：额度概览没就绪时也要渲染模型负载——后端 model_loads
-    // 明确不依赖 quota_login 状态，挂在 !ov 之后会「悬浮卡有、面板没有」。
-    _renderModelLoads(j);
-    if (!ov) { quotaViewEl.innerHTML = '<div class="px-hint">登录后显示额度（10 分钟自动刷新）</div>'; return; }
-    const tile = (u, l) => {
-      u = u || 0; l = l || 0;
-      const hot = l && u / l >= 0.85;
-      return `<span class="px-q-tile ${hot ? 'px-q-hot' : ''}">${_pxFnum(u)} / ${_pxFnum(l)}</span>`;
-    };
-    let html = `<div class="px-q-row"><span class="px-q-k">今日外部</span>${tile(ov.externalDailyUsed, ov.externalDailyLimit)}<span class="px-q-k">今日内部</span>${tile(ov.internalDailyUsed, ov.internalDailyLimit)}<span class="px-q-k">请求</span><span class="px-q-tile">${_pxFnum(ov.dailyRequestCount)}</span></div>`;
-    if (ov.hasBudget) {
-      const tot = ov.totalCredits || 0;
-      const r = ov.usageRate || 0;
-      html += `<div class="px-q-row"><span class="px-q-k">剩余积分</span><span class="px-q-tile">${Math.round(ov.remainCredit || 0)}</span><span class="px-q-k">总消耗</span><span class="px-q-tile">${Math.round(tot)}${r ? ` (${Math.round(r*100)}%)` : ''}</span></div>`;
-    }
-    const models = j.quota_models || [];
-    if (models.length) {
-      html += '<div class="px-q-models">' + models.map(m => {
-        const hot = m.limit && m.used / m.limit >= 0.85;
-        return `<div class="px-q-model ${hot ? 'px-q-hot' : ''}"><span class="px-q-mk">${esc(m.name)}</span>` +   // a239 B3-P2: 外部网关数据必过 esc
-          `<span>已用 ${_pxFnum(m.used)}</span><span>还剩 ${_pxFnum(m.remain)}</span><span>${m.pct}%</span></div>`;
-      }).join('') + '</div>';
-    }
-    quotaViewEl.innerHTML = html;
-    // a452：模型负载已在函数开头渲染过（额度过览未就绪时也要显示），
-    // 这里不再重复调用。
-    // 模型用量排名表（老 GUI q_model_tree 平移：模型/tokens/费用/积分/请求数）
-    const rank = j.quota_rank || [];
-    if (rank.length) {
-      let rhtml = '<div class="px-rank-title">模型用量排名' +
-        (j.quota_ts ? `<span class="px-rank-ago">上次刷新 ${new Date(j.quota_ts * 1000).toLocaleTimeString('zh-CN', {hour12: false})}</span>` : '') +
-        '</div><div class="px-rank">' +
-        '<div class="px-rank-h"><span>模型</span><span>tokens</span><span>费用</span><span>积分</span><span>请求数</span></div>';
-      rank.forEach(m => {
-        rhtml += `<div class="px-rank-r"><span class="px-rank-m">${esc(String(m.finalModel || '?'))}</span>` +
-          `<span>${_pxTok(m.tokens)}</span><span>${(m.cost || 0).toFixed(2)}</span>` +
-          `<span>${(m.credits || 0).toFixed(2)}</span><span>${_pxFnum(m.requestCount)}</span></div>`;
-      });
-      quotaRankEl.innerHTML = rhtml + '</div>';
-    } else {
-      quotaRankEl.innerHTML = '';
-    }
   }
 
   // a407：billion-context 唯一安装入口（用户令：移出资源包/安装库，代理
@@ -552,16 +346,12 @@ function buildProxyTab() {
     else if (!_msgHeld()) _msg('');
       _renderStats(j.snapshot);
       _renderHist(j.snapshot);
-      _renderQuota(j);
       _renderHrStats(j);
       _setHrUI(j);
       _setRetryUI(j);
       _renderBiliInstall(j);
-      // a456（第三轮审计 P2）：locked 优先级最高，不能被压缩引擎提示覆盖。
-      // 原来 bili 分支无条件 _msg——账号锁定 + 压缩引擎未装时，用户每 3s
-      // 只看得到压缩提示，看不到「别再点刷新、每次尝试都会续期锁定」。
-      // 操作反馈保鲜期同理（bili 是常驻状态，不该抢用户刚点按钮的结果）。
-      const _biliHold = ((j.quota_login || {}).state === 'locked') || _msgHeld();
+      // 操作反馈保鲜期：bili 是常驻状态，不该抢用户刚点按钮的结果
+      const _biliHold = _msgHeld();
       if (!j.bili_ready && j.bili_mode === 'on') {
         msgEl.dataset.biliKeep = '1';
         if (!_biliHold)
@@ -586,14 +376,13 @@ function buildProxyTab() {
   // tab 激活/切走控制轮询（流畅守则：看不见不轮询）。
   // switchTab 靠 wrap.style.display 切换，无回调可挂——tick 开头检测：
   // 隐藏即停 interval（下次 switchTab 回来时 startPoll 重建）。
-  // 倒计时 1s tick 只更新「上次刷新 Ns 前」字符串（零网络），同随可见性启停。
+  // a672：额度「上次刷新 Ns 前」倒计时随额度区一起迁到 Lanzi 专栏，
+  // 代理面板这里不再需要 1s tick。
   function _startPoll() {
     if (!conn.pollTimer) { conn.pollTimer = setInterval(_tickPoll, 3000)   /* v3.5.288: 1s→3s——代理状态无需秒级刷新（卡死报告 §6.4） */; _poll(); }
-    if (!conn.tickTimer) conn.tickTimer = setInterval(() => { qLastEl.textContent = _qLastText(); }, 1000);
   }
   function _stopPoll() {
     if (conn.pollTimer) { clearInterval(conn.pollTimer); conn.pollTimer = null; }
-    if (conn.tickTimer) { clearInterval(conn.tickTimer); conn.tickTimer = null; }
   }
   async function _tickPoll() {
     if (wrap.style.display === 'none') { _stopPoll(); return; }
@@ -798,107 +587,6 @@ function buildProxyTab() {
     };
     m.classList.add('show');
   }
-
-  // 密码明文/密文眼睛切换（SSH 客户端同款）：点击切换 input type，
-  // 图标状态用 CSS class 表达（睁眼=password 可切显示，闭眼=明文中）
-  // a452：用户动过就不自动回填（清空也算动过——否则想换密码时旧值被写回，
-  // 再粘贴就拼成错密码）。保存/登出时复位。
-  qUserEl.addEventListener('input', () => { qUserEl._dirty = true; });
-  qPwdEl.addEventListener('input', () => { qPwdEl._dirty = true; });
-  qEyeBtn.onclick = () => {
-    const show = qPwdEl.type === 'password';
-    qPwdEl.type = show ? 'text' : 'password';
-    qEyeBtn.classList.toggle('px-eye-on', show);
-    qEyeBtn.title = show ? '隐藏密码' : '显示密码';
-  };
-
-  qSaveBtn.onclick = async () => {
-    const u = qUserEl.value.trim();
-    const p = qPwdEl.value;
-    if (!u || !p) { _setQStatus('用户名/密码不能为空', 'px-failed'); return; }
-    _setQButtons('logging');
-    try {
-      const r = await fetch('/api/proxy/credentials', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({username: u, password: p})});
-      const j = await r.json();
-      // a452（审计）：只在输入框内容仍是**本次提交的那份**时清 dirty。
-      // 请求在途期间用户若全选删空密码框（input 置 dirty），无条件清 dirty
-      // 会让下一轮轮询把刚保存的旧密码填回去，用户接着输入就拼成错密码。
-      if (j.ok) {
-        if (qUserEl.value.trim() === u) qUserEl._dirty = false;
-        if (qPwdEl.value === p) qPwdEl._dirty = false;
-      }
-      _setQStatus(j.ok ? '● 登录中…' : '保存失败', j.ok ? 'px-retry' : 'px-failed');
-      _msgKeep(j.ok ? '凭据已保存，正在登录…' : (j.msg || '保存失败'), !j.ok);
-    } catch(e) { _msg('请求失败: ' + e, true); }
-  };
-  qRefreshBtn.onclick = async () => {
-    qRefreshBtn.disabled = true;
-    try {
-      const r = await fetch('/api/proxy/quota', {method: 'POST'});
-      const j = await r.json();
-      if (!j.ok) { _setQStatus((j.msg || '刷新失败'), 'px-failed'); qRefreshBtn.disabled = false; }
-      else { _setQStatus('● 刷新中…', 'px-retry'); _msg(''); }
-    } catch(e) { _msg('请求失败: ' + e, true); qRefreshBtn.disabled = false; }
-  };
-  qReloginBtn.onclick = async () => {
-    // 强制重登：换新 client 丢旧 session 全新登录（多天不用后登录失效的自救）。
-    // 只动额度查询登录态，重试代理/headroom 链路零触碰。
-    if (!(await _ddConfirm('强制重登', '丢弃当前登录会话，用保存的凭据重新登录拉取额度？\n（代理转发不受任何影响，只刷新额度登录状态）'))) return;
-    try {
-      const r = await fetch('/api/proxy/quota', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({force: true})});
-      const j = await r.json();
-      if (!j.ok) _setQStatus((j.msg || '触发失败'), 'px-failed');
-      else { _setQStatus('● 重登中…', 'px-retry'); _msgKeep('已触发强制重登，稍候看登录状态'); }
-    } catch(e) { _msg('请求失败: ' + e, true); }
-  };
-  qLogoutBtn.onclick = async () => {
-    try {
-      await fetch('/api/proxy/credentials', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: 'clear'})});
-      conn.quotaTs = 0;
-      qPwdEl.value = '';
-      qUserEl.value = '';   // a455：用户名也清——否则下次自动回填残留旧账号
-      qPwdEl._dirty = false; qUserEl._dirty = false;   // a452：解除 dirty
-      quotaViewEl.innerHTML = '<div class="px-hint">已断开。登录后显示额度</div>';
-      quotaRankEl.innerHTML = '';
-      qLastEl.textContent = '上次刷新 -';
-      _setQStatus('● 未登录', 'px-stopped');
-      _setQButtons(undefined);
-      _msgKeep('已断开登录，本地凭据已删除');
-    } catch(e) { _msg('请求失败: ' + e, true); }
-  };
-  if (qAutoLoginEl) qAutoLoginEl.onchange = async (e) => {
-    // a448：自动重登独立开关（用户令：不许复用「自动刷新」那个开关，
-    // 刷新=拉额度，重登=登录失败后要不要自己再登，两件事）
-    try {
-      await fetch('/api/proxy/quota', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({auto_relogin: e.target.checked})});
-      _msgKeep(e.target.checked
-        ? '自动重登已开启（登录失败时按退避自动重试）'
-        : '自动重登已关闭——只在你手动点「刷新」/「强制重登」时登录');
-    } catch(err) {
-      e.target.checked = !e.target.checked;   // 回滚
-      _msg('请求失败: ' + err, true);
-    }
-  };
-  qAutoEl.onchange = async (e) => {
-    // 自动刷新开关（老 GUI checkbox 平移），后端是真相源
-    try {
-      await fetch('/api/proxy/quota', {method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({auto: e.target.checked})});
-      _msgKeep(e.target.checked ? '自动刷新已开启（每 10 分钟）' : '自动刷新已关闭（手动刷新仍可用）');
-    } catch(err) {
-      e.target.checked = !e.target.checked;   // 回滚
-      _msg('请求失败: ' + err, true);
-    }
-  };
 
   // 初始一次渲染 + 1s 轮询（_tickPoll 内检测 tab 可见性，切走自动停；
   // 切回时 switchTab 调 conn.onResumePoll 恢复）

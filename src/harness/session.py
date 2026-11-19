@@ -496,7 +496,7 @@ class HarnessSession:
         判定：hiklink 单例记着的 harness sid 就是本会话（controller 在但
         sid 对不上=GUI 会话，不能静默换会话）。"""
         try:
-            from src import hiklink_bot as hb
+            from src.lanzi import bot as hb
             ctl = hb._controller
             return bool(ctl and ctl._sid and ctl._sid == self.sid)
         except Exception:

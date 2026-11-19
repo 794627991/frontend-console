@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-lanz_quota.py
-=============
+quota.py (源 src/lanz_quota.py，a672 迁入 src/lanzi/)
+=============================================================
 海康 Lanz 平台（lanz.hikvision.com）API 额度查询客户端。
 
 为 claude_proxy_gui.pyw 提供：登录 Lanz 平台、查询 API 使用情况与额度。

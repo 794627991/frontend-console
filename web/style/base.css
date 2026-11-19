@@ -2672,3 +2672,17 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .bl-empty { color: var(--muted); font-size: 12px; padding: 14px 4px; }
 .bl-foot { padding: 5px 10px; border-top: 1px solid var(--border);
   font-size: 10.5px; color: var(--muted); flex-shrink: 0; }
+
+/* ---- Lanzi 专栏（a672，web/js/lanzi/panel.js）---- */
+.lz-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.lz-dot.off { background: var(--muted); opacity: .5; }
+.lz-dot.idle { background: var(--muted); opacity: .75; }
+.lz-dot.wait { background: #d99b2b; }
+.lz-dot.err { background: #e5484d; }
+.lz-dot.on { background: #34c77b; box-shadow: 0 0 6px rgba(52,199,123,.55); }
+.lz-inp { box-sizing: border-box; padding: 5px 9px; font-size: 13px;
+  background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--fg); }
+.lz-inp:focus { outline: none; border-color: var(--accent); }
+.px-quota-login .lz-inp + .px-eye-wrap .lz-inp,
+.px-eye-wrap .lz-inp { padding-right: 26px; }

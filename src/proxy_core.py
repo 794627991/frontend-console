@@ -389,21 +389,6 @@ def parse_request_brief(body_bytes):
     return None
 
 
-def is_offpeak(ts=None):
-    """免费时段判定（请求发起时刻）。True=免费(不扣积分)/False=收费。
-    免费时段：周六、周日全天；周一~周五 12:00-13:30、17:30-18:30、20:30-次日09:30。
-    区间左闭右开 [start, end)。20:30-次日09:30 跨午夜，拆成 [20:30,24:00) 与
-    [00:00,09:30) 两段。用 time.localtime 一次取星期+时分，无需 datetime。"""
-    t = time.localtime(ts if ts is not None else time.time())
-    if t.tm_wday >= 5:          # 5=周六 6=周日 全天免费
-        return True
-    hm = t.tm_hour * 60 + t.tm_min
-    return ((12 * 60 <= hm < 13 * 60 + 30) or          # 12:00-13:30
-            (17 * 60 + 30 <= hm < 18 * 60 + 30) or     # 17:30-18:30
-            (20 * 60 + 30 <= hm < 24 * 60) or          # 20:30-24:00 (跨午夜前段)
-            (0 <= hm < 9 * 60 + 30))                   # 00:00-09:30 (跨午夜后段)
-
-
 # ---- 共享状态（代理线程写，GUI/仪表盘线程读）----------------------------
 class Stats:
     def __init__(self):
@@ -416,14 +401,6 @@ class Stats:
         # token 累计
         self.total_input_tokens = 0
         self.total_output_tokens = 0
-        # 免费/收费时段单独计数（免费时段不扣积分）。按请求发起时刻归属。
-        # 请求数在 req_start 发起即计，token 在 req_success/req_failed 终结时计。
-        self.free_requests = 0
-        self.fee_requests = 0
-        self.free_input_tokens = 0
-        self.fee_input_tokens = 0
-        self.free_output_tokens = 0
-        self.fee_output_tokens = 0
         # 最近一次请求详情
         self.last_model = None
         self.last_input_tokens = 0
@@ -462,12 +439,6 @@ class Stats:
                 "total_success": self.total_success,
                 "total_input_tokens": self.total_input_tokens,
                 "total_output_tokens": self.total_output_tokens,
-                "free_requests": self.free_requests,
-                "fee_requests": self.fee_requests,
-                "free_input_tokens": self.free_input_tokens,
-                "fee_input_tokens": self.fee_input_tokens,
-                "free_output_tokens": self.free_output_tokens,
-                "fee_output_tokens": self.fee_output_tokens,
                 "last_model": self.last_model,
                 "last_input_tokens": self.last_input_tokens,
                 "last_output_tokens": self.last_output_tokens,
@@ -487,21 +458,13 @@ class Stats:
                 "last_fail": self.last_fail,
             }
 
-    def req_start(self, method, path, model, brief=None, offpeak=None):
+    def req_start(self, method, path, model, brief=None):
         with self._lock:
             self.total_requests += 1
-            # 免费时段单独计数：发起即计请求数（offpeak 由 _forward 用
-            # is_offpeak(time.time()) 算好透传，None=向后兼容不分桶）
-            if offpeak is not None:
-                if offpeak:
-                    self.free_requests += 1
-                else:
-                    self.fee_requests += 1
             self.last_req_brief = (method, short_path(path), model, brief)
             self.last_req_ts = time.time()
 
-    def req_success(self, model, in_tok, out_tok, elapsed, offpeak=None,
-                    brief=None):
+    def req_success(self, model, in_tok, out_tok, elapsed, brief=None):
         """brief: 本请求的 (method, path, model, desc) 四元组。并发下共享的
         last_req_brief 会被其他请求覆盖（张冠李戴），调用方应传请求级快照；
         None 时回退共享字段（向后兼容）。"""
@@ -513,18 +476,6 @@ class Stats:
             if out_tok:
                 self.total_output_tokens += out_tok
                 self.last_output_tokens = out_tok
-            # 免费时段单独计数：token 在终结时累加到对应桶（请求数已在 req_start 计）
-            if offpeak is not None:
-                if offpeak:
-                    if in_tok:
-                        self.free_input_tokens += in_tok
-                    if out_tok:
-                        self.free_output_tokens += out_tok
-                else:
-                    if in_tok:
-                        self.fee_input_tokens += in_tok
-                    if out_tok:
-                        self.fee_output_tokens += out_tok
             if model:
                 self.last_model = model
             brief = brief if brief is not None else self.last_req_brief
@@ -544,7 +495,7 @@ class Stats:
                 self.req_history = self.req_history[-self.history_max:]
 
     def req_failed(self, reason, path, attempt, status=None, elapsed=None,
-                   in_tok=0, out_tok=0, offpeak=None, brief=None):
+                   in_tok=0, out_tok=0, brief=None):
         """记录一个放弃/中止的请求。reason 见 __init__ 注释。
         已消耗的 token 如实累加（额度确实消耗了）；失败行写入 req_history，
         描述后缀 " ← 失败:原因@attempt"，GUI 历史表直接可见。
@@ -558,18 +509,6 @@ class Stats:
                 self.total_input_tokens += in_tok
             if out_tok:
                 self.total_output_tokens += out_tok
-            # 免费时段单独计数：token 在终结时累加到对应桶（请求数已在 req_start 计）
-            if offpeak is not None:
-                if offpeak:
-                    if in_tok:
-                        self.free_input_tokens += in_tok
-                    if out_tok:
-                        self.free_output_tokens += out_tok
-                else:
-                    if in_tok:
-                        self.fee_input_tokens += in_tok
-                    if out_tok:
-                        self.fee_output_tokens += out_tok
             self.last_fail = (time.time(), reason, short_path(path), attempt, status)
             brief = brief if brief is not None else self.last_req_brief
             if brief and brief[3]:
@@ -709,12 +648,6 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
                 "total_success": s["total_success"],
                 "total_input_tokens": s["total_input_tokens"],
                 "total_output_tokens": s["total_output_tokens"],
-                "free_requests": s["free_requests"],
-                "fee_requests": s["fee_requests"],
-                "free_input_tokens": s["free_input_tokens"],
-                "fee_input_tokens": s["fee_input_tokens"],
-                "free_output_tokens": s["free_output_tokens"],
-                "fee_output_tokens": s["fee_output_tokens"],
                 "last_model": s["last_model"],
                 "last_input_tokens": s["last_input_tokens"],
                 "last_output_tokens": s["last_output_tokens"],
@@ -769,11 +702,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
         # req_success/req_failed——不再回查共享字段（并发下会被别的请求覆盖，
         # 历史 model/描述张冠李戴，审计 TODO#3）
         req_brief_t = (self.command, short_path(self.path), req_model, req_brief)
-        # 免费时段归属：按请求发起时刻判定一次，随调用链透传到 req_start/
-        # req_success/req_failed（线程局部变量，避免共享 Stats 字段被并发覆盖）
-        req_offpeak = is_offpeak(time.time())
-        stats.req_start(self.command, self.path, req_model, req_brief,
-                        offpeak=req_offpeak)
+        stats.req_start(self.command, self.path, req_model, req_brief)
         t0 = time.time()
 
         out_headers = {}
@@ -797,7 +726,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
             # 循环顶部：客户端若已断开，立即放弃，不再发任何请求（省额度）
             if not client_alive(self.connection):
                 stats.req_failed("client_gone", path, attempt,
-                                 elapsed=time.time() - t0, offpeak=req_offpeak,
+                                 elapsed=time.time() - t0,
                                  brief=req_brief_t)
                 log.info("client gone on %s %s (attempt %d) -- abort",
                          self.command, path, attempt)
@@ -847,7 +776,6 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
                         if not self._sleep_checked(wait):
                             stats.req_failed("client_gone", path, attempt,
                                              elapsed=time.time() - t0,
-                                             offpeak=req_offpeak,
                                              brief=req_brief_t)
                             self._inflight_done(stats)
                             return
@@ -877,7 +805,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
                     if cap is not None:
                         self._inflight_done(stats)
                         self._give_up(cap, path, attempt, resp.status, last_err,
-                                      t0, offpeak=req_offpeak, brief=req_brief_t)
+                                      t0, brief=req_brief_t)
                         return
                     # Retry-After 头优先于阶梯退避（限流场景上游更清楚节奏）；
                     # backoff_enabled=False 时不等待也不理 Retry-After（立即重试）
@@ -890,7 +818,6 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
                         # 睡眠期间客户端断开，立即放弃
                         stats.req_failed("client_gone", path, attempt,
                                          elapsed=time.time() - t0,
-                                         offpeak=req_offpeak,
                                          brief=req_brief_t)
                         self._inflight_done(stats)
                         return
@@ -898,7 +825,6 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
 
                 # 成功：流式/非流式透传并解析 usage
                 self._stream_response(resp, conn, stats, t0, attempt,
-                                      req_offpeak=req_offpeak,
                                       req_model=req_model, req_brief=req_brief)
                 self._inflight_done(stats)  # 请求终结（成功/client_gone/upstream_broke）
                 return
@@ -920,8 +846,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
                                 " -- not retrying/replaying (would double-charge)",
                                 self.command, path, e)
                     stats.req_failed("upstream_error", path, attempt,
-                                     status=None, elapsed=time.time() - t0,
-                                     offpeak=req_offpeak, brief=req_brief_t)
+                                     status=None, elapsed=time.time() - t0, brief=req_brief_t)
                     try:
                         conn.close()
                     except Exception:
@@ -947,15 +872,14 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
                 if cap is not None:
                     self._inflight_done(stats)
                     self._give_up(cap, path, attempt, None, last_err, t0,
-                                  conn_err=e, offpeak=req_offpeak,
+                                  conn_err=e,
                                   brief=req_brief_t)
                     return
                 log.warning("upstream error on %s %s: %s -- retry in %.1fs",
                             self.command, path, e, wait)
                 if not self._sleep_checked(wait):
                     stats.req_failed("client_gone", path, attempt,
-                                     elapsed=time.time() - t0,
-                                     offpeak=req_offpeak, brief=req_brief_t)
+                                     elapsed=time.time() - t0, brief=req_brief_t)
                     self._inflight_done(stats)
                     return
                 continue
@@ -979,10 +903,10 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
         return True
 
     def _give_up(self, reason, path, attempt, status, last_err, t0,
-                 conn_err=None, offpeak=None, brief=None):
+                 conn_err=None, brief=None):
         """重试上限熔断出口：记录失败，把最后一次上游错误原样回放给客户端，
         不让客户端挂死。last_err=(status, headers, body)；全网络异常无响应时
-        合成 502 JSON。offpeak/brief 为本请求的透传值（不回查共享字段）。"""
+        合成 502 JSON。brief 为本请求的透传值（不回查共享字段）。"""
         elapsed = time.time() - t0
         stats = self.server.stats
         if last_err is not None:
@@ -1001,7 +925,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
             hdrs = [("Content-Type", "application/json"),
                     ("Content-Length", str(len(bdy)))]
         stats.req_failed(reason, path, attempt, status=st, elapsed=elapsed,
-                         offpeak=offpeak, brief=brief)
+                         brief=brief)
         log.warning("give up on %s %s (attempt %d, reason=%s) -- replay %d",
                     self.command, path, attempt, reason, st)
         try:
@@ -1016,7 +940,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
             # 客户端在熔断回放时已断开，无所谓
             pass
 
-    def _stream_response(self, resp, conn, stats, t0, attempt=0, req_offpeak=None,
+    def _stream_response(self, resp, conn, stats, t0, attempt=0,
                          req_model=None, req_brief=None):
         # req_model/req_brief 由 _forward 透传，用于构造请求级 brief
         # （不回查共享的 last_req_brief，避免并发请求张冠李戴）。
@@ -1116,8 +1040,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
             elapsed = time.time() - t0
             stats.req_failed("client_gone", self.path, attempt,
                              status=resp.status, elapsed=elapsed,
-                             in_tok=in_tok, out_tok=out_tok,
-                             offpeak=req_offpeak, brief=req_brief_t)
+                             in_tok=in_tok, out_tok=out_tok, brief=req_brief_t)
             log.info("client gone during stream on %s %s (attempt %d)",
                      self.command, self.path, attempt)
             return
@@ -1129,8 +1052,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
             elapsed = time.time() - t0
             stats.req_failed("upstream_error", self.path, attempt,
                              status=resp.status, elapsed=elapsed,
-                             in_tok=in_tok, out_tok=out_tok,
-                             offpeak=req_offpeak, brief=req_brief_t)
+                             in_tok=in_tok, out_tok=out_tok, brief=req_brief_t)
             log.warning("upstream broke mid-stream on %s %s (attempt %d, %.1fs, "
                         "in=%d out=%d) -- not replaying",
                         self.command, short_path(self.path), attempt, elapsed,
@@ -1159,8 +1081,7 @@ class RetryProxyHandler(http.server.BaseHTTPRequestHandler):
             out_tok = parser.output_tokens or out_tok
 
         elapsed = time.time() - t0
-        stats.req_success(model, in_tok, out_tok, elapsed,
-                          offpeak=req_offpeak, brief=req_brief_t)
+        stats.req_success(model, in_tok, out_tok, elapsed, brief=req_brief_t)
         log.info("ok %s %s -> %d (attempt %d, %.1fs, in=%d out=%d)",
                  self.command, short_path(self.path), resp.status,
                  attempt, elapsed, in_tok, out_tok)

@@ -1455,55 +1455,13 @@
 .hg-login-dot.wait { background: #d99b2b; }
 .hg-login-dot.err { background: #e5484d; }
 .hg-login-dot.on { background: #34c77b; box-shadow: 0 0 6px rgba(52,199,123,.55); }
-/* 冒泡弹窗：按钮上方气泡（暗色卡，与全局模态同风格） */
-.hg-login-pop { position: absolute; left: 8px; right: 8px; bottom: 46px;
-  z-index: 50; background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 12px; padding: 10px; display: flex; flex-direction: column;
-  gap: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.45);
-  animation: hgPopIn .16s ease-out; }
-.hg-login-pop .hg-login-inp { width: 100%; box-sizing: border-box;
-  padding: 5px 9px; font-size: var(--fs-base); background: var(--bg);
-  border: 1px solid var(--border); border-radius: 6px; color: var(--fg); }
-.hg-login-pop .hg-login-inp:focus { outline: none; border-color: var(--accent); }
-/* 密码类输入（SSO 密码 / App Secret）：右侧内置显隐按钮，输入区让出内边距 */
-.hg-login-pop .hg-inp-wrap { position: relative; width: 100%; }
-.hg-login-pop .hg-inp-wrap .hg-login-inp { padding-right: 32px; }
-.hg-login-pop .hg-inp-eye { position: absolute; right: 4px; top: 50%;
-  transform: translateY(-50%); display: inline-flex; align-items: center;
-  justify-content: center; width: 24px; height: 24px; padding: 0;
-  background: transparent; border: 0; border-radius: 4px;
-  color: var(--muted); cursor: pointer; }
-.hg-login-pop .hg-inp-eye:hover { color: var(--fg);
-  background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.hg-login-pop .hg-inp-eye svg { width: 14px; height: 14px; }
-.hg-login-pop [data-hg-login-btn] { width: 100%; text-align: center; }
-.hg-login-pop .hg-pop-row { display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: var(--fg); }
+/* a672：登录/机器人浮层已删——配置整体迁到 Lanzi 专栏（web/js/lanzi/panel.js）。
+   原 .hg-login-pop 系列样式随之移除。 */
 /* 胶囊内两段：固定前缀「机器人」+ 用户名（颜色表达登录态） */
 .hg-login-side .hg-login-botlabel { color: var(--muted); font-size: var(--fs-sm); }
 .hg-login-side .hg-login-userlabel { font-size: var(--fs-sm); }
 .hg-login-userlabel.off { color: var(--muted); }
 .hg-login-userlabel.on { color: #34c77b; }
-/* 机器人凭据区：标题行（指示灯表达状态）+ 字段列（输入框与保存按钮同宽） */
-.hg-login-pop .hg-robot-box { display: flex; flex-direction: column; gap: 8px;
-  padding-top: 8px; border-top: 1px solid var(--border); }
-.hg-login-pop .hg-robot-head { gap: 6px; }
-.hg-login-pop .hg-robot-title { font-size: var(--fs-sm); color: var(--muted); }
-/* 分区小标题（如「账号登录」）：与机器人标题同一视觉层级 */
-.hg-login-pop .hg-robot-hint { font-size: var(--fs-sm); color: var(--muted); }
-.hg-login-pop .hg-robot-state { font-size: var(--fs-sm); color: var(--muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hg-login-pop .hg-robot-fields { display: flex; flex-direction: column;
-  gap: 6px; }
-.hg-login-pop .hg-robot-save { width: 100%; margin: 0; padding: 5px 10px;
-  font-size: var(--fs-sm); }
-/* v2.27：登出按钮从独立整行搬进「已登录」行右侧（用户要求紧凑），文案缩为「登出」 */
-.hg-login-pop .hg-pop-logout { margin-left: auto; flex-shrink: 0; padding: 2px 10px;
-  font-size: 11px; background: transparent; border: 1px solid
-  color-mix(in srgb, #e5484d 45%, var(--border)); border-radius: 6px; cursor: pointer;
-  color: #e5484d; }
-.hg-login-pop .hg-pop-logout:hover { background: color-mix(in srgb, #e5484d 14%, transparent); }
-
 /* v2.3.9 会话列表项目分组：组头 + 缩进子项 */
 .hg-grp { display: flex; align-items: center; gap: 7px; padding: 7px 10px 5px;
   border-radius: 8px; cursor: pointer; user-select: none; margin-top: 6px; }

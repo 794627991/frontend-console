@@ -8,7 +8,7 @@
  *
  * 行为：index.html 头部先置 window.__HG_WORKER__（服务端注入 worker 基址；
  * 空串=未分离[CLAUDE_INLINE]或 worker 未就绪→本层完全透明零改动）。
- * 只改写「相对路径」且前缀命中 /api/harness、/api/hiklink 的 fetch 与
+ * 只改写「相对路径」且前缀命中 /api/harness、/api/lanzi 的 fetch 与
  * EventSource；其余请求（串口 send_raw/终端 SSE/静态资源）原样走主进程。
  * 必须在任何业务脚本之前加载（index.html 头部第二个 script）。*/
 (function () {
@@ -47,7 +47,7 @@
   // 整段命名空间直连 worker；/api/claude/* 因与 claude_setup（主进程）共享
   // 前缀，只能精确枚举 claude_default 的端点（与 server.py 的 _CW_CLAUDE_PATHS
   // + profiles 子前缀同清单，两处必须同步改）
-  var PRE = ['/api/harness', '/api/hiklink'];
+  var PRE = ['/api/harness', '/api/lanzi'];
   var EXACT = [];
   if (FULL) {
     PRE = PRE.concat(['/api/proxy', '/api/usage', '/api/claude/profiles']);

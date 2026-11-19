@@ -140,7 +140,8 @@ def build_app():
     from flask import Flask, jsonify, request
 
     from src.harness.routes import harness_bp
-    from src import hiklink_bot
+    from src.lanzi import bot
+    from src.lanzi.routes import lanzi_bp
     from src.proxy import proxy_bp
     from src.proxy_usage import usage_bp
     from src.claude_default import claude_default_bp
@@ -156,39 +157,10 @@ def build_app():
     app.register_blueprint(proxy_bp)
     app.register_blueprint(usage_bp)
     app.register_blueprint(claude_default_bp)
+    # a672：Lanzi 专栏（机器人/登录/额度）统一蓝图
+    app.register_blueprint(lanzi_bp)
 
-    # ---- HikLink 机器人路由（自 server.py 随迁，语义不变） ----
-    @app.route("/api/hiklink/status")
-    def hiklink_status():
-        """统一登录 UI 轮询：登录名 + 机器人运行态。"""
-        try:
-            return jsonify({"ok": True, **hiklink_bot.status_snapshot()})
-        except Exception as e:
-            return jsonify({"ok": False, "msg": str(e)})
-
-    @app.route("/api/hiklink/activate", methods=["POST"])
-    def hiklink_activate():
-        """激活/停用机器人（幂等）。未登录（无统一凭据）时激活会被拒绝。"""
-        j = request.get_json(silent=True) or {}
-        if j.get("stop"):
-            ok, msg = hiklink_bot.ensure_stopped()
-        else:
-            ok, msg = hiklink_bot.ensure_started()
-        return jsonify({"ok": ok, "msg": msg})
-
-    @app.route("/api/hiklink/credentials", methods=["POST"])
-    def hiklink_credentials():
-        """保存/清除手填机器人凭据（App ID + App Secret）。
-        body: {app_id, app_secret}；两者皆空 = 清除。保存即重连生效。
-        显式要求两个键都在场：把「取不到参数」当清除的话，本机任意网页
-        一个 text/plain 简单请求就能清空凭据并停掉机器人。Host/Origin
-        由全站 _guard_host 收口。"""
-        j = request.get_json(silent=True)
-        if not isinstance(j, dict) or "app_id" not in j or "app_secret" not in j:
-            return jsonify({"ok": False, "msg": "请求体必须含 app_id 与 app_secret"}), 400
-        ok, msg = hiklink_bot.set_manual_credentials(
-            j.get("app_id"), j.get("app_secret"))
-        return jsonify({"ok": ok, "msg": msg})
+    # a672：/api/hiklink/* 与额度端点已并入 lanzi_bp（见上）
 
     @app.route("/health")
     def health():
@@ -219,7 +191,7 @@ def build_app():
         except Exception:
             pass
         try:
-            hiklink_bot.ensure_stopped()
+            bot.ensure_stopped()
         except Exception:
             pass
         threading.Timer(0.5, os._exit, (0,)).start()
@@ -315,7 +287,7 @@ def _bot_restore():
     """机器人重启自恢复（自 server.py start_background 随迁，逻辑同款）。"""
     time.sleep(8)   # 让端口/网络就绪，避开启动高峰
     try:
-        from src import hiklink_bot as hb
+        from src.lanzi import bot as hb
         # 机器人只认凭证登录（SSO 自动注册已退役）：没有 app_id/app_secret
         # 就不要去调 ensure_started，否则每次开机刷一行「启动自恢复失败」
         if hb.is_manual_mode():

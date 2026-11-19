@@ -32,40 +32,11 @@ function buildClaudeHarnessTab(opts = {}) {
           <img src="/ico/proxy.png" alt="proxy" style="width:14px;height:14px;vertical-align:-2px;"> Proxy
           <span class="hg-proxy-state" data-hg-proxy-state>检测中…</span>
         </button>
-        <button class="hg-prompt-btn hg-login-side" data-hg-login-toggle title="机器人凭据与登录账号。指示灯=机器人在线状态，用户名颜色=登录状态。点击展开配置">
+        <button class="hg-prompt-btn hg-login-side" data-hg-login-toggle title="打开 Lanzi 专栏（内网登录 + 机器人 + 额度）。指示灯=机器人在线状态，用户名颜色=登录状态">
           <span class="hg-login-dot off" data-hg-login-dot></span>
           <span class="hg-login-botlabel">机器人</span>
           <span class="hg-login-userlabel" data-hg-login-text>未登录</span>
         </button>
-        <div class="hg-login-pop" data-hg-login-pop style="display:none">
-          <div data-hg-login-off>
-            <div class="hg-pop-row hg-robot-hint">账号登录（用于代理与额度）</div>
-            <input class="hg-login-inp" data-hg-login-user placeholder="用户名" spellcheck="false" autocomplete="username" name="hg_login_user">
-            <div class="hg-inp-wrap">
-              <input class="hg-login-inp" data-hg-login-pwd type="password" placeholder="密码" autocomplete="current-password" name="hg_login_pwd">
-              <button class="hg-inp-eye" type="button" data-hg-eye title="显示密码" aria-label="显示密码">${ICO16.eye}</button>
-            </div>
-            <button class="hg-prompt-btn" data-hg-login-btn>登录</button>
-          </div>
-          <div class="hg-robot-box">
-            <div class="hg-pop-row hg-robot-head">
-              <span class="hg-robot-title">机器人凭据</span>
-              <span class="hg-login-dot off" data-hg-robot-dot></span>
-              <span class="hg-robot-state" data-hg-robot-state></span>
-            </div>
-            <div class="hg-robot-fields">
-              <input class="hg-login-inp" data-hg-robot-id placeholder="App ID" spellcheck="false" autocomplete="off" name="hg_robot_id">
-              <div class="hg-inp-wrap">
-                <input class="hg-login-inp" data-hg-robot-secret type="password" placeholder="App Secret" autocomplete="new-password" name="hg_robot_secret">
-                <button class="hg-inp-eye" type="button" data-hg-eye title="显示密钥" aria-label="显示密钥">${ICO16.eye}</button>
-              </div>
-              <button class="hg-prompt-btn hg-robot-save" data-hg-robot-save title="保存后立即用该机器人重连">保存机器人</button>
-            </div>
-          </div>
-          <div data-hg-login-on style="display:none">
-            <div class="hg-pop-row"><span data-hg-login-name class="hg-login-userlabel">已登录</span><button class="hg-pop-logout" data-hg-logout-btn title="登出（不影响机器人）">登出</button></div>
-          </div>
-        </div>
       </div>
       <div class="hg-main">
         <div class="hg-top">
@@ -143,24 +114,16 @@ function buildClaudeHarnessTab(opts = {}) {
   // 机器人凭据输入的 dirty 监听必须在 DOM 就位后立刻挂上——它由本模板
   // 动态注入，shell.js 模块级那轮 querySelectorAll 扑空；晚到的话首屏
   // status 失败时用户清空 App ID 的意图会被后续回填抹掉
-  if (typeof hgRobotWire === 'function') {
-    _hgWrap.querySelectorAll('[data-hg-robot-id]').forEach(hgRobotWire);
-  }
-  if (typeof hgEyeWire === 'function') {
-    _hgWrap.querySelectorAll('[data-hg-eye]').forEach(hgEyeWire);
-  }
-  if (typeof hgSecretWire === 'function') {
-    _hgWrap.querySelectorAll('[data-hg-robot-secret]').forEach(hgSecretWire);
-  }
-  // 登录条 DOM 随 tab 创建——创建后立刻拉一次登录态（页面加载时的首轮
-  // 渲染发生在 DOM 存在之前，会扑空停在「未登录」默认态）
-  if (typeof hgLoginRefresh === 'function') setTimeout(hgLoginRefresh, 150);
   // 开启 Claude 联动：确保重试代理在跑（无则后台拉起无 headroom 的轻量
   // 代理，30s 未就绪自动回退直连）。fire-and-forget，不阻塞 tab 打开。
   fetch('/api/proxy/ensure', { method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{"for_claude":true}' }).catch(() => {});
   if (typeof hgProxyRefreshState === 'function') setTimeout(hgProxyRefreshState, 300);
+  // 侧栏「机器人」按钮的指示灯/用户名在 shell.js 里 30s 轮询一次，且模块
+  // 加载时的首拉发生在 harness DOM 存在之前（扑空）。这里 tab 建好后补拉
+  // 一次，否则冷启打开对话要等最多 30s 才纠正成真实状态。
+  if (typeof window.hgLoginRefresh === 'function') setTimeout(window.hgLoginRefresh, 150);
 
   _hgConn = {
     portId,

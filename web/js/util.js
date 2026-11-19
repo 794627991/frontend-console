@@ -40,6 +40,7 @@ let activePortId = null;
     claude: 'Claude', harness: 'Claude 对话',
     editor: '编辑器', hex: 'Hex', diff: '对比', bindiff: 'Bin对比',
     log: '日志', office: '文件', proxy: '代理', bitcalc: '计算器', vcs: '版本',
+    lanzi: 'Lanzi',   // a672：机器人/登录/额度专栏
     web: '网页',   // a473：内网页面浏览 tab（iframe，SSO 走应用档 cookie）
     shell: '终端',   // a581：本地 shell（cmd/PowerShell/Git Bash），可多开
   };
@@ -50,13 +51,14 @@ let activePortId = null;
     editor: ICO16.file, hex: ICO16.hex, diff: ICO16.compare, bindiff: ICO16.compare,
     log: ICO16.log, office: ICO16.folderOpen, proxy: ICO16.gear, bitcalc: ICO16.calc,
     vcs: ICO16.branch, web: ICO16.link,
+    lanzi: '<img src="/ico/lanz.png" alt="" style="width:12px;height:12px;vertical-align:-2px;">',
   };
   const _groupOf = c => (c.meta && c.meta.kind) || 'other';
   // 第7轮盲测P5：列表/抽屉组序对齐标签栏的 sortKey 类型序（串口→SSH→日志→
   // 编辑器类→Claude→…），原来跟 connections 插入序导致"Claude 在日志前"不一致
   const _GROUP_ORDER = { serial: 0, ssh: 1, telnet: 1, shell: 1, log: 2, diff: 3, editor: 3,
     hex: 3, bindiff: 3, office: 3, bitcalc: 3, vcs: 3, note: 3, claude: 4, harness: 5, proxy: 6,
-    web: 7 };
+    lanzi: 6, web: 7 };
   // 用户需求：同类只开一个时不收进抽屉（平铺直达，一点即达），开第二个才收。
   // _SINGLE_KINDS = 设计上不会多开的类型（兜底：即便数量判定放宽也不收）
   // a452（审计 P1）：claude **不在**此列——后端 server.py 允许 `claude:{n}`
@@ -64,7 +66,7 @@ let activePortId = null;
   // 多个 claude tab 永不进抽屉，tab 栏被平铺占满压成图标态。
   // R1 审计 W9：a554 起网页 tab 支持多开（buildWebPanelTab newTab），
   // 'web' 留在此集合会让多开的网页 tab 永不进抽屉（claude 同款事故）。
-  const _SINGLE_KINDS = new Set(['harness', 'bitcalc', 'proxy', 'vcs']);
+  const _SINGLE_KINDS = new Set(['harness', 'bitcalc', 'proxy', 'vcs', 'lanzi']);
   // 按当前打开的 tab 统计各 kind 数量（判定「是否独苗」）
   function _kindCount() {
     const cnt = {};
@@ -251,7 +253,7 @@ let activePortId = null;
         }
         const isEd = kind === 'editor' || kind === 'hex' || kind === 'diff' ||
           kind === 'bindiff' || kind === 'office' || kind === 'vcs' ||
-          kind === 'proxy' || kind === 'bitcalc';
+          kind === 'proxy' || kind === 'bitcalc' || kind === 'lanzi';
         if (isEd && typeof _edCloseNow === 'function') { _edCloseNow(conn); return; }
         if (typeof closeConnection === 'function') closeConnection(pid);
       });
@@ -1380,7 +1382,8 @@ function sortKeyFn(pid) {
   if (pid.startsWith('bitcalc:')) return [3, pid];  // 计算器：编辑器类桶
   if (pid.startsWith('vcs:')) return [3, pid];      // 版本控制：编辑器类桶（a435）
   if (pid.startsWith('web:')) return [8, pid];      // 网页：独立桶（a473 审计修，与抽屉分组序对齐）
-  if (pid.startsWith('proxy:')) return [6, pid];    // 代理面板：最后
+  if (pid.startsWith('proxy:')) return [6, pid];    // 代理面板：最后
+  if (pid.startsWith('lanzi:')) return [6, pid];    // Lanzi 专栏：与代理同桶（a672）
   return [1, pid];  // SSH：字典序
 }
 

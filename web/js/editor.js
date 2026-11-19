@@ -1509,6 +1509,13 @@ function _edCloseNow(conn) {
   if (conn.meta && conn.meta.kind === 'vcs') {
     try { if (typeof vcsPanelTeardown === 'function') vcsPanelTeardown(); } catch(e){}
   }
+  // a672：Lanzi 专栏收尾——停 3s 轮询 + 收起模型负载悬浮卡并停其 20s tick。
+  // 悬浮卡由 document 级 mouseover 打开、靠 mouseout 关闭；指针就停在
+  // Lanzi 标签上点 ✕ 时 Chromium 不会补发 mouseout，卡片会带着 detached
+  // anchor 钉在左上角、每 20s 空拉一次 status。
+  if (conn.meta && conn.meta.kind === 'lanzi') {
+    try { if (typeof window._lzTeardown === 'function') window._lzTeardown(); } catch(e){}
+  }
   conn.tab.remove(); conn.wrap.remove();
   delete connections[conn.portId];
   if (typeof treeDecoRefresh === 'function') treeDecoRefresh();   // a209批1：树 open/dirty 装饰联动
