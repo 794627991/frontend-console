@@ -245,6 +245,16 @@ function buildClaudeHarnessTab(opts = {}) {
       else if (gap > 150) _HG.stickBtm = false;
     });
   });
+  // a671（用户实锤两个现象：①发消息后「工作中」转圈看不见；②切会话不贴底，
+  // 底部一片空白、上方的模型名等内容被顶出视口）——同一根因：`.h-grp` 是
+  // `content-visibility:auto` + `contain-intrinsic-size:auto 600px`，屏幕外
+  // 的组先按 600px **估高**。`scrollTop = scrollHeight` 一次写入只能滚到
+  // 「估高算出的底部」；物化（估高换真高）发生在随后的渲染帧里，真高往往
+  // 远小于 600，真底就比刚才滚到的位置**高出一大截**——于是视口停在内容
+  // 下方的空白区，用户看到的正是「不贴底 / 底部空白」。
+  // 原来只补 1 帧，够不上物化周期。改为高度还在变就继续钉，最多 8 帧
+  //（约 130ms，用户来不及手动滚动）；高度稳定即停，零额外开销。
+  let _hgSbRaf = 0, _hgSbN = 0, _hgSbH = -1;
   _hgScrollBottom = (force) => {
     if (_HG.noScroll) return;   // v2.16：历史重建期间不滚（几百行逐行 append 会反复重排）
     // v2.20：用户翻上去看历史时不抢滚动条（用户实测「看之前思考时 AI 一回复
@@ -254,9 +264,22 @@ function buildClaudeHarnessTab(opts = {}) {
     if (!force && !_HG.stickBtm &&
         _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 150) return;
     _hgFlow.scrollTop = _hgFlow.scrollHeight;
-    // 布局二次兜底：活动指示条弹出/气泡内图片加载等会在同帧稍后改变 flow 高度，
-    // 下一帧再滚一次，保证"发送后我的消息在底部"（v2.5 用户反馈修复）
-    requestAnimationFrame(() => { _hgFlow.scrollTop = _hgFlow.scrollHeight; });
+    // 布局二次兜底（v2.5）+ 物化追真底（a671，见上）
+    if (_hgSbRaf) cancelAnimationFrame(_hgSbRaf);
+    _hgSbN = 0;
+    _hgSbH = -1;
+    const step = () => {
+      _hgSbRaf = 0;
+      if (_HG.noScroll) return;
+      // 重钉途中用户主动往上翻（非 force 场景）→ 立刻让权，绝不拽回
+      if (!force && !_HG.stickBtm &&
+          _hgFlow.scrollHeight - _hgFlow.scrollTop - _hgFlow.clientHeight > 150) return;
+      const h = _hgFlow.scrollHeight;
+      _hgFlow.scrollTop = h;
+      if (h !== _hgSbH) { _hgSbH = h; _hgSbN = 0; }   // 高度还在变：物化未收敛
+      if (++_hgSbN < 8) _hgSbRaf = requestAnimationFrame(step);
+    };
+    _hgSbRaf = requestAnimationFrame(step);
   };
 
   // ==================== 交互式提问卡片（v2.17）====================

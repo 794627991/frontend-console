@@ -205,6 +205,13 @@
     }
     phStopTimer(g);
     g.phIdx = 0;
+    // a671（用户实锤「发完消息后首个占位气泡不贴底，直到弹出正文气泡才贴底」）：
+    // 占位是**组内追加**（g.root.appendChild），不走 addRow，因此不带拽底——
+    // 组根下凭空多出一行高度，视图停在原位，占位被推到可视区下方；等首条
+    // 正文 renderAsst 走 addRow 才补上拽底，于是表现为「气泡一到就贴底」。
+    // 非 force：用户真翻上去看历史（stickBtm=false 且 gap>150）时不打扰；
+    // 历史重建期 noScroll=true 同样被 _hgScrollBottom 自身短路。
+    _hgScrollBottom();
     g.phTimer = setInterval(() => {
       if (!g.ph || !g.ph.isConnected) { phStopTimer(g); return; }
       g.phIdx = (g.phIdx + 1) % _PH_WORDS.length;
@@ -855,6 +862,11 @@
       _turnHeadShow(g);                        // v3.1h（用户实锤）：消息发出第一时间亮
                                                // 「工作中」秒表——静默等待期也是工时
       _hgRailSync();   // v3.2.10：live 新回合入轨（历史路径在 _histRender 尾统一 sync）
+      // a671：占位气泡（phStart 内部已拽一次）与「工作中」组头（display
+      // none→可见，也在组内、不走 addRow）都在这之后才定高；这里再补一次
+      // 非 force 拽底，让「发出消息 → 占位可见」这一屏本身贴底，而不是
+      // 干等到首条正文 addRow。
+      _hgScrollBottom();
     }
     return d;
   }

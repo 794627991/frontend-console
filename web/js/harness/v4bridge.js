@@ -339,12 +339,19 @@ const root = window;
       if (pr) { try { pr(true); } catch (e) {} }
     }
     // 打开会话强制贴底（用户实测「打开会话不置底」）：渲染后布局仍会变
-    // （懒体/折叠），rAF 双贴等布局稳定
-    var box = this.flow;
-    if (box) {
-      try { box.scrollTop = box.scrollHeight; } catch (e) {}
+    // （懒体/折叠）+ `.h-grp` 的 content-visibility 估高要逐帧物化，一次
+    // 写入只落在估高底部。a671：改走 _hgScrollBottom(true) 的多帧追真底
+    // ——用户实锤「切会话不贴底，底部一片空白、模型名被顶出视口」正是
+    // 停在估高底部。子 bridge 容器不同（.hg-sub-sc），仍走自己的路径。
+    if (this.opt.sub) {
+      this._subScrollBottom(null, true);
+    } else if (typeof root._hgScrollBottom === 'function') {
+      try { root._hgScrollBottom(true); } catch (e) {}
+    } else if (this.flow) {
+      var _f = this.flow;
+      try { _f.scrollTop = _f.scrollHeight; } catch (e) {}
       requestAnimationFrame(function () {
-        try { box.scrollTop = box.scrollHeight; } catch (e) {}
+        try { _f.scrollTop = _f.scrollHeight; } catch (e) {}
       });
     }
     if (snap && snap.state) this._paintState(snap.state, true);
