@@ -2217,8 +2217,11 @@ def main():
     try:
         from src import worker_app
         _boot_mark("worker 拉起 开始")
+        # a668：异步拉起——Popen + READY 握手（实测 1140ms）走后台线程，
+        # 主线程立刻继续开窗。握手完成前 harness/hiklink 族由 server.py 的
+        # 307 兜底（WORKER_BASE 空时 503，前端 workerbase.js 本来就这么处理）。
         worker_app.manage_start(main_port=port)
-        _boot_mark("worker 就绪（等待结束）")
+        _boot_mark("worker 拉起已派发（后台握手）")
     except Exception as _we:
         print(f"[警告] Claude worker 拉起失败: {_we}", file=sys.stderr)
 

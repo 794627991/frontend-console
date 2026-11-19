@@ -466,6 +466,9 @@ _MAIN_PORT = 0            # a117：主进程服务端口（CORS 白名单注入�
 _last_port = 0            # 最近一次实际端口（respawn 期望值跟随 fallback）
 _hung = 0                 # 连续 health 探活失败计数（挂死检测）
 _lock = threading.Lock()
+# a668：首次拉起改为后台线程——主线程原来 join 等 READY 握手（实测 1140ms）
+# 才继续开窗，这段时间用户盯着空白桌面。异步后主线程立即往下走开窗。
+_initial_done = threading.Event()
 
 
 def _spawn_cmd(prefer_port):
@@ -669,10 +672,17 @@ def _supervisor(prefer_port):
             backoff = min(backoff * 2, 30.0)
 
 
-def manage_start(prefer_port=0, main_port=0):
+def manage_start(prefer_port=0, main_port=0, blocking=False):
     """主进程开窗前调用：拉起 worker 并进入监护。失败不抛（终端优先）。
     main_port（a117）：主进程服务端口——worker CORS 白名单的注入源（主页面
-    来源动态随机，硬编码必拦；调用点在 write_endpoint(port) 之后端口在手）。"""
+    来源动态随机，硬编码必拦；调用点在 write_endpoint(port) 之后端口在手）。
+
+    a668（启动优化）：默认**异步**拉起——Popen + READY 握手（实测 1140ms）
+    跑在后台线程，主线程立即返回去开窗，用户不用盯着空白桌面等 worker。
+    握手完成前 /api/harness、/api/hiklink 族由 server.py 的 307 兜底转发
+    （WORKER_BASE 为空时返回 503，前端 workerbase.js 早已按「未就绪」处理）。
+    blocking=True 保留同步语义（诊断/测试用）。
+    """
     global _proc, _last_port, _MAIN_PORT
     if main_port:
         _MAIN_PORT = main_port
@@ -685,13 +695,44 @@ def manage_start(prefer_port=0, main_port=0):
             s.bind(("127.0.0.1", 0))
             prefer_port = s.getsockname()[1]
             s.close()
-        _proc, port = _spawn_once(prefer_port)
-        _last_port = port
-        _apply_base(port, _proc.pid)
-        threading.Thread(target=_supervisor, args=(prefer_port,), daemon=True,
-                         name="claude-worker-supervisor").start()
+        _initial_done.clear()
+
+        def _bring_up():
+            # a668 修复：这三个名字必须显式 global——嵌套函数里裸赋值只会
+            # 创建局部变量，模块级 _proc 永远是 None。supervisor 第一轮
+            # （5s 后）读到 _proc is None 就判「进程死了」，又拉起第二个
+            # worker：13344 与 19792 同时活着，后者被机器人单飞锁拦下，
+            # 端口/代理/会话状态全部分裂。
+            global _proc, _last_port
+            try:
+                p, port = _spawn_once(prefer_port)
+                with _lock:
+                    if _stop.is_set():
+                        # 握手期间已经要求退出：就地回收，不留孤儿
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
+                        return
+                    _proc = p
+                _last_port = port
+                _apply_base(port, p.pid)
+                threading.Thread(target=_supervisor, args=(prefer_port,),
+                                 daemon=True,
+                                 name="claude-worker-supervisor").start()
+            except Exception as e:
+                logging.getLogger("claude_worker").warning(
+                    "worker 拉起失败（Claude 面板将不可用，串口不受影响）: %s", e)
+            finally:
+                _initial_done.set()
+
         import atexit
         atexit.register(manage_stop)
+        th = threading.Thread(target=_bring_up, daemon=True,
+                              name="claude-worker-bringup")
+        th.start()
+        if blocking:
+            th.join(30)
     except Exception as e:
         logging.getLogger("claude_worker").warning(
             "worker 拉起失败（Claude 面板将不可用，串口不受影响）: %s", e)

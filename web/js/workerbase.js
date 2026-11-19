@@ -18,7 +18,27 @@
   // 被浏览器解析成 /__HG_WBASE__/api/... → 静态兜底 404，整条 harness 链挂。
   var _W = window.__HG_WORKER__ || '';
   var B = /^https?:\/\/127\.0\.0\.1:\d+$/.test(_W) ? _W : '';
-  if (!B) return;                        // 未分离/占位符残留：零开销透明层
+  // a668：worker 拉起改为后台异步（主进程不再等 READY 握手才开窗），极端
+  // 情况下页面先于 worker 就绪加载，注入基址是空串。这里补一个轻量轮询：
+  // 拿到基址后自动接上，后续请求直连 worker，用户无需刷新页面。
+  // 未分离（CLAUDE_INLINE）时后端恒返回空 base，轮询 20 次后停止。
+  if (!B) {
+    var _tries = 0;
+    var _probe = function () {
+      if (B || ++_tries > 20) return;
+      setTimeout(function () {
+        fetch('/api/worker_endpoint').then(function (r) { return r.json(); })
+          .then(function (j) {
+            var b = (j && j.base) || '';
+            if (/^https?:\/\/127\.0\.0\.1:\d+$/.test(b)) B = b;
+            else _probe();
+          }).catch(_probe);
+      }, 300);
+    };
+    _probe();
+  }
+  // B 为空时本层是透明层：请求照旧走主进程（harness 族由 server.py 的
+  // 307 兜底转发）；B 变为非空后下面拦截器自动生效，无需重新加载。
   // 能力门（对抗版本错位）：proxy/usage/claude_default 族只在新后端
   // （__HG_WFAM__ 注入 'proxy'）才改写。dev 模式前端从磁盘直读、后端可能
   // 还是旧进程——旧后端不替换此占位符（残留字面量）≠'proxy'，自动退回
