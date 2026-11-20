@@ -27,8 +27,37 @@ import threading as _threading
 # Windows 下 guess_type 受注册表影响（.js 可能被映射成 application/octet-stream），
 # 两条 serve 路径（_mem_web 的 guess_type + DEBUG 的 send_from_directory 内部
 # 同样走 mimetypes）统一在进程内钉死。
-mimetypes.add_type("text/javascript", ".js")
-mimetypes.add_type("text/javascript", ".mjs")
+def _pin_mimes():
+    """把关键静态资源的 MIME 钉死在进程内（幂等、可重入）。
+
+    a674（用户实锤同事机「整页裸 HTML、样式全丢」）：Phase 0 只钉了 .js/.mjs，
+    漏了 .css——而 Chromium 对 `<link rel=stylesheet>` 同样执行严格 MIME 校验。
+    Windows 的 mimetypes 从注册表读 HKCR\\.css 的 Content Type，被 CAD/老
+    Office/清理工具改坏或删掉后 guess_type 返回 None → 落到
+    application/octet-stream → 整个样式表被拒收，页面只剩裸 HTML 控件。
+    入口页 .html 同款风险（octet-stream 会被 WebView 当下载）。
+    抽成函数：任何地方重新 init 过 mimetypes 都可以再钉一次，测试可重入验证。
+    """
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("text/javascript", ".mjs")
+    mimetypes.add_type("text/css", ".css")
+    mimetypes.add_type("text/html", ".html")
+    mimetypes.add_type("text/html", ".htm")
+    # a674 补充（终审）：vendor/ 与 /ico/ 路由同样吃注册表——
+    #   .ttf/.wasm/.json 在 vendor（xterm 字体、tree-sitter 的 .wasm 走
+    #     WebAssembly.instantiateStreaming 是**严格 MIME**，octet-stream
+    #     直接拒=ts-outline 无声死）；
+    #   .png/.svg/.ico 在 /ico/ 与 web 资产（图标裂图）。
+    # 同一张注册表劫持多个扩展名是常态（清理工具批量改），一次钉全。
+    mimetypes.add_type("font/ttf", ".ttf")
+    mimetypes.add_type("application/wasm", ".wasm")
+    mimetypes.add_type("application/json", ".json")
+    mimetypes.add_type("image/png", ".png")
+    mimetypes.add_type("image/svg+xml", ".svg")
+    mimetypes.add_type("image/x-icon", ".ico")
+
+
+_pin_mimes()
 # a346/R21-6：/api/theme 的 nav_keys 段 read-modify-write 并发锁
 _nav_keys_lock = _threading.Lock()
 

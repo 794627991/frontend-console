@@ -1,0 +1,650 @@
+# -*- coding: utf-8 -*-
+"""代码跳转索引 API（a333 批1）。蓝图 nav_bp——就近注册（server.py）。
+
+任务槽复刻 res_api 形态（状态独立、单任务、poll 轮询、协作式取消、
+seq 日志）；查询端点无状态直答。门卫：索引根必须在文件树登记根内
+（_under_roots + _under_roots_real，与 tree 系 API 同源）。"""
+import os
+import re
+import threading
+import time
+
+from flask import Blueprint, jsonify, request
+
+nav_bp = Blueprint("nav", __name__)
+
+_lock = threading.Lock()
+_state = {"running": False, "phase": "", "log": [], "done": False,
+          "ok": False, "err": "", "ts": 0.0, "result": None, "cancel": False,
+          "percent": 0, "cur": "", "cancelled": False, "log_seq": 0,
+          "root": "", "importing": False}
+
+
+def _log(msg):
+    """a424（用户令：同类日志不许刷屏，只占同一行）：按「进度行键」合并。
+
+    进度类消息用 `\\r` 前缀标记为可覆盖行——同键的后续消息**原地替换**
+    最后一条，而不是追加。前端按 seq 变化就地更新那一行。
+    键 = 去掉末尾数字/百分比后的稳定前缀（如「产物源扫描中」「递归 include」）。
+    非进度消息（阶段头、告警、完成）照常追加。"""
+    msg = str(msg)
+    with _lock:
+        _state["log_seq"] += 1
+        _seq = _state["log_seq"]
+        _key = _progress_key(msg)
+        _lg = _state["log"]
+        if _key:
+            _last = _state.get("_prog_row") or {}
+            _idx = _last.get(_key)
+            if _idx is not None and 0 <= _idx < len(_lg) \
+                    and _lg[_idx].get("key") == _key:
+                _lg[_idx] = {"t": time.time(), "msg": msg,
+                             "seq": _seq, "key": _key}
+                # 原地替换 + 后端给旧位置换新 seq，前端写盘时要把它搬到末尾，
+                # 让日志按 seq 递增（与后端数组顺序一致）——否则 poll 响应里
+                # 数组顺序是后端顺序、seq 却乱序，任何「seq > 上次」的增量
+                # 遍历都会跳过该行之后的全部新条目。
+                _row = _lg.pop(_idx)
+                _lg.append(_row)
+                for _k, _i2 in list(_state.get("_prog_row", {}).items()):
+                    if _i2 > _idx:
+                        _state["_prog_row"][_k] = _i2 - 1
+                _state["_prog_row"][_key] = len(_lg) - 1
+                return
+        _lg.append({"t": time.time(), "msg": msg, "seq": _seq, "key": _key})
+        if _key:
+            _state.setdefault("_prog_row", {})[_key] = len(_lg) - 1
+        # 裁剪会移动下标——重置进度行索引（下一次退化为追加，可接受）。
+        # a434：记录被裁掉的最后一条 seq——前端据此判断自己是否漏了日志
+        # （进度行原地替换也会消耗 seq，只比对 log_seq 会把合并误判成丢失）
+        if len(_lg) > 400:
+            _cut = len(_lg) - 400
+            _state["log_dropped"] = _lg[_cut - 1]["seq"]
+            del _lg[:_cut]
+            _state["_prog_row"] = {}
+
+
+# 进度行识别：这些前缀的消息视为「同一行刷新」
+_PROG_PREFIXES = (
+    "产物源扫描中", "扫描中：", "单元推导", "编译参数提取", "递归 include",
+    "同目录头文件补收", "写文件清单", "指纹扫描中", "白名单映射",
+    "读符号表", "sqlite 导入", "扫描等待",
+)
+_PROG_NUM_RE = re.compile(r"\d[\d.,:/%]*")
+
+
+def _progress_key(msg):
+    """进度行键：把数字统一替换成 #，同类进度得到稳定键（原地刷新）。
+    「单元推导 ① … 100/4425」与「单元推导 ① … 200/4425」同键；
+    ①/②/③ 因文案不同而分键。"""
+    s = msg.strip()
+    if not any(s.startswith(p) for p in _PROG_PREFIXES):
+        return ""
+    return _PROG_NUM_RE.sub("#", s)[:48]
+
+
+def _guard(path):
+    """索引/管理目标必须在文件树登记根内（防任意目录索引）。"""
+    from src.file_tree import _under_roots, _under_roots_real
+    return _under_roots(path) and _under_roots_real(path)
+
+
+@nav_bp.route("/api/nav/scope_tree")
+def nav_scope_tree():
+    """a398：收录范围手选目录树（懒加载一层）。?root=&rel=
+    返回 {ok, dirs:[{name, rel, sub}], files}——sub=是否有子目录（展开箭头）。
+    跳过 _SKIP_DIRS/点目录（与建库 walk 同规则——所见即所收）。
+    a398（审计#27）：盘符根边界（root=C:\\ 时 normpath 无尾_sep 导致全
+    越界）、尾斜杠归一、realpath 防根内符号链接逃逸、条目上限、rel isabs"""
+    import os
+    from src import nav_index
+    root = (request.args.get("root") or "").strip()
+    rel = (request.args.get("rel") or "").strip().replace("\\", "/").strip("/")
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    if rel and (".." in rel.split("/") or rel.startswith("/")
+                or ntpath_isabs(rel)):
+        return jsonify({"ok": False, "err": "非法子目录"}), 400
+    base = os.path.normpath(os.path.join(root, rel.replace("/", os.sep))) \
+        if rel else os.path.normpath(root)
+    _rn = os.path.normpath(root)
+    _rn_p = _rn if _rn.endswith(("\\", "/")) else _rn + os.sep
+    if os.path.normpath(base) != _rn and \
+            not os.path.normpath(base).startswith(_rn_p):
+        return jsonify({"ok": False, "err": "越界"}), 400
+    try:
+        if os.path.realpath(base).lower() != base.lower() and \
+                not os.path.realpath(base).lower().startswith(
+                    os.path.realpath(root).rstrip("\\/") .lower() + os.sep) and \
+                os.path.realpath(base).lower() != os.path.realpath(root).lower():
+            return jsonify({"ok": False, "err": "越界（符号链接）"}), 400
+    except OSError:
+        pass
+    try:
+        with os.scandir(base) as it:
+            ents = list(it)
+    except OSError as e:
+        return jsonify({"ok": False, "err": "读取失败：%s" % e}), 400
+    dirs, files = [], 0
+    _skip_l = {s.lower() for s in nav_index._SKIP_DIRS}
+    for e in ents:
+        try:
+            if e.is_dir():
+                if e.name.lower() in _skip_l or e.name.startswith("."):
+                    continue
+                if len(dirs) >= 800:   # 巨目录封顶（浏览器渲染保护）
+                    continue
+                sub = False
+                try:
+                    with os.scandir(e.path) as it2:
+                        sub = any(x.is_dir() and x.name.lower() not in _skip_l
+                                  and not x.name.startswith(".") for x in it2)
+                except OSError:
+                    pass
+                dirs.append({"name": e.name,
+                             "rel": (rel + "/" + e.name) if rel else e.name,
+                             "sub": sub})
+            else:
+                files += 1
+        except OSError:
+            continue
+    dirs.sort(key=lambda x: x["name"].lower())
+    return jsonify({"ok": True, "rel": rel, "dirs": dirs, "files": files,
+                    "truncated": len(dirs) >= 800})
+
+
+def ntpath_isabs(p):
+    import ntpath
+    return ntpath.isabs(p)
+
+
+@nav_bp.route("/api/nav/status")
+def nav_status():
+    """右键三态 + 跳转前探测。?root= 目录（浅探测秒级）。"""
+    from src import nav_index
+    root = (request.args.get("root") or "").strip()
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    return jsonify({"ok": True, **nav_index.status(root)})
+
+
+@nav_bp.route("/api/nav/libs")
+def nav_libs():
+    """全部索引库概览（管理/存储感知联动）。"""
+    from src import nav_index
+    return jsonify({"ok": True, "libs": nav_index.list_libs(),
+                    "total": os_dir_size_safe(nav_index._nav_root())})
+
+
+def os_dir_size_safe(p):
+    import os
+    if not os.path.isdir(p):
+        return 0
+    total = 0
+    for r, _, fs in os.walk(p):
+        for f in fs:
+            try:
+                total += os.path.getsize(os.path.join(r, f))
+            except OSError:
+                pass
+    return total
+
+
+@nav_bp.route("/api/nav/build", methods=["POST"])
+def nav_build():
+    """手动建库（唯一入口——绝不自动触发）。body {root, backend?}"""
+    from src import nav_index
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    backend = str(d.get("backend") or "auto").strip().lower()   # a369 三档
+    # a393（用户令：不允许全量方案）：memory 显式拒绝给明确反馈
+    if backend == "memory":
+        return jsonify({"ok": False, "err": "全量内存模式已下线"
+                        "（600 万符号 ≈8GB 常驻实锤），请用 readtags 或 sqlite"}), 400
+    if backend not in ("auto", "readtags", "sqlite"):
+        backend = "auto"
+    if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
+        return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    if not os.path.isdir(root):   # FD-2 终审（P4）：D-5 只落了 isabs 半截——不存在的绝对路径仍真启动任务
+        return jsonify({"ok": False, "err": "目录不存在：%s" % root[:120]}), 400
+    # a390：显式点 sql 档但环境无 sqlite3（旧版 exe 打包缺件）——早拒说人话，
+    # 不让任务跑到阶段 4 才"构建失败"吓人（auto 由 build 内部自动降 readtags）
+    if backend == "sqlite" and not nav_index.sqlite_capable():
+        return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"
+                        "（旧版打包缺件，升级新版修复；readtags 模式查询速度相近）"}), 400
+    # a398：收录范围（档B）。a398（审计#11）：校验/互斥全过之后再处理
+    # scope 三参数（原 409 拒绝时 scope.json 已被删）。scope=dict 内联配置
+    # （UI 导入 JSON/手选目录）建库成功后落独立存储位（复用）；scope_tier=
+    # 用已发现配置强制档位；scope_clear=清已存范围（回全量）
+    # a415R2 BUG-E2：scope 传了但不是对象=显式 400（原静默当没传=整根全量）
+    if d.get("scope") is not None and not isinstance(d.get("scope"), dict):
+        return jsonify({"ok": False, "err": "scope 必须是 JSON 对象"}), 400
+    scope = d.get("scope") if isinstance(d.get("scope"), dict) else None
+    with _lock:
+        # R17-2（实锤：互斥只挡单向）：导入进行中（大清单秒级窗口）启动
+        # build 会非确定互覆 symbols/meta——双向互斥
+        if _state["running"]:
+            return jsonify({"ok": False,
+                            "err": "已有索引任务在运行（%s）" % _state["root"]}), 409
+        if _state["importing"]:
+            return jsonify({"ok": False, "err": "nm 清单导入进行中，稍后再建"}), 409
+        if scope is None and d.get("scope_tier") in ("whitelist", "full"):
+            # a415R3 BUG-3：带 scope_clear 时档位解析不再读**即将删除的**
+            # 已存范围（store="" 只认工程配置）——否则清除被隐性撤销
+            _sc_d, _src_d = nav_index.load_scope(
+                root, store="" if d.get("scope_clear") else None)
+            if not _sc_d:
+                # a400：无配置时白名单档走零配置形态识别（sbuilder 方案）
+                _sc_d, _dk = nav_index.detect_scope(root)
+            if _sc_d:
+                _sc_d["tier"] = d["scope_tier"]
+                scope = _sc_d
+            elif d["scope_tier"] == "full":
+                scope = {"tier": "full", "include": ["."]}
+            else:
+                return jsonify({"ok": False, "err": "没有可用的收录范围配置"
+                                "（工程 .fcpk-scope.json 或已存范围均无）——"
+                                "先「导入 JSON」或「选择目录」"}), 400
+        # a415R2 N7/WB#11b：scope_clear 在档位校验之后；纯清除（无建库
+        # 意图）删完即回——不空跑一次全量建库覆盖原索引
+        if d.get("scope_clear"):
+            try:
+                _sp = nav_index.scope_store_path(root)
+                if os.path.isfile(_sp):
+                    os.remove(_sp)
+            except OSError:
+                pass
+            if scope is None:
+                return jsonify({"ok": True, "cleared": True})
+        _state.update(running=True, phase="准备", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
+                      err="", ts=time.time(), result=None, cancel=False,
+                      percent=0, cur="", cancelled=False, log_seq=0, root=root)
+
+    def should_cancel():
+        return bool(_state.get("cancel"))
+
+    def on_prog(pct, total, label):
+        _state.update(percent=int(pct), cur=label or "",
+                      phase=str(label or "处理中"))
+
+    def ask_tier(info):
+        """a431：白名单覆盖率偏低时暂停，等用户在弹窗里选建库方式。
+        返回 "full" | "whitelist"；用户取消任务时返回 "cancel"。
+
+        a432：不能用裸 evt.wait()——用户点「取消」或关掉面板时没有任何
+        路径能唤醒它，建库线程会永久挂起（running 状态卡死，下次建库被拒）。
+        改分片轮询：0.2s 一轮，同时检查 should_cancel；超时兜底 10 分钟。"""
+        _ask = {"evt": threading.Event(), "choice": None, "info": info}
+        with _lock:
+            _state["ask_tier"] = _ask
+        _state.update(phase="等待选择建库方式")
+        _t0 = time.time()
+        try:
+            while not _ask["evt"].wait(0.2):
+                if should_cancel():
+                    break
+                if time.time() - _t0 > 600:      # 10 分钟无人应答 → 按全量继续
+                    _log("等待建库方式选择超时（10 分钟），按全量收源码继续")
+                    break
+        finally:
+            # a452（审计 P2）：清空必须走 finally——等待期间线程被异常打断
+            # 时若不执行，ask_tier 会残留非空，poll 持续下发数据、/api/nav/tier
+            # 持续返回 200，前端弹窗反复出现，直到下一次建库才被 reset。
+            with _lock:
+                _state["ask_tier"] = None
+        if should_cancel():
+            return "cancel"
+        return _ask["choice"] or "full"
+
+    def work():
+        try:
+            nav_index._close_tagdb()   # S37-2（P2）：与 reindex 对齐——查询过的库
+                                       # 持有 tags.db 连接，阶段 4 os.replace 撞
+                                       # WinError 5 → 静默降级 readtags + tmp 残留
+            res = nav_index.build(root, log=_log, progress=on_prog,
+                                  should_cancel=should_cancel,
+                                  backend=backend, scope=scope,
+                                  ask_tier=ask_tier)
+            # a398（审计#13）：建库**成功后**才落盘范围（原先落盘——失败/
+            # 取消后范围与索引对不上）；独立存储位（删索引不连带删范围）
+            if scope is not None:
+                _ok_sc, _sc_n = nav_index._norm_scope(scope, root)
+                if _ok_sc:
+                    try:
+                        nav_index._write_json(
+                            nav_index.scope_store_path(root), _sc_n)
+                    except OSError:
+                        pass
+            _state.update(done=True, ok=True, result=res, phase="完成")
+        except nav_index.Cancelled:
+            _state.update(done=True, ok=False, err="已取消", phase="已取消",
+                          cancelled=True)
+            _log("用户取消索引")
+        except Exception as e:
+            _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
+            _log("失败：%s" % e)
+        finally:
+            _state["running"] = False
+            _state["cancel"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@nav_bp.route("/api/nav/poll")
+def nav_poll():
+    with _lock:
+        return jsonify({"ok": True, "running": _state["running"],
+                        "phase": _state["phase"], "log": _state["log"],
+                        "done": _state["done"], "ok_done": _state["ok"],
+                        "err": _state["err"], "result": _state["result"],
+                        "percent": _state["percent"], "cur": _state["cur"],
+                        "cancelling": _state["cancel"],
+                        "cancelled": _state["cancelled"],
+                        "log_seq": _state["log_seq"], "root": _state["root"],
+                        # a426：任务启动时刻（前端独立计时器基准——关面板
+                        # 重开后仍能显示真实已用时间，而非从 0 重数）
+                        "started": _state.get("ts") or 0,
+                        # a431：等待用户选择建库方式时的数据（无则 null）
+                        "ask_tier": (_state.get("ask_tier") or {}).get("info"),
+                        # a434：已被裁剪的日志最大 seq——前端据此提示省略
+                        "log_dropped": _state.get("log_dropped") or 0})
+
+
+@nav_bp.route("/api/nav/tier", methods=["POST"])
+def nav_tier():
+    """a431：用户对「白名单覆盖率偏低」弹窗的选择。body {choice}：
+    full=全量收源码 / whitelist=只收白名单 / cancel=放弃建库。"""
+    d = request.get_json(force=True, silent=True) or {}
+    choice = str(d.get("choice") or "").strip().lower()
+    if choice not in ("full", "whitelist", "cancel"):
+        return jsonify({"ok": False, "err": "choice 必须是 "
+                        "full / whitelist / cancel"}), 400
+    with _lock:
+        _ask = _state.get("ask_tier")
+        if not _ask:
+            return jsonify({"ok": False, "err": "当前没有待选择的建库任务"}), 409
+        _ask["choice"] = choice
+        if choice == "cancel":
+            _state["cancel"] = True
+    _ask["evt"].set()
+    return jsonify({"ok": True})
+
+
+@nav_bp.route("/api/nav/cancel", methods=["POST"])
+def nav_cancel():
+    with _lock:
+        if not _state["running"]:
+            return jsonify({"ok": False, "err": "没有运行中的索引任务"}), 409
+        _state["cancel"] = True
+    return jsonify({"ok": True})
+
+
+@nav_bp.route("/api/nav/delete", methods=["POST"])
+def nav_delete():
+    """删除某根的索引库。body {root}
+    R15-7：运行中建库拒删（build 线程正在写库目录，删=竞态崩溃）。
+    R15-5：工程路径已不可达（换盘/移动）时门卫必拒——但库删除本身不依赖
+    路径有效性：库存在即允许删（否则孤儿库永远删不掉）。"""
+    from src import nav_index
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
+        return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False, "err": "索引任务运行中，稍后再删"}), 409
+        # R18-1（实锤：delete 漏接 importing 互斥）：导入中删库 → 导入线程
+        # makedirs 复活库目录写孤儿 symbols.json（不可见、无法 UI 清理）
+        if _state["importing"]:
+            return jsonify({"ok": False, "err": "nm 清单导入进行中，稍后再删"}), 409
+    has_lib = any(l["root"].lower() == os.path.normcase(os.path.abspath(root))
+                  for l in nav_index.list_libs())
+    if not has_lib and not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内且无对应索引库"}), 400
+    # P-13 干跑补 api 层：文件被外部占用时 rmtree 抛 OSError——不捕获则
+    # 500 HTML（原为静默 ok:true 残留，两个极端都不对）
+    try:
+        return jsonify({"ok": nav_index.delete_lib(root)})
+    except OSError as e:
+        return jsonify({"ok": False, "err": "部分删除失败（%s）——文件被占用，"
+                        "关闭占用程序后重试" % str(e)[:80]})
+
+
+@nav_bp.route("/api/nav/rebind", methods=["POST"])
+def nav_rebind():
+    """工程移动/换盘后重关联。body {old_root, new_root}"""
+    from src import nav_index
+    d = request.get_json(force=True, silent=True) or {}
+    old_root = str(d.get("old_root") or "").strip()
+    new_root = str(d.get("new_root") or "").strip()
+    if not old_root or not new_root:
+        return jsonify({"ok": False, "err": "缺 old_root/new_root"}), 400
+    if not _guard(new_root):
+        return jsonify({"ok": False, "err": "新目录不在文件树登记根内"}), 400
+    try:
+        ok, msg = nav_index.rebind(old_root, new_root)
+        return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+    except OSError as e:
+        # FA-3 终审：rebind 内部有目录改名——文件被占用时抛 OSError 不捕获
+        # 则 500 HTML+半迁移孤儿（P-13 delete 同款防御）
+        return jsonify({"ok": False, "err": "重关联失败（%s）——文件被占用" % str(e)[:80]})
+
+
+@nav_bp.route("/api/nav/reindex", methods=["POST"])
+def nav_reindex():
+    """a369：已建库切换查询后端（不重建 tags）。body {root, backend}"""
+    import os
+    from src import nav_index
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    backend = str(d.get("backend") or "").strip().lower()
+    # a393（用户令：不允许全量方案）：memory 显式拒绝
+    if backend == "memory":
+        return jsonify({"ok": False, "err": "全量内存模式已下线"
+                        "（600 万符号 ≈8GB 常驻实锤），请用 readtags 或 sqlite"}), 400
+    if backend not in ("readtags", "sqlite"):
+        return jsonify({"ok": False, "err": "backend 须为 readtags/sqlite"}), 400
+    # a390：同 build——sqlite 无能力早拒（切换任务同样不该跑到一半失败）
+    if backend == "sqlite" and not nav_index.sqlite_capable():
+        return jsonify({"ok": False, "err": "本程序未内置 sqlite3 模块"
+                        "（旧版打包缺件，升级新版修复；readtags 模式查询速度相近）"}), 400
+    if not os.path.isabs(root):   # D-5（P4）：类型混淆/相对形态以 CWD 解析落登记根——垃圾任务真实启动
+        return jsonify({"ok": False, "err": "root 须为绝对路径"}), 400
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    ld = nav_index.lib_dir(root)
+    if not os.path.isfile(os.path.join(ld, "meta.json")):
+        return jsonify({"ok": False, "err": "该目录没有索引库"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False,
+                            "err": "已有索引任务在运行（%s）" % _state["root"]}), 409
+        _state.update(running=True, phase="切档", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
+                      err="", ts=time.time(), result=None, cancel=False,
+                      percent=0, cur="", cancelled=False, log_seq=0, root=root)
+
+    def work():
+        try:
+            # R35 复验终修（S35-2）+FD-1 终审（P1）：定向关目标库（非全量）——
+            # 全量关闭与 20 并发线程重建交叠触发 sqlite3 C 层竞态杀进程 3/3。
+            # 定向关+busy 让路：其他库不受干扰、目标库窗口内不再建 sqlite 连接
+            nav_index._close_tagdb(ld)
+            meta = nav_index._read_json(os.path.join(ld, "meta.json")) or {}
+            db = os.path.join(ld, "tags.db")
+            tags_p = os.path.join(ld, "tags")
+            if backend == "sqlite":
+                _log("切换 sqlite：构建 tags.db（%d 符号，一次性）…"
+                     % (meta.get("code_files") or 0))
+                n = nav_index._build_tag_db(
+                    tags_p, db, say=_log,
+                    prog=lambda pct, lab: _state.update(
+                        percent=int(pct), cur=lab, phase=str(lab or "sqlite")))
+                _log("✓ tags.db：%d 行" % n)
+            else:
+                if os.path.isfile(db):
+                    os.remove(db)
+                    _log("已删除 tags.db（%s 模式零额外文件）" % backend)
+            meta["backend"] = backend
+            meta["backend_auto"] = False
+            # S37-9（P4）：切档后 sizes.db 同步（sqlite 加项/其他档删项）——
+            # 面板尺寸双方向失真（虚高 95MB+/虚低 1.2GB）
+            _sz = meta.get("sizes") or {}
+            _sz.pop("db", None)
+            if backend == "sqlite" and os.path.isfile(db):
+                _sz["db"] = os.path.getsize(db)
+            meta["sizes"] = _sz
+            nav_index._write_json(os.path.join(ld, "meta.json"), meta)
+            nav_index._invalidate_cache()
+            _state.update(done=True, ok=True, phase="完成",
+                          result={"kind": "reindex", "backend": backend})
+        except Exception as e:
+            _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
+            _log("失败：%s" % e)
+        finally:
+            nav_index._unbusy_tagdb(ld)   # FD-1：解除 busy，恢复 sqlite 查询
+            _state["running"] = False
+            _state["cancel"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@nav_bp.route("/api/nav/cg_status")
+def nav_cg_status():
+    """Claude 代码图（codegraph）状态。?root="""
+    from src import nav_codegraph as cg
+    root = (request.args.get("root") or "").strip()
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    return jsonify(cg.status(root))
+
+
+@nav_bp.route("/api/nav/cg_build", methods=["POST"])
+def nav_cg_build():
+    """建/重建 Claude 代码图索引。body {root, mode: 'build'|'sync'}
+    复用 nav 任务槽（与 ctags 建库互斥——同一时间只跑一种索引）。"""
+    from src import nav_codegraph as cg
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    mode = str(d.get("mode") or "build")
+    if mode not in ("build", "sync"):
+        return jsonify({"ok": False, "err": "mode 只认 build/sync"}), 400
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False, "err": "索引任务运行中（%s）" % _state["root"]}), 409
+        _state.update(running=True, phase="codegraph", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
+                      err="", ts=time.time(), result=None, cancel=False,
+                      percent=0, cur="", cancelled=False, log_seq=0, root=root)
+
+    def work():
+        def should_cancel():
+            return bool(_state.get("cancel"))
+        try:
+            _state["percent"] = 10
+            fn = cg.sync if mode == "sync" else cg.build
+            # R27-1（实锤：取消钮假动作）：should_cancel 透传——心跳每拍查，
+            # 取消即杀 codegraph 子进程并走取消终态（旧版钮在动作假）
+            ok, msg = fn(root, log=_log, should_cancel=should_cancel)
+            _state.update(percent=100, done=True, ok=ok,
+                          err="" if ok else msg[:400],
+                          phase="完成" if ok else "失败",
+                          result={"kind": "codegraph", "ok": ok, "msg": msg[:200],
+                                  "files": (cg.status(root) or {}).get("files", 0)})
+        except cg.CgCancelled:
+            _state.update(done=True, ok=False, err="已取消", phase="已取消",
+                          cancelled=True)
+            _log("用户取消 codegraph")
+        except Exception as e:
+            _state.update(done=True, ok=False, err=str(e)[:400], phase="失败")
+        finally:
+            _state["running"] = False
+            _state["cancel"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@nav_bp.route("/api/nav/cg_delete", methods=["POST"])
+def nav_cg_delete():
+    """删除工程的 codegraph 索引。body {root}
+    R26-4（实锤：缺运行互斥）：build 运行中可删——uninit 与 index 并发
+    操作同一 DB。对齐 nav_delete 的 R15-7 防护"""
+    from src import nav_codegraph as cg
+    d = request.get_json(force=True, silent=True) or {}
+    root = str(d.get("root") or "").strip()
+    if not root:
+        return jsonify({"ok": False, "err": "缺 root"}), 400
+    if not _guard(root):
+        return jsonify({"ok": False, "err": "目录不在文件树登记根内"}), 400
+    with _lock:
+        if _state["running"]:
+            return jsonify({"ok": False, "err": "索引任务运行中，稍后再删"}), 409
+    ok, msg = cg.remove(root)
+    return jsonify({"ok": ok, "err": "" if ok else msg, "msg": msg})
+
+
+@nav_bp.route("/api/nav/definition")
+def nav_definition():
+    """跳转查询。?file=（发起跳转的文件，组件上下文+库反查）&symbol="""
+    from src import nav_index
+    f = (request.args.get("file") or "").strip()
+    sym = (request.args.get("symbol") or "").strip()
+    if not f or not sym:
+        return jsonify({"ok": False, "err": "缺 file/symbol"}), 400
+    try:
+        res = nav_index.definition(f, sym)
+        return jsonify({"ok": True, **res})
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)[:200]}), 200
+
+
+@nav_bp.route("/api/nav/symbols")
+def nav_symbols():
+    """工作区符号面板（Ctrl+T）。?file=&q=&limit="""
+    from src import nav_index
+    f = (request.args.get("file") or "").strip()
+    q = (request.args.get("q") or "").strip()
+    try:
+        limit = min(100, max(10, int(request.args.get("limit") or 50)))
+    except ValueError:
+        limit = 50
+    scope = (request.args.get("scope") or "").strip()   # a383：file=文件内符号（Ctrl+Shift+O）
+    if not f:
+        return jsonify({"ok": False, "err": "缺 file"}), 400
+    try:
+        return jsonify(nav_index.symbols(f, q, limit if scope != "file" else 500, scope=scope))
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)[:200]}), 200
+
+
+@nav_bp.route("/api/nav/references")
+def nav_references():
+    """引用查找（Shift+F12）。?file=&symbol="""
+    from src import nav_index
+    f = (request.args.get("file") or "").strip()
+    sym = (request.args.get("symbol") or "").strip()
+    if not f or not sym:
+        return jsonify({"ok": False, "err": "缺 file/symbol"}), 400
+    try:
+        return jsonify(nav_index.references(f, sym))
+    except Exception as e:
+        return jsonify({"ok": False, "err": str(e)[:200]}), 200
