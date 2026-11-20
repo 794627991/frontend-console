@@ -1,13 +1,23 @@
 {
-  "updated": "2026-11-09 10:32:25",
+  "updated": "2026-11-20 20:30:37",
   "items": [
     {
-      "kind": "git",
-      "file": "install/Git-2.55.0.4-64-bit.exe",
-      "size": 65388168,
-      "sha256": "0cbc0b34a74b3aff3ace0910328549155a770e228331b19cb1498218a120e7ff",
-      "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe",
-      "note": "官方直链，在线安装同源"
+      "kind": "claude",
+      "dir": "claude-code/",
+      "files": 11,
+      "size": 745132278,
+      "version": "2.1.325",
+      "url": "https://www.npmjs.com/package/@anthropic-ai/claude-code",
+      "note": "npm 包整树镜像"
+    },
+    {
+      "kind": "codegraph",
+      "dir": "codegraph/",
+      "files": 941,
+      "size": 261470246,
+      "version": "1.6.0",
+      "url": "https://www.npmjs.com/package/@colbymchenry/codegraph",
+      "note": "发布机 npm i -g @colbymchenry/codegraph 后跑 src/build.py _refresh_offline_codegraph 恢复（平台 bundle win32-x64：node.exe+lib 自带运行时）"
     },
     {
       "kind": "dotnet",
@@ -15,6 +25,14 @@
       "size": 77688504,
       "sha256": "c0ca2e0c9cd18a24a0a77369a13fae2c2c4e8bc83355dd24e5ddc00f9d791fe3",
       "url": "https://download.visualstudio.microsoft.com/download/pr/6a893f45-0810-4b11-9051-3b9ef0d1cf0e/4d6923c759e4cc4d34438f2b57f4c06/ndp481-x86-x64-allos-enu.exe",
+      "note": "官方直链，在线安装同源"
+    },
+    {
+      "kind": "git",
+      "file": "install/Git-2.55.0.4-64-bit.exe",
+      "size": 65388168,
+      "sha256": "0cbc0b34a74b3aff3ace0910328549155a770e228331b19cb1498218a120e7ff",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe",
       "note": "官方直链，在线安装同源"
     },
     {
@@ -26,47 +44,12 @@
       "note": "官方直链，在线安装同源"
     },
     {
-      "kind": "node",
-      "file": "install/node-v24.19.0-x64.msi",
-      "size": 32972800,
-      "sha256": "f0f66c2a80c08a30a5ab5179ee9ea9e45f9b46289436a8cc87ff833b852db351",
-      "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi",
-      "note": "官方直链，在线安装同源"
-    },
-    {
       "kind": "onlyoffice",
       "file": "onlyoffice/onlyoffice-documentserver.exe",
       "size": 916210008,
       "sha256": "5106656fe128828f17d636bd784c2a24ae1be5d95563635df7fcce1e531d1cc5",
       "url": "https://www.onlyoffice.com/download.aspx",
       "note": "DS 安装器；在线安装用官方 download.aspx 直链"
-    },
-    {
-      "kind": "claude",
-      "dir": "claude-code/",
-      "files": 11,
-      "size": 685007344,
-      "version": "2.1.318",
-      "url": "https://www.npmjs.com/package/@anthropic-ai/claude-code",
-      "note": "npm 包整树镜像"
-    },
-    {
-      "kind": "webview2",
-      "dir": "webview2/",
-      "files": 168,
-      "size": 584494479,
-      "version": "Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.x64",
-      "url": "tools/fetch_webview2_fixed.py 按版本下载（微软已下架直链）",
-      "note": "Fixed Version 运行时，恢复脚本见 url"
-    },
-    {
-      "kind": "codegraph",
-      "dir": "codegraph/",
-      "files": 941,
-      "size": 261470246,
-      "version": "1.6.0",
-      "url": "https://www.npmjs.com/package/@colbymchenry/codegraph",
-      "note": "发布机 npm i -g @colbymchenry/codegraph 后跑 src/build.py _refresh_offline_codegraph 恢复（平台 bundle win32-x64：node.exe+lib 自带运行时）"
     },
     {
       "kind": "pydeps",
@@ -99,6 +82,15 @@
       ],
       "url": "pip download（requirements 见 wheel 名）",
       "note": "离线 wheel 池，在线安装走 pip"
+    },
+    {
+      "kind": "webview2",
+      "dir": "webview2/",
+      "files": 168,
+      "size": 584494479,
+      "version": "Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.x64",
+      "url": "tools/fetch_webview2_fixed.py 按版本下载（微软已下架直链）",
+      "note": "Fixed Version 运行时，恢复脚本见 url"
     }
   ],
   "note": "资源本体不入 git；本清单入库。新检出机器按各 item 的 url/note 恢复 offline_assets/ 后才能打离线包。"

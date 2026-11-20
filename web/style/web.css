@@ -15,6 +15,11 @@
 .web-body { flex: 1; min-height: 0; position: relative; background: var(--bg); }
 .web-frame { position: absolute; inset: 0; width: 100%; height: 100%;
   border: none; background: var(--bg); }
+/* P3 壳形态：<webview> 宿主铺满（.web-frame 已 absolute inset:0，本行只是
+  尺寸兜底）。注意 webview 元素本身绝不能 display:block——Electron 45/44
+  实测 guest 视口高度会钉死 150（宽度仍跟随），页面只画顶上一条；创建处
+  用 display:flex。高度同步由 web-panel.js 的 ResizeObserver 写 px */
+.web-host { width: 100%; height: 100%; }
 .web-fav-menu { position: fixed; z-index: 10001; min-width: 280px; max-width: 420px;
   max-height: 60vh; overflow-y: auto; padding: 6px 0;
   background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
@@ -36,7 +41,7 @@
 .web-fav-note-inp:focus { outline: none; border-color: var(--accent); }
 .web-fav-empty { font-size: 12px; color: var(--muted); padding: 10px 12px; }
 
-/* a475：阅读模式 / 休眠层（Edge sleeping tabs + Reader 等价物） */
+/* a475：阅读模式层（Reader 等价物；休眠层已随 a475 机制退役删除） */
 .web-reader { position: absolute; inset: 0; overflow-y: auto; padding: 18px 24px;
   background: var(--bg); color: var(--fg); font-size: 13px; line-height: 1.8; }
 .web-reader-head { font-size: 14px; font-weight: 600; color: var(--fg-bright, var(--fg));
@@ -47,10 +52,6 @@
 .web-reader-body { max-width: 860px; word-break: break-word; white-space: normal; }
 .web-reader-load, .web-reader-err { color: var(--muted); padding: 12px 0; }
 .web-reader-err { color: var(--neon-red, #e5484d); }
-.web-sleep { position: absolute; inset: 0; display: flex; align-items: center;
-  justify-content: center; background: var(--bg); z-index: 2;
-  font-size: 13px; color: var(--muted); text-align: center; line-height: 2; }
-.web-sleep-sub { font-size: 11px; color: var(--muted); }
 
 /* a488：网页加载失败提示层 */
 .web-err { position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -59,3 +60,31 @@
 .web-err-title { font-size: 14px; font-weight: 600; color: var(--neon-orange, #d29922); }
 .web-err-msg { font-size: 12px; color: var(--muted); line-height: 1.6; }
 .web-err-acts { display: flex; gap: 10px; margin-top: 6px; }
+
+/* P3 壳形态：密码保存提示（登录提交后主进程推送；确认才落盘） */
+.pw-save-toast {
+  position: fixed; right: 18px; bottom: 18px; z-index: 10050;
+  width: 300px; max-width: calc(100vw - 36px); padding: 12px 14px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+  font-size: 12px;
+}
+.pw-save-title { font-weight: 600; color: var(--fg); margin-bottom: 4px; }
+.pw-save-site { color: var(--muted); word-break: break-all; margin-bottom: 10px;
+  font-family: var(--font-mono); }
+.pw-save-acts { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* 选择式填充弹层（工具内置存储，Edge 风格） */
+.pw-suggest {
+  position: fixed; z-index: 10060; width: 280px; max-height: 260px;
+  overflow-y: auto; padding: 4px 0; background: var(--bg-panel);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, .5);
+}
+.pw-suggest-title { font-size: 10px; font-weight: 600; color: var(--muted);
+  letter-spacing: 1px; padding: 4px 12px 6px; }
+.pw-suggest-item { display: flex; flex-direction: column; gap: 2px;
+  width: 100%; padding: 7px 12px; background: none; border: none;
+  text-align: left; cursor: pointer; color: var(--fg); }
+.pw-suggest-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pw-suggest-user { font-size: 12px; color: var(--fg); }

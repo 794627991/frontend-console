@@ -66,6 +66,9 @@ document.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();
   if (/^https?:/i.test(href)) {
+    // P1 口径（2026-11-20 拍板）：壳形态统一开网页 tab（工具内浏览）；
+    // 旧 pywebview 形态维持系统浏览器（/api/open_url）
+    if (window.fcShell && window.__newWindow) { window.__newWindow(href); return; }
     fetch('/api/open_url', {method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url: href})}).catch(() => {});

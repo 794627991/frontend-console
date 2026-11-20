@@ -101,11 +101,14 @@ def test_hard_reload_defined_and_cleans_up():
 
 
 def test_window_routes_registered_before_app_run():
-    """两个新路由必须注册在 app.run 之前（Flask 起过请求后禁止注册）。"""
+    """两个新路由必须注册在（GUI 路径的）app.run 之前（Flask 起过请求后
+    禁止注册）。--headless 分支（Electron 壳形态）自带一个更早的
+    app.run：该分支先 return、不注册窗口路由，服务的是无窗进程——序
+    断言取最后一次 app.run（GUI 路径的服务点）。"""
     main = _read("src/main.py")
     i_reload = main.index('@app.route("/api/window/reload"')
     i_dev = main.index('@app.route("/api/window/devtools"')
-    i_run = main.index("app.run(host=")
+    i_run = main.rfind("app.run(host=")
     assert i_reload < i_run and i_dev < i_run
 
 

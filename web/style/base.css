@@ -2686,3 +2686,30 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 .lz-inp:focus { outline: none; border-color: var(--accent); }
 .px-quota-login .lz-inp + .px-eye-wrap .lz-inp,
 .px-eye-wrap .lz-inp { padding-right: 26px; }
+
+/* ===== Electron 壳形态（P2，body.hg-shell）=====
+ * 无边框窗的顶栏拖拽区：整条 topbar 交给 -webkit-app-region: drag（原生
+ * 拖拽 + 双击最大化，Windows NCL 语义），交互元素逐类豁免 no-drag。
+ * 仅在壳形态 body 类下生效——pywebview 形态（无此类）零影响，其 JS 拖拽
+ * 桥（win-controls.js）照旧。 */
+body.hg-shell .topbar { -webkit-app-region: drag; }
+body.hg-shell .topbar button,
+body.hg-shell .topbar input,
+body.hg-shell .topbar select,
+body.hg-shell .topbar textarea,
+body.hg-shell .topbar a,
+body.hg-shell .topbar [contenteditable],
+body.hg-shell .topbar [data-no-drag],
+/* 按交互语义豁免（用户实锤「logo/版本点不开」：设置入口与最大化展开的
+ * 版本区块是 div——按标签枚举必漏；带 aria-label/title 即交互件，连同
+ * 子元素一并豁免（img 在 [aria-label] 容器内） */
+body.hg-shell .topbar [aria-label],
+body.hg-shell .topbar [aria-label] *,
+body.hg-shell .topbar [title],
+body.hg-shell .topbar [title] * { -webkit-app-region: no-drag; }
+
+
+/* 壳形态隐藏自研边缘 resize 热区（index.html .edge-hot 六个 div + win-controls
+ * 的 resize_* 路由链）：Electron frameless 原生 resize 边接管，热区留着会
+ * 与原生边打架（preventDefault 抢事件）。旧 pywebview 形态不受影响。 */
+body.hg-shell .edge-hot { display: none !important; }

@@ -1,7 +1,7 @@
 ﻿<!doctype html>
 <html lang="zh-CN">
 <head>
-<script>window._HG_VER='v__HG_VER__';window.__HG_WORKER__='__HG_WBASE__';window.__HG_WFAM__='__HG_WFAMFLAG__';window.__HG_DBG__=__HG_DBGF__==='1';console.log('[harness] boot '+window._HG_VER+' [v4]'+(window.__HG_WORKER__?' [worker '+window.__HG_WORKER__+']':''));
+<script>window._HG_VER='v__HG_VER__';window.__HG_WORKER__='__HG_WBASE__';window.__HG_WFAM__='__HG_WFAMFLAG__';window.__HG_DBG__=__HG_DBGF__==='1';window.__HG_HEADLESS__=(typeof __HG_HEADF__==='undefined'?'':__HG_HEADF__)==='1';console.log('[harness] boot '+window._HG_VER+' [v4]'+(window.__HG_WORKER__?' [worker '+window.__HG_WORKER__+']':'')+(window.__HG_HEADLESS__?' [electron-shell]':''));
 /* 刷新清场（a624：调试能力常开，F5 快捷键已屏蔽，整刷改由后端日志窗口的
    图标按钮触发）。pagehide 瞬间 sendBeacon 通知后端回收全部串口/SSH
    连接——否则句柄滞留后端进程，重开串口报「被占用」（CDP 强刷 COM10

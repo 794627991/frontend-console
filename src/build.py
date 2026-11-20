@@ -115,19 +115,27 @@ def build():
         # v4.1（用户拍板）：不再 _bundle_webview2 随包带运行时——改为打进
         # 统一离线资源包 .fcpk（含 WebView2/dotnet/node/git/claude/pydeps）。
         # 发布包随之从 318MB 降到约 65MB。
-        # v2.3.1 发布前资源加密（web 前端源码/blob → AES-256-GCM 密文，
-        # exe 启动 src/secure_boot.py 自解密；第三方库不碰）
+        # v4.1 换壳（Electron 迁移 P1，用户拍板）：资源加密链退役——web/ 由
+        # spec datas 明文直带 _internal/web（磁盘 serve：secure_boot 见无
+        # .fcenc 自动空转、FC_MEM_WEB 空、Flask 落磁盘读，运行时零改动）。
+        # Cython pyd 外置**保留**（防抄=机器码层，与加密解耦的独立开关）。
+        # 原 AES-GCM 链（encrypt_pkg → .fcenc → 启动自解密进内存）不再调用；
+        # .fcdebug 哨兵照写——selftest 的「明文磁盘 serve」分支语义正好覆盖
+        # 本形态（pyd src + 明文 web），省一个第三态
         try:
-            from tools.encrypt_pkg import encrypt_pkg
-            n = encrypt_pkg(app_dir)
-            if n:
-                print(f"资源加密: {n} 个文件（口令混淆内嵌，首启自解密）")
+            from tools.encrypt_pkg import _stage_src_pyd
+            _n = _stage_src_pyd(app_dir, BASE)
+            print("pyd 外置: %d 个（web 明文直带——资源加密已随换壳退役）" % _n)
         except Exception as e:
             # a635（用户实锤 v2.4.4 死包启动 ModuleNotFoundError: src.version）：
             # 原来是「打印警告照常发布」——Cython 编译失败时 _internal/src/ 一个
-            # pyd 都没有，包照发，同事装上必崩。加密/编译是发布必经步骤，
+            # pyd 都没有，包照发，同事装上必崩。编译是发布必经步骤，
             # 失败即停发，不许产出残缺包。
-            raise SystemExit("[发布守卫] 资源加密/Cython 编译失败，禁止发布：%s" % e)
+            raise SystemExit("[发布守卫] Cython 编译失败，禁止发布：%s" % e)
+        try:
+            open(os.path.join(app_dir, "_internal", ".fcdebug"), "w").close()
+        except OSError:
+            pass
         # a635：pyd 外置在 encrypt_pkg 里做，这里复核确实落了盘——空 src/
         # 的包启动就 ModuleNotFoundError，绝不能进分发流。
         _src_dir = os.path.join(app_dir, "_internal", "src")

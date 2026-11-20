@@ -13,7 +13,7 @@
     "t"
    ],
    "is_module": true,
-   "load_index": 41,
+   "load_index": 42,
    "referenced_by": {
     "js/resources.js": [
      "fix"
@@ -34,7 +34,8 @@
      "hgModal"
     ],
     "js/office-viewer.js": [
-     "js"
+     "js",
+     "page"
     ],
     "js/sidebar.js": [
      "password"
@@ -152,7 +153,8 @@
      "of"
     ],
     "js/office-viewer.js": [
-     "js"
+     "js",
+     "page"
     ],
     "js/settings.js": [
      "ready",
@@ -189,6 +191,7 @@
     "LOCAL_MAX",
     "POS_KEY",
     "__backendLogToggle",
+    "_verLabel",
     "allRows",
     "anchor",
     "approx",
@@ -283,13 +286,39 @@
     "y"
    ],
    "is_module": true,
-   "load_index": 74,
+   "load_index": 76,
    "referenced_by": {
+    "js/bit-calc.js": [
+     "toggle"
+    ],
+    "js/claude.js": [
+     "toggle"
+    ],
+    "js/cmd-lib.js": [
+     "toggle"
+    ],
+    "js/diff-viewer.js": [
+     "toggle"
+    ],
     "js/editor.js": [
-     "fallback"
+     "fallback",
+     "toggle"
+    ],
+    "js/file-tree.js": [
+     "toggle"
     ],
     "js/harness/ask-md.js": [
-     "opt"
+     "opt",
+     "toggle"
+    ],
+    "js/harness/chatctl.js": [
+     "toggle"
+    ],
+    "js/harness/chips.js": [
+     "toggle"
+    ],
+    "js/harness/fx.js": [
+     "toggle"
     ],
     "js/harness/groups.js": [
      "opt"
@@ -298,7 +327,17 @@
      "opt"
     ],
     "js/harness/main.js": [
-     "opt"
+     "opt",
+     "toggle"
+    ],
+    "js/harness/managers.js": [
+     "toggle"
+    ],
+    "js/harness/panel.js": [
+     "toggle"
+    ],
+    "js/harness/readonly.js": [
+     "toggle"
     ],
     "js/harness/registry.js": [
      "fresh"
@@ -306,44 +345,102 @@
     "js/harness/sessions.js": [
      "fresh"
     ],
+    "js/harness/shell.js": [
+     "toggle"
+    ],
     "js/harness/subblk.js": [
      "opt"
     ],
     "js/harness/subpane.js": [
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/harness/tools.js": [
      "fallback",
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/harness/v4bridge.js": [
      "fresh",
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/harness/v4main.js": [
      "opt"
     ],
+    "js/hex-diff.js": [
+     "toggle"
+    ],
+    "js/hex-viewer.js": [
+     "toggle"
+    ],
     "js/history.js": [
      "autoScroll"
+    ],
+    "js/lanzi/panel.js": [
+     "toggle"
+    ],
+    "js/log-viewer.js": [
+     "toggle"
     ],
     "js/nav.js": [
      "vw"
     ],
     "js/notes-nav.js": [
      "incoming",
-     "opt"
+     "opt",
+     "toggle"
+    ],
+    "js/office-viewer.js": [
+     "toggle"
+    ],
+    "js/proxy-panel.js": [
+     "toggle"
+    ],
+    "js/proxy-usage.js": [
+     "toggle"
+    ],
+    "js/replay.js": [
+     "toggle"
     ],
     "js/resources.js": [
      "opt"
     ],
     "js/search.js": [
-     "autoScroll"
+     "autoScroll",
+     "toggle"
+    ],
+    "js/settings.js": [
+     "toggle"
+    ],
+    "js/sidebar-resize.js": [
+     "toggle"
+    ],
+    "js/sidebar.js": [
+     "toggle"
     ],
     "js/terminal-core.js": [
-     "autoScroll"
+     "autoScroll",
+     "toggle"
+    ],
+    "js/tftp.js": [
+     "toggle"
+    ],
+    "js/tree-search.js": [
+     "toggle"
     ],
     "js/util.js": [
-     "opt"
+     "opt",
+     "toggle"
+    ],
+    "js/vcs-panel.js": [
+     "toggle"
+    ],
+    "js/web-panel.js": [
+     "toggle"
+    ],
+    "js/win-controls.js": [
+     "toggle"
     ]
    },
    "references": {
@@ -379,9 +476,6 @@
     "js/office-viewer.js": [
      "js"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -400,6 +494,7 @@
      "sy"
     ],
     "js/win-controls.js": [
+     "fcShell",
      "init"
     ],
     "js/workerbase.js": [
@@ -534,6 +629,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/cmd-lib.js": [
      "sheet"
     ],
@@ -548,10 +646,8 @@
      "openDroppedFile"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
-    ],
-    "js/harness/v4bridge.js": [
-     "step"
     ],
     "js/icons.js": [
      "ICO16"
@@ -565,9 +661,6 @@
     ],
     "js/office-viewer.js": [
      "js"
-    ],
-    "js/proxy-panel.js": [
-     "state"
     ],
     "js/sense.js": [
      "filter"
@@ -591,8 +684,7 @@
      "$",
      "connections",
      "restore",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/vcs-git-ops.js": [
      "local",
@@ -708,7 +800,6 @@
     ],
     "js/harness/shell.js": [
      "connectClaude",
-     "sessions",
      "skills"
     ],
     "js/harness/skills.js": [
@@ -748,6 +839,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/cmd-lib.js": [
      "sheet"
     ],
@@ -760,6 +854,7 @@
      "modal"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
     ],
     "js/harness/main.js": [
@@ -898,6 +993,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "empty"
     ],
@@ -1140,6 +1238,9 @@
      "check",
      "openDiffPicker"
     ],
+    "js/lanzi/panel.js": [
+     "empty"
+    ],
     "js/log-viewer.js": [
      "empty"
     ],
@@ -1205,6 +1306,9 @@
     "js/analyze.js": [
      "match"
     ],
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/editor.js": [
      "_edCloseNow",
      "actions",
@@ -1216,6 +1320,7 @@
      "openDroppedFile"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "rm",
      "value"
     ],
@@ -1257,9 +1362,6 @@
     "js/office-viewer.js": [
      "js"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/search.js": [
      "hideCtxMenu"
     ],
@@ -1291,8 +1393,7 @@
      "notifyTask",
      "notifyTaskDone",
      "portList",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/web-panel.js": [
      "api"
@@ -1460,6 +1561,7 @@
     "ext",
     "fd",
     "file",
+    "files",
     "finish",
     "finishCode",
     "fit",
@@ -1546,6 +1648,7 @@
     "pane",
     "parserKey",
     "path",
+    "paths",
     "ph",
     "pick",
     "portId",
@@ -1760,7 +1863,6 @@
      "index",
      "inline",
      "json",
-     "level",
      "modal",
      "scroll"
     ],
@@ -1821,6 +1923,12 @@
      "newFileMenuShow",
      "showFilesModal"
     ],
+    "js/lanzi/panel.js": [
+     "_edCloseNow",
+     "actions",
+     "dirty",
+     "json"
+    ],
     "js/log-viewer.js": [
      "MB",
      "_edCloseNow",
@@ -1878,9 +1986,7 @@
     ],
     "js/proxy-panel.js": [
      "actions",
-     "dirty",
      "json",
-     "level",
      "modal",
      "tokens"
     ],
@@ -2019,7 +2125,8 @@
      "moved"
     ],
     "js/workerbase.js": [
-     "index"
+     "index",
+     "json"
     ]
    },
    "references": {
@@ -2027,7 +2134,8 @@
      "match"
     ],
     "js/backend-log.js": [
-     "fallback"
+     "fallback",
+     "toggle"
     ],
     "js/bit-calc.js": [
      "hashBox"
@@ -2044,7 +2152,6 @@
     "js/file-tree.js": [
      "addTreeRoot",
      "inRoot",
-     "paths",
      "treeDecoRefresh",
      "treeReveal"
     ],
@@ -2054,6 +2161,7 @@
     "js/harness/chatctl.js": [
      "draft",
      "images",
+     "pop",
      "value"
     ],
     "js/harness/main.js": [
@@ -2092,6 +2200,9 @@
     ],
     "js/icons.js": [
      "ICO16"
+    ],
+    "js/lanzi/panel.js": [
+     "_lzTeardown"
     ],
     "js/log-viewer.js": [
      "buildLogViewer",
@@ -2139,9 +2250,6 @@
      "startH",
      "table",
      "tc"
-    ],
-    "js/proxy-panel.js": [
-     "state"
     ],
     "js/sense.js": [
      "tools"
@@ -2193,8 +2301,7 @@
      "portList",
      "showBanner",
      "sortKeyFn",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/vcs-panel.js": [
      "H",
@@ -2206,6 +2313,9 @@
      "below",
      "headers",
      "push"
+    ],
+    "js/win-controls.js": [
+     "fcShell"
     ],
     "js/workerbase.js": [
      "B",
@@ -2414,15 +2524,8 @@
     "js/editor.js": [
      "addTreeRoot",
      "inRoot",
-     "paths",
      "treeDecoRefresh",
      "treeReveal"
-    ],
-    "js/harness/main.js": [
-     "paths"
-    ],
-    "js/monaco-bridge.js": [
-     "paths"
     ],
     "js/tree-fileops.js": [
      "_TV",
@@ -2437,15 +2540,14 @@
      "_TV",
      "treeReveal"
     ],
-    "js/vcs-git-ops.js": [
-     "paths"
-    ],
     "js/vcs-panel.js": [
-     "deco",
-     "paths"
+     "deco"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/cmd-lib.js": [
      "sheet"
     ],
@@ -2466,6 +2568,7 @@
      "fileIconHtml"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "proj",
      "value"
     ],
@@ -2634,7 +2737,7 @@
     "tip"
    ],
    "is_module": true,
-   "load_index": 45,
+   "load_index": 47,
    "referenced_by": {
     "js/editor.js": [
      "ignore"
@@ -2667,6 +2770,7 @@
      "askCheckDone",
      "askPage",
      "askPick",
+     "askRender",
      "askSubmit",
      "copyText",
      "ignore",
@@ -2723,7 +2827,8 @@
      "match"
     ],
     "js/backend-log.js": [
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/claude.js": [
      "sessions"
@@ -2738,6 +2843,7 @@
     ],
     "js/harness/chatctl.js": [
      "images",
+     "pop",
      "value"
     ],
     "js/harness/groups.js": [
@@ -2755,6 +2861,7 @@
      "renderRaw"
     ],
     "js/harness/sessions.js": [
+     "refreshSessions",
      "switchTo"
     ],
     "js/harness/skills.js": [
@@ -2776,7 +2883,8 @@
     ],
     "js/office-viewer.js": [
      "container",
-     "js"
+     "js",
+     "page"
     ],
     "js/sense.js": [
      "filter"
@@ -2838,7 +2946,7 @@
     "todos"
    ],
    "is_module": true,
-   "load_index": 44,
+   "load_index": 46,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "_HG",
@@ -2963,6 +3071,7 @@
     "js/harness/chatctl.js": [
      "draft",
      "images",
+     "pop",
      "proj"
     ],
     "js/harness/fx.js": [
@@ -3069,11 +3178,14 @@
     "HG_SLASH_DEAD",
     "SKILL_ZH",
     "_cur",
+    "_g",
+    "_reqAt",
     "_skillDesc",
     "_skillZhSync",
     "_stopLocalFinish",
     "_t",
     "_v4cmd",
+    "anyAsk",
     "anyBusy",
     "applyModel",
     "built",
@@ -3093,7 +3205,6 @@
     "execSlash",
     "files",
     "g",
-    "gotEvent",
     "groups",
     "h",
     "handleHistoryKey",
@@ -3125,7 +3236,6 @@
     "newChat",
     "norm",
     "numOr",
-    "onInt",
     "ordered",
     "p",
     "pct",
@@ -3157,7 +3267,7 @@
     "value"
    ],
    "is_module": true,
-   "load_index": 60,
+   "load_index": 62,
    "referenced_by": {
     "js/analyze.js": [
      "kw",
@@ -3167,9 +3277,11 @@
      "value"
     ],
     "js/bit-calc.js": [
+     "pop",
      "value"
     ],
     "js/claude.js": [
+     "pop",
      "value"
     ],
     "js/cmd-lib.js": [
@@ -3177,32 +3289,42 @@
      "value"
     ],
     "js/diff-viewer.js": [
+     "pop",
      "rm",
      "value"
     ],
     "js/editor.js": [
      "draft",
      "images",
+     "pop",
      "value"
     ],
     "js/file-tree.js": [
+     "pop",
      "proj",
      "value"
     ],
     "js/harness/ask-md.js": [
      "images",
+     "pop",
      "value"
     ],
     "js/harness/base.js": [
      "draft",
      "images",
+     "pop",
      "proj"
     ],
+    "js/harness/chips.js": [
+     "pop"
+    ],
     "js/harness/fx.js": [
-     "applyModel"
+     "applyModel",
+     "newChat"
     ],
     "js/harness/groups.js": [
-     "images"
+     "images",
+     "pop"
     ],
     "js/harness/hist.js": [
      "dispatch",
@@ -3214,6 +3336,8 @@
      "proj"
     ],
     "js/harness/input-fx.js": [
+     "newChat",
+     "pop",
      "slashMenuUpdate",
      "value"
     ],
@@ -3227,6 +3351,7 @@
      "handleSlashKey",
      "images",
      "newChat",
+     "pop",
      "proj",
      "send",
      "slashMenuUpdate",
@@ -3243,6 +3368,7 @@
     ],
     "js/harness/panel.js": [
      "applyModel",
+     "pop",
      "proj"
     ],
     "js/harness/reducer.js": [
@@ -3251,15 +3377,14 @@
     ],
     "js/harness/relay.js": [
      "dead",
-     "dispatch"
+     "dispatch",
+     "pop"
     ],
     "js/harness/sessions.js": [
      "images",
+     "newChat",
      "proj",
      "send"
-    ],
-    "js/harness/shell.js": [
-     "value"
     ],
     "js/harness/skills.js": [
      "value"
@@ -3275,15 +3400,16 @@
      "send"
     ],
     "js/harness/subpane.js": [
+     "pop",
      "send"
     ],
     "js/harness/tools.js": [
+     "pop",
      "rm"
     ],
     "js/harness/v4bridge.js": [
      "_t",
      "dispatch",
-     "gotEvent",
      "images",
      "send",
      "stopGen"
@@ -3291,6 +3417,9 @@
     "js/harness/v4main.js": [
      "dispatch",
      "ensureSession"
+    ],
+    "js/hex-diff.js": [
+     "pop"
     ],
     "js/hex-viewer.js": [
      "value"
@@ -3301,8 +3430,15 @@
     "js/icons.js": [
      "send"
     ],
+    "js/init.js": [
+     "dispatch"
+    ],
+    "js/lanzi/panel.js": [
+     "value"
+    ],
     "js/log-viewer.js": [
      "kw",
+     "pop",
      "value"
     ],
     "js/logs-modal.js": [
@@ -3312,12 +3448,14 @@
      "value"
     ],
     "js/nav.js": [
+     "pop",
      "value"
     ],
     "js/notes-nav.js": [
      "value"
     ],
     "js/office-viewer.js": [
+     "pop",
      "value"
     ],
     "js/proxy-panel.js": [
@@ -3336,9 +3474,11 @@
      "kw"
     ],
     "js/settings.js": [
+     "pop",
      "value"
     ],
     "js/sidebar.js": [
+     "pop",
      "value"
     ],
     "js/tftp.js": [
@@ -3349,6 +3489,7 @@
      "value"
     ],
     "js/tree-fileops.js": [
+     "pop",
      "value"
     ],
     "js/tree-search.js": [
@@ -3358,6 +3499,7 @@
      "value"
     ],
     "js/vcs-git-ops.js": [
+     "pop",
      "value"
     ],
     "js/vcs-panel.js": [
@@ -3372,6 +3514,9 @@
    "references": {
     "js/analyze.js": [
      "match"
+    ],
+    "js/backend-log.js": [
+     "toggle"
     ],
     "js/claude.js": [
      "sessions",
@@ -3509,7 +3654,6 @@
     ],
     "js/util.js": [
      "$",
-     "banner",
      "showBanner",
      "stack"
     ],
@@ -3523,6 +3667,7 @@
      "init"
     ],
     "js/workerbase.js": [
+     "B",
      "fetch"
     ]
    },
@@ -3550,7 +3695,7 @@
     "thinkChipLabel"
    ],
    "is_module": true,
-   "load_index": 62,
+   "load_index": 64,
    "referenced_by": {
     "js/harness/chatctl.js": [
      "_HG_PERMS",
@@ -3578,12 +3723,18 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/editor.js": [
      "dirty",
      "json"
     ],
     "js/harness/base.js": [
      "_HG"
+    ],
+    "js/harness/chatctl.js": [
+     "pop"
     ],
     "js/harness/main.js": [
      "buildClaudeHarnessTab"
@@ -3710,7 +3861,7 @@
     "win"
    ],
    "is_module": true,
-   "load_index": 51,
+   "load_index": 53,
    "referenced_by": {
     "js/harness/base.js": [
      "actStart",
@@ -3770,12 +3921,12 @@
     ],
     "js/harness/v4proto.js": [
      "rc"
-    ],
-    "js/proxy-panel.js": [
-     "used"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "sessions"
     ],
@@ -3787,7 +3938,8 @@
      "_HG"
     ],
     "js/harness/chatctl.js": [
-     "applyModel"
+     "applyModel",
+     "newChat"
     ],
     "js/harness/hist.js": [
      "_hgFmtDur"
@@ -3809,7 +3961,8 @@
     "js/harness/sessions.js": [
      "_hgQueueSync",
      "queuePump",
-     "refreshSessions"
+     "refreshSessions",
+     "switchTo"
     ],
     "js/harness/state.js": [
      "_hgActEl",
@@ -3871,12 +4024,15 @@
     "_askN",
     "_busy",
     "_dur",
+    "_eb",
     "_empty",
     "_fTs",
     "_gp2",
     "_h2",
+    "_hasText",
     "_hasWork",
     "_hgAvaCls",
+    "_hgLastFinalizedRoot",
     "_hgRollbackTurn",
     "_hgTailAdopt",
     "_hgTurnDurTxt",
@@ -3888,16 +4044,19 @@
     "_maybeTimeBar",
     "_mm",
     "_n",
+    "_oldTips",
     "_pend",
     "_pt0",
     "_rAt",
     "_rd",
     "_res",
     "_rg",
+    "_root",
     "_segN",
     "_shift",
     "_srcTotal",
     "_t02",
+    "_tb",
     "_timeFmt",
     "_trimOldTurns",
     "_turnHeadShow",
@@ -3981,7 +4140,7 @@
     "yst"
    ],
    "is_module": true,
-   "load_index": 46,
+   "load_index": 48,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "_turnHeadSubPaint",
@@ -4128,10 +4287,14 @@
      "_hDrawerName"
     ],
     "js/harness/chatctl.js": [
-     "images"
+     "images",
+     "pop"
     ],
     "js/harness/fx.js": [
      "setBusy"
+    ],
+    "js/harness/hgstate.js": [
+     "HgState"
     ],
     "js/harness/hist.js": [
      "_hgFmtDur",
@@ -4169,7 +4332,6 @@
     "js/harness/state.js": [
      "_hgAskDockEl",
      "_hgFlow",
-     "_hgRolesCache",
      "_hgScrollBottom",
      "_hgWrap"
     ],
@@ -4178,9 +4340,6 @@
      "_tlPlace",
      "closeRun",
      "renderToolUse"
-    ],
-    "js/harness/v4bridge.js": [
-     "hasWork"
     ],
     "js/icons.js": [
      "ICO",
@@ -4199,6 +4358,7 @@
      "tools"
     ],
     "js/settings.js": [
+     "force",
      "r3",
      "reset"
     ],
@@ -4234,10 +4394,44 @@
     "window._hgTailAdopt = _hgTailAdopt;"
    ]
   },
+  "js/harness/hgstate.js": {
+   "defines": [
+    "HgState",
+    "_m",
+    "_subs",
+    "s",
+    "subs"
+   ],
+   "is_module": true,
+   "load_index": 44,
+   "referenced_by": {
+    "js/harness/groups.js": [
+     "HgState"
+    ],
+    "js/harness/main.js": [
+     "HgState"
+    ],
+    "js/harness/panel.js": [
+     "HgState"
+    ]
+   },
+   "references": {
+    "js/office-viewer.js": [
+     "js"
+    ],
+    "js/web-panel.js": [
+     "del"
+    ]
+   },
+   "top_level_exec": [
+    "window.HgState = HgState;"
+   ]
+  },
   "js/harness/hist.js": {
    "defines": [
     "_agKind",
     "_ar",
+    "_cfgB",
     "_dur",
     "_fall",
     "_ga",
@@ -4252,6 +4446,7 @@
     "_histLazyFill",
     "_histLazyLineOk",
     "_histToolBodyHtml",
+    "_inpB",
     "_ms",
     "_p",
     "_prevTs",
@@ -4305,7 +4500,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 49,
+   "load_index": 51,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "isNearBottom"
@@ -4468,18 +4663,19 @@
     ],
     "js/harness/tools.js": [
      "_hgIsExplore",
+     "_hgPatchMissingCmds",
      "_tlExpFlush",
      "_tlPlace",
      "arg",
      "closeRun",
-     "hgToolCard"
+     "hgToolCard",
+     "renderToolUse"
     ],
     "js/harness/v4bridge.js": [
      "L",
      "agent",
      "prevTs",
-     "rowToLine",
-     "step"
+     "rowToLine"
     ],
     "js/icons.js": [
      "ICO16"
@@ -4504,13 +4700,14 @@
      "skip"
     ],
     "js/workerbase.js": [
-     "B"
+     "B",
+     "fetch"
     ]
    },
    "top_level_exec": [
     "window._hgFmtDur = _hgFmtDur;",
-    "window._histLazyDrop = _histLazyDrop;",
-    "window._histLazyFill = _histLazyFill;"
+    "window._hgHistWinStart = _hgHistWinStart;",
+    "window._histLazyDrop = _histLazyDrop;"
    ]
   },
   "js/harness/histcache.js": {
@@ -4568,7 +4765,7 @@
     "totalTurns"
    ],
    "is_module": true,
-   "load_index": 56,
+   "load_index": 58,
    "referenced_by": {
     "js/harness/groups.js": [
      "_histRender"
@@ -4684,6 +4881,9 @@
     "js/icons.js": [
      "ICO16"
     ],
+    "js/lanzi/panel.js": [
+     "poll"
+    ],
     "js/office-viewer.js": [
      "R",
      "js",
@@ -4768,7 +4968,7 @@
     "wrEl"
    ],
    "is_module": true,
-   "load_index": 61,
+   "load_index": 63,
    "referenced_by": {
     "js/harness/base.js": [
      "query"
@@ -4829,6 +5029,8 @@
      "_HG"
     ],
     "js/harness/chatctl.js": [
+     "newChat",
+     "pop",
      "slashMenuUpdate",
      "value"
     ],
@@ -4838,6 +5040,9 @@
      "isImg",
      "mi",
      "of"
+    ],
+    "js/harness/sessions.js": [
+     "switchTo"
     ],
     "js/harness/skills.js": [
      "ask"
@@ -4910,6 +5115,7 @@
     "_hgRailBind",
     "_hgRailPagers",
     "_hgRailSync",
+    "_hgSbRaf",
     "_hgSubTailTick",
     "_hit",
     "_last",
@@ -4973,6 +5179,7 @@
     "grip",
     "grp",
     "grpEl",
+    "h",
     "harnessAddFilesByPath",
     "heavy",
     "host",
@@ -5039,6 +5246,7 @@
     "src",
     "st",
     "stEl",
+    "step",
     "stgl",
     "subRow",
     "swp",
@@ -5069,7 +5277,7 @@
     "xc"
    ],
    "is_module": true,
-   "load_index": 65,
+   "load_index": 67,
    "referenced_by": {
     "js/a11y.js": [
      "of"
@@ -5277,7 +5485,8 @@
      "counts"
     ],
     "js/backend-log.js": [
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/claude.js": [
      "sessions",
@@ -5298,9 +5507,6 @@
      "scroll",
      "tokens"
     ],
-    "js/file-tree.js": [
-     "paths"
-    ],
     "js/harness/ask-md.js": [
      "_codeLazyEnhance",
      "_hgLoadOpen",
@@ -5308,6 +5514,7 @@
      "askCheckDone",
      "askPage",
      "askPick",
+     "askRender",
      "askSubmit",
      "copyText",
      "ignore",
@@ -5332,6 +5539,7 @@
      "handleSlashKey",
      "images",
      "newChat",
+     "pop",
      "proj",
      "send",
      "slashMenuUpdate",
@@ -5361,6 +5569,9 @@
      "grpFromDom",
      "renderAsst",
      "renderUser"
+    ],
+    "js/harness/hgstate.js": [
+     "HgState"
     ],
     "js/harness/hist.js": [
      "_hgFmtDur",
@@ -5445,12 +5656,8 @@
     ],
     "js/harness/shell.js": [
      "_harnessClose",
-     "hgEyeWire",
      "hgLoginRefresh",
-     "hgProxyRefreshState",
-     "hgRobotWire",
-     "hgSecretWire",
-     "secret"
+     "hgProxyRefreshState"
     ],
     "js/harness/skills.js": [
      "ask",
@@ -5458,7 +5665,6 @@
      "zh"
     ],
     "js/harness/state.js": [
-     "_agentModelsTried",
      "_codeIO",
      "_dynRaf",
      "_hgActEl",
@@ -5476,7 +5682,6 @@
      "_hgOverlayEl",
      "_hgQ",
      "_hgRailEl",
-     "_hgRolesCache",
      "_hgScrollBottom",
      "_hgSearchEl",
      "_hgSendBtn",
@@ -5557,9 +5762,6 @@
      "js",
      "ro"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/replay.js": [
      "fire"
     ],
@@ -5570,15 +5772,11 @@
      "filter"
     ],
     "js/settings.js": [
-     "fields",
      "force",
-     "pending",
-     "save"
+     "pending"
     ],
     "js/sidebar.js": [
-     "password",
-     "shell",
-     "username"
+     "shell"
     ],
     "js/skin.js": [
      "style"
@@ -5607,8 +5805,7 @@
      "banner",
      "connections",
      "showBanner",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/vcs-panel.js": [
      "skip"
@@ -5703,7 +5900,7 @@
     "ta"
    ],
    "is_module": true,
-   "load_index": 63,
+   "load_index": 65,
    "referenced_by": {
     "js/diff-viewer.js": [
      "_inline"
@@ -5755,6 +5952,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "check",
      "empty"
@@ -5799,9 +5999,6 @@
     "js/office-viewer.js": [
      "R",
      "js"
-    ],
-    "js/proxy-panel.js": [
-     "state"
     ],
     "js/sense.js": [
      "filter"
@@ -5871,7 +6068,7 @@
     "wrapped"
    ],
    "is_module": true,
-   "load_index": 64,
+   "load_index": 66,
    "referenced_by": {
     "js/a11y.js": [
      "hgModal"
@@ -5998,6 +6195,7 @@
     "_mode",
     "_p",
     "_p2",
+    "_rc",
     "_res",
     "_rolesFetchSeq",
     "_sec",
@@ -6088,7 +6286,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 58,
+   "load_index": 60,
    "referenced_by": {
     "js/editor.js": [
      "P"
@@ -6221,17 +6419,20 @@
      "P",
      "db"
     ],
-    "js/proxy-panel.js": [
-     "cx"
-    ],
     "js/settings.js": [
      "cx"
     ],
     "js/tree-fileops.js": [
      "cx"
+    ],
+    "js/vcs-panel.js": [
+     "cx"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "sessions"
     ],
@@ -6246,6 +6447,7 @@
     ],
     "js/harness/chatctl.js": [
      "applyModel",
+     "pop",
      "proj"
     ],
     "js/harness/fx.js": [
@@ -6256,6 +6458,9 @@
      "denomAuth",
      "setBusy",
      "used"
+    ],
+    "js/harness/hgstate.js": [
+     "HgState"
     ],
     "js/harness/hist.js": [
      "_hgFmtDur"
@@ -6283,11 +6488,9 @@
      "switchTo"
     ],
     "js/harness/state.js": [
-     "_agentModelsTried",
      "_dynRaf",
      "_hgFlow",
      "_hgInput",
-     "_hgRolesCache",
      "_hgWrap",
      "_subPaneEl",
      "dynEl"
@@ -6376,7 +6579,7 @@
    "top_level_exec": [
     "window._hgActDone = _hgActDone;",
     "window._hgActPush = _hgActPush;",
-    "window._hgAgentModelsFetch = _hgAgentModelsFetch;"
+    "window._hgAgentModelPre = _hgAgentModelPre;"
    ]
   },
   "js/harness/readonly.js": {
@@ -6415,7 +6618,7 @@
     "tb"
    ],
    "is_module": true,
-   "load_index": 67,
+   "load_index": 69,
    "referenced_by": {
     "js/editor.js": [
      "fc"
@@ -6475,6 +6678,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "sessions"
     ],
@@ -6622,7 +6828,7 @@
     "t"
    ],
    "is_module": true,
-   "load_index": 68,
+   "load_index": 70,
    "referenced_by": {
     "js/harness/fx.js": [
      "_hgSpinShow"
@@ -6788,7 +6994,7 @@
     "tm"
    ],
    "is_module": true,
-   "load_index": 69,
+   "load_index": 71,
    "referenced_by": {
     "js/harness/base.js": [
      "agents"
@@ -6877,7 +7083,6 @@
      "tids"
     ],
     "js/harness/v4bridge.js": [
-     "_g",
      "quiet"
     ],
     "js/hex-diff.js": [
@@ -6907,8 +7112,8 @@
    },
    "top_level_exec": [
     "window._hgAg = _hgAg;",
-    "window._hgRegSync = _hgRegSync;",
-    "window._hgRegSyncSoon = _hgRegSyncSoon;"
+    "window._regInterruptedStale = _regInterruptedStale;",
+    "window._hgRegSync = _hgRegSync;"
    ]
   },
   "js/harness/relay.js": {
@@ -6986,7 +7191,7 @@
     "waiting"
    ],
    "is_module": true,
-   "load_index": 48,
+   "load_index": 50,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "renderRaw"
@@ -7073,7 +7278,8 @@
     ],
     "js/harness/chatctl.js": [
      "dead",
-     "dispatch"
+     "dispatch",
+     "pop"
     ],
     "js/harness/fx.js": [
      "actWord"
@@ -7121,9 +7327,6 @@
      "js",
      "task"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter",
      "tools"
@@ -7146,9 +7349,9 @@
     ]
    },
    "top_level_exec": [
+    "window._hgCompactionEnd = _hgCompactionEnd;",
     "window._hgGrantRewind = _hgGrantRewind;",
-    "window._hgPeerLineStop = _hgPeerLineStop;",
-    "window._hgPeerStaleSweep = _hgPeerStaleSweep;"
+    "window._hgPeerLineStop = _hgPeerLineStop;"
    ]
   },
   "js/harness/sessions.js": {
@@ -7213,12 +7416,13 @@
     "to"
    ],
    "is_module": true,
-   "load_index": 57,
+   "load_index": 59,
    "referenced_by": {
     "js/diff-viewer.js": [
      "same"
     ],
     "js/harness/ask-md.js": [
+     "refreshSessions",
      "switchTo"
     ],
     "js/harness/base.js": [
@@ -7239,7 +7443,8 @@
     "js/harness/fx.js": [
      "_hgQueueSync",
      "queuePump",
-     "refreshSessions"
+     "refreshSessions",
+     "switchTo"
     ],
     "js/harness/groups.js": [
      "switchTo"
@@ -7250,6 +7455,9 @@
     ],
     "js/harness/histcache.js": [
      "_peerDesc",
+     "switchTo"
+    ],
+    "js/harness/input-fx.js": [
      "switchTo"
     ],
     "js/harness/main.js": [
@@ -7332,6 +7540,7 @@
     ],
     "js/harness/chatctl.js": [
      "images",
+     "newChat",
      "proj",
      "send"
     ],
@@ -7430,9 +7639,6 @@
      "js",
      "task"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -7471,102 +7677,47 @@
   "js/harness/shell.js": {
    "defines": [
     "_ac",
-    "_avail",
     "_claudeUiMode",
     "_getClaudeUiMode",
     "_harnessClose",
     "_hgConn",
-    "_hgFetchJson",
-    "_hgLastSt",
-    "_hgLoadsHide",
-    "_hgLoadsPaint",
-    "_hgLoadsStopTick",
-    "_hgLoadsTick",
-    "_hgLoadsTickStart",
-    "_hgLoadsTip",
-    "_hgLoadsTipEl",
     "_hgPanelMode",
-    "_hgProxyHoverAnchor",
-    "_hgProxyLoads",
-    "_hgProxyLoadsErr",
-    "_hgProxyLoadsSupported",
     "_orig",
+    "_proxyES",
+    "_proxyESRestart",
     "_to",
-    "aj",
-    "botOn",
     "btn",
     "claudeButtonAction",
-    "cls",
     "ctl",
     "dot",
-    "el",
     "fetchIt",
     "hgBotLed",
     "hgBotOnline",
-    "hgBotPhase",
     "hgBotRemote",
-    "hgEyeWire",
     "hgLoginRefresh",
-    "hgLoginRender",
-    "hgLoginTogglePop",
-    "hgProxyES",
     "hgProxyRefreshState",
-    "hgRobotWire",
-    "hgSecretWire",
-    "id",
-    "inp",
     "isHg",
     "j",
-    "jsStatus",
     "ka",
-    "keepSecret",
     "live",
-    "loads",
-    "loginBtn",
     "mode",
-    "nameEl",
-    "off",
-    "on",
-    "opening",
-    "outBtn",
     "p",
-    "pEl",
     "pageVer",
-    "pct",
-    "pop",
     "r",
-    "rSave",
-    "rdot",
     "remaining",
     "retrying",
-    "rid",
-    "rsec",
-    "rstate",
-    "secret",
     "setClaudeUiMode",
-    "show",
-    "sj",
     "tid",
-    "tip",
-    "toggle",
-    "top",
-    "tw",
     "txt",
-    "u",
-    "uEl",
     "wasHg"
    ],
    "is_module": true,
-   "load_index": 66,
+   "load_index": 68,
    "referenced_by": {
     "js/harness/main.js": [
      "_harnessClose",
-     "hgEyeWire",
      "hgLoginRefresh",
-     "hgProxyRefreshState",
-     "hgRobotWire",
-     "hgSecretWire",
-     "secret"
+     "hgProxyRefreshState"
     ],
     "js/harness/subpane.js": [
      "_hgPanelMode"
@@ -7588,9 +7739,11 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "connectClaude",
-     "sessions",
      "skills"
     ],
     "js/diff-viewer.js": [
@@ -7601,15 +7754,11 @@
      "index",
      "inline",
      "json",
-     "level",
      "modal",
      "scroll"
     ],
     "js/harness/base.js": [
      "_HG"
-    ],
-    "js/harness/chatctl.js": [
-     "value"
     ],
     "js/harness/fx.js": [
      "setBusy"
@@ -7646,25 +7795,18 @@
      "_sub",
      "_subReset"
     ],
-    "js/icons.js": [
-     "ICO16"
-    ],
     "js/log-viewer.js": [
      "scrollTop"
     ],
     "js/logs-modal.js": [
      "sort"
     ],
-    "js/notes-nav.js": [
-     "rect"
-    ],
     "js/office-viewer.js": [
      "R",
      "js"
     ],
     "js/proxy-panel.js": [
-     "buildProxyTab",
-     "state"
+     "buildProxyTab"
     ],
     "js/replay.js": [
      "_aiPanelSyncBtn"
@@ -7675,16 +7817,11 @@
     "js/settings.js": [
      "force",
      "pending",
-     "reset",
-     "save"
+     "reset"
     ],
     "js/sidebar.js": [
-     "password",
      "refreshSidebar",
      "username"
-    ],
-    "js/skin.js": [
-     "style"
     ],
     "js/theme.js": [
      "theme"
@@ -7696,12 +7833,10 @@
      "activePortId",
      "connections",
      "showBanner",
-     "sortKeyFn",
-     "termArea"
+     "sortKeyFn"
     ],
     "js/web-panel.js": [
-     "api",
-     "headers"
+     "api"
     ],
     "js/win-controls.js": [
      "init"
@@ -7713,8 +7848,8 @@
    },
    "top_level_exec": [
     "})();",
-    "document.querySelectorAll('[data-hg-eye]').forEach(hgEyeWire);",
-    "document.querySelectorAll('[data-hg-robot-id]').forEach(hgRobotWire);"
+    "setInterval(hgLoginRefresh, 30000);   // 低频保活（机器人/登录态显示）",
+    "hgLoginRefresh();"
    ]
   },
   "js/harness/skills.js": {
@@ -7805,7 +7940,7 @@
     "zh"
    ],
    "is_module": true,
-   "load_index": 71,
+   "load_index": 73,
    "referenced_by": {
     "js/backend-log.js": [
      "zh"
@@ -7869,6 +8004,9 @@
     "js/util.js": [
      "zh"
     ],
+    "js/vcs-git-ops.js": [
+     "bodyHtml"
+    ],
     "js/vcs-panel.js": [
      "ask",
      "ins"
@@ -7914,9 +8052,6 @@
      "ro",
      "zip"
     ],
-    "js/proxy-panel.js": [
-     "hot"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -7953,7 +8088,6 @@
   },
   "js/harness/state.js": {
    "defines": [
-    "_agentModelsTried",
     "_codeIO",
     "_dynRaf",
     "_hgActEl",
@@ -7975,7 +8109,6 @@
     "_hgOverlayEl",
     "_hgQ",
     "_hgRailEl",
-    "_hgRolesCache",
     "_hgScrollBottom",
     "_hgSearchEl",
     "_hgSendBtn",
@@ -8006,7 +8139,7 @@
     "warm"
    ],
    "is_module": true,
-   "load_index": 43,
+   "load_index": 45,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "_codeIO",
@@ -8045,7 +8178,6 @@
     "js/harness/groups.js": [
      "_hgAskDockEl",
      "_hgFlow",
-     "_hgRolesCache",
      "_hgScrollBottom",
      "_hgWrap"
     ],
@@ -8065,7 +8197,6 @@
      "_hgWrap"
     ],
     "js/harness/main.js": [
-     "_agentModelsTried",
      "_codeIO",
      "_dynRaf",
      "_hgActEl",
@@ -8083,7 +8214,6 @@
      "_hgOverlayEl",
      "_hgQ",
      "_hgRailEl",
-     "_hgRolesCache",
      "_hgScrollBottom",
      "_hgSearchEl",
      "_hgSendBtn",
@@ -8114,11 +8244,9 @@
      "_hgWrap"
     ],
     "js/harness/panel.js": [
-     "_agentModelsTried",
      "_dynRaf",
      "_hgFlow",
      "_hgInput",
-     "_hgRolesCache",
      "_hgWrap",
      "_subPaneEl",
      "dynEl"
@@ -8180,6 +8308,7 @@
      "_hgAskDockEl",
      "_hgFlow",
      "_hgQ",
+     "_hgScrollBottom",
      "_hgSyncAudit",
      "saveCache"
     ],
@@ -8285,7 +8414,7 @@
     "p"
    ],
    "is_module": true,
-   "load_index": 70,
+   "load_index": 72,
    "referenced_by": {
     "js/harness/hist.js": [
      "_hgDispatch",
@@ -8372,9 +8501,6 @@
     "js/office-viewer.js": [
      "js"
     ],
-    "js/settings.js": [
-     "subs"
-    ],
     "js/terminal-core.js": [
      "flush"
     ],
@@ -8405,7 +8531,7 @@
     "title"
    ],
    "is_module": true,
-   "load_index": 47,
+   "load_index": 49,
    "referenced_by": {
     "js/harness/hist.js": [
      "_toolInputBodyHtml"
@@ -8645,7 +8771,7 @@
     "ws"
    ],
    "is_module": true,
-   "load_index": 59,
+   "load_index": 61,
    "referenced_by": {
     "js/editor.js": [
      "_folded"
@@ -8770,7 +8896,8 @@
      "match"
     ],
     "js/backend-log.js": [
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/diff-viewer.js": [
      "empty"
@@ -8793,6 +8920,7 @@
      "_harnessRelTime"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "send"
     ],
     "js/harness/groups.js": [
@@ -8889,9 +9017,6 @@
      "js",
      "task"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/replay.js": [
      "elapsed"
     ],
@@ -8962,6 +9087,7 @@
     "_cmdFull",
     "_dOp",
     "_ek",
+    "_head",
     "_hgAgCnt",
     "_hgAgentRowBindAid",
     "_hgAgentRowBuild",
@@ -9099,7 +9225,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 50,
+   "load_index": 52,
    "referenced_by": {
     "js/harness/base.js": [
      "_hgAgentRowBuild",
@@ -9124,11 +9250,13 @@
     ],
     "js/harness/hist.js": [
      "_hgIsExplore",
+     "_hgPatchMissingCmds",
      "_tlExpFlush",
      "_tlPlace",
      "arg",
      "closeRun",
-     "hgToolCard"
+     "hgToolCard",
+     "renderToolUse"
     ],
     "js/harness/histcache.js": [
      "_tlExpFlush",
@@ -9223,7 +9351,8 @@
     ],
     "js/backend-log.js": [
      "fallback",
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/claude.js": [
      "sessions"
@@ -9247,6 +9376,7 @@
      "_hToolLabel"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "rm"
     ],
     "js/harness/groups.js": [
@@ -9333,9 +9463,6 @@
      "js",
      "task"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter",
      "tools"
@@ -9371,6 +9498,7 @@
     ],
     "js/web-panel.js": [
      "api",
+     "arm",
      "del",
      "headers",
      "push"
@@ -9415,10 +9543,12 @@
     "_dur",
     "_dv",
     "_eAt",
+    "_eAt0",
     "_ex",
     "_exp",
     "_expG",
     "_expK",
+    "_f",
     "_fa2",
     "_fin",
     "_flowEl",
@@ -9480,6 +9610,7 @@
     "_sEl",
     "_sat",
     "_sat24",
+    "_sawIntThis",
     "_sb2",
     "_scopes",
     "_sd",
@@ -9488,10 +9619,12 @@
     "_sf",
     "_sg",
     "_sid",
+    "_skipExit",
     "_slp",
     "_sq",
     "_src",
     "_srs",
+    "_stAt",
     "_staleRound",
     "_subG",
     "_subNorm",
@@ -9523,6 +9656,7 @@
     "_vr2",
     "_vs",
     "_vs2",
+    "_wasStopped",
     "a",
     "aT",
     "ad",
@@ -9543,7 +9677,6 @@
     "at2",
     "b",
     "base",
-    "box",
     "busy",
     "chip",
     "coll",
@@ -9647,11 +9780,8 @@
     "ws"
    ],
    "is_module": true,
-   "load_index": 54,
+   "load_index": 56,
    "referenced_by": {
-    "js/bit-calc.js": [
-     "step"
-    ],
     "js/diff-viewer.js": [
      "_fin"
     ],
@@ -9661,15 +9791,11 @@
     "js/harness/chatctl.js": [
      "agent"
     ],
-    "js/harness/groups.js": [
-     "hasWork"
-    ],
     "js/harness/hist.js": [
      "L",
      "agent",
      "prevTs",
-     "rowToLine",
-     "step"
+     "rowToLine"
     ],
     "js/harness/histcache.js": [
      "_sq"
@@ -9689,7 +9815,6 @@
      "prevTs"
     ],
     "js/harness/registry.js": [
-     "_g",
      "quiet"
     ],
     "js/harness/store.js": [
@@ -9706,14 +9831,11 @@
      "V4Bridge",
      "agent"
     ],
-    "js/log-viewer.js": [
-     "step"
+    "js/lanzi/panel.js": [
+     "lastEl"
     ],
     "js/notes-nav.js": [
      "L"
-    ],
-    "js/proxy-panel.js": [
-     "step"
     ],
     "js/proxy-usage.js": [
      "_tot"
@@ -9736,7 +9858,8 @@
     ],
     "js/backend-log.js": [
      "fresh",
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/claude.js": [
      "sessions"
@@ -9760,7 +9883,6 @@
     "js/harness/chatctl.js": [
      "_t",
      "dispatch",
-     "gotEvent",
      "images",
      "send",
      "stopGen"
@@ -9850,6 +9972,7 @@
      "_hgAskDockEl",
      "_hgFlow",
      "_hgQ",
+     "_hgScrollBottom",
      "_hgSyncAudit",
      "saveCache"
     ],
@@ -9902,6 +10025,9 @@
     "js/icons.js": [
      "ICO16"
     ],
+    "js/lanzi/panel.js": [
+     "poll"
+    ],
     "js/log-viewer.js": [
      "scrollTop"
     ],
@@ -9912,9 +10038,6 @@
      "js",
      "ri",
      "task"
-    ],
-    "js/proxy-panel.js": [
-     "state"
     ],
     "js/sidebar.js": [
      "shell"
@@ -9979,7 +10102,7 @@
     "v4Switch"
    ],
    "is_module": true,
-   "load_index": 55,
+   "load_index": 57,
    "referenced_by": {
     "js/harness/chatctl.js": [
      "v4PaintHeader"
@@ -10103,7 +10226,7 @@
     "want"
    ],
    "is_module": true,
-   "load_index": 52,
+   "load_index": 54,
    "referenced_by": {
     "js/file-tree.js": [
      "s2"
@@ -10150,9 +10273,6 @@
     "js/office-viewer.js": [
      "js"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -10191,7 +10311,7 @@
     "still"
    ],
    "is_module": true,
-   "load_index": 53,
+   "load_index": 55,
    "referenced_by": {
     "js/harness/v4main.js": [
      "V4Store"
@@ -10346,6 +10466,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "bin",
      "buildDiffViewerTab",
@@ -10358,6 +10481,9 @@
      "dirty",
      "json",
      "scroll"
+    ],
+    "js/harness/chatctl.js": [
+     "pop"
     ],
     "js/harness/main.js": [
      "of"
@@ -10385,9 +10511,6 @@
      "canvas",
      "js"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sidebar.js": [
      "_recentAdd",
      "refreshSidebar"
@@ -10413,8 +10536,7 @@
      "connections",
      "notifyTask",
      "notifyTaskDone",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/web-panel.js": [
      "api",
@@ -10619,9 +10741,18 @@
     ],
     "js/util.js": [
      "_hxConfirm"
+    ],
+    "js/web-panel.js": [
+     "be"
+    ],
+    "js/win-controls.js": [
+     "rgba"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "empty"
     ],
@@ -10660,9 +10791,6 @@
      "canvas",
      "js"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -10686,8 +10814,7 @@
      "hkMatch",
      "notifyTask",
      "notifyTaskDone",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/vcs-git-ops.js": [
      "message"
@@ -10766,6 +10893,7 @@
      "loadBuffer"
     ],
     "js/office-viewer.js": [
+     "page",
      "task"
     ],
     "js/settings.js": [
@@ -10945,9 +11073,6 @@
      "ICO",
      "ICO16"
     ],
-    "js/harness/shell.js": [
-     "ICO16"
-    ],
     "js/harness/skills.js": [
      "ICO16"
     ],
@@ -10972,6 +11097,9 @@
      "ICO16"
     ],
     "js/init.js": [
+     "ICO16"
+    ],
+    "js/lanzi/panel.js": [
      "ICO16"
     ],
     "js/log-viewer.js": [
@@ -11093,7 +11221,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 75,
+   "load_index": 77,
    "referenced_by": {},
    "references": {
     "js/analyze.js": [
@@ -11124,6 +11252,9 @@
      "newFileMenuShow",
      "showFilesModal"
     ],
+    "js/harness/chatctl.js": [
+     "dispatch"
+    ],
     "js/harness/readonly.js": [
      "fc"
     ],
@@ -11148,8 +11279,7 @@
      "js"
     ],
     "js/proxy-panel.js": [
-     "buildProxyTab",
-     "state"
+     "buildProxyTab"
     ],
     "js/sense.js": [
      "connectAiSSE",
@@ -11158,7 +11288,8 @@
     "js/settings.js": [
      "_ddConfirm",
      "_stRenderHelpPane",
-     "openSettingsPanel"
+     "openSettingsPanel",
+     "ready"
     ],
     "js/sidebar.js": [
      "loadPorts",
@@ -11186,6 +11317,9 @@
      "api",
      "headers"
     ],
+    "js/win-controls.js": [
+     "init"
+    ],
     "js/workerbase.js": [
      "fetch"
     ]
@@ -11194,6 +11328,121 @@
     "document.addEventListener('DOMContentLoaded', () => { _perf.domReady = performance.now(); });",
     "loadPorts();",
     "refreshGlobalStatus();"
+   ]
+  },
+  "js/lanzi/panel.js": {
+   "defines": [
+    "LANZI_ID",
+    "POLL_MS",
+    "_lzConn",
+    "_lzTeardown",
+    "autoEl",
+    "autoReloginEl",
+    "buildLanziTab",
+    "c",
+    "conn",
+    "els",
+    "es",
+    "inp",
+    "j",
+    "j1",
+    "j2",
+    "poll",
+    "robotUI",
+    "show",
+    "startPoll",
+    "stopPoll",
+    "tab",
+    "tabs",
+    "termArea",
+    "tg",
+    "u",
+    "wrap"
+   ],
+   "is_module": true,
+   "load_index": 39,
+   "referenced_by": {
+    "js/editor.js": [
+     "_lzTeardown"
+    ],
+    "js/harness/histcache.js": [
+     "poll"
+    ],
+    "js/harness/v4bridge.js": [
+     "poll"
+    ],
+    "js/nav.js": [
+     "poll"
+    ],
+    "js/proxy-panel.js": [
+     "startPoll"
+    ],
+    "js/resources.js": [
+     "poll"
+    ]
+   },
+   "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
+    "js/diff-viewer.js": [
+     "empty"
+    ],
+    "js/editor.js": [
+     "_edCloseNow",
+     "actions",
+     "dirty",
+     "json"
+    ],
+    "js/harness/chatctl.js": [
+     "value"
+    ],
+    "js/harness/v4bridge.js": [
+     "lastEl"
+    ],
+    "js/icons.js": [
+     "ICO16"
+    ],
+    "js/office-viewer.js": [
+     "js"
+    ],
+    "js/resources.js": [
+     "manual"
+    ],
+    "js/settings.js": [
+     "_ddConfirm",
+     "save"
+    ],
+    "js/sidebar.js": [
+     "password",
+     "refreshSidebar",
+     "username"
+    ],
+    "js/skin.js": [
+     "style"
+    ],
+    "js/tab-drag.js": [
+     "_initTabDrag"
+    ],
+    "js/util.js": [
+     "$",
+     "connections"
+    ],
+    "js/vcs-panel.js": [
+     "checked"
+    ],
+    "js/web-panel.js": [
+     "api",
+     "headers"
+    ],
+    "js/workerbase.js": [
+     "fetch"
+    ]
+   },
+   "top_level_exec": [
+    "bindHover();",
+    "document.addEventListener('click', (ev) => {",
+    "window.buildLanziTab = buildLanziTab;"
    ]
   },
   "js/log-viewer.js": {
@@ -11474,6 +11723,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "empty"
     ],
@@ -11494,6 +11746,7 @@
     ],
     "js/harness/chatctl.js": [
      "kw",
+     "pop",
      "value"
     ],
     "js/harness/main.js": [
@@ -11501,9 +11754,6 @@
     ],
     "js/harness/tools.js": [
      "mark"
-    ],
-    "js/harness/v4bridge.js": [
-     "step"
     ],
     "js/harness/v4proto.js": [
      "patch"
@@ -11523,9 +11773,6 @@
      "searchResults",
      "startH",
      "viewport"
-    ],
-    "js/proxy-panel.js": [
-     "state"
     ],
     "js/sidebar.js": [
      "_recentAdd",
@@ -11552,8 +11799,7 @@
      "connections",
      "fmtTs",
      "showBanner",
-     "sortKeyFn",
-     "termArea"
+     "sortKeyFn"
     ],
     "js/web-panel.js": [
      "api",
@@ -11694,10 +11940,12 @@
     "MONACO_LIGHT_THEMES",
     "MonacoEnvironment",
     "WORKER_BOOT",
+    "_last",
     "_monacoApplyTheme",
     "_monacoDefinePlusThemes",
     "_monacoReady",
     "_monacoThemeName",
+    "_rep",
     "d",
     "detectLangByShebang",
     "ed",
@@ -11712,6 +11960,7 @@
     "monacoSyncTheme",
     "monacoWarmup",
     "n",
+    "now",
     "opts",
     "ph",
     "s",
@@ -11749,9 +11998,6 @@
      "MB",
      "create",
      "json"
-    ],
-    "js/file-tree.js": [
-     "paths"
     ],
     "js/harness/chatctl.js": [
      "value"
@@ -11792,10 +12038,21 @@
      "langName"
     ],
     "js/util.js": [
-     "$"
+     "$",
+     "stack"
+    ],
+    "js/vcs-git-ops.js": [
+     "message"
+    ],
+    "js/web-panel.js": [
+     "api",
+     "headers"
     ],
     "js/win-controls.js": [
      "init"
+    ],
+    "js/workerbase.js": [
+     "fetch"
     ]
    },
    "top_level_exec": [
@@ -12116,7 +12373,8 @@
      "word"
     ],
     "js/vcs-panel.js": [
-     "commit"
+     "commit",
+     "word"
     ]
    },
    "references": {
@@ -12131,6 +12389,7 @@
      "openFileSmart"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
     ],
     "js/harness/groups.js": [
@@ -12152,6 +12411,9 @@
     ],
     "js/icons.js": [
      "ICO16"
+    ],
+    "js/lanzi/panel.js": [
+     "poll"
     ],
     "js/log-viewer.js": [
      "center",
@@ -12360,9 +12622,6 @@
     "js/harness/main.js": [
      "rect"
     ],
-    "js/harness/shell.js": [
-     "rect"
-    ],
     "js/harness/tools.js": [
      "node"
     ],
@@ -12413,7 +12672,8 @@
     ],
     "js/backend-log.js": [
      "incoming",
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/diff-viewer.js": [
      "empty"
@@ -12715,13 +12975,15 @@
     "zoomEl"
    ],
    "is_module": true,
-   "load_index": 42,
+   "load_index": 43,
    "referenced_by": {
     "js/a11y.js": [
-     "js"
+     "js",
+     "page"
     ],
     "js/analyze.js": [
-     "js"
+     "js",
+     "page"
     ],
     "js/backend-log.js": [
      "js"
@@ -12760,7 +13022,8 @@
     ],
     "js/harness/ask-md.js": [
      "container",
-     "js"
+     "js",
+     "page"
     ],
     "js/harness/base.js": [
      "js",
@@ -12783,6 +13046,9 @@
      "R",
      "js",
      "ro"
+    ],
+    "js/harness/hgstate.js": [
+     "js"
     ],
     "js/harness/hist.js": [
      "js"
@@ -12886,6 +13152,7 @@
      "js"
     ],
     "js/highlight.js": [
+     "page",
      "task"
     ],
     "js/history.js": [
@@ -12893,6 +13160,9 @@
     ],
     "js/init.js": [
      "R",
+     "js"
+    ],
+    "js/lanzi/panel.js": [
      "js"
     ],
     "js/log-viewer.js": [
@@ -12914,6 +13184,7 @@
     ],
     "js/proxy-panel.js": [
      "js",
+     "page",
      "table"
     ],
     "js/proxy-usage.js": [
@@ -12985,11 +13256,14 @@
     ],
     "js/vcs-panel.js": [
      "R",
-     "js"
+     "js",
+     "page",
+     "wb"
     ],
     "js/web-panel.js": [
      "R",
-     "js"
+     "js",
+     "page"
     ],
     "js/win-controls.js": [
      "js"
@@ -12998,6 +13272,9 @@
    "references": {
     "js/analyze.js": [
      "match"
+    ],
+    "js/backend-log.js": [
+     "toggle"
     ],
     "js/cmd-lib.js": [
      "sheet"
@@ -13016,6 +13293,7 @@
      "scroll"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
     ],
     "js/harness/groups.js": [
@@ -13043,9 +13321,6 @@
     ],
     "js/notes-nav.js": [
      "rect"
-    ],
-    "js/proxy-panel.js": [
-     "state"
     ],
     "js/sense.js": [
      "filter"
@@ -13075,8 +13350,7 @@
     "js/util.js": [
      "$",
      "connections",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/vcs-panel.js": [
      "entry"
@@ -13105,7 +13379,6 @@
     "HR_NOTE",
     "ST_CLS",
     "_biliHold",
-    "_holdMsg",
     "_hrCfgModal",
     "_msg",
     "_msgHeld",
@@ -13113,35 +13386,27 @@
     "_poll",
     "_pxFnum",
     "_pxTok",
-    "_qLastText",
     "_renderBiliInstall",
     "_renderHist",
     "_renderHrStats",
-    "_renderModelLoads",
-    "_renderQuota",
     "_renderStats",
     "_retryCfgFmt",
     "_retryCfgModal",
     "_setHrUI",
-    "_setQButtons",
-    "_setQStatus",
     "_setRetryUI",
     "_startPoll",
     "_stopPoll",
     "_tickPoll",
-    "ago",
     "applyBtn",
     "b",
     "badgeEl",
     "btn",
     "buildProxyTab",
-    "busy",
     "c",
     "canFull",
     "cards",
     "chain",
     "close",
-    "cls",
     "conn",
     "direct",
     "div",
@@ -13155,76 +13420,42 @@
     "hist",
     "histEl",
     "hit",
-    "host",
-    "hot",
     "hrCfgBtn",
     "hrStatsEl",
-    "html",
     "inst",
     "isOverload",
     "j",
     "jj",
     "lab",
-    "lg",
     "lines",
-    "loads",
-    "locked",
     "log",
     "logEl",
-    "lvTxt",
     "m",
-    "mainPage",
     "mode",
-    "models",
     "msgEl",
     "n",
-    "online",
-    "ov",
-    "p",
-    "page",
-    "pct",
     "portId",
-    "qAutoEl",
-    "qAutoLoginEl",
-    "qEyeBtn",
-    "qLastEl",
-    "qLogoutBtn",
-    "qPwdEl",
-    "qRefreshBtn",
-    "qReloginBtn",
-    "qSaveBtn",
-    "qStatusEl",
-    "qUserEl",
-    "quotaRankEl",
-    "quotaViewEl",
     "r",
-    "rank",
     "rate",
     "rb",
     "rebuild",
     "reqs",
     "retryCfgBtn",
-    "rhtml",
     "row",
     "rows",
     "running",
     "saveBtn",
-    "show",
     "st",
-    "state",
     "statsEl",
     "succ",
     "t",
     "tab",
     "take",
-    "tile",
     "tip",
     "toggleBtn",
     "tot",
     "total",
     "txt",
-    "u",
-    "uPage",
     "until",
     "up",
     "upTxt",
@@ -13234,97 +13465,24 @@
    "is_module": true,
    "load_index": 38,
    "referenced_by": {
-    "js/backend-log.js": [
-     "state"
-    ],
-    "js/bit-calc.js": [
-     "state"
-    ],
-    "js/diff-viewer.js": [
-     "state"
-    ],
-    "js/editor.js": [
-     "state"
-    ],
-    "js/harness/main.js": [
-     "state"
-    ],
-    "js/harness/managers.js": [
-     "state"
-    ],
-    "js/harness/relay.js": [
-     "state"
-    ],
-    "js/harness/sessions.js": [
-     "state"
-    ],
     "js/harness/shell.js": [
-     "buildProxyTab",
-     "state"
-    ],
-    "js/harness/skills.js": [
-     "hot"
-    ],
-    "js/harness/subpane.js": [
-     "state"
-    ],
-    "js/harness/tools.js": [
-     "state"
-    ],
-    "js/harness/v4bridge.js": [
-     "state"
-    ],
-    "js/harness/v4proto.js": [
-     "state"
-    ],
-    "js/hex-diff.js": [
-     "state"
-    ],
-    "js/hex-viewer.js": [
-     "state"
+     "buildProxyTab"
     ],
     "js/init.js": [
-     "buildProxyTab",
-     "state"
-    ],
-    "js/log-viewer.js": [
-     "state"
-    ],
-    "js/office-viewer.js": [
-     "state"
+     "buildProxyTab"
     ],
     "js/proxy-usage.js": [
      "_pxFnum",
      "_pxTok"
     ],
-    "js/resources.js": [
-     "state"
-    ],
-    "js/settings.js": [
-     "state"
-    ],
-    "js/sidebar.js": [
-     "state"
-    ],
-    "js/terminal-core.js": [
-     "state"
-    ],
-    "js/util.js": [
-     "state"
-    ],
     "js/vcs-panel.js": [
-     "state",
      "until"
-    ],
-    "js/web-panel.js": [
-     "state"
-    ],
-    "js/win-controls.js": [
-     "hot",
-     "state"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "sessions"
     ],
@@ -13333,30 +13491,22 @@
     ],
     "js/editor.js": [
      "actions",
-     "dirty",
      "json",
-     "level",
      "modal",
      "tokens"
     ],
     "js/harness/chatctl.js": [
      "value"
     ],
-    "js/harness/fx.js": [
-     "used"
-    ],
     "js/harness/main.js": [
      "of"
-    ],
-    "js/harness/panel.js": [
-     "cx"
     ],
     "js/harness/skills.js": [
      "dis",
      "zh"
     ],
-    "js/harness/v4bridge.js": [
-     "step"
+    "js/lanzi/panel.js": [
+     "startPoll"
     ],
     "js/log-viewer.js": [
      "center",
@@ -13367,25 +13517,21 @@
     ],
     "js/office-viewer.js": [
      "js",
+     "page",
      "table"
     ],
     "js/proxy-usage.js": [
-     "pxUsageInit",
-     "pxUsageLoad"
+     "pxUsageInit"
     ],
     "js/replay.js": [
      "elapsed"
     ],
     "js/settings.js": [
-     "_ddConfirm",
-     "force",
      "npm",
      "save"
     ],
     "js/sidebar.js": [
-     "password",
-     "refreshSidebar",
-     "username"
+     "refreshSidebar"
     ],
     "js/skin.js": [
      "style"
@@ -13393,13 +13539,9 @@
     "js/tab-drag.js": [
      "_initTabDrag"
     ],
-    "js/tree-fileops.js": [
-     "svg"
-    ],
     "js/util.js": [
      "$",
-     "connections",
-     "termArea"
+     "connections"
     ],
     "js/vcs-panel.js": [
      "cached",
@@ -13461,14 +13603,13 @@
     "wrap"
    ],
    "is_module": true,
-   "load_index": 39,
+   "load_index": 40,
    "referenced_by": {
     "js/icons.js": [
      "palette"
     ],
     "js/proxy-panel.js": [
-     "pxUsageInit",
-     "pxUsageLoad"
+     "pxUsageInit"
     ],
     "js/settings.js": [
      "palette"
@@ -13478,6 +13619,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "empty"
     ],
@@ -13593,6 +13737,9 @@
     "js/analyze.js": [
      "renderAnalyze"
     ],
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "refreshClaudePanel"
     ],
@@ -13706,7 +13853,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 72,
+   "load_index": 74,
    "referenced_by": {
     "js/harness/main.js": [
      "manual"
@@ -13718,6 +13865,9 @@
      "manual"
     ],
     "js/harness/subpane.js": [
+     "manual"
+    ],
+    "js/lanzi/panel.js": [
      "manual"
     ],
     "js/nav.js": [
@@ -13765,6 +13915,9 @@
     "js/icons.js": [
      "ICO16"
     ],
+    "js/lanzi/panel.js": [
+     "poll"
+    ],
     "js/log-viewer.js": [
      "center",
      "scrollTop"
@@ -13775,15 +13928,13 @@
     "js/office-viewer.js": [
      "js"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter"
     ],
     "js/settings.js": [
      "force",
-     "npm"
+     "npm",
+     "online"
     ],
     "js/skin.js": [
      "style"
@@ -13884,7 +14035,8 @@
    },
    "references": {
     "js/backend-log.js": [
-     "autoScroll"
+     "autoScroll",
+     "toggle"
     ],
     "js/editor.js": [
      "_edConfirm",
@@ -14199,7 +14351,6 @@
     "_stApiModels",
     "_stApiNewMode",
     "_stBoostCard",
-    "_stCdpLive",
     "_stDoApply",
     "_stModal",
     "_stNavKeysCard",
@@ -14323,7 +14474,6 @@
     "opts",
     "out",
     "p",
-    "paint",
     "paintList",
     "pane",
     "parts",
@@ -14429,6 +14579,7 @@
      "pending"
     ],
     "js/harness/groups.js": [
+     "force",
      "r3",
      "reset"
     ],
@@ -14436,10 +14587,8 @@
      "force"
     ],
     "js/harness/main.js": [
-     "fields",
      "force",
-     "pending",
-     "save"
+     "pending"
     ],
     "js/harness/managers.js": [
      "force"
@@ -14467,15 +14616,11 @@
     "js/harness/shell.js": [
      "force",
      "pending",
-     "reset",
-     "save"
+     "reset"
     ],
     "js/harness/state.js": [
      "pending",
      "reset"
-    ],
-    "js/harness/store.js": [
-     "subs"
     ],
     "js/harness/subpane.js": [
      "force",
@@ -14507,7 +14652,12 @@
     "js/init.js": [
      "_ddConfirm",
      "_stRenderHelpPane",
-     "openSettingsPanel"
+     "openSettingsPanel",
+     "ready"
+    ],
+    "js/lanzi/panel.js": [
+     "_ddConfirm",
+     "save"
     ],
     "js/monaco-bridge.js": [
      "npm"
@@ -14523,14 +14673,13 @@
      "save"
     ],
     "js/proxy-panel.js": [
-     "_ddConfirm",
-     "force",
      "npm",
      "save"
     ],
     "js/resources.js": [
      "force",
-     "npm"
+     "npm",
+     "online"
     ],
     "js/sense.js": [
      "ready"
@@ -14561,12 +14710,16 @@
      "save"
     ],
     "js/web-panel.js": [
+     "ready",
      "save"
     ]
    },
    "references": {
     "js/a11y.js": [
      "fix"
+    ],
+    "js/backend-log.js": [
+     "toggle"
     ],
     "js/diff-viewer.js": [
      "check",
@@ -14587,6 +14740,7 @@
      "legacy"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
     ],
     "js/harness/groups.js": [
@@ -14640,9 +14794,6 @@
      "js",
      "serial"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/proxy-usage.js": [
      "palette"
     ],
@@ -14658,8 +14809,7 @@
      "filter"
     ],
     "js/sidebar.js": [
-     "password",
-     "port"
+     "password"
     ],
     "js/skin.js": [
      "STYLES",
@@ -14736,6 +14886,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/editor.js": [
      "index",
      "json"
@@ -14923,15 +15076,12 @@
      "exp"
     ],
     "js/harness/main.js": [
-     "password",
-     "shell",
-     "username"
+     "shell"
     ],
     "js/harness/readonly.js": [
      "shell"
     ],
     "js/harness/shell.js": [
-     "password",
      "refreshSidebar",
      "username"
     ],
@@ -14970,6 +15120,11 @@
      "refreshSidebar",
      "renderRecentList"
     ],
+    "js/lanzi/panel.js": [
+     "password",
+     "refreshSidebar",
+     "username"
+    ],
     "js/log-viewer.js": [
      "_recentAdd",
      "closeConnection",
@@ -14985,16 +15140,13 @@
      "openRecentItem"
     ],
     "js/proxy-panel.js": [
-     "password",
-     "refreshSidebar",
-     "username"
+     "refreshSidebar"
     ],
     "js/sense.js": [
      "port"
     ],
     "js/settings.js": [
-     "password",
-     "port"
+     "password"
     ],
     "js/tab-drag.js": [
      "refreshSidebar"
@@ -15025,9 +15177,15 @@
     "js/web-panel.js": [
      "password",
      "refreshSidebar"
+    ],
+    "js/win-controls.js": [
+     "shell"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "_claudeTitleMap",
      "connectClaude"
@@ -15058,6 +15216,7 @@
      "fileIconHtml"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
     ],
     "js/harness/main.js": [
@@ -15100,9 +15259,6 @@
      "searchInput",
      "serial"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter",
      "ports"
@@ -15142,8 +15298,7 @@
      "portList",
      "showBanner",
      "sortKeyFn",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/vcs-panel.js": [
      "auth",
@@ -15262,9 +15417,6 @@
     "js/harness/sessions.js": [
      "style"
     ],
-    "js/harness/shell.js": [
-     "style"
-    ],
     "js/harness/skills.js": [
      "style"
     ],
@@ -15284,6 +15436,9 @@
      "style"
     ],
     "js/init.js": [
+     "style"
+    ],
+    "js/lanzi/panel.js": [
      "style"
     ],
     "js/log-viewer.js": [
@@ -15396,7 +15551,7 @@
     "j"
    ],
    "is_module": true,
-   "load_index": 40,
+   "load_index": 41,
    "referenced_by": {
     "js/harness/main.js": [
      "harnessSnipStart"
@@ -15471,6 +15626,9 @@
      "_initTabDrag"
     ],
     "js/hex-viewer.js": [
+     "_initTabDrag"
+    ],
+    "js/lanzi/panel.js": [
      "_initTabDrag"
     ],
     "js/log-viewer.js": [
@@ -15691,7 +15849,8 @@
      "renderAnalyze"
     ],
     "js/backend-log.js": [
-     "autoScroll"
+     "autoScroll",
+     "toggle"
     ],
     "js/diff-viewer.js": [
      "empty"
@@ -15739,9 +15898,6 @@
      "onScroll",
      "viewport"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/search.js": [
      "_pasteToConn",
      "doTermSearch",
@@ -15788,8 +15944,7 @@
      "hkMatch",
      "notifyPop",
      "portList",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/vcs-panel.js": [
      "_vcsActivate"
@@ -15926,12 +16081,12 @@
     ],
     "js/util.js": [
      "transfers"
-    ],
-    "js/vcs-panel.js": [
-     "j1"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "empty"
     ],
@@ -16155,6 +16310,7 @@
      "theme"
     ],
     "js/web-panel.js": [
+     "bg",
      "theme"
     ],
     "js/win-controls.js": [
@@ -16370,9 +16526,6 @@
     "js/office-viewer.js": [
      "T"
     ],
-    "js/proxy-panel.js": [
-     "svg"
-    ],
     "js/settings.js": [
      "down",
      "svg"
@@ -16390,6 +16543,9 @@
     ],
     "js/tree-search.js": [
      "fileops"
+    ],
+    "js/vcs-panel.js": [
+     "svg"
     ],
     "js/web-panel.js": [
      "svg"
@@ -16426,6 +16582,7 @@
      "treeInvalidate"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
     ],
     "js/harness/main.js": [
@@ -16588,6 +16745,9 @@
    "references": {
     "js/analyze.js": [
      "match"
+    ],
+    "js/backend-log.js": [
+     "toggle"
     ],
     "js/cmd-lib.js": [
      "sheet"
@@ -16951,8 +17111,7 @@
      "$",
      "connections",
      "restore",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/claude.js": [
      "$",
@@ -16978,8 +17137,7 @@
      "notifyTask",
      "notifyTaskDone",
      "portList",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/editor.js": [
      "$",
@@ -16993,8 +17151,7 @@
      "portList",
      "showBanner",
      "sortKeyFn",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/file-icons.js": [
      "$"
@@ -17014,7 +17171,6 @@
     ],
     "js/harness/chatctl.js": [
      "$",
-     "banner",
      "showBanner",
      "stack"
     ],
@@ -17047,8 +17203,7 @@
      "banner",
      "connections",
      "showBanner",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/harness/managers.js": [
      "$",
@@ -17085,8 +17240,7 @@
      "activePortId",
      "connections",
      "showBanner",
-     "sortKeyFn",
-     "termArea"
+     "sortKeyFn"
     ],
     "js/harness/skills.js": [
      "showBanner",
@@ -17121,8 +17275,7 @@
      "connections",
      "notifyTask",
      "notifyTaskDone",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/hex-viewer.js": [
      "$",
@@ -17131,8 +17284,7 @@
      "hkMatch",
      "notifyTask",
      "notifyTaskDone",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/highlight.js": [
      "stack"
@@ -17148,21 +17300,25 @@
      "$",
      "activePortId"
     ],
+    "js/lanzi/panel.js": [
+     "$",
+     "connections"
+    ],
     "js/log-viewer.js": [
      "$",
      "activePortId",
      "connections",
      "fmtTs",
      "showBanner",
-     "sortKeyFn",
-     "termArea"
+     "sortKeyFn"
     ],
     "js/logs-modal.js": [
      "$",
      "showBanner"
     ],
     "js/monaco-bridge.js": [
-     "$"
+     "$",
+     "stack"
     ],
     "js/nav.js": [
      "$",
@@ -17179,13 +17335,11 @@
     "js/office-viewer.js": [
      "$",
      "connections",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/proxy-panel.js": [
      "$",
-     "connections",
-     "termArea"
+     "connections"
     ],
     "js/proxy-usage.js": [
      "$"
@@ -17233,8 +17387,7 @@
      "portList",
      "showBanner",
      "sortKeyFn",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/skin.js": [
      "showBanner"
@@ -17257,8 +17410,7 @@
      "hkMatch",
      "notifyPop",
      "portList",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/tftp.js": [
      "$",
@@ -17290,8 +17442,7 @@
      "connections",
      "restore",
      "short",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/web-panel.js": [
      "$",
@@ -17300,8 +17451,7 @@
      "connections",
      "restore",
      "showBanner",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/win-controls.js": [
      "apiPost",
@@ -17313,7 +17463,8 @@
    },
    "references": {
     "js/backend-log.js": [
-     "opt"
+     "opt",
+     "toggle"
     ],
     "js/ctx-menu.js": [
      "buildCtxMenu"
@@ -17380,9 +17531,6 @@
      "serial",
      "viewport"
     ],
-    "js/proxy-panel.js": [
-     "state"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -17428,16 +17576,20 @@
     ]
    },
    "top_level_exec": [
+    "window.$ = $;   // a664：经典脚本的全局 const 对 module 不可靠；显式挂 window 防连锁未定义",
     "document.addEventListener('visibilitychange', () => {",
-    "document.documentElement.toggleAttribute('data-document-hidden', document.hidden);",
-    "})();"
+    "document.documentElement.toggleAttribute('data-document-hidden', document.hidden);"
    ]
   },
   "js/vcs-git-ops.js": {
    "defines": [
     "D",
+    "_vcsAsk",
     "_vcsBranchDialog",
     "_vcsBranchSwitch",
+    "_vcsCfm",
+    "_vcsCfmClose",
+    "_vcsConfirm",
     "_vcsDiscardSelected",
     "_vcsDlg",
     "_vcsDlgClose",
@@ -17446,9 +17598,14 @@
     "_vcsStashDialog",
     "_vcsTagsDialog",
     "ab",
+    "acts",
+    "btn",
     "close",
     "cur0",
+    "done",
     "files",
+    "fin",
+    "first",
     "i",
     "list",
     "local",
@@ -17458,6 +17615,7 @@
     "n",
     "name",
     "nb",
+    "onKey",
     "ov",
     "paint",
     "remote",
@@ -17508,6 +17666,9 @@
     "js/hex-viewer.js": [
      "message"
     ],
+    "js/monaco-bridge.js": [
+     "message"
+    ],
     "js/nav.js": [
      "local"
     ],
@@ -17519,6 +17680,7 @@
     ],
     "js/vcs-panel.js": [
      "_vcsBranchDialog",
+     "_vcsConfirm",
      "_vcsDiscardSelected",
      "_vcsDlgClose",
      "_vcsStashDialog",
@@ -17538,17 +17700,18 @@
      "json",
      "modal"
     ],
-    "js/file-tree.js": [
-     "paths"
-    ],
     "js/harness/ask-md.js": [
      "ignore"
     ],
     "js/harness/chatctl.js": [
+     "pop",
      "value"
     ],
     "js/harness/modal.js": [
      "hgModal"
+    ],
+    "js/harness/skills.js": [
+     "bodyHtml"
     ],
     "js/office-viewer.js": [
      "js"
@@ -17601,12 +17764,14 @@
     "_gbtn",
     "_gen0",
     "_j1ok",
-    "_known",
     "_lim",
     "_meta",
+    "_newL",
+    "_newSet",
     "_nh",
     "_oh",
     "_oldL",
+    "_oldRest",
     "_ovC",
     "_psb",
     "_rdlg",
@@ -17626,6 +17791,7 @@
     "_vcsApi",
     "_vcsBind",
     "_vcsCommitModal",
+    "_vcsDecoBadge",
     "_vcsFileDiffClick",
     "_vcsFileHtml",
     "_vcsFmtDt",
@@ -17691,6 +17857,7 @@
     "cmd",
     "cnt",
     "conn",
+    "ctxChanged",
     "curProf",
     "d",
     "dEl",
@@ -17709,6 +17876,7 @@
     "fp",
     "guard",
     "has",
+    "hasHead",
     "hasProf",
     "head",
     "hgCwd",
@@ -17719,8 +17887,11 @@
     "inp",
     "isNet",
     "isNew",
+    "isRemote",
     "isSvn",
+    "isTag",
     "j",
+    "jHead",
     "k",
     "key",
     "known",
@@ -17747,6 +17918,7 @@
     "ov",
     "p",
     "pages",
+    "parts",
     "pg",
     "pid",
     "portId",
@@ -17782,6 +17954,7 @@
     "ta",
     "tab",
     "tgt",
+    "tip",
     "today",
     "total",
     "ub",
@@ -17839,6 +18012,9 @@
      "buildVcsPanelTab",
      "checked"
     ],
+    "js/lanzi/panel.js": [
+     "checked"
+    ],
     "js/nav.js": [
      "checked"
     ],
@@ -17877,6 +18053,9 @@
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/claude.js": [
      "sessions"
     ],
@@ -17892,8 +18071,7 @@
      "modal"
     ],
     "js/file-tree.js": [
-     "deco",
-     "paths"
+     "deco"
     ],
     "js/harness/base.js": [
      "_HG"
@@ -17915,6 +18093,9 @@
      "hgModalTrack",
      "wrapped"
     ],
+    "js/harness/panel.js": [
+     "cx"
+    ],
     "js/harness/skills.js": [
      "ask",
      "ins"
@@ -17935,14 +18116,16 @@
      "rowEl"
     ],
     "js/nav.js": [
-     "commit"
+     "commit",
+     "word"
     ],
     "js/office-viewer.js": [
      "R",
-     "js"
+     "js",
+     "page",
+     "wb"
     ],
     "js/proxy-panel.js": [
-     "state",
      "until"
     ],
     "js/sense.js": [
@@ -17967,8 +18150,8 @@
     "js/tab-drag.js": [
      "_initTabDrag"
     ],
-    "js/tftp.js": [
-     "j1"
+    "js/tree-fileops.js": [
+     "svg"
     ],
     "js/tree-search.js": [
      "more"
@@ -17979,11 +18162,11 @@
      "connections",
      "restore",
      "short",
-     "showBanner",
-     "termArea"
+     "showBanner"
     ],
     "js/vcs-git-ops.js": [
      "_vcsBranchDialog",
+     "_vcsConfirm",
      "_vcsDiscardSelected",
      "_vcsDlgClose",
      "_vcsStashDialog",
@@ -18016,7 +18199,8 @@
     "$w",
     "KEY",
     "TOKEN",
-    "_WEB_SLEEP_MIN",
+    "_WV",
+    "_WV_INJECT",
     "__fcDiag",
     "__fcPwToken",
     "__fcPwTokenPromise",
@@ -18060,17 +18244,18 @@
     "_webPwMgr",
     "_webReaderToggle",
     "_webReconcileVis",
-    "_webRestore",
     "_webSavedNav",
     "_webSeq",
     "_webSessSrvReady",
     "_webSessionSave",
     "_webSetLabel",
     "_webShortUrl",
-    "_webSleep",
     "_webSyncUI",
-    "_webWake",
     "_webZoomFor",
+    "_wvEl",
+    "_wvInject",
+    "_wvSizeKick",
+    "_wvWire",
     "a",
     "above",
     "act",
@@ -18121,6 +18306,7 @@
     "ff",
     "fitsAbove",
     "fitsBelow",
+    "go",
     "h",
     "head",
     "headers",
@@ -18149,11 +18335,11 @@
     "ok",
     "okBtn",
     "old",
+    "onNav",
     "onScreen",
     "onStyleMut",
     "orig",
     "origClose",
-    "ov",
     "owner",
     "pend",
     "pid",
@@ -18180,6 +18366,7 @@
     "t",
     "tab",
     "target",
+    "tid",
     "title",
     "top",
     "topUp",
@@ -18191,6 +18378,7 @@
     "want",
     "webTabs",
     "wrap",
+    "wv",
     "x",
     "z"
    ],
@@ -18257,6 +18445,9 @@
     "js/harness/groups.js": [
      "push"
     ],
+    "js/harness/hgstate.js": [
+     "del"
+    ],
     "js/harness/histcache.js": [
      "api",
      "push"
@@ -18309,8 +18500,7 @@
      "queue"
     ],
     "js/harness/shell.js": [
-     "api",
-     "headers"
+     "api"
     ],
     "js/harness/skills.js": [
      "api",
@@ -18329,6 +18519,7 @@
     ],
     "js/harness/tools.js": [
      "api",
+     "arm",
      "del",
      "headers",
      "push"
@@ -18374,12 +18565,20 @@
      "api",
      "headers"
     ],
+    "js/lanzi/panel.js": [
+     "api",
+     "headers"
+    ],
     "js/log-viewer.js": [
      "api",
      "headers",
      "push"
     ],
     "js/logs-modal.js": [
+     "api",
+     "headers"
+    ],
+    "js/monaco-bridge.js": [
      "api",
      "headers"
     ],
@@ -18500,13 +18699,17 @@
     ],
     "js/win-controls.js": [
      "api",
-     "headers"
+     "headers",
+     "wv"
     ],
     "js/workerbase.js": [
      "api"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/diff-viewer.js": [
      "check",
      "empty"
@@ -18532,6 +18735,9 @@
     "js/hex-diff.js": [
      "vis"
     ],
+    "js/hex-viewer.js": [
+     "be"
+    ],
     "js/icons.js": [
      "ICO16"
     ],
@@ -18540,10 +18746,8 @@
     ],
     "js/office-viewer.js": [
      "R",
-     "js"
-    ],
-    "js/proxy-panel.js": [
-     "state"
+     "js",
+     "page"
     ],
     "js/resources.js": [
      "net",
@@ -18553,6 +18757,7 @@
      "filter"
     ],
     "js/settings.js": [
+     "ready",
      "save"
     ],
     "js/sidebar.js": [
@@ -18569,6 +18774,7 @@
      "overlay"
     ],
     "js/theme.js": [
+     "bg",
      "theme"
     ],
     "js/tree-fileops.js": [
@@ -18584,14 +18790,15 @@
      "connections",
      "restore",
      "showBanner",
-     "stack",
-     "termArea"
+     "stack"
     ],
     "js/vcs-git-ops.js": [
      "message"
     ],
+    "js/win-controls.js": [
+     "fcShell"
+    ],
     "js/workerbase.js": [
-     "B",
      "fetch"
     ]
    },
@@ -18604,6 +18811,7 @@
   "js/win-controls.js": {
    "defines": [
     "SKIP",
+    "_HG_HEADLESS",
     "_apply",
     "_hgWinState",
     "_lastBg",
@@ -18621,26 +18829,33 @@
     "dragOn",
     "edge",
     "el",
+    "fcShell",
     "init",
     "ix",
+    "m",
     "now",
     "onMove",
     "onUp",
     "ov",
     "p",
+    "parts",
     "t"
    ],
    "is_module": true,
-   "load_index": 73,
+   "load_index": 75,
    "referenced_by": {
     "js/analyze.js": [
      "init"
     ],
     "js/backend-log.js": [
+     "fcShell",
      "init"
     ],
     "js/claude.js": [
      "init"
+    ],
+    "js/editor.js": [
+     "fcShell"
     ],
     "js/harness/base.js": [
      "init"
@@ -18666,6 +18881,9 @@
     "js/highlight.js": [
      "init"
     ],
+    "js/init.js": [
+     "init"
+    ],
     "js/monaco-bridge.js": [
      "init"
     ],
@@ -18684,15 +18902,24 @@
     "js/vcs-panel.js": [
      "init"
     ],
+    "js/web-panel.js": [
+     "fcShell"
+    ],
     "js/workerbase.js": [
      "init"
     ]
    },
    "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
     "js/editor.js": [
      "index",
      "json",
      "moved"
+    ],
+    "js/hex-viewer.js": [
+     "rgba"
     ],
     "js/notes-nav.js": [
      "rect"
@@ -18700,12 +18927,11 @@
     "js/office-viewer.js": [
      "js"
     ],
-    "js/proxy-panel.js": [
-     "hot",
-     "state"
-    ],
     "js/replay.js": [
      "fire"
+    ],
+    "js/sidebar.js": [
+     "shell"
     ],
     "js/skin.js": [
      "style"
@@ -18720,7 +18946,8 @@
     ],
     "js/web-panel.js": [
      "api",
-     "headers"
+     "headers",
+     "wv"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -18739,6 +18966,9 @@
     "_ES",
     "_W",
     "_fetch",
+    "_probe",
+    "_tries",
+    "b",
     "fetch",
     "head",
     "hit",
@@ -18779,6 +19009,7 @@
      "B"
     ],
     "js/harness/chatctl.js": [
+     "B",
      "fetch"
     ],
     "js/harness/chips.js": [
@@ -18792,7 +19023,8 @@
      "B"
     ],
     "js/harness/hist.js": [
-     "B"
+     "B",
+     "fetch"
     ],
     "js/harness/histcache.js": [
      "B",
@@ -18871,11 +19103,17 @@
     "js/init.js": [
      "fetch"
     ],
+    "js/lanzi/panel.js": [
+     "fetch"
+    ],
     "js/log-viewer.js": [
      "B",
      "fetch"
     ],
     "js/logs-modal.js": [
+     "fetch"
+    ],
+    "js/monaco-bridge.js": [
      "fetch"
     ],
     "js/nav.js": [
@@ -18954,7 +19192,6 @@
      "fetch"
     ],
     "js/web-panel.js": [
-     "B",
      "fetch"
     ],
     "js/win-controls.js": [
@@ -18966,7 +19203,8 @@
      "sessions"
     ],
     "js/editor.js": [
-     "index"
+     "index",
+     "json"
     ],
     "js/util.js": [
      "$"

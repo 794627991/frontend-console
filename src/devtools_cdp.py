@@ -89,7 +89,10 @@ def find_cdp(timeout=1.0):
 def find_webtab_target(timeout=3.0):
     """R4 审计 D2（W4）：在网页 tab CDP 端口（9223）找第一个非空页面
     target（网页 tab 加载的是外部 URL，无工具 origin 可匹配）。
-    返回 (port, target)；零命中抛 TargetNotFound。"""
+    返回 (port, target)；零命中抛 TargetNotFound。
+    Electron 壳形态（P3）：无 9223——网页 tab 是主窗 DOM 里的 <webview>，
+    guest 以 type=webview 挂在 9222 的 target 列表。9223 不可达时回落
+    9222 找 webview target（url 同样可连可 evaluate，实测）。"""
     last = None
     try:
         targets = [t for t in list_targets(_WEBTAB_PORT, timeout)
@@ -98,6 +101,16 @@ def find_webtab_target(timeout=3.0):
     except Exception as e:
         last = e
         targets = []
+    if not targets:
+        # 壳形态回落：9222 的 webview target
+        try:
+            wv = [t for t in list_targets(_DEBUG_PORT, timeout)
+                  if t.get("type") == "webview" and t.get("url")
+                  and str(t.get("url")) != "about:blank"]
+            if wv:
+                return _DEBUG_PORT, wv[0]
+        except Exception as e2:
+            last = e2
     if not targets:
         raise TargetNotFound(
             "9223 无可达网页 tab target%s" % ("（%r）" % last if last else ""))

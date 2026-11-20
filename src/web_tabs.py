@@ -17,6 +17,7 @@ document.domain/防盗链等 iframe 时代的一切限制结构性消失。
   设 Bounds；切 tab = 显示/隐藏控件
 """
 import json
+import os
 import threading
 
 _tabs = None            # WebTabs 单例（main._patched_ready 装配）
@@ -54,6 +55,14 @@ _SSO_HOSTS = ("sso.hikvision.com", "moa.hikvision.com")
 # ---------- 原生密码库管理器（a583，用户令：🔑 显示/删改已存密码） ----------
 def _pwdb_path():
     import os
+    # P3 壳形态：网页 tab 跑在 Electron 分区（FC_WEBTAB_PROFILE 由壳注入，
+    # 目录=壳 userData/Partitions/webtabs）；无 env=旧 pywebview 形态原路径
+    _prof = os.environ.get("FC_WEBTAB_PROFILE")
+    if _prof:
+        # Electron 分区目录本身就是 profile 根（无 Default/ 子层——P1 审计
+        # 实测）。注意：Electron 无保存密码 UI，壳形态不会产生新 Login Data，
+        # 此路径只服务旧库读取/管理与未来自定义填充
+        return os.path.join(_prof, "Login Data")
     return os.path.join(os.environ.get("LOCALAPPDATA", ""),
                         "fc_webview_tabs", "EBWebView", "Default", "Login Data")
 
@@ -809,7 +818,42 @@ PW_TOKEN = _secrets.token_urlsafe(24)
 
 
 def get_tabs():
+    # P3 壳形态（webview 标签内嵌，用户定调 2026-11-20）：网页视图归前端
+    # DOM——控件命令在页面本地消化，到达后端的只剩兼容残路（pagehide
+    # beacon 等）。FC_WEBTAB_SHELL 由壳注入，返回纯 stub 让 pw_* 路由过
+    # get_tabs() 门（密码库业务仍在本模块 + register 路由直调）
+    if _tabs is None and os.environ.get("FC_WEBTAB_SHELL"):
+        return _shell_tabs()
     return _tabs
+
+
+class _ShellTabs(object):
+    """壳形态兼容 stub：视图在前端 <webview> 里随页面生灭——create/dispose
+    全套生命周期由 DOM 天然承担，纪元/在途/可见性机制随之不需要。"""
+
+    def _ok(self, *a, **k):
+        return {"ok": True}
+
+    create = _ok
+    navigate = _ok
+    go_back = _ok
+    go_forward = _ok
+    reload = _ok
+    suspend = _ok
+    show = _ok
+    dispose = _ok
+    dispose_all = _ok
+    layout = _ok
+    flush_on_exit = _ok
+
+
+_SHELL_TABS = [None]
+
+
+def _shell_tabs():
+    if _SHELL_TABS[0] is None:
+        _SHELL_TABS[0] = _ShellTabs()
+    return _SHELL_TABS[0]
 
 
 def _log(level, msg):
@@ -1689,6 +1733,12 @@ def _detect_cdp():
 def register(app):
     from flask import Blueprint, jsonify, request
     bp = Blueprint("web_tabs", __name__)
+
+    @bp.route("/api/web/tabs/inject")
+    def api_web_inject_js():
+        """P3 壳形态：防自动签到注入脚本（壳侧 did-navigate 执行的等价物
+        ——原 AddScriptToExecuteOnDocumentCreatedAsync 只在 WinForms 控件上）。"""
+        return jsonify({"ok": True, "js": _ANTI_AUTOSIGNIN_JS})
 
     @bp.route("/api/web/tabs", methods=["POST"])
     def api_web_tabs():

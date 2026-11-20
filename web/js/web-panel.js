@@ -4,13 +4,15 @@
 // 架构：每个网页 tab = 一个完整的 WebView2 浏览器控件实例（Python 侧
 // src/web_tabs.py 管理，与 Edge 标签页同级）——XFO/CSP/document.domain/
 // 防盗链/返回栈等 iframe+代理时代的一切限制结构性消失。本文件只保留
-// 工具栏 UI 与命令转发（REST /api/web/tabs），控件本体在工具窗口内
+// 工具栏 UI 与命令转发（REST /api/web/tabs）。视图本体双形态：旧
+// pywebview=WebView2 控件叠放；壳=<webview> 标签内嵌本页 DOM（P3）
 // 与本面板的 web-body 区域像素级对齐（布局经 rect 上报）。
 //
 // 地址栏/返回/前进 = 控件原生（SourceChanged/HistoryChanged 事件经
 // ExecuteScriptAsync 回推：__webTabUrl/__webTabHist/__webTabTitle）。
-// 新窗口（target=_blank/window.open）= NewWindowRequested → __webTabNew
-// → 本面板内导航（不弹系统浏览器）。
+// 新窗口（target=_blank/window.open）：旧形态=NewWindowRequested →
+// __webTabNew；壳形态=主进程 deny guest 开窗 → onWebTabOpen → __newWindow。
+// 两条路最终都在本面板开新 tab（不弹系统浏览器/不弹裸窗）。
 //
 // 保留功能：阅读模式（fetch_text）/「发给 Claude」/收藏/会话恢复/
 // 站点缩放（阅读态）。iframe 时代的代理/软过渡/逃逸检测全部退役
@@ -28,21 +30,38 @@ const _webPageEpoch = (Date.now() % 1e8) + '-' + Math.random().toString(36).slic
 (function () {
   const KEY = 'web-ui-owner';
   const TOKEN = Math.random().toString(36).slice(2) + '-' + Date.now();
-  let owner = false;
+  // P3 壳形态：单实例单窗口，webview 就在本页 DOM（后端没有可被抢的共享
+  // 控件）——「第二 UI 客户端」语义在壳内不存在。启动期同源残留 token
+  // （a664 自愈重载/强杀留下的旧心跳，最多 6s）会把壳窗口误判成副窗，
+  // 用户实锤「刚打开不让用网页功能」。故壳内恒为 owner；token 照常刷新，
+  // 普通浏览器页（无 fcShell）仍走原仲裁、压不住壳窗口。
+  const NATIVE = !!window.fcShell;
+  function touch() {
+    try { localStorage.setItem(KEY, JSON.stringify({ token: TOKEN, ts: Date.now() })); } catch (_) {}
+  }
+  let owner = NATIVE;
   function claim() {
+    if (NATIVE) { owner = true; touch(); return; }
     try {
       const cur = JSON.parse(localStorage.getItem(KEY) || 'null');
       if (!cur || (Date.now() - cur.ts) > 6000 || cur.token === TOKEN) {
-        localStorage.setItem(KEY, JSON.stringify({ token: TOKEN, ts: Date.now() }));
+        touch();
         owner = true;
       }
     } catch (_) { owner = true; }
   }
   claim();
   setInterval(function () {
-    if (owner) { try { localStorage.setItem(KEY, JSON.stringify({ token: TOKEN, ts: Date.now() })); } catch (_) {} }
+    if (owner) touch();
     else claim();
   }, 2000);
+  // 卸载即让位（用户实锤「刚启动不让用网页功能」）：正常刷新/重启清掉
+  // 自己的 token，新页面首个 claim 直接成功——不等 6s 心跳过期。杀进程
+  // 崩溃（无 pagehide）才回落原 6s 超时兜底
+  window.addEventListener('pagehide', function () {
+    if (!owner) return;
+    try { localStorage.removeItem(KEY); } catch (_) {}
+  });
   window.__webUiIsOwner = function () { return owner; };
 })();
 // R4 审计 D1（W3）：页面卸载（刷新/关闭）→ 按纪元回收本页网页控件 + 后端
@@ -61,10 +80,9 @@ window.addEventListener('pagehide', function () {
 });
 let _webActivePid = null;                  // 当前激活的网页 tab portId
 let _webCtlSeq = 0;                        // a556：show 命令序号（乱序丢弃，见 _webCtlVisible）
-const _WEB_SLEEP_MIN = 10;                 // a475：切走 N 分钟后休眠（分钟）
 
 function _mkNav() { return { stack: [], idx: -1 }; }
-function _mkUi() { return { sleeping: false, reader: false, zoom: 1, rseq: 0 }; }
+function _mkUi() { return { reader: false, zoom: 1, rseq: 0 }; }
 
 // a475 会话恢复：启动时读上次栈（重开网页 tab 无显式 URL 时回到上次页）
 let _webSavedNav = null;                   // a554：恢复用（首开时消费）
@@ -134,22 +152,6 @@ function _webSessionSave() {
     }
   }).catch(() => { _webSessSrvReady = true; });
 })();
-// a475 睡眠巡检：网页 tab 不在前台累计计时（60s 一查，开销可忽略），
-// 到时置空 iframe（进程回收由 Chromium 完成）；前台/休眠态即停
-setInterval(() => {
-  // a554 多开：每个隐藏的网页 tab 独立计时休眠
-  for (const pid in connections) {
-    const c = connections[pid];
-    if (!c || !c.meta || c.meta.kind !== 'web' || !c._ui) continue;
-    if (c._ui.sleeping || c._ui.reader) continue;
-    if (c.wrap.style.display === 'none' && document.visibilityState === 'visible') {
-      c._hidSec = (c._hidSec || 0) + 60;
-      if (c._hidSec >= _WEB_SLEEP_MIN * 60) _webSleep(c);
-    } else {
-      c._hidSec = 0;
-    }
-  }
-}, 60000);
 
 function _webFavs() {
   // R3 审计 B13：非数组/元素缺 url 的畸形历史值原先原样返回 → 上层
@@ -277,21 +279,16 @@ function buildWebPanelTab(url, opts) {
         <button class="btn ghost icon-btn" data-web="pw" title="密码管理：查看 / 显示 / 删除已保存的站点密码">${ICO16.key}</button>
         <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">${ICO16.book} 阅读</button>
         <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框——需登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
-        <button class="btn ghost" data-web="sys" title="X-Frame-Options 拒嵌等场景：系统浏览器打开">${ICO16.openExt} 浏览器</button>
       </div>
       <div class="web-body" data-web-body>
         <!-- a544：WebView2 控件宿主区（控件由 Python 叠放其上，像素对齐） -->
         <div class="web-frame web-host"></div>
         <div class="web-reader" data-web-reader style="display:none;"></div>
-        <div class="web-sleep" data-web-sleep style="display:none;">
-          <div>${ICO16.hourglass} 已休眠以省内存（后台超过 10 分钟）<br><span class="web-sleep-sub">正在唤醒…</span></div>
-        </div>
         <div class="web-err" data-web-err style="display:none;">
           <div class="web-err-title"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5l6 10.5H2z"/><path d="M8 6.5v3.2M8 11.4v.1"/></svg> 页面加载异常</div>
-          <div class="web-err-msg">可能是网络不可达（内网无外联？）或网站拒绝被嵌入。</div>
+          <div class="web-err-msg">可能是网络不可达（内网无外联？）或页面加载失败。</div>
           <div class="web-err-acts">
             <button class="btn" data-web-err="read">${ICO16.book} 用阅读模式打开</button>
-            <button class="btn ghost" data-web-err="sys">${ICO16.openExt} 在系统浏览器中打开</button>
             <button class="btn ghost" data-web-err="dismiss">继续等待</button>
           </div>
         </div>
@@ -301,6 +298,28 @@ function buildWebPanelTab(url, opts) {
   const conn = { portId, meta: { kind: 'web', label: '网页' }, tab, wrap,
                   _nav: _mkNav(), _ui: _mkUi(), _tabId: ctlId };
   connections[portId] = conn;
+
+  // P3 壳形态：webview 标签即网页视图（DOM 元素——悬浮菜单/弹层直接盖住，
+  // 这正是静止帧方案存在的前提消失的地方）；display:none 即隐藏且不渲染。
+  // partition 与旧 WebView2 形态同款隔离
+  if (_WV) {
+    const host = wrap.querySelector('.web-host');
+    if (host) {
+      const wv = document.createElement('webview');
+      wv.setAttribute('partition', 'persist:webtabs');
+      // allowpopups 必须存在（空值即可）：它是 window.open 请求能到达主进程
+      // handler 的开关——删掉它=请求整条断路（target=_blank 点了没反应，
+      // 二轮复审实锤）。真正的闸门=主进程 web-contents-created 的 deny；
+      // 布尔属性值写什么都是 true，故只写空值。元素级 handler 在 webview
+      // 上不存在（45.4.1 实测）
+      wv.setAttribute('allowpopups', '');
+      // ⚠ 不能写 display:block：Electron 45.4.1 实测（44.11.5 同样）guest
+      // 视口高度会钉死在 150——宽度仍跟随元素，现象=页面只画顶上一条，
+      // 下方露 webview 自身底色。display 缺省/inline-flex/flex 均正常。
+      wv.style.cssText = 'border:0;display:flex;background:var(--bg-deep,#14161c)';
+      host.appendChild(wv);
+    }
+  }
 
   const $w = (s) => wrap.querySelector(s);
   _webCtlSetup(conn);                      // a544：控件创建 + 布局跟随
@@ -331,7 +350,6 @@ function buildWebPanelTab(url, opts) {
       const act = b.dataset.webErr;
       errLayer.style.display = 'none';
       if (act === 'read') _webAct('read');
-      else if (act === 'sys') _webAct('sys');
       // dismiss：继续等待（层收起，iframe 继续加载）
     });
   }
@@ -395,12 +413,123 @@ function _webCur() {
 // ============ a544：WebView2 控件命令层（终局形态） ============
 // 控件 REST 调用（src/web_tabs.py 的 /api/web/tabs）——a554：带 conn
 // （每个网页 tab 独立控件 id，挂 conn._tabId）
+// ============ P3 壳形态：webview 标签内嵌层（用户定调 2026-11-20：DOM 可 ==
+// ============ 悬浮盖住网页——静止帧/rect 上报/可见性推演/壳桥整条链退役）==
+const _WV = !!window.fcShell;   // 壳形态=webview 内嵌；pywebview 形态走原链
+let _WV_INJECT = null;          // 防自动签到注入脚本（后端单一真源，一次拉取）
+
+function _wvEl(c) {
+  return c && c.wrap ? c.wrap.querySelector('.web-host webview') : null;
+}
+
+function _wvInject(wv) {
+  if (_WV_INJECT === null) {
+    _WV_INJECT = fetch('/api/web/tabs/inject').then(r => r.json())
+      .then(j => (j && j.ok && j.js) || '').catch(() => '');
+  }
+  _WV_INJECT.then(js => { if (js) { try { wv.executeJavaScript(js); } catch (_) {} } });
+}
+
+function _wvSizeKick(wv) {
+  // 历史兜底：曾怀疑「隐藏期 attach 的 sizing 失灵」，实测对 150 无效——
+  // 真凶是 webview 的 display:block（见创建处注释）。保留为无害的尺寸扰动。
+  try {
+    var h = wv.style.height || '100%';
+    wv.style.height = 'calc(100% - 1px)';
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      wv.style.height = h; }); });
+  } catch (_) {}
+}
+
+function _wvWire(conn) {
+  const wv = _wvEl(conn);
+  if (!wv || wv._wvWired) return;
+  wv._wvWired = true;
+  const tid = conn._tabId;
+  // Guest 视口同步：宿主实测 px 持续写 element style（RO 跟随窗口/tab 栏/
+  // 侧栏变化）。前提是 webview 保持 flex 显示——display:block 会让 guest
+  // 高度钉死 150（见创建处注释）
+  const host = wv.parentElement;
+  if (host) {
+    const sync = () => {
+      const r = host.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        wv.style.width = Math.round(r.width) + 'px';
+        wv.style.height = Math.round(r.height) + 'px';
+      }
+    };
+    conn._wvRO = new ResizeObserver(sync);
+    conn._wvRO.observe(host);
+    sync();
+  }
+  // 事件 → 原有 window.__webTab* 桥（UI 更新逻辑零改动，改在页面内直调）
+  const onNav = (url) => {
+    try { window.__webTabUrl && window.__webTabUrl(tid, url); } catch (_) {}
+    try { window.__webTabHist && window.__webTabHist(
+      tid, wv.canGoBack(), wv.canGoForward()); } catch (_) {}
+  };
+  wv.addEventListener('did-navigate', (e) => onNav(e.url));
+  wv.addEventListener('did-navigate-in-page', (e) => onNav(e.url));
+  wv.addEventListener('did-start-loading', () => {
+    try { window.__webTabLoad && window.__webTabLoad(tid, true); } catch (_) {}
+  });
+  wv.addEventListener('did-stop-loading', () => {
+    try { window.__webTabLoad && window.__webTabLoad(tid, false); } catch (_) {}
+  });
+  wv.addEventListener('page-title-updated', (e) => {
+    try { window.__webTabTitle && window.__webTabTitle(tid, e.title); } catch (_) {}
+  });
+  // 每次导航 dom-ready 重注入（原 AddScriptToExecuteOnDocumentCreated 等价）
+  wv.addEventListener('dom-ready', () => { _wvInject(wv); _wvSizeKick(wv); });
+  // guest 开窗路由已上移主进程（webview 元素级 handler 不存在——
+  // 45.4.1 实测 setWindowOpenHandler undefined、new-window 不触发；
+  // 主进程 web-contents-created 统一 deny + onWebTabOpen 推送）
+}
+
+// guest 开窗路由：主进程对 webview guest deny 后经 preload 推送到这里
+if (_WV && window.fcShell && window.fcShell.onWebTabOpen) {
+  window.fcShell.onWebTabOpen(function (url) {
+    try { window.__newWindow && window.__newWindow(url); } catch (_) {}
+  });
+}
+
 function _webCtl(conn, d) {
   // a555 审计修：conn 空时原兜底 'web-1' 会操纵 1 号控件（打错 tab）
   if (!conn || !conn._tabId) return Promise.resolve({ ok: false });
   // R4 审计 D3=a：非主 UI 客户端禁止一切网页 tab 后端操作（单点收口）
   if (window.__webUiIsOwner && !window.__webUiIsOwner()) {
     return Promise.resolve({ ok: false, err: "second-ui-client" });
+  }
+  // 壳形态：视图就在本页 DOM——已知控件命令本地消化，零后端往返；显隐=
+  // wrap display 天然语义。**正向白名单**（P2 审计）：未知 act 一律透传
+  // 后端报错——反向白名单会让新 act「假成功什么都不做」，比报错难查
+  const _WV_LOCAL = { create: 1, nav: 1, back: 1, fwd: 1, reload: 1,
+                      show: 1, suspend: 1, layout: 1, dispose: 1, dispose_all: 1 };
+  if (_WV && _WV_LOCAL[d.act]) {
+    const wv = _wvEl(conn);
+    const ok = Promise.resolve({ ok: true });
+    // ⚠ webview 初始导航必须走 src 属性——attribute 触发 guest attach；
+    // attach/dom-ready 前 loadURL 会抛「must be attached」被吞 = 永不加载
+    //（用户实锤「网页打不开」）。已 attach 后 src 赋值同样=导航，统一用它
+    const go = () => {
+      if (wv && d.url) {
+        try { wv.getBoundingClientRect(); } catch (_) {}   // 强制同步布局
+        try { wv.setAttribute('src', d.url); } catch (_) {}
+      }
+    };
+    if (d.act === 'create') {
+      _wvWire(conn);   // RO 先落内联尺寸
+      requestAnimationFrame(() => requestAnimationFrame(go));  // 布局提交后首航
+      return ok;
+    }   // 幂等=导航
+    if (d.act === 'nav') { go(); return ok; }
+    if (d.act === 'back') { if (wv) { try { wv.goBack(); } catch (_) {} } return ok; }
+    if (d.act === 'fwd') { if (wv) { try { wv.goForward(); } catch (_) {} } return ok; }
+    if (d.act === 'reload') { if (wv) { try { wv.reload(); } catch (_) {} } return ok; }
+    if (d.act === 'dispose' && conn._wvRO) {   // P1 审计：关 tab 断 RO 防泄漏
+      try { conn._wvRO.disconnect(); } catch (_) {} conn._wvRO = null;
+    }
+    return ok;   // show/suspend/layout/dispose_all：DOM 语义天然覆盖
   }
   d.tab = conn._tabId;
   return fetch('/api/web/tabs', {
@@ -412,6 +541,8 @@ function _webCtl(conn, d) {
 // 面板创建：控件 create + 布局跟随（ResizeObserver 持续上报 rect，
 // 物理像素 = DIP × devicePixelRatio——WinForms Bounds 是物理像素）
 function _webCtlSetup(conn) {
+  if (_WV) return;   // P3 审计：壳形态布局走文档流（_wvRO 内联 px 同步），
+                     // 本函数的 rect 上报链是 WebView2 控件时代的——空转跳过
   const body = conn.wrap.querySelector('[data-web-body]');
   const host = conn.wrap.querySelector('.web-host');
   const push = () => {
@@ -463,18 +594,18 @@ function _webReconcileVis() {
     if (!c || !c.meta || c.meta.kind !== 'web' || !c._tabId) continue;
     const onScreen = c.wrap && c.wrap.style.display !== 'none';
     const want = onScreen && (!_a || actWeb === c)
-      && !c._ui.reader && !c._ui.sleeping
+      && !c._ui.reader
       && !(window.__webOverlayOpen && window.__webOverlayOpen());
     if (want) { target = c; break; }   // 屏上至多一个 wrap，命中即唯一
   }
-  // R9.6·反冻结自愈：若顶层激活 tab 就是网页、且它在屏/非阅读/非休眠/
+  // R9.6·反冻结自愈：若顶层激活 tab 就是网页、且它在屏/非阅读/
   // 无浮层——按不变式它必须可见。推演循环却没选中它 = 某个连结项被陈旧
   // 状态（残留 flex/中间态）污染 → 信任屏幕真值强改为它（静默自愈；
   // 2s 周期推演持续兜底，异常形态仅体现为偶见控件闪一下）。
   if (!target) {
     const aw = (typeof activePortId !== 'undefined') ? connections[activePortId] : null;
     const awOK = aw && aw.meta && aw.meta.kind === 'web' && aw.wrap
-      && aw.wrap.style.display !== 'none' && !aw._ui.reader && !aw._ui.sleeping
+      && aw.wrap.style.display !== 'none' && !aw._ui.reader
       && !(window.__webOverlayOpen && window.__webOverlayOpen());
     if (awOK) {
       target = aw;   // R9.6·反冻结自愈：信任屏幕真值（静默，不打扰）
@@ -560,7 +691,7 @@ window.__webTabUrl = function (tid, url) {
   const c = _webByTabId(tid);
   if (!c) return;
   // a556（用户实锤：后台 tab 一段时间变 about:blank 且唤醒不恢复）：
-  // 休眠/阅读模式会把控件导航到 about:blank——该事件若入栈，about:blank
+  // 阅读模式会把视图导航到 about:blank——该事件若入栈，about:blank
   // 成为栈顶（还会存进 web-session），唤醒时「恢复」的就是 about:blank。
   // 原生 about:blank 只可能来自内部释放，一律忽略（顺带清未消费的
   // back/fwd 对账标记，防跨事件残留）
@@ -629,7 +760,7 @@ window.__webTabHist = function (tid, back, fwd) {
 };
 window.__webTabTitle = function (tid, title) {
   const c = _webByTabId(tid);
-  // 用户令：后台回收（休眠→about:blank）不得把网页名刷成空白——
+  // 用户令：后台导航（阅读→about:blank 等）不得把网页名刷成空白——
   // 空/空白标题（about:blank 阶段推送）直接忽略，保留最后真实标题
   var t = String(title || '').trim();
   // a591：检查用 t（已 trim），赋值也要用 t——原来检查 t、传原文 title，
@@ -693,7 +824,7 @@ window.__webTabNew = function (url) {
     return false;
   };
   // R9.13 诊断：冻结现场在【工具主界面】console 跑 __fcDiag()，一次给出
-  // 推演的全部输入（激活/在屏/阅读/休眠/浮层判定/各 tab 镜像/候选浮层）
+  // 推演的全部输入（激活/在屏/阅读/浮层判定/各 tab 镜像/候选浮层）
   window.__fcDiag = function () {
     try {
       const a = connections[activePortId];
@@ -703,7 +834,6 @@ window.__webTabNew = function (url) {
           wrapShown: c.wrap && c.wrap.style.display !== 'none',
           ctlShown: c._ctlShown,
           reader: !!(c._ui && c._ui.reader),
-          sleeping: !!(c._ui && c._ui.sleeping),
           label: (c.meta.label || '').slice(0, 24)
         }));
       return JSON.stringify({
@@ -712,7 +842,6 @@ window.__webTabNew = function (url) {
         activeWeb: !!(a && a.meta && a.meta.kind === 'web'),
         wrapShown: !!(a && a.wrap && a.wrap.style.display !== 'none'),
         reader: !!(a && a._ui && a._ui.reader),
-        sleeping: !!(a && a._ui && a._ui.sleeping),
         overlay: !!(window.__webOverlayOpen && window.__webOverlayOpen()),
         pwMO: !!window.__fcPwMO,
         webTabs: webTabs,
@@ -791,7 +920,6 @@ function _webNavigate(url, c) {
   c._nav.idx = c._nav.stack.length - 1;
   _webActivePid = c.portId;                // a554：导航即激活
   _webSessionSave();
-  _webWake(c);
   if (c._ui.reader) _webReaderToggle(false, true, c);
   _webCtl(c, { act: 'create', url, epoch: _webPageEpoch });   // 幂等：已有则等价 navigate
   _webReconcileVis();   // R-外泄根治：替代定向 show（地址栏回车=本 tab 在屏）
@@ -815,13 +943,6 @@ function _webNavigate(url, c) {
     const isWeb = !!(c && c.meta && c.meta.kind === 'web');
     if (isWeb) {
       _webActivePid = pid;
-      // a556（用户实锤：切回休眠 tab 干等 1s 巡检）：立即唤醒+恢复上次
-      // URL，不等 1s 兜底巡检；「正在唤醒…」只在导航完成前一瞬可见
-      if (c._ui && c._ui.sleeping) {
-        _webWake(c);
-        const u = _webNavTop(c);              // a556：跳过脏 about:blank
-        if (u) _webRestore(c, u);   // R4 审计 W29（D8）：GoBack 恢复不加历史条目
-      }
       // 目标 tab 控件显示 + 布局对齐；其余网页 tab 控件隐藏
       // R-外泄根治：可见性全部收敛到推演（W31/W32 的阅读态守卫、a551
       // 浮层联动、B22 定向语义全部由 _webReconcileVis 统一推导）
@@ -858,51 +979,12 @@ function _webNavigate(url, c) {
   }
 })();
 
-// ---- a475 休眠（a544 适配控件）----
-function _webSleep(c) {
-  c._ui.sleeping = true;
-  const ov = c.wrap.querySelector('[data-web-sleep]');
-  if (ov) ov.style.display = 'flex';
-  _webCtl(c, { act: 'nav', url: 'about:blank' });   // 释放页面
-  c._blanked = true;   // R4 审计 W29（D8）：原生历史已进 about:blank——唤醒走 GoBack 不加条目
-  // a556 + R-外泄根治：休眠=可见性状态变化 → 交推演（原先此处的定向
-  // show(false) 与全部散装命令一并退役）
-  _webReconcileVis();
-}
-function _webWake(c) {
-  if (!c._ui.sleeping) return;
-  c._ui.sleeping = false;
-  c._hidSec = 0;
-  const ov = c.wrap.querySelector('[data-web-sleep]');
-  if (ov) ov.style.display = 'none';
-  _webReconcileVis();   // R-外泄根治：唤醒=状态变化（恢复无 URL 时也不漏）
-}
-// R4 审计 W29（D8）：内部 about:blank 的恢复走原生 GoBack——不新进历史
-// 条目（原先 Navigate(u) 使原生历史 [.., B, about:blank, B'] 膨胀，用户
-// 按 ◀ 落白屏且 a556 过滤使前端不知情）。无 back 可用时回落 Navigate。
-function _webRestore(c, url) {
-  if (c._blanked) {
-    c._blanked = false;
-    c._navSrc = 'restore';       // 下一条 SourceChanged 不动栈（B 即栈顶本尊）
-    _webCtl(c, { act: 'back' });
-    return;
-  }
-  _webNavigate(url, c);
-}
-// 切回网页 tab 自动唤醒：恢复上次 URL（a556：switchTab 包装器已内联
-// 立即唤醒，这里作兜底巡检——display 变化不经 switchTab 的路径）
-setInterval(() => {
-  // a554 多开：任意隐藏中的休眠网页 tab 回前台即唤醒
-  for (const pid in connections) {
-    const c = connections[pid];
-    if (!c || !c.meta || c.meta.kind !== 'web' || !c._ui) continue;
-      if (c._ui.sleeping && c.wrap.style.display !== 'none') {
-      _webWake(c);
-      const url = _webNavTop(c);               // a556：跳过脏 about:blank
-      if (url) _webRestore(c, url);   // R4 审计 W29（D8）+ R2 审计 W15：定向 + GoBack 恢复
-    }
-  }
-}, 1000);
+// a475 休眠机制已退役（用户令 2026-11-20，产品取舍）：放弃后台 tab
+// 超 10 分钟的 about:blank 卸载回收（省内存，Edge sleeping tabs 等价物），
+// 换取切回即用无唤醒重载。注意 display:none 只停绘制不释放内存（guest
+// 进程/DOM/JS 堆仍在，Chromium 后台节流而已）——回收靠的就是被删掉的
+// 这套 about:blank 导航。_webSleep/_webWake/_webRestore 及双巡检定时器
+// 整体删除；_blanked 的 about:blank 链保留（属阅读模式）
 
 // ---- a475 阅读模式（a544 适配控件）----
 function _webReaderToggle(on, skipRestore, c) {
@@ -946,7 +1028,7 @@ function _webReaderToggle(on, skipRestore, c) {
       if (!c._ui.reader || mySeq !== c._ui.rseq) return;
       if (!j || !j.ok) {
         rd.innerHTML = '<div class="web-reader-err">取正文失败：'
-          + esc(((j && j.err) || '未知')) + '——用「浏览器」按钮打开</div>';
+          + esc(((j && j.err) || '未知')) + '</div>';
         return;
       }
       rd.innerHTML = '<div class="web-reader-head">' + esc(j.title || _webShortUrl(url))
@@ -1005,11 +1087,6 @@ function _webAct(act, wrap) {
     return;
   }
   if (act === 'read') { _webReaderToggle(!c._ui.reader, false, c); return; }
-  if (act === 'sys' && url) {
-    fetch('/api/open_url', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }) }).catch(() => {});
-    return;
-  }
   if (act === 'star' && url) {
     let favs = _webFavs();
     if (favs.some(f => f.url === url)) {
@@ -1037,6 +1114,9 @@ function _webAct(act, wrap) {
     return;
   }
   if (act === 'pw') {
+    // 壳形态：当前站点密码菜单（填充/显示/删除）；旧 pywebview 形态仍走
+    // 原生 WebView2 密码库管理。
+    if (_WV) { _pwSiteMenu(); return; }
     // a592：浮层隐藏控件是「推演 + 观察器」异步链（MutationObserver 只盯
     // class 属性，菜单是新建节点先插 DOM 后 render）——先同步推演一次、
     // 再在下两帧补两次，保证菜单出现前原生控件已经藏好（否则首帧菜单被
@@ -1085,7 +1165,8 @@ function _webAct(act, wrap) {
 // 在网页 tab 内导航（工具内打开）。没有网页 tab 时顺手开一个。
 window.__newWindow = function (url) {
   try {
-    buildWebPanelTab(url, { newTab: true });   // a554：外链开新 tab
+    buildWebPanelTab(url, { newTab: true });   // a554：外链开新 tab。guest
+    // 侧的开窗由主进程 deny 后经 onWebTabOpen 推回这里（P0 审计修）
   } catch (_) {}
 };
 
@@ -1203,6 +1284,8 @@ function _webPwMgr() {
     return __fcPwTokenPromise;
   };
   const api = (body) => {
+    // 壳形态不显示旧管理入口（自动保存 + 点击候选弹层）；
+    // 旧 pywebview 形态仍走后端 /api/web/tabs（原生 WebView2 Login Data）。
     // 每次调用都先确保 token 就位（并发调用共享同一个 in-flight promise）
     return ensurePwToken().then(() => {
       const headers = { 'Content-Type': 'application/json' };
@@ -1326,6 +1409,345 @@ function _webPwMgr() {
       return;
     }
     render(j.items || []);
+  });
+}
+
+// 工具自绘确认框（替代 Windows 原生 confirm——白底弹窗与工具风格严重不搭）
+function _pwConfirm(msg) {
+  return new Promise((resolve) => {
+    let m = document.getElementById('pwConfirmModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.className = 'modal';
+      m.id = 'pwConfirmModal';
+      m.style.zIndex = '10080';
+      m.innerHTML = `
+        <div class="box" style="max-width:380px;">
+          <div class="head"><strong>确认</strong>
+            <div class="head-actions"><button class="btn ghost icon-btn" data-pwc-close>✕</button></div>
+          </div>
+          <div style="padding:18px 20px;">
+            <div id="pwConfirmMsg" style="color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:16px;word-break:break-all;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+              <button class="btn ghost" data-pwc-no>取消</button>
+              <button class="btn primary" data-pwc-yes>确定</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+    }
+    const done = (v) => {
+      m.classList.remove('show');
+      m._resolve = null;
+      resolve(v);
+    };
+    m._resolve = done;
+    m.querySelector('#pwConfirmMsg').textContent = msg;
+    m.querySelector('[data-pwc-yes]').onclick = () => done(true);
+    m.querySelector('[data-pwc-no]').onclick = () => done(false);
+    m.querySelector('[data-pwc-close]').onclick = () => done(false);
+    m.classList.add('show');
+  });
+}
+
+// ---- 🔑 当前站点密码菜单（壳形态）：填充 / 显示 / 删除 ----
+// 只列当前页 origin 的条目（旧全站内置库列表退役）；没有条目时提示登录保存。
+function _pwSiteMenu() {
+  const old = document.getElementById('webPwSiteMenu');
+  if (old) { old.remove(); return; }
+  const c = (typeof _webCur === 'function') ? _webCur() : null;
+  const wrap = c && c.wrap;
+  const wv = wrap && wrap.querySelector('.web-host webview');
+  const btn = wrap && wrap.querySelector('[data-web="pw"]');
+  if (!wv || !btn) return;
+  let origin = '';
+  let host = '';
+  try {
+    const u = new URL(wv.getURL());
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      origin = u.origin;
+      host = u.host;
+    }
+  } catch (_) {}
+  if (!origin) return;
+  const menu = document.createElement('div');
+  menu.id = 'webPwSiteMenu';
+  menu.className = 'web-fav-menu';
+  menu.innerHTML = '<div class="web-fav-title">此站密码 · 读取中…</div>';
+  document.body.appendChild(menu);
+  const pos = () => {
+    const r = btn.getBoundingClientRect();
+    menu.style.right = Math.max(8, window.innerWidth - r.right - 4) + 'px';
+    menu.style.top = (r.bottom + 6) + 'px';
+    const h = menu.offsetHeight;
+    if (r.bottom + 6 + h > window.innerHeight - 8) {
+      menu.style.top = Math.max(8, r.top - h - 6) + 'px';
+    }
+  };
+  pos();
+  let items = [];
+  const render = () => {
+    let html = '<div class="web-fav-title">此站密码 · ' + esc(host) + '</div>';
+    if (!items.length) {
+      html += '<div class="web-fav-empty">此站还没有保存密码——登录时会提示保存</div>';
+    } else {
+      html += items.map((it, i) => {
+        const user = it.user ? esc(it.user) : '（无用户名）';
+        return '<div class="web-fav-item" data-si="' + i + '">' +
+          '<span class="web-fav-name">' + user + '</span>' +
+          '<span class="web-fav-x" data-sv="' + i + '" title="显示密码">' + ICO16.eye + '</span>' +
+          '<span class="web-fav-x" data-sd="' + i + '" title="删除">✕</span></div>';
+      }).join('');
+    }
+    menu.innerHTML = html;
+    pos();
+  };
+  const close = () => {
+    try { menu.remove(); } catch (_) {}
+    document.removeEventListener('click', onDoc, true);
+  };
+  const onDoc = (ev) => {
+    if (!menu.contains(ev.target) && !btn.contains(ev.target)) close();
+  };
+  window.fcShell.pwSiteList(origin).then((j) => {
+    if (!j || !j.ok) {
+      menu.innerHTML = '<div class="web-fav-title">此站密码</div>' +
+        '<div class="web-fav-empty">读取失败：' + esc((j && j.err) || '未知') + '</div>';
+      pos();
+      return;
+    }
+    items = j.items || [];
+    render();
+  }).catch(() => {
+    menu.innerHTML = '<div class="web-fav-title">此站密码</div>' +
+      '<div class="web-fav-empty">读取失败</div>';
+    pos();
+  });
+  menu.onclick = async (e) => {
+    const del = e.target.closest('[data-sd]');
+    if (del) {
+      e.stopPropagation();
+      const it = items[+del.dataset.sd];
+      if (!it) return;
+      if (!(await _pwConfirm('删除 ' + host + ' 的这条已存密码？'))) return;
+      window.fcShell.pwSiteDelete(origin, it.user).then((r) => {
+        if (r && r.ok) {
+          items = items.filter((x) => x !== it);
+          render();
+          showBanner('已删除密码', 1800);
+        } else showBanner('删除失败：' + ((r && r.err) || '未知'), 2600, true);
+      });
+      return;
+    }
+    const show = e.target.closest('[data-sv]');
+    if (show) {
+      e.stopPropagation();
+      const it = items[+show.dataset.sv];
+      if (!it) return;
+      const row = show.closest('.web-fav-item');
+      const nm = row && row.querySelector('.web-fav-name');
+      if (!nm) return;
+      if (nm.dataset.shown) {
+        nm.textContent = it.user || '（无用户名）';
+        delete nm.dataset.shown;
+        return;
+      }
+      window.fcShell.pwSiteReveal(origin, it.user).then((r) => {
+        if (r && r.ok) {
+          nm.dataset.shown = '1';
+          nm.textContent = (it.user || '（无用户名）') + ' | ' + (r.pw || '(空)');
+        } else showBanner('读取失败：' + ((r && r.err) || '未知'), 2600, true);
+      });
+      return;
+    }
+    const row = e.target.closest('[data-si]');
+    if (!row) return;
+    e.stopPropagation();
+    const it = items[+row.dataset.si];
+    if (!it) return;
+    let wcId = 0;
+    try { wcId = wv.getWebContentsId(); } catch (_) {}
+    if (!wcId) { showBanner('页面不可用', 2000, true); return; }
+    window.fcShell.pwSiteFill({ wcId, origin, user: it.user }).then((r) => {
+      if (r && r.ok) {
+        close();
+        showBanner('已填充密码', 1800);
+      } else showBanner('填充失败：' + ((r && r.err) || '未知'), 2600, true);
+    });
+  };
+  setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+}
+
+// ---- P3 密码保存提示（壳形态）：登录提交后主进程推送 fc:pw-save-prompt
+//（只含 origin/user，不含密码）；用户点「保存」才落盘。多提示覆盖时先
+// 作废旧 pending，避免主进程里堆一串等待确认的明文。
+let _pwPromptEl = null;
+let _pwPromptTimer = null;
+let _pwPromptId = 0;
+
+function _pwPromptHide() {
+  if (_pwPromptTimer) { clearTimeout(_pwPromptTimer); _pwPromptTimer = null; }
+  if (_pwPromptEl) {
+    try { _pwPromptEl.remove(); } catch (_) {}
+    _pwPromptEl = null;
+  }
+}
+
+function _pwPromptShow(info) {
+  if (!info || !info.id) return;
+  if (_pwPromptId && window.fcShell && window.fcShell.pwDiscard) {
+    try { window.fcShell.pwDiscard(_pwPromptId); } catch (_) {}
+  }
+  _pwPromptHide();
+  const el = document.createElement('div');
+  el.className = 'pw-save-toast';
+  const who = (info.origin || '') + (info.user ? ' · ' + info.user : '');
+  el.innerHTML =
+    '<div class="pw-save-title">保存登录密码？</div>' +
+    '<div class="pw-save-site">' + esc(who) + '</div>' +
+    '<div class="pw-save-acts">' +
+    '<button class="btn ghost" data-pw-no>不保存</button>' +
+    '<button class="btn primary" data-pw-yes>保存</button></div>';
+  document.body.appendChild(el);
+  _pwPromptEl = el;
+  _pwPromptId = info.id;
+  _pwPromptTimer = setTimeout(_pwPromptHide, 60000);
+  const yes = el.querySelector('[data-pw-yes]');
+  const no = el.querySelector('[data-pw-no]');
+  yes.onclick = () => {
+    yes.disabled = true; no.disabled = true;
+    Promise.resolve(window.fcShell.pwSave(info.id)).then(j => {
+      _pwPromptHide();
+      _pwPromptId = 0;
+      if (j && j.ok) showBanner('密码已保存', 2200);
+      else showBanner('保存失败：' + ((j && j.err) || '未知错误'), 3200, true);
+    }).catch(() => {
+      _pwPromptHide();
+      _pwPromptId = 0;
+      showBanner('保存失败', 2600, true);
+    });
+  };
+  no.onclick = () => {
+    try { window.fcShell.pwDiscard(info.id); } catch (_) {}
+    _pwPromptHide();
+    _pwPromptId = 0;
+  };
+}
+
+if (_WV && window.fcShell && window.fcShell.onPwSavePrompt) {
+  window.fcShell.onPwSavePrompt(_pwPromptShow);
+}
+
+// ---- 选择式填充弹层（工具内置存储；Edge 风格）----
+let _pwSugEl = null;
+let _pwSugId = 0;
+let _pwSugTimer = null;
+let _pwSugItems = null;
+let _pwSugDocDown = null;
+let _pwSugDocKey = null;
+
+function _pwSugActiveWebview() {
+  const c = (typeof _webCur === 'function') ? _webCur() : null;
+  let wv = c && c.wrap ? c.wrap.querySelector('.web-host webview') : null;
+  if (!wv) {
+    const wraps = [...document.querySelectorAll('.term-area')]
+      .filter((w) => w.style.display !== 'none');
+    for (const w of wraps) {
+      const x = w.querySelector('.web-host webview');
+      if (x) { wv = x; break; }
+    }
+  }
+  return wv;
+}
+
+function _pwSugHide(close) {
+  if (_pwSugTimer) { clearTimeout(_pwSugTimer); _pwSugTimer = null; }
+  if (_pwSugDocDown) {
+    document.removeEventListener('mousedown', _pwSugDocDown, true);
+    _pwSugDocDown = null;
+  }
+  if (_pwSugDocKey) {
+    document.removeEventListener('keydown', _pwSugDocKey, true);
+    _pwSugDocKey = null;
+  }
+  if (_pwSugEl) { try { _pwSugEl.remove(); } catch (_) {} _pwSugEl = null; }
+  const oldId = _pwSugId;
+  _pwSugId = 0;
+  _pwSugItems = null;
+  if (close && oldId && window.fcShell && window.fcShell.pwSuggestClose) {
+    try { window.fcShell.pwSuggestClose(oldId); } catch (_) {}
+  }
+}
+
+function _pwSugShow(info) {
+  if (!info || !info.id || !Array.isArray(info.items) || !info.items.length) return;
+  _pwSugHide(false);   // 主进程已作废旧候选
+  const wv = _pwSugActiveWebview();
+  if (!wv) return;
+  const wr = wv.getBoundingClientRect();
+  const r = info.rect || {};
+  const el = document.createElement('div');
+  el.className = 'pw-suggest';
+  let html = '<div class="pw-suggest-title">选择已保存的密码</div>';
+  html += info.items.map((it, i) => {
+    const user = it.user ? it.user : '（无用户名）';
+    return '<button type="button" class="pw-suggest-item" data-pi="' + i + '">' +
+      '<span class="pw-suggest-user">' + esc(user) + '</span></button>';
+  }).join('');
+  el.innerHTML = html;
+  document.body.appendChild(el);
+
+  let left = wr.left + (Number(r.left) || 0);
+  let top = wr.top + (Number(r.top) || 0) + (Number(r.height) || 0) + 6;
+  const pw = el.offsetWidth;
+  const ph = el.offsetHeight;
+  left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+  if (top + ph > window.innerHeight - 8) {
+    const above = wr.top + (Number(r.top) || 0) - ph - 6;
+    top = Math.max(8, above);
+  }
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+
+  _pwSugEl = el;
+  _pwSugId = info.id;
+  _pwSugItems = info.items.slice();
+  _pwSugTimer = setTimeout(() => _pwSugHide(true), 20000);
+  _pwSugDocDown = (ev) => {
+    if (_pwSugEl && !_pwSugEl.contains(ev.target)) _pwSugHide(true);
+  };
+  _pwSugDocKey = (ev) => {
+    if (ev.key === 'Escape') _pwSugHide(true);
+  };
+  document.addEventListener('mousedown', _pwSugDocDown, true);
+  document.addEventListener('keydown', _pwSugDocKey, true);
+
+  let done = false;
+  const choose = (i) => {
+    if (done) return;
+    done = true;
+    const sid = _pwSugId;
+    _pwSugHide(false);
+    Promise.resolve(window.fcShell.pwFill(sid, i)).then(j => {
+      if (!j || !j.ok) {
+        showBanner('填充失败：' + ((j && j.err) || '未知错误'), 3200, true);
+      }
+    }).catch(() => showBanner('填充失败', 2600, true));
+  };
+  el.querySelectorAll('[data-pi]').forEach((b) => {
+    b.addEventListener('mousedown', (e) => { e.preventDefault(); choose(+b.dataset.pi); });
+    b.addEventListener('click', (e) => { e.preventDefault(); choose(+b.dataset.pi); });
+  });
+}
+
+// 候选弹层订阅（内部存储，无建库/主密码/管理面板）
+if (_WV && window.fcShell && window.fcShell.onPwSuggest) {
+  window.fcShell.onPwSuggest(_pwSugShow);
+}
+if (_WV && window.fcShell && window.fcShell.onPwSuggestHide) {
+  window.fcShell.onPwSuggestHide((info) => {
+    // 只关当前这条：旧候选的迟到 hide 不能关掉新弹层
+    if (!info || !info.id || info.id === _pwSugId) _pwSugHide(false);
   });
 }
 

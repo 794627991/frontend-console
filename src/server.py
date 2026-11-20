@@ -142,6 +142,10 @@ DEBUG_WEB_PAGE = DEBUG_CAPS
 # /api/harness、/api/lanzi 的 307 兜底重定向都在请求时读它。
 CLAUDE_OFFLOAD = os.environ.get("CLAUDE_INLINE") != "1"
 WORKER_BASE = ""
+# Electron 壳形态（main.py --headless 启动时置 True）：index 注入
+# __HG_HEADLESS__='1'，前端据此停掉 pywebview 窗体专属调用（窗控路由/
+# 背景上报/窗态轮询——headless 不注册这些路由，调了只剩 404/405 日志噪音）
+HEADLESS_FORM = False
 # a558（SSO 锁号实锤）：真应用实例判定——main.py 入口（含打包 exe，frozen）
 # 或 worker 进程（worker_app 以 __main__ 运行时自设）。测试/临时实例
 #（python -c 起 server、pytest、python -m src.server）不带此标记 →
@@ -663,12 +667,16 @@ def index():
             data = data.replace(b"__HG_WFAMFLAG__", b"proxy" if CLAUDE_OFFLOAD else b"")
             # 带引号注入（前端 __HG_DBGF__==='1' 字符串严格比较——裸 1 会
             # 1==='1' 恒 false，钩子永不注册=刷新清场整个死链，用户实锤）
-            return data.replace(b"__HG_DBGF__",
+            # __HG_HEADF__ 同款（win-controls.js 壳形态守卫）
+            data = data.replace(b"__HG_DBGF__",
                                 b"'1'" if DEBUG_WEB_PAGE else b"''")
+            return data.replace(b"__HG_HEADF__",
+                                b"'1'" if HEADLESS_FORM else b"''")
         data = data.replace("__HG_VER__", _HV)
         data = data.replace("__HG_WBASE__", WORKER_BASE)
         data = data.replace("__HG_WFAMFLAG__", "proxy" if CLAUDE_OFFLOAD else "")
-        return data.replace("__HG_DBGF__", "'1'" if DEBUG_WEB_PAGE else "''")
+        data = data.replace("__HG_DBGF__", "'1'" if DEBUG_WEB_PAGE else "''")
+        return data.replace("__HG_HEADF__", "'1'" if HEADLESS_FORM else "''")
     if DEBUG_WEB:
         with open(os.path.join(_SRC_WEB, "index.html"), "rb") as f:
             return Response(_inject(f.read()), mimetype="text/html")
@@ -1031,6 +1039,25 @@ def api_help_readme():
     if not os.path.isfile(p):
         return jsonify({"ok": False, "err": "README.md 不存在"})
     return jsonify({"ok": True, "path": p})
+
+@app.route("/api/shell_log", methods=["POST"])
+def api_shell_log():
+    """Electron 壳日志转发（用户令 2026-11-20：壳只做启动作用，一切问题进
+    统一日志面板）。tag=shell 与 frontend/main 并列；批量收、限长防刷、
+    失败静默（日志通道绝不能反向拖累壳）。"""
+    d = request.get_json(force=True, silent=True) or {}
+    lines = d.get("lines")
+    if not isinstance(lines, list):
+        lines = [str(lines)] if lines else []
+    try:
+        from src import backend_log as _bl
+        lvl = str(d.get("level") or "info")
+        for ln in lines[:20]:
+            _bl.log("shell", str(ln)[:500], lvl)
+    except Exception:
+        pass
+    return '{"ok": true}', 200, {"Content-Type": "application/json"}
+
 
 @app.route("/api/status")
 def api_status():

@@ -2479,6 +2479,22 @@ window.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('drop', () => { window.__dragT0 = Date.now(); window.__dragProbe && __dragProbe('html-drop'); }, true);
+// Electron 壳形态：Python 侧 drop_handler 桥不存在，renderer 自己取绝对
+// 路径（preload 暴露 fcShell.pathForFile = webUtils.getPathForFile）→ 走
+// 同一入口 openDroppedFiles——去重/对比弹窗填栏/harness 附件/文件夹设根/
+// 计算器哈希等全部分发逻辑零改动复用。旧 pywebview 形态此监听空转
+//（无 fcShell 即返回，路径仍由 Python 桥推送）
+window.addEventListener('drop', (e) => {
+  if (!window.fcShell || !window.fcShell.pathForFile) return;
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || !files.length) return;
+  const paths = [];
+  for (let i = 0; i < files.length; i++) {
+    try { const p = window.fcShell.pathForFile(files[i]); if (p) paths.push(p); }
+    catch (_) {}
+  }
+  if (paths.length) openDroppedFiles(paths);
+}, true);
 // v3.5.73：原生拖拽多文件入口（main.py 全量透传）——harness 活动时全部
 // 加为对话附件（用户拖 5 个文件就该进 5 个附件）；其余 tab 保持首文件行为
 // （编辑器/阅读器一次开一个是合理交互），旧码在 Python 侧 break 只发第一个

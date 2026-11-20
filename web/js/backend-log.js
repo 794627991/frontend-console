@@ -94,6 +94,11 @@ let panel = null;
       if (window.__fcHardReload) window.__fcHardReload();
     };
     panel.querySelector('[data-bl="devtools"]').onclick = () => {
+      // 壳形态走 IPC（headless 无 /api/window/devtools 路由，独立 DevTools 窗）
+      if (window.fcShell && window.fcShell.openDevtools) {
+        window.fcShell.openDevtools();
+        return;
+      }
       fetch('/api/window/devtools', { method: 'POST' })
         .then(r => r.json())
         .then(j => { if (!j.ok) showBanner(j.err || '打开开发者工具失败', 3000, true); })

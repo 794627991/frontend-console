@@ -14,6 +14,17 @@
 // 挂载不变，Python 推送（main.py:2534/2554）不受影响。
 'use strict';
 
+  // Electron 壳形态：窗控三钮走 fcShell IPC（preload contextBridge），
+  // 拖拽/双击最大化交给原生 -webkit-app-region 区（body.hg-shell 样式钩子，
+  // 见 style.css），窗态由壳 maximize/unmaximize 事件推送。旧 pywebview 链
+  // （_post 窗控路由/JS 拖拽桥/背景上报/窗态轮询）仅在非壳形态运行。
+  // 形态判定以 preload 桥为准（window.fcShell）——__HG_HEADLESS__ 只是后端
+  // 注入旗标，二者可能不一致（壳连到非 headless 后端/旧页缓存时，按旗标
+  // 会把窗控绑到不存在的 pywebview 路由 = 三钮全死）
+  var fcShell = window.fcShell || null;
+  var _HG_HEADLESS = !!fcShell;
+  if (_HG_HEADLESS) document.body.classList.add('hg-shell');
+
   // 窗控是 fire-and-forget：窗口本体即反馈，失败静默——apiPost 的义务化
   // banner（util.js v3.5.109）在这里只会刷屏（teardown 期拖拽失败弹红条
   // 纯噪音），有意偏离统一包装。
@@ -56,17 +67,26 @@
     var bClose = document.getElementById('wcClose');
     if (!bMin || !bMax || !bClose) return;
 
-    bMin.addEventListener('click', function () { _post('/api/window/minimize'); });
-    bMax.addEventListener('click', function () {
-      // toggle 返回终态，立即切字形（事件回推随后同值到达，幂等）
-      _post('/api/window/toggle_max', true).then(function (j) {
-        if (j && j.ok) _apply(j.max, j.overhang);
+    if (fcShell) {
+      // 壳形态：三钮走 IPC。终态不猜——max 的字形/样式由 onState 推回驱动
+      bMin.addEventListener('click', function () { fcShell.winCtl('min'); });
+      bMax.addEventListener('click', function () { fcShell.winCtl('max'); });
+      // close 语义同旧链（close_to_tray 默认驻托盘，壳 close 事件分流）
+      bClose.addEventListener('click', function () { fcShell.winCtl('close'); });
+    } else {
+      bMin.addEventListener('click', function () { _post('/api/window/minimize'); });
+      bMax.addEventListener('click', function () {
+        // toggle 返回终态，立即切字形（事件回推随后同值到达，幂等）
+        _post('/api/window/toggle_max', true).then(function (j) {
+          if (j && j.ok) _apply(j.max, j.overhang);
+        });
       });
-    });
-    // 与原生 ✕ 同语义（close_to_tray 默认驻托盘，后端 destroy 走 closing 链）
-    bClose.addEventListener('click', function () { _post('/api/window/close'); });
-
-    // 顶栏 = 拖拽区（zcode 的整条 [app-region:drag] 等位）。
+      // 与原生 ✕ 同语义（close_to_tray 默认驻托盘，后端 destroy 走 closing 链）
+      bClose.addEventListener('click', function () { _post('/api/window/close'); });
+    }
+    // 顶栏 = 拖拽区（zcode 的整条 [app-region:drag] 等位）。壳形态整段跳过
+    // ——原生 -webkit-app-region 区（body.hg-shell 样式）自带拖拽与双击
+    // 最大化（Windows NCLBUTTONDBLCLK 语义），JS 桥只在 pywebview 形态需要。
     // v2 根因修正（用户实锤「窗口状态无法拖动」）：HTCAPTION 方案在
     // WebView2 里被 Chromium 的鼠标捕获吞掉（pywebview 自己的 easy_drag
     // 都不走它）——改用 pywebview 官方 move 机制：mousemove 逐帧调
@@ -76,7 +96,7 @@
     // screenX-clientX 自校正公式逐字抄 customize.js onMouseMove。
     // 最大化态不拖（无题窗拖不还原，Electron 同款约定；还原用 ❐/Win+↓）。
     // 双击最大化 HTCAPTION 免费不了了 → 手动 dblclick。
-    var bar = document.querySelector('.topbar');
+    var bar = fcShell ? null : document.querySelector('.topbar');
     if (bar) {
       var SKIP = 'button,input,textarea,select,a,[contenteditable],[data-no-drag]';
       var dragOn = false;
@@ -131,6 +151,7 @@
     // 非客户区后亮暗主题都不露黑边）
     var _lastBg = '';
     function _syncBg() {
+      if (_HG_HEADLESS) return;
       try {
         // 取侧栏渲染色（--bg-panel，与顶栏/侧栏同色）——边缘带贴着顶栏/侧栏，
         // 用它们同色才无缝；body 底色（--bg-deep）比面板色深会显细框
@@ -176,6 +197,7 @@
     // 堆积）：前端 resize 防抖拉 /api/window/state，snap/移动等无事件场景兜底
     var _pullT = null;
     function _pullState() {
+      if (_HG_HEADLESS) return;
       try {
         fetch('/api/window/state').then(function (r) { return r.ok ? r.json() : null; })
           .then(function (j) { if (j && j.ok) _apply(j.max, j.overhang); })
@@ -226,11 +248,20 @@
     });
 
     // 初态兜底（冷启直接最大化：shown 前的 maximized 事件推不到未加载的页面）
-    try {
-      fetch('/api/window/state').then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (j) { if (j && j.ok) _apply(j.max, j.overhang); })
-        .catch(function () {});
-    } catch (_) {}
+    if (fcShell) {
+      // 壳形态：初态 IPC 拉 + 事件订阅（无轮询、无 overhang 概念）
+      try {
+        fcShell.onState(function (st) { _apply(st && st.max, 0); });
+        fcShell.getState().then(function (st) { if (st) _apply(st.max, 0); })
+          .catch(function () {});
+      } catch (_) {}
+    } else {
+      try {
+        fetch('/api/window/state').then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) { if (j && j.ok) _apply(j.max, j.overhang); })
+          .catch(function () {});
+      } catch (_) {}
+    }
   }
 
   if (document.readyState === 'loading') {

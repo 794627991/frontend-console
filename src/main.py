@@ -192,7 +192,11 @@ def _audit_exit():
         pass
 
 
-ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
+# Electron 壳（换壳迁移）与测试实例可用 FC_ENDPOINT_FILE 指到别处——默认
+# 路径与历史行为完全一致；覆盖只影响本进程写哪，读侧（server.py 探活查询）
+# 仍走默认路径，不误报
+ENDPOINT_FILE = os.environ.get("FC_ENDPOINT_FILE") or os.path.join(
+    STATE_DIR, "endpoint.json")
 
 def write_endpoint(port):
     """把本地 HTTP 服务地址写到固定文件，供 Claude Code 跨会话发现。"""
@@ -204,6 +208,13 @@ def write_endpoint(port):
             "port": port,
             "pid": os.getpid(),
             "started_at": datetime.now().isoformat(),
+            # epoch 毫秒：Electron 壳的就绪判据（跨语言精确比较，ISO 串
+            # 免时区解析歧义）。旧读方（Claude 发现/server 探活）忽略未知键
+            "boot_ms": int(time.time() * 1000),
+            # Electron 壳启动亲和令牌：壳 spawn 时注入 FC_BOOT_TOKEN，
+            # 这里原样回写——壳只认与自己 token 匹配的 endpoint，杜绝
+            # 认到旧形态/陈旧后端（boot_ms 时间窗在时钟回拨时会误判）
+            "boot_token": os.environ.get("FC_BOOT_TOKEN") or "",
         }
         with open(ENDPOINT_FILE, "w", encoding="utf-8") as f:
             json.dump(ep, f, ensure_ascii=False, indent=2)
@@ -1771,10 +1782,15 @@ def main():
     if '--mcp' in sys.argv:
         _run_mcp_mode()
         return
+    # --headless（Electron 壳形态，换壳迁移 P0）：单实例锁与文件关联归壳，
+    # 本进程无窗口语义——open-file 探活/聚焦与 Win32 Global mutex 整段跳过
+    #（壳 requestSingleInstanceLock 替代 mutex；与旧 exe 并存共用
+    # ~/.serialconsole_pro 的互踩面记入迁移方案已知项）
+    _headless = "--headless" in sys.argv
     # --open-file <path>：文件关联接管后的双击打开入口（file_assoc.py 写的 shell 命令）。
     # 有活实例 → 聚焦其窗口 + HTTP 通知它打开（SSE ui_action 拉起）。
     open_file_path = None
-    if '--open-file' in sys.argv:
+    if not _headless and '--open-file' in sys.argv:
         i = sys.argv.index('--open-file')
         if i + 1 < len(sys.argv):
             open_file_path = os.path.abspath(sys.argv[i + 1])
@@ -1782,7 +1798,7 @@ def main():
     if open_file_path:
         _notify_existing_open_file(open_file_path)
         notified_existing = True
-    if not acquire_single_instance():
+    if not _headless and not acquire_single_instance():
         # mutex 提示已有实例。先探活旧实例的 HTTP 服务：
         # 若旧实例正常响应，聚焦其窗口后静默退出；
         # 若旧实例已死（进程被强杀但 mutex 残留，或僵尸状态），强制接管——
@@ -1837,6 +1853,160 @@ def main():
 
     threading.Thread(target=_preload_server, daemon=True,
                      name="server-preload").start()
+    # ---- --headless：Electron 壳形态（换壳迁移 P0）----
+    # 壳负责单实例锁/窗口/树杀；本进程只起服务链（Flask/SSE/串口/SSH/终端/
+    # harness worker），与 GUI 形态共用 boot 前置（backend_log/Job Object/
+    # 依赖自检/server 预导入）。跳过全部 WebView2 依赖段（资源闸门、
+    # import webview、EdgeChrome patch、窗体/托盘/热键链）——WebView2
+    # 缺失/过旧/注册表劫持整类故障在此形态下不存在。
+    if _headless:
+        _deps_missing = selftest_once()
+        _boot_mark("selftest_once 完成")
+        _server_ready.wait(timeout=10)
+        if "err" in _server_mod:
+            raise _server_mod["err"]
+        if "app" not in _server_mod:
+            # 预导入超时兜底（与 GUI 形态同款）
+            from src.server import app as _app, start_background as _sb
+            _server_mod["app"] = _app
+            _server_mod["start_background"] = _sb
+        app = _server_mod["app"]
+        start_background = _server_mod["start_background"]
+        start_background()
+        # 壳形态旗标（index 注入 __HG_HEADLESS__='1'，win-controls.js 据此
+        # 停掉窗控路由族调用——headless 无这些路由，只剩 404/405 日志噪音）
+        from src import server as _srv_headless
+        _srv_headless.HEADLESS_FORM = True
+
+        # 壳「真退出」通道（P2：托盘退出 / ✕ 直退路径）：优雅清理后自灭。
+        # 秒回 200、清理在后台线程跑（壳有界等 4s 后树杀兜底）——清理链是
+        # GUI 形态 _do_real_cleanup 的 headless 子集（无 web_tabs/snip/托盘）
+        @app.route("/api/quit", methods=["POST"])
+        def _api_shell_quit():
+            def _quit_chain():
+                _exit_reason("shell_quit")
+                try:
+                    from src.server import close_all_ports
+                    close_all_ports()
+                except Exception:
+                    pass
+                clear_endpoint()
+                try:
+                    from src import worker_app
+                    worker_app.manage_stop()
+                except Exception:
+                    pass
+                os._exit(0)   # Job Object 内核级收割余下子进程
+            threading.Thread(target=_quit_chain, daemon=True,
+                             name="shell-quit").start()
+            return '{"ok": true}', 200, {"Content-Type": "application/json"}
+        # 空闲端口起 Flask（同款探活节奏）。窗口控制路由族（/api/window/*
+        # 等）不注册——那是壳 IPC 的领地（P2），main._win 恒 None。
+        import socket
+        _s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _s.bind(("127.0.0.1", 0))
+        port = _s.getsockname()[1]
+        _s.close()
+        threading.Thread(
+            target=lambda: app.run(host="127.0.0.1", port=port, threaded=True,
+                                   debug=False, use_reloader=False),
+            daemon=True).start()
+        import urllib.request
+        _ready = False
+        for _ in range(100):
+            try:
+                urllib.request.urlopen(
+                    "http://127.0.0.1:%d/api/status" % port, timeout=0.5)
+                _ready = True
+                break
+            except Exception:
+                time.sleep(0.05)
+        if not _ready:
+            print("[错误] headless 后端未能在端口 %d 就绪（端口占用/Flask "
+                  "异常），进程退出" % port, file=sys.stderr)
+            return
+        write_endpoint(port)
+        _boot_mark("Flask 就绪")
+        # harness 链：worker 进程隔离照常（失败不阻塞，307/503 兜底不变）
+        try:
+            from src import worker_app
+            _boot_mark("worker 拉起 开始")
+            worker_app.manage_start(main_port=port)
+            _boot_mark("worker 拉起已派发（后台握手）")
+        except Exception as _we:
+            print("[警告] Claude worker 拉起失败: %s" % _we, file=sys.stderr)
+        # 全局截图热键（GUI 形态同款）：OS 级键盘钩子不依赖窗口，headless
+        # 可注册；触发起独立 DPI 截图子进程（Job Object 收编，壳树杀覆盖）。
+        # GUI 版经 endpoint.json 转 port，headless 直接闭包 port 更稳
+        try:
+            from src.app_state import CONFIG_FILE
+            with open(CONFIG_FILE, encoding="utf-8") as _f:
+                _snip_hk = (json.load(_f).get("snip_hotkey") or "ctrl+alt+a")
+        except Exception:
+            _snip_hk = "ctrl+alt+a"
+
+        def _on_snip_hotkey_hd():
+            from src import snip as _snip_h
+            _snip_h.launch_window(port)
+        try:
+            from src import snip as _snip_hm
+            _snip_hm.start_hotkey(_snip_hk, _on_snip_hotkey_hd)
+        except Exception:
+            pass   # 热键被占用等：静默（📷 按钮仍可用）
+        # 自依赖自检结果给前端（/api/deps_status 弹提醒，同 GUI 形态）
+        try:
+            _ok, _mr, _mo, _skipped = _deps_missing
+            from src import server as _srv
+            if hasattr(_srv, "set_deps_missing"):
+                _srv.set_deps_missing(_mr, _mo, _skipped)
+        except Exception:
+            pass
+        # 升级分发服务（config 开着才起，发布机形态；与 GUI 形态对齐）
+        try:
+            import json as _json2
+            from src.app_state import CONFIG_FILE
+            with open(CONFIG_FILE, encoding="utf-8") as _f:
+                if (_json2.load(_f) or {}).get("update_server_enabled"):
+                    from src import update_server
+                    update_server.start()
+        except Exception:
+            pass
+        try:
+            from src import backend_log as _bl
+            _bl.log("main", "[headless] 服务就绪 port=%d pid=%d（Electron "
+                    "壳形态，无窗口；退出由壳树杀 + Job Object 内核兜底）"
+                    % (port, os.getpid()), "info")
+        except Exception:
+            pass
+        # 壳孤儿兜底：壳被强杀（崩溃/taskkill /F）时 will-quit 不会跑，
+        # 树杀丢失 → 后端变孤儿常驻。轮询壳进程句柄，壳亡即硬退（Job
+        # Object 内核级收割 worker 等全部子进程；worker 侧本就有同款
+        # 父进程探活自杀，此处对齐）。--headless 只被壳拉起，跟随壳退出
+        # 即正确语义。
+        # 盯 FC_SHELL_PID（壳 spawn 时注入）：中间隔 launcher shim
+        #（如 WindowsApps 商店 python 别名——壳 spawn 的是 shim，真后端
+        # 是孙进程）时 os.getppid() 指向 shim，壳死了 shim 不死、探活失效
+        #（实测实锤）。env 缺失再回落直接父进程
+        _ppid = int(os.environ.get("FC_SHELL_PID") or 0) or os.getppid()
+        def _parent_watch():
+            import ctypes as _ct
+            _k32 = _ct.windll.kernel32
+            while True:
+                # PROCESS_QUERY_LIMITED_INFORMATION；父已亡 → NULL → 退
+                _h = _k32.OpenProcess(0x1000, 0, _ppid)
+                if not _h:
+                    _exit_reason("shell_gone")
+                    os._exit(0)
+                _k32.CloseHandle(_h)
+                time.sleep(2.0)
+        threading.Thread(target=_parent_watch, daemon=True,
+                         name="parent-watch").start()
+        # webview.start 的 headless 等价物：主线程挂起。daemon 线程随进程走；
+        # 壳退出 → taskkill /T 树杀本进程 → Job Object 自动终结全部子进程
+        #（worker 等，内核级，强杀也覆盖）
+        threading.Event().wait()
+        return
     # v4.1（用户拍板）：硬资源闸门——必须在 `import webview` 之前。
     # WebView2 缺失/过旧、.NET Framework < 4.8.1 时窗口根本建不出来（后者
     # 连 import webview 都抛异常），所以这里用 Win32 原生对话框引导用户装

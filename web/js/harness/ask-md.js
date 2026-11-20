@@ -417,6 +417,8 @@ function askRender(it) {
         a.addEventListener('click', e => {
           e.preventDefault();
           if (/^https?:/i.test(href)) {
+            // P1 口径：壳形态开网页 tab（init.js 全局拦截同款分支）
+            if (window.fcShell && window.__newWindow) { window.__newWindow(href); return; }
             fetch('/api/open_url', {method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({url: href})}).catch(() => {});

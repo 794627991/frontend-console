@@ -39,17 +39,29 @@ def _find_vcvars():
 
 
 def _msvc_env():
-    """v2.3.3 绕过 vcvars64（本机 VsDevCmd 深处报「找不到网络路径」，SDK 装了
+    r"""v2.3.3 绕过 vcvars64（本机 VsDevCmd 深处报「找不到网络路径」，SDK 装了
     也起不来）——直接枚举 MSVC/Windows SDK 目录手工构造 INCLUDE/LIB/PATH。
-    返回 (env_dict, cl_path) 或 (None, None)。"""
+    返回 (env_dict, cl_path) 或 (None, None)。
+    v4.1 换壳批：FC_MSVC_BT 指 BuildTools 安装根（用户令装非系统盘，本机
+    D:\AI_PROJECT\msvc-buildtools）——其下 VC\Tools\MSVC\* 取最高版本。
+    env 指**根目录**而非带版本号的 MSVC 目录：MSVC 小版本升级不打断打包
+    环境。标准盘 glob 照旧兜底；Windows SDK 微软固定装
+    C:\Program Files (x86)\Windows Kits，无需配置。"""
     msvc_root = None
+    _cands = []
+    if os.environ.get("FC_MSVC_BT"):
+        _bt = os.environ["FC_MSVC_BT"]
+        _cands.extend(sorted(glob.glob(
+            os.path.join(_bt, "VC", "Tools", "MSVC", "*"))))
     for pat in (r"C:\Program Files (x86)\Microsoft Visual Studio\*\BuildTools\VC\Tools\MSVC\*",
                 r"C:\Program Files\Microsoft Visual Studio\*\BuildTools\VC\Tools\MSVC\*",
                 r"C:\Program Files (x86)\Microsoft Visual Studio\*\Community\VC\Tools\MSVC\*",
                 r"C:\Program Files\Microsoft Visual Studio\*\Community\VC\Tools\MSVC\*"):
-        hit = sorted(glob.glob(pat))
-        if hit:
-            msvc_root = hit[-1]
+        _cands.extend(sorted(glob.glob(pat)))
+    # 取排序后第一个可用（升序=最低版本——任一可用即可，非注释曾说的"最高"）
+    for _c in _cands:
+        if os.path.isfile(os.path.join(_c, "bin", "Hostx64", "x64", "cl.exe")):
+            msvc_root = _c
             break
     sdk_inc = sorted(glob.glob(r"C:\Program Files (x86)\Windows Kits\10\Include\*"))
     sdk_lib = sorted(glob.glob(r"C:\Program Files (x86)\Windows Kits\10\Lib\*"))
