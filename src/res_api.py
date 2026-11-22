@@ -2,8 +2,8 @@
 """离线资源状态 / 安装 API（v4.1）。
 
 前端启动后 GET /api/resources/status 拿统一检测结果：
-- hard_missing 非空 → 理论上此时界面根本起不来（启动闸门已拦），
-  能走到这里说明是旁路启动，仍按红条提示
+- 换壳 P4 起全部资源均为可选（Node/Git/Claude/OnlyOffice/pydeps 等）——
+  hard_missing 恒为空，保留字段只为前端旧结构兼容
 - soft_missing 非空 → 常驻红条「缺少 X —— 相关功能不可用 [安装资源包]」
 
 安装走后台线程 + 轮询（与 claude_setup 的任务状态机同款形态，但状态
@@ -69,8 +69,7 @@ def res_ignore():
     from src.res_boot import _read_state, _write_state
     d = request.get_json(force=True, silent=True) or {}
     kinds = [str(k) for k in (d.get("kinds") or []) if k]
-    # 对抗审 P3：硬资源（webview2/dotnet）不许忽略——红条消失但下次启动
-    # 闸门照拦，行为不一致还掩盖问题
+    # 保留硬资源不可忽略的防线（换壳 P4 后 _HARD 为空，规则对空集无操作）
     from src.res_boot import _HARD
     bad = [k for k in kinds if k in _HARD]
     if bad:

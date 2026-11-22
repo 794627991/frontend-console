@@ -8,14 +8,13 @@
 
   1. 打开 `.fcpk` → 解到临时 staging（按 kind 只解需要的）
   2. 按「先决条件优先」的顺序调用对应安装器
-  3. 进度/日志回调转给调用方（启动闸门的 IProgressDialog 或前端的轮询）
-  4. 装完清理 staging（WebView2 除外——它是常驻运行时）
+  3. 进度/日志回调转给调用方（前端安装面板的轮询）
+  4. 装完清理 staging
 
 安装顺序（有真实先决依赖）：
-  dotnet → webview2(纯解包) → node → git → claude → pydeps
+  node → git → claude → codegraph → onlyoffice → pydeps
 
-dotnet 必须在最前：它不是给工具用的，而是给 pywebview 的 pythonnet
-后端用的，缺了连窗口都建不出来。
+换壳 P4：WebView2/.NET 已随 pywebview 链一起退役，不再属于工具依赖。
 """
 import os
 import shutil
@@ -38,8 +37,8 @@ import time
 # a407（用户令）：billion-context 移出安装库——内网装不上是常态，
 # 唯一入口=代理面板联网下载（proxy.py /api/proxy/bili_install）。旧资源包
 # 里的 bili/ 段随 ORDER 摘除而自然跳过（不解包不报错）
-ORDER = ["dotnet", "webview2", "node", "git", "claude",
-           "codegraph", "onlyoffice", "pydeps"]
+# D（2026-11-23 用户拍板）：electron 入列——内网源码/调试形态离线起壳
+ORDER = ["node", "electron", "git", "claude", "codegraph", "onlyoffice", "pydeps"]
 
 
 class InstallError(Exception):
@@ -51,7 +50,7 @@ class InstallCancelled(Exception):
 
 
 def runtime_root():
-    """离线资源解包落点。与 res_boot.wv2_fixed_dir 的探测点一致。"""
+    """离线资源解包落点（res_boot.app_dir()/offline_runtime）。"""
     from src.res_boot import app_dir
     return os.path.join(app_dir(), "offline_runtime")
 
@@ -83,9 +82,8 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
                     返回 True 则抛 InstallCancelled（全审 C1：早前进度条的
                     「取消」按钮完全没接线，用户点了安装照跑还自动重启）
     force    : 强制重装（用户需求「一键重装对应依赖」）。只对 node/git 生效：
-               它们平时「已存在就跳过」，force 时重跑安装器。
-               dotnet **始终忽略 force**——已满足时强装要管理员 + 重启，
-               收益为零；webview2/claude/pydeps 本就恒覆盖/幂等，无需区分。
+               它们平时「已存在就跳过」，force 时重跑安装器；
+               claude/pydeps 本就恒覆盖/幂等，无需区分。
 
     返回 {"installed": [...], "skipped": [...], "errors": {kind: msg},
           "absent": [...]}
@@ -174,18 +172,6 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
         # webview2 同款：直接解到 runtime_root()（arc 前缀 bili/ 天然落
         # offline_runtime/bili/），不经 staging 不 move
         # a407：bili 解包分支移除（移出安装库）
-        if "webview2" in plan:
-            # 返回值 False = 已完成跳过（没解包，不产生进度字节）→ 把它
-            # 的体量从分母里扣掉，否则单装 webview2 时进度条只能到 ~0%
-            # 再被末尾硬拉满（复审实测跳过时 557MB 白占分母）
-            if not _install_webview2(reader, staging, cur, say, prog, res,
-                                     should_cancel=should_cancel,
-                                     total=sub_total):
-                sub_total = max(1, sub_total - sum(
-                    int(e.get("size") or 0) for e in reader.entries
-                    if e.get("kind") == "webview2"
-                    and e.get("mode") != "link"))
-            plan.remove("webview2")
         # 其余资源解到同一 staging（安装器需要同目录，如 node zip 与 msi 同层）
         rest = [k for k in plan]
         if rest:
@@ -260,145 +246,61 @@ def install_from(path, kinds=None, log=None, progress=None, should_cancel=None,
 
 # ------------------------------------------------------------------ 各资源
 
-WV2_MARKER = ".wv2ok"          # 完整性标记：解包全程成功才写（对抗审 P0）
+def _install_electron(reader, staging, cur, say, prog, res,
+                       should_cancel=None, total=None):
+    """D（2026-11-23 用户拍板）：Electron 运行时离线落位。
 
-
-def _install_webview2(reader, staging, cur, say, prog, res, should_cancel=None,
-                      total=None):
-    """WebView2 是纯解包——不跑安装器（Fixed Version 免安装，设环境变量即用）。
-
-    对抗审 P0 修正：早前直落 runtime_root()，断电/取消/坏段留下「exe 在
-    DLL 缺」的半棵树——而闸门只探测 msedgewebview2.exe 存在性，半装被
-    判「已装」后**永无自愈路径**（建窗深处无声崩溃）。现改为：旧目录先
-    备份让位 → 解包 → 校验关键文件 → 写完成标记；失败恢复备份并清半成品。
-    闸门侧（res_boot）只认标记。
-
-    落点：包内 arcname 已是 `webview2/...`，解到 runtime_root() 本身
-    （不是 runtime_root()/webview2，那会多套一层 webview2/webview2/）。"""
+    资源包内是官方 dist zip（electron-v<ver>-win32-x64.zip，~150MB）。
+    落点 runtime_root()/electron/：先把 zip 解到该目录，再原地解包出
+    electron.exe（run.bat 识别 offline_runtime/electron/electron.exe
+    直接起壳，免 npm/网络）。已装（electron.exe 在）默认跳过；force 重解。
+    纯文件操作，无需提权。"""
+    import zipfile
     root = runtime_root()
-    os.makedirs(root, exist_ok=True)
-    mark = os.path.join(root, WV2_MARKER)
-    cur_dir = os.path.join(root, "webview2")
-    if os.path.isfile(mark) and os.path.isdir(cur_dir):
-        say("· WebView2 已完整安装，跳过（删 offline_runtime/.wv2ok 可重装）")
-        return False
-    bak = ""
-    if os.path.isdir(cur_dir):
-        import time
-        bak = cur_dir + ".old-%d" % int(time.time())
-        say("  现有运行时已备份 → %s" % os.path.basename(bak))
-        try:
-            os.replace(cur_dir, bak)
-        except OSError as e:
-            raise InstallError("无法替换现有运行时（可能正在使用）：%s" % e)
+    dst = os.path.join(root, "electron")
+    marker = os.path.join(root, ".electron_ok")
+    if os.path.isfile(os.path.join(dst, "electron.exe")) and os.path.isfile(marker):
+        if not force:
+            say("· Electron 运行时已安装，跳过（删 offline_runtime/.electron_ok 可重装）")
+            return False
+        shutil.rmtree(dst, ignore_errors=True)
+    os.makedirs(dst, exist_ok=True)
     try:
-        if os.path.isfile(mark):
-            os.remove(mark)
-        say("解出 WebView2 运行时 → %s …" % cur_dir)
-        # a337R（第8轮 P3-1）：进度必须从当前累计字节起算。bili 分支在
-        # webview2 之前跑（解完 cur[0]≈200MB），原先这里 `d` 从 0 起 →
-        # 进度条从 ~12% 跳回 0%（对比 rest 分支的 `base = cur[0]`）。
-        _base = cur[0]
-        _wv2_pct = [-1]
-        def _wv2_prog(d, t, p):
-            prog(_base + d, total or t, p)
-            if t > 0:
-                _p = int(d * 10 // t) * 10
-                if _p > _wv2_pct[0] and _p < 100:
-                    _wv2_pct[0] = _p
-                    prog(_base + d, total or t,
-                         "解包 WebView2 %d%%（%.0f / %.0f MB）" % (
-                             _p, d / 1048576, t / 1048576))
-        got = reader.extract_all(root, kinds=["webview2"],
-                                 progress=_wv2_prog,
-                                 should_cancel=should_cancel)
-        if not any(p.endswith("msedgewebview2.exe") for p in got):
-            raise InstallError("包内 WebView2 运行时不完整（缺 msedgewebview2.exe）")
-        _verify_wv2_tree(root)
-        with open(mark, "w", encoding="utf-8") as f:
-            f.write("ok")
-    except BaseException:
-        # 半成品清理（对抗审 P0：半装骗闸门）——尽力而为，恢复优先
-        shutil.rmtree(cur_dir, ignore_errors=True)
+        os.remove(marker)
+    except OSError:
+        pass
+    say("解出 Electron 运行时 → %s …" % dst)
+    base = cur[0]
+    pct = [-1]
+
+    def _prog(d, t, p):
+        prog(base + d, total or t, p)
+        if t > 0:
+            _p = int(d * 10 // t) * 10
+            if _p > pct[0] and _p < 100:
+                pct[0] = _p
+                prog(base + d, total or t, "解包 Electron %d%%" % _p)
+
+    got = reader.extract_all(root, kinds=["electron"], progress=_prog,
+                             should_cancel=should_cancel)
+    zips = [p for p in got if p.lower().endswith(".zip")]
+    if not zips:
+        raise InstallError("包内无 Electron 运行时 zip")
+    zp = os.path.join(root, zips[0])
+    try:
+        with zipfile.ZipFile(zp) as z:
+            z.extractall(dst)
+    finally:
         try:
-            if os.path.isfile(mark):
-                os.remove(mark)
+            os.remove(zp)   # zip 落位后即弃（重装走资源包重解）
         except OSError:
             pass
-        if bak and os.path.isdir(bak) and not os.path.isdir(cur_dir):
-            try:
-                os.replace(bak, cur_dir)
-                say("  已恢复原运行时")
-            except OSError:
-                pass
-        raise
-    if bak:
-        shutil.rmtree(bak, ignore_errors=True)
-    res["installed"].append("webview2")
-    say("✓ webview2 完成（%d 个文件）" % len(got))
-    return True
-
-
-def _verify_wv2_tree(root):
-    """切换前校验关键文件在场（配合 GCM 段验签，防「exe 在 DLL 缺」）。"""
-    import glob as _gl
-    hits = _gl.glob(os.path.join(root, "webview2", "*",
-                                 "msedgewebview2.exe"))
-    if not hits:
-        raise InstallError("WebView2 解包校验失败（未找到 msedgewebview2.exe）")
-    ver_dir = os.path.dirname(hits[0])
-    for key in ("EBWebView", "msedge.dll"):
-        if not (_gl.glob(os.path.join(ver_dir, key))
-                or _gl.glob(os.path.join(ver_dir, "*", key))):
-            raise InstallError("WebView2 解包校验失败（缺 %s）——疑似损坏包"
-                               % key)
-
-
-def _install_dotnet(staging, say, force=False):
-    """跑 ndp481 安装器。已满足则跳过。
-    装 .NET 需要管理员；失败不致命——res_boot 下次探测仍会判缺失。
-
-    force 刻意**不生效**：已满足时强装要管理员 + 可能要重启，收益为零。
-    这条不要「优化」掉。"""
-    from src.res_boot import probe_dotnet
-    st = probe_dotnet()[0]
-    if st == "ok":
-        if force:
-            say("· .NET 不支持强制重装（需管理员且可能要重启），按缺失安装")
-        else:
-            say("· .NET Framework 已满足当前版本，跳过")
-        return False
-    exe = _find(staging, "ndp481")
-    if not exe:
-        raise InstallError("包内无 .NET 安装器（ndp481*.exe）")
-    say("安装 .NET Framework 4.8.1（1-2 分钟，可能需要管理员）…")
-    import subprocess
-    try:
-        r = subprocess.run([exe, "/q", "/norestart"], timeout=1200,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except OSError as e:
-        # WinError 740 = 安装器清单要求提权，CreateProcess 拒起（非 1603 的
-        # 另一种「没管理员」形态）——给人话，别让用户看到裸 WinError
-        if getattr(e, "winerror", None) == 740:
-            raise InstallError(
-                ".NET 安装器需要管理员权限——请以管理员身份运行工具后重试，"
-                "或手动安装 .NET Framework 4.8.1")
-        raise
-    say("安装器退出码 %d" % r.returncode)
-    # 3010 = 成功但需重启（对抗审 P2：早前 3010 也立即复验——重启前注册表
-    # 必然未更新必报失败，把用户锁进重试循环；现 3010 直接判成功并明说）
-    if r.returncode == 3010:
-        say("✓ .NET 安装成功（需重启 Windows 后生效）")
-        return True
-    if r.returncode != 0:
-        if r.returncode in (1603, 5, 740):
-            raise InstallError(
-                ".NET 安装被拒（退出码 %d，多因无管理员权限）——请以管理员"
-                "身份运行工具后重试，或手动安装 .NET Framework 4.8.1"
-                % r.returncode)
-        raise InstallError("安装器退出码 %d（0/3010 为成功）" % r.returncode)
-    if probe_dotnet()[0] != "ok":
-        raise InstallError(".NET 装完仍未检测到——可能要重启后再试")
+    if not os.path.isfile(os.path.join(dst, "electron.exe")):
+        raise InstallError("Electron 解包校验失败（缺 electron.exe）")
+    with open(marker, "w", encoding="utf-8") as f:
+        f.write("ok")
+    res["installed"].append("electron")
+    say("✓ electron 完成（源码形态 run.bat 将直接使用该运行时）")
     return True
 
 
@@ -715,7 +617,7 @@ def _merge_state(d):
     res_boot._write_state(d)
 
 
-_INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
+_INSTALLERS = {"node": _install_node, "electron": _install_electron,
                "git": _install_git, "claude": _install_claude,
                "codegraph": _install_codegraph,
                "onlyoffice": _install_onlyoffice,
@@ -725,7 +627,8 @@ _INSTALLERS = {"dotnet": _install_dotnet, "node": _install_node,
 _PROGRESSIVE = {_install_claude}
 
 # 安装器名称（前端「不确定进度」提示用）
-_INSTALL_LABEL = {"dotnet": ".NET Framework", "node": "Node.js", "git": "Git",
+_INSTALL_LABEL = {"node": "Node.js", "electron": "Electron 运行时",
+                  "git": "Git",
                   "codegraph": "Claude 代码图引擎（codegraph）",
                   "onlyoffice": "OnlyOffice（约 10 分钟，请留意 UAC 弹窗）",
                   "pydeps": "Python 依赖"}
@@ -770,15 +673,6 @@ ONLINE_URLS = {
     "node_zip": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-win-x64.zip",
     "git": ("https://github.com/git-for-windows/git/releases/download/"
             "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe"),
-    # a595（用户定调「在线安装必须可靠」）：dotnet 换 fwlink 稳定跳转。
-    # 原来写死 download.visualstudio.microsoft.com/pr/<guid>/<hash>/ 直链——
-    # 微软会轮换 PR 路径令牌，链接死了（实测直连+代理都 400，非用户网络
-    # 问题，winget-pkgs#278129 同款）。fwlink 是微软永久重定向，实测
-    # 200 → download.microsoft.com 稳定路径。
-    "dotnet": "https://go.microsoft.com/fwlink/?linkid=2203305",
-    # WebView2 Evergreen standalone 引导器（微软官方稳定 fwlink；Fixed 版
-    # 直链 2025-01 起下架，在线场景 Evergreen 由系统自更新维护）
-    "webview2": "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
 }
 # 无稳定官方直链的 kind（在线通道明确跳过并指路离线包）
 ONLINE_UNSUPPORTED = {"bili", "onlyoffice"}
@@ -794,8 +688,7 @@ def net_check(kinds=None):
     返回 {kind: {"ok": bool, "code": int, "err": str, "via": url}}。
     """
     import urllib.request
-    want = list(kinds) if kinds else ["node", "git", "dotnet", "webview2",
-                                      "npm", "pip"]
+    want = list(kinds) if kinds else ["node", "git", "npm", "pip"]
     out = {}
     for k in want:
         if k in ONLINE_UNSUPPORTED:
@@ -885,8 +778,6 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
     - node/git：cs._install_*_if_missing（本地 offline_assets 资源优先，
       缺则镜像/官方直链下载；MSI 提权失败自动 zip 兜底）
     - claude/codegraph：确保 node → npm 逐源重试 → 运行/探测验证
-    - dotnet：下载 ndp481 → 复用 _install_dotnet 静默装（微软 fwlink 官方直链）
-    - webview2：下载 Evergreen standalone → /silent /install（同上）
     - pydeps：源码形态 pip 逐源装；exe 形态不支持（引导离线包）
     - bili/onlyoffice：无稳定直链，skipped 指路离线包
     """
@@ -1023,11 +914,6 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                                            % (_m or v or "未知原因"))
                     else:
                         ok = True
-                elif k == "dotnet":
-                    say("下载 .NET 4.8.1 安装器（微软 fwlink 稳定直链，约 74MB）…")
-                    exe = os.path.join(dl_dir, "ndp481-online.exe")
-                    cs._download(ONLINE_URLS["dotnet"], exe)
-                    ok = bool(_install_dotnet(dl_dir, say, force))
                 elif k == "codegraph":
                     # a595（用户定调「在线安装必须可靠，无条件能装」）：
                     # codegraph=npm 平台包 @colbymchenry/codegraph-win32-x64
@@ -1073,28 +959,6 @@ def install_online(kinds, log=None, progress=None, should_cancel=None,
                                            % (_m or v or "未知"))
                     say("✓ codegraph %s" % (v or "安装完成"))
                     ok = True
-                elif k == "webview2":
-                    say("下载 WebView2 Evergreen 引导器（微软 fwlink）…")
-                    exe = os.path.join(dl_dir, "MicrosoftEdgeWebview2Setup.exe")
-                    cs._download(ONLINE_URLS["webview2"], exe)
-                    say("静默安装 WebView2 Evergreen …")
-                    try:
-                        rc = _sp.call([exe, "/silent", "/install"],
-                                      creationflags=0x08000000, timeout=600)
-                    except OSError as e:
-                        # WinError 740 = 安装器要求提权（Evergreen 是 per-machine
-                        # 安装），CreateProcess 直接拒起——给人话而非裸 WinError
-                        if getattr(e, "winerror", None) == 740:
-                            raise InstallError(
-                                "WebView2 安装器需要管理员权限——请以管理员身份"
-                                "运行工具后重试，或改用离线资源包（Fixed Version "
-                                "免提权）")
-                        raise
-                    from src.res_boot import probe_webview2
-                    st, v, _m = probe_webview2()
-                    if st != "ok" and rc != 0:
-                        raise InstallError("WebView2 安装失败（退出码 %s）" % rc)
-                    ok = st == "ok"
                 if ok:
                     res["installed"].append(k)
                     say("✓ %s 完成" % k)

@@ -33,7 +33,7 @@
 
 ## 一、快速上手
 
-1. 双击「前端控制台」快捷方式启动（或运行 `run.bat` 走源码）。
+1. 双击「前端控制台」快捷方式启动（源码开发运行 `run.bat`，同样走 Electron 壳）。
 2. 点顶栏「新建连接」→ 选 **串口 / SSH / Telnet** → 填参数 → 「连接」。连上后自动开一个终端标签页，直接敲命令。
 3. 需要 AI 帮忙时点顶栏「Claude」进入 **Claude 对话**；需要查说明书在 **设置 → 帮助**。
 
@@ -710,7 +710,10 @@ Claude Code → 压缩层（18788，可选）→ 重试代理（37349）→ 上�
 ### 15.5 外部依赖安装
 
 - 选择或粘贴 `.fcpk` 离线资源包，重新检测；
-- 依赖清单：WebView2、.NET 4.8+、Node/npm、Git、Claude Code CLI、工具 Python 依赖、OnlyOffice、codegraph；
+- **工具本体已自足**：安装包内置 Python 运行时与 Electron/Chromium，不再需要
+  WebView2 运行时或 .NET Framework，也不用另装 Python；
+- 可选依赖清单：Node/npm、Git、Claude Code CLI、OnlyOffice、codegraph、
+  工具 Python 依赖（仅源码形态）；
 - 勾选 = 本次安装/重装；支持「离线包安装所选」「在线安装所选」；
 - Claude CLI 可单独「在线升级到新版本」。
 

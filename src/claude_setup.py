@@ -161,8 +161,8 @@ def _node_ok():
 
 
 def _mirrors():
-    """src/mirrors 注册表访问（惰性导入——本模块在 preflight_gate 早期链路
-    被 res_install 引用，镜像档位每次调用实时读 config，改档即时生效）。"""
+    """src/mirrors 注册表访问（惰性导入——本模块被 res_install 引用，
+    镜像档位每次调用实时读 config，改档即时生效）。"""
     from src import mirrors
     return mirrors
 
@@ -173,10 +173,11 @@ def _git_ok():
 
 # ---- 运行时依赖安装（供 res_install 复用；旧 zip 通道的 UI/端点已退役）----
 
-# 工具自身 pip 依赖（与 deps_bootstrap.DEPS 一致）——资源包的 pydeps kind
-# 解包后按 --no-index --find-links 离线补装
-_TOOL_DEPS = ["flask", "pyserial", "pywebview", "paramiko", "pywinpty",
-              "pyelftools"]
+# 工具自身 pip 依赖（与 deps_bootstrap.DEPS 同源 + pyelftools 供 ELF 符号
+# 层离线补装）——资源包的 pydeps kind 解包后按 --no-index --find-links
+# 离线补装。换壳 P4：pywebview 已退役，绝不回表（字符串防线见
+# tests/test_p4_cleanup.py）
+_TOOL_DEPS = ["flask", "pyserial", "paramiko", "pywinpty", "pyelftools"]
 # 在线安装 pydeps 用：比离线表多 pycryptodome（fcpk 资源包解密，a356 铁律
 # 不进启动自举表，但在线装 pydeps 本就是联网动作——顺手装齐，装完资源包
 # 功能自愈，不再 503）。离线 _install_pydeps 对它做「包内 wheel 有就装、

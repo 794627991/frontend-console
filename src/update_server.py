@@ -206,10 +206,9 @@ def _offline_pkg():
     from src.pkgname import (pkg_rank as _pr, pkg_derived as _derived,
                              pkg_class as _cls, is_res_pkg as _is_res,
                              pkg_pref as _pref, pkg_backup as _bk)
-    # a338R（第9轮 P2-3）：可见性判定必须与闸门（res_ui.autofind_fcpk）同口径。
-    # 原先这里判 `"-资源包" in _ln`、闸门判 `"资源包" in _bn` —— 分裂从分类
-    # 转移到了可见性：用户把包改名成 `资源包.fcpk` 时闸门选得中、门户看不见。
-    # 现统一走 pkgname.is_res_pkg。
+    # a338R（第9轮 P2-3）：可见性判定与客户端选包同口径（统一走
+    # pkgname.is_res_pkg）——原先后端各处各写包含判断，改名包会出现
+    # 「客户端选得中、门户看不见」的分裂。
     for n in sorted(names):
         _ln = n.lower()
         # a331（第15轮 P2-1）：zip 通道已按用户命令彻底退役——客户端

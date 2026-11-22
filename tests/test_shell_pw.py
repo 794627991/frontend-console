@@ -29,7 +29,7 @@ def test_packaging_contains_all_password_files():
         assert name in files, name
         assert os.path.exists(os.path.join(ROOT, 'electron', name)), name
     assert not any('kdbxweb' in f or 'vault-keepass' in f for f in files)
-    bat = _read_gbk('打包壳.bat')
+    bat = _read_gbk('打包.bat')
     for name in ('preload.js', 'guest-preload.js', 'passwords.js', 'pw-ipc.js'):
         assert name in bat, name
     assert 'vault-keepass.js' not in bat and 'kdbxweb' not in bat

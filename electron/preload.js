@@ -20,6 +20,20 @@ contextBridge.exposeInMainWorld('fcShell', {
   openDevtools: () => ipcRenderer.send('fc:devtools'),
   // 拖放文件的绝对路径（Electron 32 起 File.path 移除，webUtils 是唯一正道）
   pathForFile: (f) => webUtils.getPathForFile(f),
+  // 文件关联双击（--open-file）：壳解析 argv 后推给前端智能分发
+  onOpenFile: (cb) => ipcRenderer.on('fc:open-file', (_e, p) => cb(p)),
+  // 截图覆盖窗（P4）：主窗收到后端 SSE snip_open / 📷 按钮后打开
+  openSnip: () => ipcRenderer.invoke('fc:snip-open'),
+  // 截图页 ↔ 壳握手：hello=listener 就绪（此后 arm 可达）；ready=底图已
+  // 画完（壳此刻才 show，杜绝黑屏）；arm=壳下发底图裁剪偏移 {x,y}
+  snipHello: () => ipcRenderer.send('fc:snip-hello'),
+  snipReady: () => ipcRenderer.send('fc:snip-ready'),
+  // 底图取失败：绝不 reveal 纯黑覆盖层（黑层一旦上屏，下次抓屏抓到的
+  // 就是它自己 → 黑屏死循环，用户实锤）。通知壳立即隐藏本窗
+  snipFail: (reason) => ipcRenderer.send('fc:snip-fail', reason),
+  onSnipArm: (cb) => ipcRenderer.on('fc:snip-arm', (_e, d) => cb(d)),
+  // 覆盖窗自身句柄（十进制字符串数组）——窗口识别探测时排除自己
+  snipHwnds: () => ipcRenderer.invoke('fc:snip-hwnds'),
   // guest（webview）里 window.open/target=_blank 的路由落点：主进程按
   // webContents 类型 deny 后推送过来（元素级 handler 在 webview 上不存在）
   onWebTabOpen: (cb) => ipcRenderer.on('fc:webtab-open', (_e, url) => cb(url)),
@@ -58,5 +72,9 @@ contextBridge.exposeInMainWorld('pywebview', {
     copy_image_to_clipboard: (p) => ipcRenderer.invoke('fc:clipboard-write-image', p),
     // 首次关闭提示的「知道了」——壳托盘语义下无此流程，空实现保调用不炸
     tray_confirm_hide: () => {},
+    // 截图覆盖窗的 pywebview js_api 等价面（screenshot.html 零改动消费）
+    snip_done: (b64) => ipcRenderer.invoke('fc:snip-done', b64),
+    snip_save_as: (dataUrl) => ipcRenderer.invoke('fc:snip-save-as', dataUrl),
+    snip_cancel: () => ipcRenderer.invoke('fc:snip-cancel'),
   },
 });

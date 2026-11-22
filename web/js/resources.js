@@ -1,10 +1,9 @@
 // 41-resources.js —— 离线资源状态与安装（v4.1，用户拍板）
 //
-// 分工：
-//   硬资源（WebView2 / .NET）缺失时界面根本起不来，由启动闸门
-//   （src/res_boot.py）用 Win32 原生对话框处理，与前端无关。
-//   软资源（Node/Git/claude/pydeps）缺失只影响相关功能，不锁死工具——
-//   这里负责在界面顶部挂一条常驻红条 + 一个安装面板。
+// 分工（换壳 P4 起）：工具本体已自足（Electron/Chromium + 打包的 Python）；
+// 资源包只剩可选集成（Node/Git/claude/codegraph/OnlyOffice/pydeps）。
+// 缺任何一项都只影响相关功能，不锁死工具——这里负责在界面顶部挂一条
+// 常驻红条 + 一个安装面板。
 //
 // 「常驻」是刻意的：不用 showBanner（3 秒淡出），用户可以点「忽略」，
 // 忽略后写 config，不再打扰，但设置里仍可查看。

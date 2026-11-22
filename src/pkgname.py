@@ -25,8 +25,11 @@ APP_NAME = "前端控制台"
 
 # 子集包语义关键字。英文短词加词边界——`digital`/`legit` 含 git、
 # `nodejs` 含 node，无边界会把 `前端控制台-digital资源包.fcpk` 判成子集。
-_SUBSET_KW = (r"拓展|扩展|claude|基础|onlyoffice|webview2|dotnet|bili|"
-              r"pydeps|(?<![a-z])(?:node|git|office)(?:js|s)?(?![a-z0-9])")
+# webview2/dotnet 只为识别历史资源包文件名（换壳 P4 已退役，不再有
+# 语义优先级）；新增 codegraph。
+_SUBSET_KW = (r"拓展|扩展|claude|基础|onlyoffice|bili|pydeps|codegraph|"
+              r"webview2|dotnet|"
+              r"(?<![a-z])(?:node|git|office)(?:js|s)?(?![a-z0-9])")
 
 # 浏览器重名下载：`资源包 (1).fcpk`。序号必须在空白/括号里。
 _RE_COPY = re.compile(r"资源包[ \t]*[()（）][ \t]*\d+[ \t]*[)）][ \t]*\.fcpk$")
@@ -141,9 +144,9 @@ def pkg_rank(name, require_prefix=None, filter_backup=False):
     _bk = bool(_RE_BACKUP.search(t))
     if cls == "subset":
         # a332（第16轮 P1-1，实锤回归）：上一版让备份子集直接不可见，结果
-        # 闸门也一刀切 —— 用户唯一一份包是 `-资源包-基础-备份.fcpk` 时工具
-        # 直接起不来。而 build.py 的 base 预设（webview2+dotnet+pydeps）恰好
-        # 就是 MANIFEST 里全部三个硬项，它**能**救急。
+        # 选包也一刀切——用户唯一一份包是 `-资源包-基础-备份.fcpk` 时工具
+        # 找不到任何候选。换壳 P4 后硬项已退役，但备份子集仍可能含用户
+        # 需要的集成（claude/pydeps 等），不能直接判死。
         # 档位差：备份全量(1) > 备份子集(0)；改名/留档子集(0) 让位于正规子集(1)。
         # 「只有备份子集」仍能装（它是唯一候选）。
         return 1 if (not _bk and not pkg_derived(name)) else 0
@@ -166,17 +169,19 @@ def pkg_backup(name):
     """是不是备份件（a334 第20轮）。
 
     备份全量（rank 1）与正规子集（rank 1）同档，但它是**完整包**，
-    装它一定能满足启动闸门的硬项（webview2/dotnet），理应优先。
-    单列一个决胜维度，不再塞进 pkg_pref 的数值里。
+    至少能覆盖全部可选集成，理应优先。单列一个决胜维度，不再塞进
+    pkg_pref 的数值里。
     """
     return bool(_RE_BACKUP.search(_norm(_base(name))))
 
 
 # 子集包的语义分组（与 build.py 的 presets 对齐）。
-# 顺序有意义：base 含 webview2+dotnet 两个硬项，是唯一能让工具起来的子集。
-_PREF_BASE = re.compile(r"基础|(?<![a-z])base(?![a-z])|webview2|dotnet|pydeps")
+# 换壳 P4 起没有「能让工具起来的硬项子集」——所有资源都是可选集成。
+# 同档排序取「常用集成面」：claude 包（node/git/claude/codegraph）> 基础
+# （pydeps）> 拓展（onlyoffice）。
 _PREF_CLAUDE = re.compile(r"claude|(?<![a-z])node(?:js)?(?![a-z0-9])"
-                          r"|(?<![a-z])git(?![a-z])|bili")
+                          r"|(?<![a-z])git(?![a-z])|codegraph|bili")
+_PREF_BASE = re.compile(r"基础|(?<![a-z])base(?![a-z])|pydeps")
 _PREF_EXT = re.compile(r"拓展|扩展|(?<![a-z])ext(?![a-z])|onlyoffice")
 
 # 规范名形：`<前缀>-资源包.fcpk` / `资源包.fcpk`。
@@ -194,7 +199,7 @@ def pkg_pref(name):
     a333 之前按 mtime 至少"重打的基础包更新就能自愈"，a333 把这条路封死了。
 
     现按语义分档内决胜：
-      子集：基础(3.0，含硬项) > claude(2.0) > 拓展(1.0) > 其它(0.5)
+      子集：claude(3.0) > 基础/pydeps(2.0) > 拓展(1.0) > 其它(0.5)
       全量：带版本尾(v2/v2.1)取其自然数值，规范名 0.9，其余 0
             —— `-2024`/`-1` 这类无名 tag 是旧版留档，不得压过 `-v2`
     """
@@ -202,9 +207,9 @@ def pkg_pref(name):
     t = _norm(b)
     cls = pkg_class(name)
     if cls == "subset":
-        if _PREF_BASE.search(t):
-            return 3.0
         if _PREF_CLAUDE.search(t):
+            return 3.0
+        if _PREF_BASE.search(t):
             return 2.0
         if _PREF_EXT.search(t):
             return 1.0

@@ -2,15 +2,16 @@
 """CPU 优先提升（用户需求：工具抢占更多 CPU 获得更强性能）。
 
 两件事（都可独立开关）：
-1. 进程优先级：本工具 python 主进程 + 全部 WebView2 子进程（renderer/GPU）
-   提到 AboveNormal/High——CPU 满载争抢时分到更多时间片（编译/虚拟机
-   并行时界面不被挤压）。Realtime 绝不提供（会饿死系统进程）。
+1. 进程优先级：本工具 python 后端进程 + Electron 壳主进程及其直接子进程
+   （renderer/GPU/utility）提到 AboveNormal/High——CPU 满载争抢时分到更多
+   时间片（编译/虚拟机并行时界面不被挤压）。Realtime 绝不提供（会饿死
+   系统进程）。
 2. 电源计划：切 Windows 高性能计划（消除省电降频的间歇慢）——改的是
    系统全局，退出/关闭时还原原计划。
 
-实现：PowerShell 一次调用全提（不引入 psutil 依赖）；webview 子进程组
-随工具启动固定，但崩溃重启会出新进程——低频重刷兜底。配置存
-config.json 的 boost 键，启动时若开启则应用。
+实现：PowerShell 一次调用全提（不引入 psutil 依赖）；Electron 的 renderer
+崩溃重启会出新进程——低频重刷兜底。壳 pid 由 FC_SHELL_PID 注入（headless
+后端 ↔ Electron 壳的既有约定）。配置存 config.json 的 boost 键。
 """
 import os
 import subprocess
@@ -43,14 +44,26 @@ def _ps(script, timeout=30):
 
 def _apply_priority(level):
     ps_level = _PS_NAME.get(level, "AboveNormal")
-    # 主进程（自身）+ 全部 webview2 子进程一次提
-    ok1, _ = _ps("$p = Get-Process -Id %d -ErrorAction SilentlyContinue; "
-                 "if ($p) { $p.PriorityClass = '%s' }" % (os.getpid(), ps_level))
-    ok2, out2 = _ps("Get-Process msedgewebview2 -ErrorAction SilentlyContinue | "
-                    "ForEach-Object { try { $_.PriorityClass = '%s' } catch {} }; "
-                    "(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count" % ps_level)
-    n = (out2 or "").strip().splitlines()[-1] if ok2 else "?"
-    return ok1 and ok2, n
+    try:
+        shell_pid = int(os.environ.get("FC_SHELL_PID") or 0)
+    except ValueError:
+        shell_pid = 0
+    # 后端自身 + Electron 壳主进程 + 壳的直接子进程（renderer/GPU/utility）。
+    # 只按 pid 树提权，不用进程名匹配——避免误伤机器上其他 Electron 应用。
+    script = (
+        "$ids = New-Object System.Collections.Generic.HashSet[int]; "
+        "[void]$ids.Add(%d); $sp = %d; "
+        "if ($sp -gt 0) { [void]$ids.Add($sp); "
+        "try { Get-CimInstance Win32_Process -Filter \"ParentProcessId=$sp\" "
+        "-ErrorAction SilentlyContinue | ForEach-Object { "
+        "[void]$ids.Add([int]$_.ProcessId) } } catch {} }; "
+        "$n = 0; foreach ($i in $ids) { "
+        "$p = Get-Process -Id $i -ErrorAction SilentlyContinue; "
+        "if ($p) { try { $p.PriorityClass = '%s'; $n++ } catch {} } }; $n"
+        % (os.getpid(), shell_pid, ps_level))
+    ok, out = _ps(script)
+    n = (out or "").strip().splitlines()[-1] if ok else "?"
+    return ok, n
 
 
 def _apply_power(on):
@@ -94,13 +107,13 @@ def apply(level="above_normal", power_plan=False, quiet=False):
         if level in _LEVELS:
             ok, n = _apply_priority(level)
             if not quiet:
-                _log("优先级 %s → python+webview2×%s %s"
+                _log("优先级 %s → 后端+Electron×%s %s"
                      % (level, n, "✓" if ok else "✗"))
             if power_plan:
                 okp = _apply_power(True)
                 if not quiet:
                     _log("电源计划 → 高性能 %s" % ("✓" if okp else "✗（本机无此计划）"))
-            # 低频重刷：webview2 子进程崩溃重启后新进程回到 Normal——60s 兜底
+            # 低频重刷：Electron renderer 崩溃重启后新进程回到 Normal——60s 兜底
             _refresh_timer = threading.Timer(60.0, _refresh_loop,
                                              args=(my_gen, level, power_plan))
             _refresh_timer.daemon = True
@@ -126,7 +139,7 @@ def _refresh_loop(my_gen, level, power_plan):
     with _boost_lock:
         if my_gen != _gen:
             return
-        _apply_priority(level)   # 静默重刷（新 webview2 进程补提）
+        _apply_priority(level)   # 静默重刷（Electron 新子进程补提）
         # R24-2 补刀：_apply_priority 期间（秒级 PowerShell）可能已有新
         # apply 进来（代际已变）——起下一拍前**再查一次**，否则旧循环复活
         if my_gen != _gen:

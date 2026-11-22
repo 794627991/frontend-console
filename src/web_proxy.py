@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """Web 服务模块（a544 终局形态精简）。
 
-WebView2 控件架构（src/web_tabs.py）下，代理路由/NAV_JS 注入/h2 端口/
-404 兜底全部退役（用户令「没用全删」）。本模块只保留与 iframe/代理无关
-的独立功能：
+Electron 壳形态（P3/P4）下网页视图归前端 `<webview>`，旧 WebView2 控件
+架构已退役；代理路由/NAV_JS 注入/h2 端口/404 兜底全部删除（用户令
+「没用全删」）。本模块只保留与 iframe/代理无关的独立功能：
 - /api/web/fetch_text：取页转纯文本（阅读模式 / 收藏命名 / 发给 Claude）
 - _web_detect_charset / _web_html_to_text：纯函数（tests 直测，a473 起）
 

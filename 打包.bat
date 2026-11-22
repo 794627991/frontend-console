@@ -1,19 +1,19 @@
 @echo off
 chcp 936 >nul
-rem 一键打包：dist\前端控制台\（onedir：exe+全部资源）
-rem 双击即用；成功/失败窗口都停留显示结果，并落盘 dist\打包结果.txt
-rem v3.4.96：修复 be5c669 起尾部丢失（:fail 标签不存在→goto 报错秒关窗，
-rem 成功路径也无 pause——用户实锤「莫名其妙消失，看不到成败」）
+rem ===== release 打包（2026-11-23 用户令：打包只留两个）=====
+rem 一键三产物：①后端正包（PyInstaller+Cython pyd，含 releases 升级 zip）
+rem ②离线资源包 .fcpk（含 Electron 运行时——资源包只在打 release 时出）
+rem ③electron-builder NSIS → dist\electron_setup\前端控制台-Setup-*.exe
+rem debug 包用 打包_debug.bat（自带 Electron 运行时）。
+rem 依赖（本机已就绪）：Python314 + pip cython + VS BuildTools（D 盘）
+rem + Node/npm + electron\node_modules（首次跑 electron 下 npm install）。
+rem 中途失败窗口停留显示原因。
 cd /d "%~dp0"
-if not exist "dist" mkdir "dist"
-rem 解析 Python：先 PATH，退回本机 Python314 用户安装路径
+
+rem ---- Python 解析（PATH 优先，退回本机 Python314）----
 set "PY="
 set "PYFALLBACK=%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
-where python.exe >nul 2>&1
-rem v3.5.115 fix: resolve the FULL path via where. The old code kept the
-rem bare name on success and then `if not exist "%PY%"` tested a
-rem CWD-relative file - always missing - so the script misjudged failure
-rem once Python got added to PATH. Fallback stays for PATH-less machines.
+where python.exe >nul 2>nul
 if not errorlevel 1 for /f "delims=" %%i in ('where python.exe') do if not defined PY set "PY=%%i"
 if not defined PY set "PY=%PYFALLBACK%"
 if not exist "%PY%" (
@@ -21,39 +21,102 @@ if not exist "%PY%" (
   pause
   exit /b 1
 )
-echo ==============================================
-echo   前端控制台 一键打包
-echo ==============================================
-set PYTHONIOENCODING=gbk
+
+rem ---- MSVC 工具链（本机 BuildTools 装在 D 盘，pyd 编译必需）----
+set "FC_MSVC_BT=D:\AI_PROJECT\msvc-buildtools"
+if not exist "%FC_MSVC_BT%\VC\Tools\MSVC" (
+  echo [失败] 未找到 MSVC：%FC_MSVC_BT% —— BuildTools 被移动/删除？改本脚本的 FC_MSVC_BT
+  pause
+  exit /b 1
+)
+
+rem ---- 第 1 步：后端正包（含 releases zip + 离线资源包 .fcpk）----
+echo ===== [1/2] 后端正包 + 升级 zip + 离线资源包（约 4~8 分钟）=====
 "%PY%" src\build.py
-if errorlevel 1 goto fail
-if not exist "dist\前端控制台\前端控制台.exe" goto fail
+if errorlevel 1 (
+  echo.
+  echo [失败] 后端打包未通过（上方有具体原因），未继续出安装包。
+  pause
+  exit /b 1
+)
 
-rem v2.3.8 自检（解密+全依赖 import，不碰单实例锁）
-"dist\前端控制台\前端控制台.exe" --selftest
-rem v3.5.268(复核):selftest崩溃态(TypError等)exit非零——findstr查不到FAIL行会假报成功,补errorlevel兜底
-if errorlevel 1 goto fail
-rem v3.4.96b: 自检结果为 UTF-8 文件, type 按码页直倒会花脸——
-rem 经 python 按 UTF-8 读出显示（findstr 判定不受影响）
-"%PY%" -c "import io,sys; sys.stdout.reconfigure(errors='replace'); print(io.open(r'dist\前端控制台\selftest_result.txt', encoding='utf-8', errors='replace').read(), end='')"
-findstr /C:"selftest FAIL" "dist\前端控制台\selftest_result.txt" >nul && goto fail
+rem ---- 第 2 步：electron-builder 出 Setup.exe ----
+where npm.cmd >nul 2>nul
+if errorlevel 1 (
+  echo [失败] 找不到 npm：请先安装 Node.js 22.12+
+  pause
+  exit /b 1
+)
+rem Electron 45.4.1 的 engines 硬要求 node >=22.12.0
+node -e "const v=process.versions.node.split('.').map(Number);process.exit(v[0]>22||(v[0]===22&&v[1]>=12)?0:1)"
+if errorlevel 1 (
+  echo [失败] Electron 45 需要 Node.js 22.12+，当前版本：
+  node -v
+  pause
+  exit /b 1
+)
+if not exist "electron\node_modules\electron\dist\electron.exe" (
+  rem electron 44/45 无 postinstall（无 scripts 字段，bin.install-electron
+  rem =install.js）——npm install 不会自动下载 dist，须手动跑安装脚本
+  echo [首次] 安装 Electron 构建依赖（约 100MB，配国内镜像）...
+  pushd electron
+  call npm install
+  if not exist "node_modules\electron\dist\electron.exe" (
+    set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
+    node node_modules\electron\install.js
+  )
+  popd
+)
+echo ===== [2/2] electron-builder NSIS（约 2~3 分钟）=====
+pushd electron
+set "ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/"
+call npx electron-builder --win nsis
+popd
+if errorlevel 1 (
+  echo.
+  echo [失败] 安装包构建未通过（上方有具体原因）。
+  pause
+  exit /b 1
+)
 
-:ok
+rem ---- P0 审计守卫：preload/guest-preload/passwords 必须进 asar（漏一次=装机残）----
+rem findstr 用前导 \ 做行首锚定（防 guest-preload.js 误命中 preload.js 检查）
+pushd electron
+call npx asar list ..\dist\electron_setup\win-unpacked\resources\app.asar > "%TEMP%\fc_asar.txt"
+findstr /C:"\preload.js" "%TEMP%\fc_asar.txt" >nul
+if errorlevel 1 (
+  popd
+  echo [失败] app.asar 里没有 preload.js——package.json files 清单漏了，禁止发布
+  pause
+  exit /b 1
+)
+findstr /C:"\guest-preload.js" "%TEMP%\fc_asar.txt" >nul
+if errorlevel 1 (
+  popd
+  echo [失败] app.asar 里没有 guest-preload.js——自动填充/保存会静默失效
+  pause
+  exit /b 1
+)
+findstr /C:"\passwords.js" "%TEMP%\fc_asar.txt" >nul
+if errorlevel 1 (
+  popd
+  echo [失败] app.asar 里没有 passwords.js——密码存储无法启动
+  pause
+  exit /b 1
+)
+findstr /C:"\pw-ipc.js" "%TEMP%\fc_asar.txt" >nul
+if errorlevel 1 (
+  popd
+  echo [失败] app.asar 里没有 pw-ipc.js——密码 IPC 无法注册
+  pause
+  exit /b 1
+)
+del "%TEMP%\fc_asar.txt" >nul 2>nul
+popd
+
 echo.
-echo ==============================================
-echo [成功] 打包完成: dist\前端控制台
-echo  结果已记录: dist\打包结果.txt
-echo ==============================================
->>"dist\打包结果.txt" echo [%date% %time%] 成功
+echo ===== 完成 =====
+for %%f in ("dist\electron_setup\前端控制台-Setup-*.exe") do echo 安装包：%%~ff
+for %%f in ("dist\releases\前端控制台-资源包.fcpk") do echo 资源包：%%~ff（含 Electron，源码形态离线可用）
+echo 装机升级：直接重跑 Setup.exe（oneClick=false 会走向导，装到原目录即覆盖升级）
 pause
-exit /b 0
-
-:fail
-echo.
-echo ==============================================
-echo [失败] 打包未成功——请把上方报错截图/复制
-echo 结果已记录: dist\打包结果.txt
-echo ==============================================
->>"dist\打包结果.txt" echo [%date% %time%] 失败
-pause
-exit /b 1

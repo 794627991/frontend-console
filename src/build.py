@@ -54,18 +54,21 @@ def build():
         app_dir = os.path.join(app_dir, APP_NAME)
     dist = os.path.join(app_dir, APP_NAME + ".exe")
     if os.path.exists(dist):
-        # 对抗审计 P0 复发防线（v2.4.0 曾把 pythonnet/runtime 99 个文件剔掉
-        # 发出死包）：发布 zip 前强制校验关键目录在场，缺了直接 FAIL 停发
-        _guards = [
-            os.path.join(app_dir, "_internal", "pythonnet", "runtime"),
-            os.path.join(app_dir, "_internal", "webview", "lib"),
-            os.path.join(app_dir, "_internal", "web", "index.html"),
-        ]
-        for g in _guards:
+        # 发布守卫：
+        # 1) web 明文目录必须在场（Flask 磁盘 serve 的唯一 UI 源）
+        # 2) 已退役依赖反向校验——pywebview/pythonnet/clr_loader 一个都不许
+        #    混进来（换壳 P4 后后端零 .NET 依赖，混入说明 spec/import 链回归）
+        _need = [os.path.join(app_dir, "_internal", "web", "index.html")]
+        for g in _need:
             if not os.path.exists(g):
                 raise SystemExit("[发布守卫] 关键内容缺失：%s ——禁止发布，"
                                  "请检查 skip_top/打包配置后重打" % g)
-        print("[发布守卫] 关键内容校验通过（pythonnet/webview/web）")
+        for _bad in ("webview", "pythonnet", "clr_loader"):
+            _p = os.path.join(app_dir, "_internal", _bad)
+            if os.path.exists(_p):
+                raise SystemExit("[发布守卫] 已退役依赖被打进包：%s ——"
+                                 "检查 spec hiddenimports / 遗留 import" % _p)
+        print("[发布守卫] web 在场；webview/pythonnet/clr_loader 均未混入")
         sz = sum(os.path.getsize(os.path.join(r, f))
                  for r, _, fs in os.walk(app_dir) for f in fs) / 1024 / 1024
         print(f"\n打包成功: {app_dir} ({sz:.1f} MB)")
@@ -112,8 +115,9 @@ def build():
                          os.path.join(BASE, "dist", APP_NAME, "README.md"))
         except OSError:
             pass
-        # v4.1（用户拍板）：不再 _bundle_webview2 随包带运行时——改为打进
-        # 统一离线资源包 .fcpk（含 WebView2/dotnet/node/git/claude/pydeps）。
+        # v4.1（用户拍板）：WebView2 不再随包（换壳 P4 后 Electron 自带
+        # Chromium，该项整体退役）；离线资源包 .fcpk 只保留可选集成
+        # （node/git/claude/codegraph/onlyoffice/pydeps）。
         # 发布包随之从 318MB 降到约 65MB。
         # v4.1 换壳（Electron 迁移 P1，用户拍板）：资源加密链退役——web/ 由
         # spec datas 明文直带 _internal/web（磁盘 serve：secure_boot 见无
@@ -160,52 +164,46 @@ def build():
         return None
 
 
-def _bundle_webview2(app_dir):
-    """【v4.1 已退役，保留以便回滚】WebView2 改为打进 .fcpk 资源包，
-    发布包不再随带。回滚：skip_dirs 去掉 "runtime" + 主流程恢复调用。
-
-    v2.3.7b（用户铁律×2「无条件随包；保底包不能是下载的——不能假设
-    构建机有网络」）：WebView2 Fixed Version 运行时随仓走——a322 起
-    本体迁 offline_assets/webview2/（不入 git），MANIFEST.json 入库记录
-    版本与获取方式，新检出机器按清单跑 tools/fetch_webview2_fixed.py
-    恢复后再打包。
-
-    缺失=资源未恢复 → 打包直接失败（绝不出依赖系统运行时的降级包，
-    也绝不在 build 期下载）。版本升级：开发机上人工跑
-    tools/fetch_webview2_fixed.py（那是唯一联网点，跑完更新清单提交）。"""
-    src = os.path.join(BASE, "offline_assets", "webview2")
-    if not os.path.isdir(src):
-        raise RuntimeError(
-            "WebView2 内置运行时缺失（offline_assets/webview2/ 不在——新"
-            "检出仓库无资源本体）。按铁律打包中止：按 offline_assets/"
-            "MANIFEST.json 跑 tools/fetch_webview2_fixed.py 恢复后重试"
-            "（不在 build 期下载）")
-    dst = os.path.join(app_dir, "runtime", "WebView2Fixed")
-    if os.path.isdir(dst):
-        shutil.rmtree(dst, ignore_errors=True)
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.copytree(src, dst)
-    n = sum(len(fs) for _, _, fs in os.walk(dst))
-    if not os.path.isfile(os.path.join(
-            dst, os.listdir(dst)[0], "msedgewebview2.exe")) or n < 100:
-        raise RuntimeError("WebView2 内置运行时不完整（%d 文件）——打包中止"
-                           % n)
-    sz = sum(os.path.getsize(os.path.join(r, f))
-             for r, _, fs in os.walk(dst) for f in fs) / 1024 / 1024
-    print("webview2 内置: WebView2Fixed → 应用包（%d 文件，%.0f MB，"
-          "zip 压缩后约增 1/3）" % (n, sz))
-
-
 def _publish_debug(app_dir):
     """v3.5.248：调试包压缩——同 _publish 的 zip 口径（顶层壳目录、跳运行时
     产物），但输出 dist 根、不写 manifest、不进 releases：压缩是给用户拿去
-    别处调试用的，升级分发服务（检查更新）绝不收录调试包。"""
+    别处调试用的，升级分发服务（检查更新）绝不收录调试包。
+
+    D（2026-11-23 用户拍板）：调试包**必须自带 Electron 运行时**——内网/
+    无网机器解压即用（正常发布走 Setup.exe）。zip 内追加：
+      electron-shell/        壳五件 + package.json（复制自 electron/）
+      electron-shell/dist/   Electron 运行时（node_modules/electron/dist 全量）
+      启动调试版.bat         设 FC_BACKEND_CMD 指向后端 exe 后起壳
+    """
     import zipfile
     sys.path.insert(0, BASE)
     from src.version import APP_VERSION
     dst = os.path.join(BASE, "dist", "%s_debug-v%s.zip" % (APP_NAME, APP_VERSION))
     skip_dirs = {".update", "data"}          # 运行时产物不进包
     skip_files = {"update.bat"}
+    top = APP_NAME + "_debug"
+
+    # ---- D：Electron 运行时与壳（调试包自足） ----
+    ed = os.path.join(BASE, "electron")
+    dist_rt = os.path.join(ed, "node_modules", "electron", "dist")
+    if not os.path.isfile(os.path.join(dist_rt, "electron.exe")):
+        raise SystemExit("[发布守卫] 调试包缺 Electron 运行时（electron/"
+                         "node_modules/electron/dist 不在）——先跑 run.bat "
+                         "装齐再打调试包（用户令：调试包必须自带运行时）")
+    shell_files = ["main.js", "preload.js", "guest-preload.js",
+                   "passwords.js", "pw-ipc.js", "package.json"]
+    for f in shell_files:
+        if not os.path.isfile(os.path.join(ed, f)):
+            raise SystemExit("[发布守卫] 调试包缺壳文件 %s（electron/ 不完整）" % f)
+    launcher = ("@echo off\r\n"
+                "chcp 936 >nul\r\n"
+                "rem D（2026-11-23 用户令：调试包必须自带 Electron）：本 bat 起\r\n"
+                "rem 自带壳+自带后端 exe，全离线可用。正常发布走 Setup.exe。\r\n"
+                "cd /d \"%~dp0\"\r\n"
+                "set \"FC_BACKEND_EXE=%~dp0" + APP_NAME + "\\" + APP_NAME + ".exe\"\r\n"
+                "start \"\" \"electron-shell\\dist\\electron.exe\" \"%~dp0electron-shell\"\r\n"
+                "exit /b 0\r\n")
+
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for r, ds, fs in os.walk(app_dir):
             ds[:] = [d for d in ds if d not in skip_dirs]
@@ -213,8 +211,24 @@ def _publish_debug(app_dir):
                 if f in skip_files:
                     continue
                 p = os.path.join(r, f)
-                z.write(p, os.path.join(APP_NAME + "_debug", os.path.relpath(p, app_dir)))
-    print("调试 zip: %s (%.1f MB)" % (dst, os.path.getsize(dst) / 1024 / 1024))
+                z.write(p, os.path.join(top, os.path.relpath(p, app_dir)))
+        # 后端 exe 在 onedir 内层：dist/前端控制台_debug/前端控制台/前端控制台.exe
+        z.writestr(os.path.join(top, "启动调试版.bat"), launcher)
+        for f in shell_files:
+            z.write(os.path.join(ed, f), os.path.join(top, "electron-shell", f))
+        # ico/：壳 dev 形态托盘图标指 <root>/ico/app.ico（缺了托盘建不出）
+        ico_dir = os.path.join(BASE, "ico")
+        for r, _ds, fs in os.walk(ico_dir):
+            for f in fs:
+                p = os.path.join(r, f)
+                z.write(p, os.path.join(top, "ico", os.path.relpath(p, ico_dir)))
+        for r, ds, fs in os.walk(dist_rt):
+            for f in fs:
+                p = os.path.join(r, f)
+                z.write(p, os.path.join(top, "electron-shell", "dist",
+                                        os.path.relpath(p, dist_rt)))
+    print("调试 zip: %s (%.1f MB，含 Electron 运行时)"
+          % (dst, os.path.getsize(dst) / 1024 / 1024))
 
 
 def _publish(app_dir):
@@ -232,15 +246,9 @@ def _publish(app_dir):
     dst = os.path.join(rel, ver_name)
     # 压缩应用目录（顶层带「前端控制台/」壳——同事解压即得同名目录，
     # updater 解压后按唯一壳目录定位应用根）
-    # v4.1（用户拍板）：runtime/ 不再进发布包——WebView2 移入统一离线资源包
-    # （.fcpk），发布包 318MB → 65MB。缺运行时的机器启动时由 res_boot 闸门
-    # 引导装包。回滚只需把下面的顶层 runtime 剔除删掉并恢复 _bundle_webview2。
-    #
-    # 全审 A2 实锤（严重）：早前用 {".update","data","runtime"} 做**裸目录名**
-    # 匹配，对任意深度生效，把 _internal/pythonnet/runtime/（Python.Runtime.dll
-    # 等 99 个文件）一并剔掉 → 发布包里 pythonnet 条目为 0 → import clr 失败
-    # → `import webview` 抛异常，窗口根本建不出来。必须只跳过应用目录**顶层**
-    # 的那三个目录。
+    # skip_top 只对应用目录**顶层**生效（旧实现用裸目录名对任意深度匹配，
+    # 曾把 _internal/pythonnet/runtime/ 误剔 → 发布死包）。换壳 P4 后
+    # pythonnet/webview 已不在包内；runtime/ 仅兼容旧构建残留。
     skip_top = {".update", "data", "runtime", "offline_runtime"}
     skip_files = {"update.bat"}
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
@@ -422,8 +430,8 @@ def _offline_sources(kinds=None):
     某几项，如 --kinds claude 单独出 270MB 的小包给只缺 Claude 的同事）。
 
     mode 取舍（实测压缩率）：.msi/.zip/.whl 已压缩过（1.01~1.05，再压反而
-    变大）→ raw；.exe/.dll 值得压（Git 1.03 但 exe 本体可变、webview2 的
-    msedge.dll 0.61、claude.exe 0.57）→ 只有明确的 DLL/EXE 用 deflate。
+    变大）→ raw；.exe/.dll 值得压（Git 1.03、claude.exe 0.57）→ 只有明确的
+    DLL/EXE 用 deflate。
     """
     want = set(kinds) if kinds else None
 
@@ -449,8 +457,6 @@ def _offline_sources(kinds=None):
                 kind = "git"
             elif low.startswith("node-"):
                 kind = "node"
-            elif low.startswith("ndp481"):
-                kind = "dotnet"
             else:
                 continue
             if _take(kind):
@@ -512,16 +518,15 @@ def _offline_sources(kinds=None):
                 p = os.path.join(pd, f)
                 if os.path.isfile(p):
                     out.append((p, "pydeps/" + f, "pydeps", "raw", None))
-    wv = os.path.join(BASE, "offline_assets", "webview2")
-    if os.path.isdir(wv) and _take("webview2"):
-        for r, ds, fs in os.walk(wv):
-            ds.sort()
-            for f in sorted(fs):
-                p = os.path.join(r, f)
-                arc = "webview2/" + os.path.relpath(p, wv).replace("\\", "/")
-                low = f.lower()
-                mode = "deflate" if low.endswith((".exe", ".dll")) else "raw"
-                out.append((p, arc, "webview2", mode, None))
+        # D（2026-11-23 用户拍板）：Electron 运行时 zip 入包——内网源码/
+        # 调试形态无网也能起壳（正常发布走 Setup.exe 自带）。zip 已压缩
+        # → raw；版本须与 electron/package.json 的 devDependency 对齐
+        el = os.path.join(src, "electron")
+        if os.path.isdir(el) and _take("electron"):
+            for f in sorted(os.listdir(el)):
+                if f.lower().endswith(".zip"):
+                    out.append((os.path.join(el, f), "electron/" + f,
+                                "electron", "raw", None))
     return out
 
 
@@ -595,13 +600,16 @@ def _build_offline_fcpk(kinds=None, quiet=False, tag=""):
     if old == fp and os.path.isfile(dst):
         print("资源包: 内容未变，沿用 %s（%d MB）"
               % (os.path.basename(dst), os.path.getsize(dst) // 1024 // 1024))
+        # 包体沿用也要刷新清单：退役 kind（webview2/dotnet）的旧条目必须在
+        # MANIFEST 里消失，不能因为「文件没变」把过期清单一直带在仓库里
+        _write_offline_manifest()
         return dst
     total_bytes = sum(os.path.getsize(p) for p, *_ in files)
     print("资源包: 打包 %d 个文件 / %.0f MB（加密 + 压缩，需数分钟）…"
           % (len(files), total_bytes / 1024 / 1024))
     resources = []
-    for kind in ("webview2", "dotnet", "node", "git", "claude",
-                 "onlyoffice", "pydeps"):
+    for kind in ("node", "git", "claude", "codegraph",
+                 "onlyoffice", "pydeps", "electron"):
         n = sum(1 for x in files if x[2] == kind)
         if n:
             resources.append({"kind": kind, "files": n})
@@ -651,7 +659,7 @@ def _write_offline_manifest():
     """a322（用户需求：资源本体不入 git，清单入 git）：扫描 offline_assets/
     生成 MANIFEST.json——新检出机器按清单的 url/note 恢复资源本体。
     单文件条目记 sha256（安装器类 <100MB）；目录类（claude-code/
-    webview2）记 version+文件数+总大小，不逐文件哈希（1.2 万文件太慢）。
+    codegraph）记 version+文件数+总大小，不逐文件哈希。
     """
     import hashlib
     import json
@@ -691,9 +699,6 @@ def _write_offline_manifest():
         "git": "https://github.com/git-for-windows/git/releases/download/"
                "v2.55.0.windows.5/Git-2.55.0.5-64-bit.exe",
         "node": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-x64.msi",
-        "dotnet": "https://download.visualstudio.microsoft.com/download/pr/"
-                  "6a893f45-0810-4b11-9051-3b9ef0d1cf0e/4d6923c759e4cc4d34438f"
-                  "2b57f4c06/ndp481-x86-x64-allos-enu.exe",
     }
     if os.path.isdir(inst):
         for name in sorted(os.listdir(inst)):
@@ -703,7 +708,6 @@ def _write_offline_manifest():
             low = name.lower()
             kind = ("git" if low.startswith("git-") else
                     "node" if low.startswith("node-") else
-                    "dotnet" if low.startswith("ndp481") else
                     "onlyoffice" if "onlyoffice" in low else None)
             if not kind:
                 continue
@@ -719,9 +723,30 @@ def _write_offline_manifest():
                       "size": os.path.getsize(oo), "sha256": _sha256(oo),
                       "url": "https://www.onlyoffice.com/download.aspx",
                       "note": "DS 安装器；在线安装用官方 download.aspx 直链"})
+    # D：Electron 运行时 zip（版本读 electron/package.json 对齐声明）
+    _ev = ""
+    try:
+        with open(os.path.join(BASE, "electron", "package.json"),
+                  encoding="utf-8") as _f:
+            _ev = (json.load(_f).get("devDependencies") or {}).get("electron") or ""
+    except Exception:
+        pass
+    eld = os.path.join(A, "electron")
+    if os.path.isdir(eld):
+        for f in sorted(os.listdir(eld)):
+            p = os.path.join(eld, f)
+            if os.path.isfile(p) and f.lower().endswith(".zip"):
+                items.append({"kind": "electron", "file": "electron/" + f,
+                              "size": os.path.getsize(p), "sha256": _sha256(p),
+                              "url": "https://npmmirror.com/mirrors/electron/"
+                                     + (f.split("-")[1].lstrip("v")
+                                        if "-v" in f else "") + "/" + f,
+                              "note": "Electron 运行时（devDependency %s）——"
+                                      "源码/调试形态离线起壳；正常发布走 "
+                                      "Setup.exe 自带" % _ev})
     # a407：bili 不再入清单（移出默认包）
     for kind, sub in (("claude", "claude-code"),
-                      ("webview2", "webview2"), ("codegraph", "codegraph")):
+                      ("codegraph", "codegraph")):
         d = os.path.join(A, sub)
         if not os.path.isdir(d):
             continue
@@ -734,20 +759,14 @@ def _write_offline_manifest():
             _v = _pkgver(os.path.join(d, "lib"))
         items.append({
             "kind": kind, "dir": sub + "/", "files": n, "size": sz,
-            "version": (_v if kind in ("claude", "codegraph") else
-                        (sorted(os.listdir(d))[0] if kind == "webview2"
-                         and os.listdir(d) else "")),
+            "version": _v,
             "url": ("https://www.npmjs.com/package/@anthropic-ai/claude-code"
                     if kind == "claude" else
-                    "https://www.npmjs.com/package/@colbymchenry/codegraph"
-                    if kind == "codegraph" else
-                    "tools/fetch_webview2_fixed.py 按版本下载（微软已下架直链）"),
+                    "https://www.npmjs.com/package/@colbymchenry/codegraph"),
             "note": ("npm 包整树镜像" if kind == "claude" else
                      "发布机 npm i -g @colbymchenry/codegraph 后跑 "
                      "src/build.py _refresh_offline_codegraph 恢复"
-                     "（平台 bundle win32-x64：node.exe+lib 自带运行时）"
-                     if kind == "codegraph" else
-                     "Fixed Version 运行时，恢复脚本见 url"),
+                     "（平台 bundle win32-x64：node.exe+lib 自带运行时）"),
         })
     pd = os.path.join(A, "pydeps")
     if os.path.isdir(pd):
@@ -760,8 +779,9 @@ def _write_offline_manifest():
                           "note": "离线 wheel 池，在线安装走 pip"})
     # a419：丢项告警——新清单比旧清单少的 kind 且本体仍在盘上=扫描器没认出
     # （codegraph 静默丢失实锤），必须大声报出来而不是静默写盘等提交。
-    # a407 退役例外：有意移出的资源（bili→代理面板联网装）允许从清单消失
-    _RETIRED = {"bili"}
+    # 有意移出的资源允许从清单消失：bili→代理面板联网装；webview2/dotnet
+    # →换壳 P4 后不再是工具依赖（Electron 自带 Chromium，无 pythonnet）
+    _RETIRED = {"bili", "webview2", "dotnet"}
     _mf_path = os.path.join(A, "MANIFEST.json")
     try:
         _old = json.load(open(_mf_path, encoding="utf-8"))
@@ -788,8 +808,7 @@ def offline_main(argv):
     """只打离线资源包，不跑 PyInstaller（用户拍板：命令行 + bat 入口）。
 
     用法：
-      python src/build.py --offline                    打全量（八项）
-      python src/build.py --offline --preset base      基础资源包
+      python src/build.py --offline                    打全量（六项）
       python src/build.py --offline --preset claude    claude 包
       python src/build.py --offline --preset ext       额外拓展包
       python src/build.py --offline --kinds claude     自定义只打某几项
@@ -801,15 +820,12 @@ def offline_main(argv):
     """
     import argparse
     import glob
-    # 四档预设（用户需求：全量 / 基础 / claude / 额外拓展）。分组语义：
-    #   基础 = 工具本体运行环境；claude = Claude 生态（CLI + 运行时 + 版本
-    #   控制）；拓展 = OnlyOffice 全功能 Office 编辑。
+    # 三档预设（换壳 P4：工具本体已自足，资源包只剩可选集成）：
+    #   claude = Claude 生态（CLI + Node + Git）；拓展 = OnlyOffice；full 全量。
     #   要调整分组改这里即可（安装端按 kind 装包，与分组无关）。
     presets = {
         "full":   {"label": "",       "kinds": None,
-                   "desc": "全量（八项全含）"},
-        "base":   {"label": "基础",    "kinds": ["webview2", "dotnet", "pydeps"],
-                   "desc": "基础资源包（WebView2 + .NET + Python 依赖——工具本体环境）"},
+                   "desc": "全量（六项全含）"},
         "claude": {"label": "claude", "kinds": ["claude", "node", "git"],
                    "desc": "claude 包（Claude CLI + Node + Git）"},
         "ext":    {"label": "拓展",    "kinds": ["onlyoffice"],
@@ -821,10 +837,10 @@ def offline_main(argv):
     ap.add_argument("--offline", action="store_true", help="离线资源包模式")
     ap.add_argument("--preset", default="",
                     choices=sorted(presets),
-                    help="四档预设：full 全量 / base 基础 / claude / ext 额外拓展")
+                    help="三档预设：full 全量 / claude / ext 额外拓展")
     ap.add_argument("--kinds", default="",
-                    help="自定义只打这些资源，逗号分隔：webview2,dotnet,node,git,"
-                         "claude,onlyoffice,pydeps；--preset 优先")
+                    help="自定义只打这些资源，逗号分隔：node,git,claude,"
+                         "codegraph,onlyoffice,pydeps；--preset 优先")
     ap.add_argument("--manifest", action="store_true",
                     help="只刷新 offline_assets/MANIFEST.json（资源清单入库用）")
     ap.add_argument("--out", default="",
@@ -841,11 +857,11 @@ def offline_main(argv):
         tag = pr["label"]
         title = pr["desc"]
     elif args.preset == "full":
-        kinds, tag, title = None, "", "全量（八项全含）"
+        kinds, tag, title = None, "", "全量（六项全含）"
     else:
         kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
-        valid = {"webview2", "dotnet", "node", "git", "claude",
-                 "onlyoffice", "pydeps"}
+        valid = {"node", "git", "claude", "codegraph",
+                 "onlyoffice", "pydeps", "electron"}
         bad = [k for k in kinds if k not in valid]
         if bad:
             print("未知资源：%s（可选：%s）" % (",".join(bad), ",".join(sorted(valid))))

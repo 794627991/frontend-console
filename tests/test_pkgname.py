@@ -122,7 +122,7 @@ def _test_rank_consistency():
           and pkg_rank("前端控制台-资源包备份.fcpk", require_prefix=_APP)
           < pkg_rank("前端控制台-资源包.fcpk", require_prefix=_APP))
     # 第16轮 P1-1：备份全量(1) 必须压过备份子集(0)——"两份备份"取全量；
-    # 但备份子集仍可见（唯一一份时闸门要能装，base 预设含全部硬项）
+    # 但备份子集仍可见（唯一一份时要能装，且可能含用户需要的集成）
     check("备份全量 > 备份子集",
           pkg_rank("前端控制台-资源包备份.fcpk", require_prefix=_APP)
           > pkg_rank("前端控制台-资源包-拓展-备份.fcpk",
@@ -209,19 +209,13 @@ def _e2e(cases):
 
     a333（第19轮）：三元组的 size 用于验证同档决胜——副本/备份与原件
     字节相同，按 mtime 会被它们的"下载时间更新"顶掉；按大小决胜则赢不了。"""
-    from src import res_ui, update_server
+    from src import update_server
 
     for label, files, want in cases:
         d = tempfile.mkdtemp(prefix="pkgname_e2e_")
         old_releases = update_server._releases_dir
-        old_app = res_ui._app_dir
-        old_dirs = res_ui._search_dirs
         try:
             update_server._releases_dir = lambda d=d: d
-            res_ui._app_dir = lambda d=d: d
-            # a330（第14轮 P1-3）：必须同时桩搜索目录——否则会读真实
-            # ~/Desktop、~/Downloads（发布者桌面常放着资源包，测试必假红）
-            res_ui._search_dirs = lambda d=d: (d,)
             for n, mt, *rest in files:
                 p = os.path.join(d, n)
                 with open(p, "wb") as f:
@@ -229,18 +223,14 @@ def _e2e(cases):
                 os.utime(p, (mt, mt))
             por = update_server._offline_pkg()
             got_por = por["file"] if por else None
-
-            got_af = os.path.basename(res_ui.autofind_fcpk()) or None
         finally:
             update_server._releases_dir = old_releases
-            res_ui._app_dir = old_app
-            res_ui._search_dirs = old_dirs
             shutil.rmtree(d, ignore_errors=True)
-        w_por, w_af = want if isinstance(want, tuple) else (want, want)
+        # 换壳 P4：启动闸门（res_ui.autofind_fcpk）已退役——只校验门户选包。
+        # 历史三元组期望仍可传 (门户, 闸门)，这里取门户侧。
+        w_por = want[0] if isinstance(want, tuple) else want
         check("e2e[%s] 门户" % label, got_por == w_por,
               "got %r want %r" % (got_por, w_por))
-        check("e2e[%s] 闸门" % label, got_af == w_af,
-              "got %r want %r" % (got_af, w_af))
 
 
 def _test_offline_fields():
@@ -329,10 +319,10 @@ def _test_e2e():
          [("前端控制台-资源包-old.fcpk", 1e9), (S, 2e9)],
          "前端控制台-资源包-old.fcpk"),
 
-        # a333（第19轮）→ a334（第20轮）推翻：同档决胜**不是**按大小。
-        # 体积与"能不能装上"无关——`-基础`(641MB) 含 webview2+dotnet 两个
-        # 硬项，`-拓展`(874MB) 只有 onlyoffice。按大小选拓展包 → 装完仍缺
-        # → 死循环。以下用例把「体积大但语义靠后」作为期望失败方向。
+        # a334（第20轮）：同档决胜**不是**按大小，而是按语义分。
+        # 历史上 `-基础` 含 webview2+dotnet 硬项，体积小但优先级最高；
+        # 换壳 P4 后硬项退役，排序改为 claude > 基础/pydeps > 拓展，用例
+        # 仍验证「体积大但语义靠后」不占优。
         ("同档子集:基础(小) vs 拓展(大)",
          [("前端控制台-资源包-拓展.fcpk", 3e9, 874),
           ("前端控制台-资源包-基础.fcpk", 1e9, 641)],
@@ -365,26 +355,27 @@ def _test_e2e():
 def _test_pref():
     """a334（第20轮 P1-1）：同档决胜用语义分，不是体积。
 
-    子集：基础(3) > claude(2) > 拓展(1) > 其它(0.5)。基础包是唯一含
-    webview2+dotnet 两个硬项的 preset，必须无条件优先——否则装完仍缺。
+    换壳 P4 起没有硬项子集：同档按「常用集成面」排序——
+    claude(3) > 基础/pydeps(2) > 拓展(1) > 其它(0.5)；webview2/dotnet
+    历史包只保留子集分类，不再有语义优先级（0.5）。
     """
     from src.pkgname import pkg_pref, pkg_backup
     order = [
-        ("前端控制台-资源包-基础.fcpk", 3.0),
-        ("前端控制台-资源包-webview2-dotnet.fcpk", 3.0),
-        ("前端控制台-资源包-pydeps.fcpk", 3.0),
-        ("前端控制台-资源包-claude.fcpk", 2.0),
-        ("前端控制台-资源包-bili.fcpk", 2.0),
-        ("前端控制台-资源包-node.fcpk", 2.0),
+        ("前端控制台-资源包-claude.fcpk", 3.0),
+        ("前端控制台-资源包-bili.fcpk", 3.0),
+        ("前端控制台-资源包-node.fcpk", 3.0),
+        ("前端控制台-资源包-基础.fcpk", 2.0),
+        ("前端控制台-资源包-pydeps.fcpk", 2.0),
         ("前端控制台-资源包-拓展.fcpk", 1.0),
         ("前端控制台-资源包-OnlyOffice.fcpk", 1.0),
+        ("前端控制台-资源包-webview2-dotnet.fcpk", 0.5),
     ]
     for n, want in order:
         check("pref %s=%s" % (n, want), pkg_pref(n) == want,
               "got %r" % pkg_pref(n))
-    check("pref 基础 > claude > 拓展",
-          pkg_pref("前端控制台-资源包-基础.fcpk")
-          > pkg_pref("前端控制台-资源包-claude.fcpk")
+    check("pref claude > 基础 > 拓展",
+          pkg_pref("前端控制台-资源包-claude.fcpk")
+          > pkg_pref("前端控制台-资源包-基础.fcpk")
           > pkg_pref("前端控制台-资源包-拓展.fcpk"))
     # 全量：带版本尾按自然序号；无名 tag（-2024/-1）不得压过 -v2
     check("pref -v2 > -2024",

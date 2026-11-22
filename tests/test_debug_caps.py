@@ -6,7 +6,7 @@
 
 本测钉住三点：
 1. DEBUG_CAPS 常开；DEBUG_WEB（源码直读）仍只认环境变量且要求 web/ 存在
-2. 包文件里主 UI 与网页 tab 都关了 AreBrowserAcceleratorKeysEnabled
+2. 主 UI 快捷键屏蔽已平移到 Electron 主窗 before-input-event（P4）
 3. 日志窗有两个纯图标按钮，且整刷/DevTools 的入口都在
 """
 import os
@@ -58,14 +58,16 @@ def test_real_repo_has_src_web():
 
 def test_accelerator_keys_disabled_main_ui_only():
     """主 UI 必须屏蔽浏览器级快捷键；网页 tab **不能**关（那里 F5/Ctrl+F
-    是浏览器本职行为，关掉等于网页刷不了）。"""
-    main = _read("src/main.py")
-    tabs = _read("src/web_tabs.py")
-    assert "AreBrowserAcceleratorKeysEnabled = False" in main
-    assert "AreBrowserAcceleratorKeysEnabled" not in tabs
-    # 不能被旧的 debug 门控写法复活
-    assert "bool(_wv_debug))" not in main.split(
-        "AreBrowserAcceleratorKeysEnabled")[1][:80]
+    是浏览器本职行为，关掉等于网页刷不了）。
+
+    P4 换壳后落点从 pywebview 的 AreBrowserAcceleratorKeysEnabled 改为
+    Electron 主窗 before-input-event；webview guest 不受主窗 handler 影响。
+    """
+    shell = _read("electron/main.js")
+    assert shell.count("before-input-event") == 1
+    seg = shell.split("before-input-event", 1)[1][:700]
+    assert "'f5'" in seg and "'f12'" in seg
+    assert "input.control" in seg and "e.preventDefault()" in seg
 
 
 def test_backend_log_has_two_icon_buttons():
@@ -100,16 +102,14 @@ def test_hard_reload_defined_and_cleans_up():
     assert "location.reload()" in seg
 
 
-def test_window_routes_registered_before_app_run():
-    """两个新路由必须注册在（GUI 路径的）app.run 之前（Flask 起过请求后
-    禁止注册）。--headless 分支（Electron 壳形态）自带一个更早的
-    app.run：该分支先 return、不注册窗口路由，服务的是无窗进程——序
-    断言取最后一次 app.run（GUI 路径的服务点）。"""
+def test_window_controls_owned_by_shell():
+    """P4：窗口控制不出现在后端（/api/window/* 已随旧窗体链删除），
+    全部走 Electron IPC（fc:win-ctl / fc:win-state-*）。"""
     main = _read("src/main.py")
-    i_reload = main.index('@app.route("/api/window/reload"')
-    i_dev = main.index('@app.route("/api/window/devtools"')
-    i_run = main.rfind("app.run(host=")
-    assert i_reload < i_run and i_dev < i_run
+    assert '@app.route("/api/window/' not in main
+    shell = _read("electron/main.js")
+    assert "fc:win-ctl" in shell and "fc:win-state-get" in shell
+    assert "fc:win-state" in shell
 
 
 def test_run_debug_bat_retired():

@@ -194,8 +194,8 @@ def inspect(path):
 
     全审 B3 实锤（严重）：本函数契约是**返回 dict**，但早前头部被截断时
     走 `_parse_header` 抛 FcpkError，三个调用点（res_boot/res_install/
-    res_api）全都没接——最坏链路是用户在引导框选了半截包 → 抛异常 →
-    preflight_gate 兜底吞掉放行 → 走到「窗口建不出来」的莫名状态。
+    res_api）全都没接——最坏链路是用户选了半截包 → 抛异常被上层吞掉 →
+    进入莫名的半装状态。
     这里统一兜成 {"ok": False}。"""
     try:
         size = os.path.getsize(path)

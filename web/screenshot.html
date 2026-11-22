@@ -10,27 +10,26 @@
   html, body { margin: 0; padding: 0; width: 100%; height: 100%;
                overflow: hidden; background: #000; }
 </style>
-<script>window.__FC_SNIP__ = true;   // 页面真伪标记：Python 侧 loaded 后验证，
-// ERR_CONNECTION_REFUSED 等错误页也会触发 loaded 事件——没这标记的错误页
-// 不 show 不写心跳，静默重试（用户实锤：错误页全屏弹出）。
+<script>window.__FC_SNIP__ = true;   // 页面真伪标记（错误页没有它）
 </script>
 <script src="/vendor/screenShotPlugin.umd.js"></script>
 </head>
 <body>
 <script>
 // ============================================================
-// 独立全屏截图窗（v2.3.12 最终形态）：窗=DPI 子进程按虚拟桌面几何定位=
-// 屏幕尺寸 → 插件 canvas=视口=底图 1:1 原生分辨率（无缩放无适配计算）。
+// 截图覆盖页（Electron 壳形态，2026-11-22 P4 修订）：
+// 常驻隐藏窗 + 壳 IPC 握手——加载即 hello（注册 arm 监听）；壳触发时下发
+// 底图偏移 {x,y}，本页按**自身实测视口**（innerWidth×dpr）取裁剪底图，
+// Image 预载完成、插件建好之后才回 ready——壳此刻才 show。全程窗口隐藏，
+// 用户永远看不到黑屏（首版在 ready-to-show 就 show + 3s 视口闸门，
+// 125% DPI 下必等满超时=全屏黑罩数秒，实锤废除）。
 // showScreenData 必开（底图绘制开关，默认关=黑屏）；writeBase64=false
-// （剪贴板统一主进程 CF_DIB）。Enter 确认/Esc 取消 → js_api → 子进程
-// 写产物退出 → 主进程收图挂附件。
+// （剪贴板统一走壳→后端 CF_DIB）。
 // ============================================================
 (function () {
   'use strict';
-  // v3.5.149（零延迟）：实例挂 window——常驻 Python 侧 go 事件路径用
-  // evaluate_js 调 __snipArm() 免 reload 唤醒（整页 reload 的导航+插件重建+
-  // 底图重拉开销全免）。destroyComponents 是插件原型的全量拆解入口。
   window.__snipInst = null;
+  var LAST = { x: 0, y: 0 };   // 最近一次 arm 的底图偏移（__snipArm 复用）
   function makeInst(img) {
     return new screenShotPlugin({
       capture: { source: 'image', imageSrc: img },
@@ -39,64 +38,281 @@
       clickCutFullScreen: true,
       maxUndoNum: 30,
       // 「保存」按钮=另存为 PNG 文件（区别于 √=附加到对话，用户定调）。
-      // dataUrl 在第 3 参；插件回调后即 destroyDom，对话框由 Python 侧弹。
+      // dataUrl 在第 3 参；插件回调后即 destroyDom，对话框由壳侧弹。
       saveCallback: function (idx, msg, dataUrl) {
+        trace('save-as', { dpr: window.devicePixelRatio || 1 });
         try { window.pywebview && pywebview.api.snip_save_as(dataUrl); }
         catch (e) { window.close(); }
       },
       completeCallback: function (info) {
+        trace('done', {
+          b64: (info && info.base64 || '').length,
+          keys: info ? Object.keys(info) : null,
+          pos: pluginPos(),
+        });
         try { window.pywebview && pywebview.api.snip_done(info.base64); }
         catch (e) { window.close(); }
       },
       closeCallback: function () {
+        trace('close', {});
         try { window.pywebview && pywebview.api.snip_cancel(); }
         catch (e) { window.close(); }
       },
       cancelCallback: function () {
+        trace('cancel', {});
         try { window.pywebview && pywebview.api.snip_cancel(); }
         catch (e) { window.close(); }
       }
     });
   }
-  function boot() {
-    var img = '/api/snip/img?v=' + Date.now();
-    // 收尾防黑闪：插件 √/×/保存 都会 destroyDom 销毁界面，露出 body 背景
-    // （原 #000=黑屏闪烁/保存键黑屏挂死双实锤）。背景换成底图原图：
-    // 销毁瞬间只丢遮罩变亮，不再黑，配合 Python 侧即刻 hide 基本无感。
-    document.body.style.background = '#000 url(' + img + ') center/100% 100% no-repeat';
-    // v3.5.151 全审F6d：ALIVE 写入（loaded 后即写）早于 boot 闸门完成，
-    // 该窗口期 __snipArm 若被调已建过实例——直接覆盖会泄漏旧实例，先拆再建
-    try { window.__snipInst && window.__snipInst.destroyComponents(); } catch (e) {}
-    window.__snipInst = makeInst(img);
+  function notifyReady() {
+    try { window.fcShell && fcShell.snipReady(); } catch (e) {}
   }
-  // go 事件唤醒入口：换底图（v=时间戳防缓存）+ 重建插件实例；旧实例先
-  // destroyComponents 免 DOM/事件泄漏。异常抛回 Python 侧回落整页 reload。
-  window.__snipArm = function () {
-    try { window.__snipInst && window.__snipInst.destroyComponents(); } catch (e) {}
-    var v = '/api/snip/img?v=' + Date.now();
-    document.body.style.background = '#000 url(' + v + ') center/100% 100% no-repeat';
-    window.__snipInst = makeInst(v);
-  };
-  // boot 闸门：等视口=物理屏幕宽高（子进程 loaded 后才把 WinForms
-  // ClientSize 钉到物理矩形，此前窗口是创建期被钳小的尺寸）。插件 canvas
-  // 按当时视口建且不重建，早 boot=canvas 偏小→底图缩放+框选错位。比较用
-  // 物理口径：DPI>100% 时 CSS 视口=物理/dpr，乘回去再比（多分辨率适配）。
-  // 3s 超时兜底强启（钉尺寸万一失败，缩小跑总比黑屏好）。
-  var qs = new URLSearchParams(location.search);
-  var W = +qs.get('w') || 0, H = +qs.get('h') || 0;
-  var t0 = Date.now();
-  function physW() { return Math.round(window.innerWidth * (window.devicePixelRatio || 1)); }
-  function physH() { return Math.round(window.innerHeight * (window.devicePixelRatio || 1)); }
-  function gate() {
-    if ((W && physW() === W && physH() === H)
-        || Date.now() - t0 > 3000) {
-      if (document.readyState === 'complete') boot();
-      else window.addEventListener('load', boot);
+  // ---- 截图链路探针（全进工具内存日志 tag=shell，不落盘）----
+  // 用户实锤：选区完整（319×211）但确认导出=一个点——病在导出侧而非
+  // 拖拽侧。盲修两轮被否，本轮只插桩不改行为：arm/取图/手势合成/导出
+  // 载荷全记录，复现一次即可从数据定位断点。
+  function trace(tag, obj) {
+    try {
+      fetch('/api/shell_log', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lines: ['[snip] ' + tag + ' ' + JSON.stringify(obj || {})] }),
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  function pluginPos() {
+    try {
+      var i = window.__snipInst;
+      return i && i.tempGraphPosition || null;
+    } catch (e) { return 'n/a'; }
+  }
+  // 插件可交互闸门：插件把 mousedown/move/up 监听挂在「图片加载→遮罩
+  // 首绘」异步链尾（vendor 源码 Ri 调用点实锤）——构造器同步返回≠监听
+  // 已挂。reveal 若早于挂载，用户首个手势（尤其首拖）会打进空处：合成
+  // mousedown 丢失 → 拖拽只剩落点 → 「截图变成一个点」（用户实锤，首
+  // 次必现=图片解码最冷；后续偶发=缓存热但偶输竞态）。
+  // 修：reveal 前两帧 settle（我们的预载已解码，插件自身 load 走缓存，
+  // 挂载链两帧内必完成）+ 未就绪的按压一律吞掉（窗口此刻透明，用户看
+  // 不见也不会按）。
+  var pluginArmed = false;
+  function armDone() {
+    pluginArmed = true;
+    notifyReady();
+  }
+  function arm(d) {
+    if (d && typeof d.x === 'number') LAST = { x: d.x | 0, y: d.y | 0 };
+    // 宽高以本页实测为准（物理口径）：窗口建窗取整与 dpr 乘回的 1px 差
+    // 都在这里消化，服务端按请求裁剪 → canvas=视口=底图恒 1:1
+    var dpr = window.devicePixelRatio || 1;
+    var w = Math.max(1, Math.round(window.innerWidth * dpr));
+    var h = Math.max(1, Math.round(window.innerHeight * dpr));
+    detectReset(LAST.x, LAST.y, dpr);
+    pluginArmed = false;
+    trace('arm', { x: LAST.x, y: LAST.y, w: w, h: h, dpr: dpr,
+                   iw: window.innerWidth, ih: window.innerHeight });
+    var url = '/api/snip/img?x=' + LAST.x + '&y=' + LAST.y
+            + '&w=' + w + '&h=' + h + '&v=' + Date.now();
+    // 底图先预载（BMP 解码近零开销）——onload 后才换背景/建插件/回 ready，
+    // 保证 show 的瞬间用户看到的就是画面而不是 #000
+    var im = new Image();
+    var settleDone = false;
+    function settle() {          // rAF 悬挂兜底（透明窗偶发不产帧）→150ms 封顶
+      if (settleDone) return;
+      settleDone = true;
+      armDone();
+    }
+    im.onload = function () {
+      trace('img-ok', { w: im.naturalWidth, h: im.naturalHeight });
+      // 收尾防黑闪：插件 √/×/保存 都会 destroyDom，背景=底图原图时销毁
+      // 瞬间只丢遮罩变亮不再黑（历史实锤）
+      document.body.style.background =
+        '#000 url(' + url + ') center/100% 100% no-repeat';
+      try { window.__snipInst && window.__snipInst.destroyComponents(); } catch (e) {}
+      window.__snipInst = makeInst(url);   // 插件再取同 URL——已缓存，即时
+      // 两帧 settle + 微任务排空后才 reveal/放行手势（见 pluginArmed 注释）
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { setTimeout(settle, 0); });
+      });
+      setTimeout(settle, 150);
+    };
+    // 底图取失败：重试 3 次（退避）；全部失败**绝不 reveal**——纯黑覆盖层
+    // 一旦上屏，下次抓屏抓到的就是它自己 → 黑屏死循环（用户实锤）。通知
+    // 壳隐藏本窗，用户体感=按了没反应，重按即重新走全链
+    var tries = 0;
+    im.onerror = function () {
+      if (++tries < 3) {
+        trace('img-retry', { n: tries });
+        setTimeout(function () { im.src = url + '&r=' + Date.now(); },
+                   150 * tries);
+        return;
+      }
+      trace('img-fail', { tries: tries });
+      try { window.fcShell && fcShell.snipFail('img x=' + tries); } catch (e) {}
+    };
+    im.src = url;
+  }
+
+  // ---- QQ/微信同款 hover 窗口识别 --------------------------------------
+  // mousemove 节流轮询 /api/snip/hittest（后端 EnumWindows z 序自顶向下取
+  // 第一个包含光标的可见顶层窗，物理坐标），命中画高亮框+尺寸标签；
+  // 点击命中窗时吃掉真实 mousedown，向插件的 #screenShotContainer 合成
+  // 一次拖拽（插件只判 instanceof MouseEvent，不查 isTrusted——读源码
+  // 实锤），直接进入已选+工具条状态。拖拽/右键/Esc 均走插件原路径。
+  var detect = { on: false, offX: 0, offY: 0, dpr: 1, rect: null,
+                 seq: 0, lastTs: 0, timer: 0, skips: null, skipsInit: false };
+  var pending = null;   // 按下待判：{x,y,r,armed}——拖过阈值=手动框选，松开=吸附
+  var hlBox = document.createElement('div');
+  var hlTag = document.createElement('div');
+  hlBox.style.cssText = 'position:fixed;display:none;pointer-events:none;'
+    + 'z-index:2147483647;border:2px solid #4aa8ff;'
+    + 'box-shadow:0 0 0 1px rgba(74,168,255,.35) inset;'
+    + 'background:rgba(74,168,255,.08);';
+  hlTag.style.cssText = 'position:absolute;top:-24px;left:-2px;display:none;'
+    + 'padding:2px 8px;background:rgba(30,41,59,.92);color:#eaf3ff;'
+    + 'font:12px/1.4 Consolas,monospace;border-radius:3px;white-space:nowrap;';
+  hlBox.appendChild(hlTag);
+  document.body.appendChild(hlBox);
+
+  function hlHide() {
+    hlTag.style.display = 'none';
+    hlBox.style.display = 'none';
+  }
+  function detectReset(offX, offY, dpr) {
+    detect.on = true; detect.offX = offX; detect.offY = offY;
+    detect.dpr = dpr; detect.rect = null; detect.seq++;
+    // 窗口可能被重建（布局变化/空闲回收），每次 arm 重取自身句柄
+    detect.skips = null; detect.skipsInit = false;
+    pending = null;
+    hlHide();
+  }
+  // skips===null = 未就绪/不可用：不发查询（否则命中盖全屏的自己，
+  // 闪一个假的全屏高亮）。就绪后缓存到下次 arm。
+  function ensureSkips() {
+    if (detect.skipsInit) return;
+    detect.skipsInit = true;
+    if (window.fcShell && fcShell.snipHwnds) {
+      Promise.resolve(fcShell.snipHwnds())
+        .then(function (l) { detect.skips = (l && l.length) ? l : null; })
+        .catch(function () { detect.skips = null; });
+    }
+  }
+  function detectShow(r) {
+    var x = (r.x - detect.offX) / detect.dpr;
+    var y = (r.y - detect.offY) / detect.dpr;
+    var w = r.w / detect.dpr, h = r.h / detect.dpr;
+    hlBox.style.left = x + 'px'; hlBox.style.top = y + 'px';
+    hlBox.style.width = w + 'px'; hlBox.style.height = h + 'px';
+    hlBox.style.display = 'block';
+    hlTag.textContent = r.w + ' × ' + r.h;   // 物理像素口径（QQ 同款）
+    hlTag.style.display = 'block';
+  }
+  function detectQuery(cx, cy) {
+    ensureSkips();
+    if (detect.skips === null) return;   // 句柄未就绪：宁可不探测，不误报全屏
+    var seq = ++detect.seq;
+    var x = Math.round(detect.offX + cx * detect.dpr);
+    var y = Math.round(detect.offY + cy * detect.dpr);
+    fetch('/api/snip/hittest?x=' + x + '&y=' + y
+          + '&skip=' + detect.skips.join(','))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (seq !== detect.seq || !detect.on) return;   // 过期响应/已退出探测
+        detect.rect = j && j.ok ? j.rect : null;
+        if (detect.rect) detectShow(detect.rect);
+        else { hlTag.style.display = 'none'; hlBox.style.display = 'none'; }
+      }).catch(function () { /* 后端忙：保持上一次高亮，手动框选不受影响 */ });
+  }
+  document.addEventListener('mousemove', function (e) {
+    if (detect.on) {
+      var now = Date.now();
+      if (now - detect.lastTs >= 30) {            // ~33fps 探测，localhost 1~2ms
+        detect.lastTs = now;
+        detectQuery(e.clientX, e.clientY);
+      } else {                                    // 高频 move 合并成一次尾随查询
+        var cx = e.clientX, cy = e.clientY;
+        clearTimeout(detect.timer);
+        detect.timer = setTimeout(function () {
+          detect.lastTs = Date.now();
+          detectQuery(cx, cy);
+        }, 30);
+      }
+    }
+    // 「按下待判」期移动超阈值 → 用户要手动拖拽：从原按下点回放 mousedown
+    // 交给插件，此后真实 move/up 自然传播——选区起点=按下点，与原生手感一致
+    if (pending && pending.armed) {
+      var dx = e.clientX - pending.x, dy = e.clientY - pending.y;
+      if (dx * dx + dy * dy >= 16) {              // 4px 阈值（QQ 同款二义判定）
+        pending.armed = false;
+        hlHide();
+        trace('handoff', { px: pending.x, py: pending.y,
+                           cx: e.clientX, cy: e.clientY });
+        firePlugin('mousedown', pending.x, pending.y);
+        firePlugin('mousemove', e.clientX, e.clientY);
+      }
+    }
+  }, true);
+  // QQ/微信同款判定：按在有窗口的地方先不定性——
+  //   拖过阈值 = 手动框选（回放 mousedown 交还插件）
+  //   原地松开 = 点击吸附（合成整窗拖拽进已选态）
+  // 首版一按下就吸附，把所有手动拖拽劫持成了整窗选区（用户实锤）。
+  document.addEventListener('mousedown', function (e) {
+    if (!detect.on) return;
+    if (!pluginArmed) {          // 插件监听未挂：吞掉（此刻窗口透明不可见，
+      e.stopImmediatePropagation();  // 误放行会打进空处产生「点」选区）
+      e.preventDefault();
+      trace('press', { path: 'swallowed' });
       return;
     }
-    setTimeout(gate, 50);
+    detect.on = false;                            // 任何按下即退出探测期
+    clearTimeout(detect.timer);
+    var r = detect.rect;
+    if (e.button !== 0 || !r) {
+      trace('press', { path: e.button !== 0 ? 'nonleft' : 'passthrough' });
+      hlHide();
+      return;                                     // 空白/右键：走插件原路径
+    }
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    trace('press', { path: 'pending', x: e.clientX, y: e.clientY });
+    pending = { x: e.clientX, y: e.clientY, r: r, armed: true };
+  }, true);
+  document.addEventListener('mouseup', function (e) {
+    if (!pending) return;
+    var p = pending;
+    if (!p.armed) { pending = null; return; }     // 已交还插件：mouseup 原样传播
+    pending = null;
+    hlHide();
+    if (e.button !== 0) return;
+    // 原地松开=点击窗口：合成整窗选区（mousedown TL → 3×move → mouseup BR）
+    var d = detect.dpr, r = p.r;
+    var x1 = (r.x - detect.offX) / d, y1 = (r.y - detect.offY) / d;
+    var x2 = x1 + r.w / d, y2 = y1 + r.h / d;
+    trace('snap', { x1: Math.round(x1), y1: Math.round(y1),
+                    x2: Math.round(x2), y2: Math.round(y2) });
+    try {
+      firePlugin('mousedown', x1, y1);
+      for (var i = 1; i <= 3; i++) {
+        firePlugin('mousemove', x1 + (x2 - x1) * i / 3, y1 + (y2 - y1) * i / 3);
+      }
+      firePlugin('mouseup', x2, y2);
+    } catch (_) { /* 合成失败兜底：退化为手动框选 */ }
+  }, true);
+  function firePlugin(type, px, py) {
+    var host = document.getElementById('screenShotContainer') || document;
+    host.dispatchEvent(new MouseEvent(type, {
+      bubbles: true, cancelable: true, view: window,
+      button: 0, buttons: type === 'mouseup' ? 0 : 1,
+      clientX: px, clientY: py, screenX: px, screenY: py,
+    }));
   }
-  gate();
+
+  // 免 reload 唤醒入口（语义保留；壳现行走 fc:snip-arm 通道）
+  window.__snipArm = function () { arm(LAST); };
+  if (window.fcShell && typeof window.fcShell.onSnipArm === 'function') {
+    window.fcShell.onSnipArm(function (d) { arm(d); });
+    window.fcShell.snipHello();   // listener 已注册——此后 arm 可达
+  }
 })();
 </script>
 </body>

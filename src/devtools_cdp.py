@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-DevTools CDP 基础设施（v3.5.187）——WebView2 调试协议直连客户端。
+DevTools CDP 基础设施（v3.5.187）——Chromium 调试协议直连客户端。
+
+换壳 P4 后由 Electron 主进程常开 9222（`app.commandLine.appendSwitch`），
+本模块协议/调用方式不变；网页 tab 是主窗 `<webview>` guest，挂在 9222
+target 列表里（9223 是旧 WebView2 控件形态的遗留端口，仅作回落）。
 
 设计（designer 方案定稿）：
 - 无连接池、无常驻、用完即弃：每次调用 = /json/list 现查 target → 新建

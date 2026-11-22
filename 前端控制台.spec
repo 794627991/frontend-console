@@ -41,7 +41,6 @@ a = Analysis(
         'websocket',                      # websocket-client（HikLink 机器人 WS；
                                           # hiklink_bot try/except 静默吞缺失，
                                           # 表现=机器人永不运行，用户实锤）
-        'webview',                       # pywebview（WebView2 桌面窗口）
         'paramiko', 'cryptography', 'nacl',   # SSH 链
         'winpty',                        # 内嵌 Claude 终端（ConPTY）
         'Crypto', 'Crypto.Cipher', 'Crypto.PublicKey', 'Crypto.Util.Padding',
@@ -50,10 +49,9 @@ a = Analysis(
         # v4.1：fcpk 资源包 AES-GCM 走 Crypto.Cipher.AES（上面已列）；
         'Crypto.Hash.HMAC', 'Crypto.Signature.PKCS1_v1_5',            # pycryptodome（代理 CAS + 资源解密）
         'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
-        'PIL.ImageGrab',                 # v3.5.26：snip.py 延迟导入（函数内 import，静态分析收不到——发布版截图 --grab 分支 ImportError 实锤）
+        'PIL.ImageGrab',                 # v3.5.26：snip.py 延迟导入（函数内 import，静态分析收不到——发布版截图 --snip-grab 分支 ImportError 实锤）
         'numpy',                         # proxy_usage 用量统计
         'yaml',                          # 配置解析
-        'pystray', 'pystray._win32',     # 托盘历史兼容（现原生 Win32，保留无害）
     ],
     hookspath=[],
     hooksconfig={},
@@ -70,6 +68,9 @@ a = Analysis(
         'pdfminer', 'setuptools',
         'pkg_resources',
         'src',
+        # 换壳 P4：旧 pywebview 窗体链已删——这三个包绝不许再被任何
+        # import 链拉回来（发布守卫也会反向校验目录不存在）
+        'webview', 'pythonnet', 'clr_loader', 'pystray',
     ],
     noarchive=False,
     optimize=0,

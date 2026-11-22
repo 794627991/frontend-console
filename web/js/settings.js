@@ -830,8 +830,7 @@ async function _stRenderResourcesPane(pane) {
         <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:12px;cursor:pointer;">
           <input type="checkbox" id="rsForce" style="margin-top:3px;">
           <span>强制重装（覆盖现有安装）
-            <span class="dd-sub" style="display:block;margin-top:2px;">.NET 始终按缺失安装（需管理员且可能要重启）；
-              Node/Git 重装可能弹管理员提示。</span></span>
+            <span class="dd-sub" style="display:block;margin-top:2px;">Node/Git 重装可能弹管理员提示。</span></span>
         </label>
         <div class="dd-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn primary" id="rsGo" disabled><span>${ICO16.wrench}</span> 离线包安装所选</button>
@@ -925,13 +924,11 @@ async function _stRenderResourcesPane(pane) {
           'border-radius:3px;color:var(--muted);">必需</span>' : '';
       const nosrc = ok ? '' :
         ' <span style="color:var(--warn,#c90);font-size:11px;">包内不含</span>';
-      const dotnetHint = (it.kind === 'dotnet' && it.ok)
-        ? ' <span style="color:var(--muted);font-size:11px;">（强制重装不适用）</span>' : '';
       return '<label style="display:flex;gap:8px;align-items:flex-start;' +
         (ok ? 'cursor:pointer;' : 'opacity:.5;cursor:not-allowed;') + '">' +
         '<input type="checkbox" data-kind="' + esc(it.kind) + '"' + chk +
         (ok ? '' : ' disabled') + ' style="margin-top:6px;flex-shrink:0;">' +
-        '<span>' + esc(it.name) + hard + ' — ' + badge + dotnetHint + detail + nosrc +
+        '<span>' + esc(it.name) + hard + ' — ' + badge + detail + nosrc +
         '</span></label>';
     }).join('');
     el.querySelectorAll('input[data-kind]').forEach(function (cb) {

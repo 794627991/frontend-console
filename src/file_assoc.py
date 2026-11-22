@@ -57,13 +57,32 @@ def _prog_id(ext):
 
 
 def _app_exe():
-    """工具可执行路径：exe 分发=本 exe；源码运行=pythonw + main.py。"""
+    """文件关联启动命令（可含多个带引号片段，末尾追加 --open-file "%1"）。
+
+    换壳 P4 起真正的启动器是 Electron 壳，不再是 sys.executable（那是
+    sidecar 后端，直接拉起只会得到无 UI 的后端进程）。壳 spawn 后端时注入：
+      FC_SHELL_EXE = Electron 壳 exe
+      FC_SHELL_APP = 源码形态的 app 目录（packaged 为空）
+    """
+    exe = os.environ.get("FC_SHELL_EXE")
+    if exe:
+        appdir = os.environ.get("FC_SHELL_APP")
+        return f'"{exe}"' + (f' "{appdir}"' if appdir else '')
     if getattr(sys, "frozen", False):
-        return sys.executable
-    # 源码运行：pythonw 跑 src/main.py（命令行形态与 exe --open-file 一致）
-    main_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
-    pyw = sys.executable.replace("python.exe", "pythonw.exe")
-    return f'"{pyw}" "{main_py}"'
+        # 兜底（env 缺失）：<install>/resources/backend/前端控制台.exe
+        # → 上三级才是 <install>/前端控制台.exe
+        root = os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(sys.executable))))
+        for name in ("前端控制台.exe", "frontend-console-shell.exe"):
+            cand = os.path.join(root, name)
+            if os.path.isfile(cand):
+                return f'"{cand}"'
+        return f'"{sys.executable}"'
+    # 源码形态兜底：electron/node_modules/electron/dist/electron.exe <electron dir>
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    appdir = os.path.join(root, "electron")
+    exe = os.path.join(appdir, "node_modules", "electron", "dist", "electron.exe")
+    return f'"{exe}" "{appdir}"'
 
 
 def _open_command():

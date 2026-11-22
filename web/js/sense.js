@@ -1,4 +1,10 @@
 let senseState = { lines: [], filter: 'ALL' };
+// 文件关联双击（壳 IPC 通道）：第二实例/首启 did-finish-load 后送达
+if (window.fcShell && typeof window.fcShell.onOpenFile === 'function') {
+  window.fcShell.onOpenFile((p) => {
+    if (typeof openFileSmart === 'function') openFileSmart(p, 'auto');
+  });
+}
 function connectAiSSE() {
   aiSse = new EventSource('/api/ai/stream');
   aiSse.onmessage = (e) => {
@@ -12,6 +18,11 @@ function connectAiSSE() {
         // 双击关联文件（--open-file 已有实例转发）：智能分发（编辑器/阅读器/hex）
         if (item.kind === 'ui_action' && item.action === 'open_file' && typeof openFileSmart === 'function') {
           openFileSmart(item.path, 'auto');
+        }
+        // 截图触发（P4 Electron 覆层窗）：热键由后端广播，前端让壳开窗
+        if (item.kind === 'ui_action' && item.action === 'snip_open'
+            && window.fcShell && typeof window.fcShell.openSnip === 'function') {
+          window.fcShell.openSnip();
         }
         // 截图完成（v2.3.12 独立窗形态）：主进程收图后广播，前端挂附件
         if (item.kind === 'ui_action' && item.action === 'snip_done'

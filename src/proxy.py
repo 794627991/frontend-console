@@ -10,8 +10,7 @@
 - BiliController billion-context 压缩层子进程托管（18788；a201 前为 headroom 8787）
 - （额度/登录/机器人已迁 src/lanzi/，本模块只管重试代理与压缩层）
 - proxy_bp           Flask 蓝图：/api/proxy/* 给前端面板
-- tray_menu_items()  Proxy 托盘段——并入主工具托盘（用户定：托盘合成一个，
-                     不建第二个 Icon）；tooltip 由 1s 线程写主托盘 title
+- 状态/操作供 Electron 托盘菜单直接 fetch（旧自绘托盘菜单已随 P4 退役）
 
 退出三件套（必须完整，生产验证过的保命逻辑）：
 - 退出回滚 base_url（autoswitched 标记，只有工具自己改写过才回滚）
@@ -487,8 +486,8 @@ def set_proxy_autostart(on):
 # PATH node ≥22 + npm 全局包。BILI_NODE/BILI_ENTRY 是启动二元组（路径或
 # None），BILI_ERR 为不可用原因（前端展示装机指引）。
 # 对抗审 a205R 实锤：释放落点权威是 res_boot.app_dir()（与 res_install.
-# runtime_root/res_boot.wv2_fixed_dir 同源）——原写 DATA_DIR/../ 在 frozen
-# 布局下错位，内置检测永远落空。延迟 import 防循环（res_boot 仅标准库）
+# runtime_root 同源）——原写 DATA_DIR/../ 在 frozen 布局下错位，内置检测
+# 永远落空。延迟 import 防循环（res_boot 仅标准库）
 def _bili_runtime_dir():
     from src.res_boot import app_dir
     return os.path.join(app_dir(), "offline_runtime", "bili")
@@ -755,8 +754,7 @@ _bili_switch_guard = threading.Lock()   # a238 P3-2：切换标志 check+set 原
 _bili_last_err = ""      # a203：最近一次压缩模式切换失败原因（前端展示，成功则清空）
 _bili_mode = None    # 当前压缩模式（init 时从记忆文件读）
 _ccr = False
-_tray_tip_thread = None
-_tip_stop = threading.Event()
+_tip_stop = threading.Event()   # bili 统计轮询线程的停止信号
 _shutdown_done = False
 _liveness_cache = {"ts": 0.0, "already": False, "busy": False}   # a239 A3-P3-9: 端口判活 2s 缓存（status 轮询防 ping 堆积）
 _bili_stats_cache = None        # headroom /stats 最近一次结果（5s 缓存线程写，
@@ -914,7 +912,6 @@ def start_proxy(bili_mode=None):
             _bili_switching = False
             _proxy_notify()   # 状态可能变化（就绪/失败），广播给前端
     threading.Thread(target=_worker, daemon=True).start()
-    _ensure_tray()
     _proxy_notify()
     return True, "启动中（bili 冷启动需就绪探测，期间先走 37349 不断会话）"
 
@@ -1245,121 +1242,7 @@ def apply_bili_mode(mode, ccr=None):
     return True, "切换中"
 
 
-# ---- 托盘（并入主工具托盘 tray.py，用户定：合成一个，不建第二个 Icon）--
-# pystray 的 MenuItem text/checked 传函数 → 每次打开菜单重新求值，
-# 因此主托盘构造时一次性并入 Proxy 子菜单，所有动态项（额度行/启停
-# 字样/压缩 radio/CCR）零重建成本，未启动时自动显示对应占位。
-
-
-def tray_menu_items():
-    """主托盘右键菜单的 Proxy 段（tray.py 原生 Win32 托盘调用并入）。
-    返回原生菜单描述树（("item", text, cb, opts) / ("sep",)），text/checked
-    可传函数 → 打开菜单时求值最新状态；未启动时启停行自动降级。
-    与 pystray.MenuItem(fn) 签名兼容：函数项被调时收一个 None 参数。"""
-    has_bili = bool(BILI_NODE and BILI_ENTRY)
-
-    def _hr_items():
-        # 未启动重试代理时压缩项置灰（bili 的上游是 37349）；
-        # 关闭压缩永远可点——用于启动前把记忆里的模式改成 off
-        en = has_bili   # 装了 billion-context 即可选，代理未跑=只记模式下次启动生效
-        return [
-            ("item", "开启压缩", lambda: apply_bili_mode("on"),
-             {"radio": True, "checked": lambda: _bili_mode == "on",
-              "enabled": en}),
-            ("item", "关闭压缩", lambda: apply_bili_mode("off"),
-             {"radio": True, "checked": lambda: _bili_mode == "off"}),
-        ]
-
-    def _toggle_text():
-        return "■ 停止 Claude 代理" if _ctl.running else "▶ 启动 Claude 代理"
-
-    def _header_text():
-        return ("Claude Proxy [%s]" % _api_status_text()) if _ctl.running \
-            else "Claude Proxy（未启动）"
-
-    # a672：额度行迁到「Lanzi」段（tray.py 另取 lanzi.tray_items()），
-    # 代理段只留代理职责
-    return [
-        ("sep",),
-        # Claude Proxy 段头（只读，代理状态随打开刷新）
-        ("item", _header_text, None, {"enabled": False}),
-        ("item", _toggle_text,
-         lambda: stop_proxy() if _ctl.running else start_proxy(), {}),
-        ("item", "切换为代理模式", lambda: set_mode("proxy"), {}),
-        ("item", "切换为直连模式", lambda: set_mode("direct"), {}),
-        ("item", "压缩模式", None, {"submenu": _hr_items()}),
-        # 对抗审 a206A：CCR 菜单退役——BiliController.start 的 ccr 形参
-        # 零引用（a201 换代时功能随 headroom env 摘除），开关卖的是空操作
-    ]
-
-
-def tray_menu_items_remote(base):
-    """进程隔离形态的托盘 Proxy 段（proxy 数据面在 worker、托盘在主进程）：
-    与 tray_menu_items 同构的菜单树，状态/操作全部经 worker 的
-    /api/proxy/* HTTP 往返。status 取一次缓存 ~2s（一次右键打开菜单时
-    多个 text/checked 求值共享同一次拉取，不风暴）；操作 fire-and-forget。"""
-    import urllib.request
-
-    cache = {"ts": 0.0, "data": None}
-
-    def _st():
-        now = time.time()
-        if cache["data"] is None or now - cache["ts"] > 2.0:
-            try:
-                req = urllib.request.urlopen(base + "/api/proxy/status",
-                                             timeout=1.5)
-                cache["data"] = json.loads(req.read().decode("utf-8", "replace"))
-            except Exception:
-                if cache["data"] is None:
-                    cache["data"] = {}
-            cache["ts"] = now
-        return cache["data"] or {}
-
-    def _post(path, body=None):
-        try:
-            req = urllib.request.Request(
-                base + path, data=json.dumps(body or {}).encode("utf-8"),
-                headers={"Content-Type": "application/json"}, method="POST")
-            urllib.request.urlopen(req, timeout=3).read()
-        except Exception:
-            pass   # 托盘操作失败静默：面板是完整入口，菜单只是快捷方式
-
-    def _header_text():
-        d = _st()
-        return ("Claude Proxy [%s]" % d.get("status")) if d.get("running") \
-            else "Claude Proxy（未启动）"
-
-    def _toggle_text():
-        return "■ 停止 Claude 代理" if _st().get("running") \
-            else "▶ 启动 Claude 代理"
-
-    def _hr_items():
-        # 装了 billion-context 即可选（代理未跑=只记模式下次启动生效）
-        en = bool(_st().get("bili_ready"))
-        return [
-            ("item", "开启压缩",
-             lambda: _post("/api/proxy/compression", {"mode": "on"}),
-             {"radio": True, "checked": lambda: _st().get("bili_mode") == "on",
-              "enabled": en}),
-            ("item", "关闭压缩",
-             lambda: _post("/api/proxy/compression", {"mode": "off"}),
-             {"radio": True, "checked": lambda: _st().get("bili_mode") == "off",
-              "enabled": True}),
-        ]
-
-    return [
-        ("sep",),
-        ("item", _header_text, None, {"enabled": False}),
-        ("item", _toggle_text,
-         lambda: _post("/api/proxy/stop" if _st().get("running")
-                       else "/api/proxy/start"), {}),
-        ("item", "切换为代理模式",
-         lambda: _post("/api/proxy/mode", {"mode": "proxy"}), {}),
-        ("item", "切换为直连模式",
-         lambda: _post("/api/proxy/mode", {"mode": "direct"}), {}),
-        ("item", "压缩模式", None, {"submenu": _hr_items()}),
-        # 对抗审 a206A：CCR 菜单退役（同 tray_menu_items 注）
-    ]
+# ---- 状态字（Electron 托盘菜单/前端代理面板共用）----
 
 
 def _api_status_text():
@@ -1380,71 +1263,6 @@ def _api_status_text():
     return "HEALTHY"
 
 
-def _tray_tip_loop():
-    """tooltip 刷新 daemon 线程（GUI:3319-3341 平移）。
-    Windows szTip 限 128 字符，额度在前确保完整显示。
-    节流 5s 且值不变不写——高频 NIM_MODIFY 会与 Explorer 悬停 tooltip
-    查询竞争。代理未启动时线程退出（不占常驻资源），start 时重开。"""
-    import src.tray as tray_mod
-    last_tip = None
-    while not _tip_stop.is_set():
-        if not tray_mod.alive():
-            time.sleep(2)   # 主托盘还没建（用户没最小化过）：低频等待
-            last_tip = None
-            continue
-        try:
-            snap = _ctl.snapshot()
-            try:
-                from src.lanzi import api as _lanzi
-                qs = _lanzi.tip_suffix()
-            except Exception:
-                qs = ""
-            if snap is None:
-                tip = qs if qs else "前端控制台"
-                tip += "\nClaude Proxy 未启动"
-            else:
-                now = time.time()
-                retrying = snap["in_flight_retries"] > 0
-                recent_overload = (snap["last_overload_ts"] is not None and
-                                   now - snap["last_overload_ts"] < 2.0)
-                last_fail = snap.get("last_fail")
-                recent_fail = (last_fail is not None and now - last_fail[0] < 5.0)
-                if recent_fail:
-                    st = "FAILED"
-                elif retrying or recent_overload:
-                    st = "RETRY"
-                else:
-                    st = "HEALTHY"
-                tip = qs if qs else "Claude Proxy [%s]" % st
-                tip += "\n429/5xx %s 重试 %s 失败 %s" % (
-                    _fnum(snap["total_overloads"]),
-                    _fnum(snap["total_retries"]),
-                    _fnum(snap.get("total_giveups", 0) + snap.get("total_client_gone", 0)))
-                tip += "\n运行 %s" % core.fmt_uptime(snap["uptime_seconds"])
-            if tip != last_tip:
-                tray_mod.set_tip(tip)
-                last_tip = tip
-        except Exception:
-            pass
-        time.sleep(5)
-
-
-def _ensure_tray():
-    """启动代理时开 tooltip 刷新线程（主托盘由 tray.py 管理，这里只写 title）。
-    worker 形态跳过：worker 进程没有托盘（tray 在主进程），tooltip 线程
-    在 worker 里只会空转（set_tip 无接收方）。"""
-    global _tray_tip_thread
-    if os.environ.get("CLAUDE_WORKER") == "1":
-        return
-    if _tray_tip_thread is not None and _tray_tip_thread.is_alive():
-        return
-    _tip_stop.clear()
-    _tray_tip_thread = threading.Thread(target=_tray_tip_loop, daemon=True)
-    _tray_tip_thread.start()
-    log.info("proxy tooltip 刷新线程已启动")
-
-
-# ---- 模块生命周期 -------------------------------------------------------
 def ensure_direct_if_proxy_down(origin="startup"):
     """base_url 指向自家代理但对应入口没在跑 → 立即恢复直连。
 
@@ -1530,8 +1348,8 @@ def _atexit_rollback():
 
 def proxy_shutdown(force_rollback=False):
     """真退出链（main.py _do_real_cleanup 调，幂等）：
-    停额度 worker → 停 tooltip 线程 → headroom → 重试代理 → base_url 回滚。
-    （托盘是主工具 tray.py 的，quit_tray 由 main.py 退出链自己管。）"""
+    停额度 worker → 停统计线程 → headroom → 重试代理 → base_url 回滚。
+    （托盘归 Electron 主进程，后端不再管 tooltip/菜单。）"""
     global _shutdown_done, _autoswitched
     if _shutdown_done:
         return

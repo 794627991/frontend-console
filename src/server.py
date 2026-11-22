@@ -143,7 +143,7 @@ DEBUG_WEB_PAGE = DEBUG_CAPS
 CLAUDE_OFFLOAD = os.environ.get("CLAUDE_INLINE") != "1"
 WORKER_BASE = ""
 # Electron 壳形态（main.py --headless 启动时置 True）：index 注入
-# __HG_HEADLESS__='1'，前端据此停掉 pywebview 窗体专属调用（窗控路由/
+# __HG_HEADLESS__='1'，前端据此停掉旧窗体专属调用（窗控路由/
 # 背景上报/窗态轮询——headless 不注册这些路由，调了只剩 404/405 日志噪音）
 HEADLESS_FORM = False
 # a558（SSO 锁号实锤）：真应用实例判定——main.py 入口（含打包 exe，frozen）
@@ -300,29 +300,6 @@ def _api_unhandled(e):
     except Exception:
         pass
     return body
-
-# ---- 单实例唤醒通道 ----
-# 二次启动的进程探活旧实例后 POST /api/raise_window，旧实例自弹主窗口
-# （pywebview WinForms 宿主从自身线程 show 才稳，跨进程 SetForegroundWindow
-# 兜底在 main.py）。路由必须在这里注册——Flask 首请求后禁止加路由。
-_raise_window_cb = None
-
-
-def set_raise_window_callback(cb):
-    """main.py 注入 show 回调（webview 窗口建好后调，闭包捕获窗口）。"""
-    global _raise_window_cb
-    _raise_window_cb = cb
-
-
-@app.route("/api/raise_window", methods=["POST"])
-def raise_window():
-    """让本实例弹主窗口（新进程探活后调用）。回调未注入（启动早期）返回 ok=False。"""
-    cb = _raise_window_cb
-    if cb:
-        threading.Thread(target=cb, daemon=True).start()
-        return jsonify({"ok": True})
-    return jsonify({"ok": False}), 503
-
 
 # ---- 自依赖自检状态（main 启动时注入，前端每次启动拉取弹提醒） ----
 _deps_state = {"missing_req": [], "missing_opt": [], "skipped": False}
@@ -559,7 +536,7 @@ def start_background():
 # 规则：
 # - Host 必须 127.0.0.1[:port] / localhost[:port] / [::1]（拦 rebinding）
 # - 写方法（POST/PUT/DELETE/PATCH）带 Origin 头时，必须 http(s)://127.0.0.1
-#   或 localhost 任意端口（WebView2 内同源 fetch / snip 独立窗 / worker / MCP
+#   或 localhost 任意端口（壳内同源 fetch / snip 独立窗 / worker / MCP
 #   的 urllib 请求无 Origin 或同源，均放行）
 _LOCAL_HOST_RE = re.compile(
     r"^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", re.I)
@@ -599,7 +576,7 @@ def _guard_local_origin():
 
 @app.after_request
 def _no_cache_static(resp):
-    """静态资源(web/ 下的 JS/CSS)禁缓存：开发迭代频繁，WebView2 若缓存旧 JS，
+    """静态资源(web/ 下的 JS/CSS)禁缓存：开发迭代频繁，Chromium 若缓存旧 JS，
     重启工具仍加载旧代码，改动"看起来不生效"。HTML/JS/CSS 每次都拉最新。
     """
     if resp.mimetype in ("text/html", "application/javascript",
@@ -686,7 +663,7 @@ def index():
         r = None
     if r is not None:
         # v3.5.80：入口页强制 no-cache——旧实现透传打包资源的 Cache-Control
-        #（空/带 max-age），WebView2 持久缓存会端出旧 index.html → 引用旧
+        #（空/带 max-age），Chromium 持久缓存会端出旧 index.html → 引用旧
         # ?v= 脚本地址 = 整套旧前端（版本徽章走 API 是新的，页面却是旧引擎，
         # 用户实锤「v3.5.78 拖拽修复没生效」的真因）。no-cache 仅要求每次
         # 校验（304 语义），内容几 KB 零成本；子资源照旧吃 ?v= 长缓存
@@ -1042,21 +1019,27 @@ def api_help_readme():
 
 @app.route("/api/shell_log", methods=["POST"])
 def api_shell_log():
-    """Electron 壳日志转发（用户令 2026-11-20：壳只做启动作用，一切问题进
+    """Electron 壳日志转发（用户令 2026-11-20：壳只做启动用，一切问题进
     统一日志面板）。tag=shell 与 frontend/main 并列；批量收、限长防刷、
-    失败静默（日志通道绝不能反向拖累壳）。"""
+    失败静默（日志通道绝不能反向拖累壳）。
+
+    对抗审（2026-11-23）：批次上限 20，**必须回实际处理数 n**——壳按 n
+    推进游标。旧版回恒 ok、壳按发送数推进 → 每批静丢 30 行，恰在日志
+    突发期（最需要留证时）丢证据。"""
     d = request.get_json(force=True, silent=True) or {}
     lines = d.get("lines")
     if not isinstance(lines, list):
         lines = [str(lines)] if lines else []
+    got = 0
     try:
         from src import backend_log as _bl
         lvl = str(d.get("level") or "info")
         for ln in lines[:20]:
             _bl.log("shell", str(ln)[:500], lvl)
+            got += 1
     except Exception:
         pass
-    return '{"ok": true}', 200, {"Content-Type": "application/json"}
+    return jsonify({"ok": True, "n": got})
 
 
 @app.route("/api/status")
@@ -1071,18 +1054,10 @@ def api_status():
                 "kind": getattr(p, "kind", "serial"),
                 "host": getattr(p, "host", None), "username": getattr(p, "username", None),
             }
-    # RW1/RW11（终审如实版）：token 经无鉴权 GET 下发——本机其他进程
-    # 可取得并调用 pw 管理面（列表/删改/明文 reveal）。这与 Edge/Chrome
-    # 的暴露等价：本机进程读 Chromium 密码库+DPAPI 解密同样可得明文。
-    # 真正的安全边界是 DPAPI 用户边界（Windows 登录会话），不是 HTTP 层。
-    # 防「浏览器跨站面」（RA2 盲 CSRF）由 _pw_guard 的 Origin 校验承担；
-    # 防「其他浏览器标签页」（跨标签）由同源策略承担。多用户/远程场景
-    # 需要更强边界时，应评估命名管道或 OS 级 ACL，属架构演进项。
-    try:
-        from src.web_tabs import PW_TOKEN as _pw_tok
-    except Exception:
-        _pw_tok = ""
-    return jsonify({"ports": info, "log_dir": LOG_DIR, "pw_token": _pw_tok})
+    # P4（2026-11-22）：旧窗体形态的密码库管理面已删除——密码存储/填充在
+    # Electron 主进程（safeStorage），后端不再下发 pw_token。字段保留空串
+    # 仅为旧页面缓存兼容（旧分支会得到空 token → 密码路由 403，不影响主 UI）。
+    return jsonify({"ports": info, "log_dir": LOG_DIR, "pw_token": ""})
 
 # v3.5.5：paramiko 服务端 disconnect 抓手——Transport 收到 MSG_DISCONNECT
 # 时只写日志不存异常对象（且 paramiko.transport 日志级别默认 INFO 不外达），
@@ -1953,7 +1928,7 @@ def api_theme():
                         # a468：远程会话检测（RDP/ICA）——前端据此一次性建议开启
                         "remote_session": _is_remote_session(),
                         # a473：L3 网页操作——CDP 端口常开（AI 经 devtools_* MCP
-                        # 操作浏览器）；重启生效（WebView2 启动参数期决定）。
+                        # 操作浏览器）；重启生效（Chromium 启动参数期决定）。
                         # web_cdp_live 由服务端探活（审计修：前端 fetch
                         # 127.0.0.1:9222 被 CORS 拒——/json/version 无 ACAO
                         # 头，跨源必败，live 态成了死码）
@@ -2315,7 +2290,7 @@ def api_log_dir():
 
 @app.route("/api/log_dir/open", methods=["POST"])
 def api_log_dir_open():
-    """用系统资源管理器打开日志目录。WebView2 拦截 file:// 协议，必须后端调 explorer。"""
+    """用系统资源管理器打开日志目录。壳内渲染层拦截 file:// 导航，必须后端调 explorer。"""
     try:
         data = request.get_json(force=True, silent=True) or {}
         d = data.get("dir")
@@ -2324,7 +2299,7 @@ def api_log_dir_open():
         # （原实现可在任意路径凭空建目录树）；目录不存在就 404
         if not os.path.isdir(target):
             return jsonify({"ok": False, "err": "目录不存在"}), 404
-        # os.startfile 在 pywebview Flask 线程里可能静默失败，改用 explorer.exe 更可靠
+        # os.startfile 偶发静默失败（无控制台形态错误不可见），explorer.exe 更可靠
         import subprocess
         subprocess.Popen(["explorer.exe", target], close_fds=True)
         return jsonify({"ok": True})
@@ -2504,7 +2479,7 @@ def api_backend_log_export():
     头部带版本号 / 启动时间 / 平台 / 缓冲统计——用户明确要求「日志里要带上
     版本号，好追溯」。返回 text/plain。
 
-    注意：WebView2 里 `<a download>` 被 init.js 的全局链接拦截器
+    注意：壳内渲染层 `<a download>` 被 init.js 的全局链接拦截器
     preventDefault 掉（该拦截器为防就地导航而拦所有 a[href]），且 pywebview
     默认 ALLOW_DOWNLOADS=False，浏览器下载路径**走不通**。前端因此改走
     /api/backend_log/save（原生保存对话框 + 后端写盘）。此接口保留给
@@ -2521,9 +2496,9 @@ def api_backend_log_export():
 
 @app.route("/api/backend_log/save", methods=["POST"])
 def api_backend_log_save():
-    """导出日志到用户选择的文件（WebView2 下唯一可行的导出路径）。
+    """导出日志到用户选择的文件（渲染层内唯一可行的导出路径）。
 
-    前端调 JS API 弹的原生保存框在 GUI 线程，路由里拿不到 window 时退回
+    保存框由 Electron 壳弹出（fc:pick），HTTP 路由侧只收路径；旧形态
     桌面/下载目录直接写——两条路都**真的落盘**了才返回 ok，前端据此提示
     （原来浏览器下载被拦却无条件弹「已导出」，用户永远拿不到文件）。
     """
@@ -3645,21 +3620,70 @@ def ai_recent():
 
 @app.route("/api/snip/img")
 def snip_img():
-    """内置截图底图（v2.3.12）：TEMP 一次性文件，DPI 子进程抓屏产出（BMP
-    免编码）。抓屏与截图窗冷启动并行，这里等文件就绪（最多 3s）。
-    no-store：每次截图都是新图，绝不能吃缓存。"""
+    """内置截图底图：TEMP 一次性文件，DPI 子进程抓屏产出。
+
+    Electron 覆盖页按自身实测视口传 x/y/w/h 裁剪（多显示器/混合 DPI 必需）。
+    裁剪一律回 BMP——PNG 编码全屏要 1~2s（P4 首版实锤：底图迟迟不到 =
+    全屏黑罩），BMP 免压缩仅像素拷贝，localhost 传输差量可忽略。
+    no-store：每次截图都是新图，绝不能吃缓存。
+    """
     import src.snip as _snip
     import time as _t
     for _ in range(15):
         if os.path.isfile(_snip._TMP_BMP):
             break
         _t.sleep(0.2)
-    if os.path.isfile(_snip._TMP_BMP):
-        with open(_snip._TMP_BMP, "rb") as f:
-            data = f.read()
-        return data, 200, {"Content-Type": "image/bmp",
-                           "Cache-Control": "no-store, max-age=0"}
-    return "no image", 404
+    if not os.path.isfile(_snip._TMP_BMP):
+        return "no image", 404
+    crop = []
+    for k in ("x", "y", "w", "h"):
+        try:
+            crop.append(int(request.args.get(k)))
+        except (TypeError, ValueError):
+            crop = []
+            break
+    if len(crop) == 4 and crop[2] > 0 and crop[3] > 0:
+        try:
+            import io as _io
+            from PIL import Image
+            x, y, w, h = crop
+            im = Image.open(_snip._TMP_BMP).convert("RGB").crop((x, y, x + w, y + h))
+            buf = _io.BytesIO()
+            im.save(buf, format="BMP")
+            return buf.getvalue(), 200, {"Content-Type": "image/bmp",
+                                         "Cache-Control": "no-store, max-age=0"}
+        except Exception:
+            pass   # 裁剪失败回落整张 BMP（至少不黑屏）
+    with open(_snip._TMP_BMP, "rb") as f:
+        data = f.read()
+    return data, 200, {"Content-Type": "image/bmp",
+                       "Cache-Control": "no-store, max-age=0"}
+
+
+@app.route("/api/snip/geo")
+def snip_geo():
+    """抓屏子进程落盘的虚拟桌面物理矩形（Electron 裁剪换算用）。"""
+    import src.snip as _snip
+    g = _snip.read_geo()
+    return jsonify({"ok": bool(g), "geo": g})
+
+
+@app.route("/api/snip/hittest")
+def snip_hittest():
+    """QQ/微信同款 hover 窗口识别：物理坐标 (x,y) 处目标窗口的可见矩形。
+
+    覆盖页 mousemove 节流轮询本接口（~30Hz，localhost 往返 1~2ms），
+    命中即画高亮框；点击由前端合成拖拽选区。skip=覆盖窗句柄（逗号分隔，
+    壳经 preload 提供）——不排除则永远命中盖全屏的自己。
+    """
+    import src.snip as _snip
+    try:
+        x = int(request.args.get("x", ""))
+        y = int(request.args.get("y", ""))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "err": "x/y 参数无效"}), 400
+    rect = _snip.window_at_point(x, y, (request.args.get("skip") or "").split(","))
+    return jsonify({"ok": rect is not None, "rect": rect})
 
 
 @app.route("/api/snip/grab", methods=["POST"])
@@ -3672,9 +3696,8 @@ def snip_grab():
 
 @app.route("/api/snip/start", methods=["POST"])
 def snip_start():
-    """起独立全屏截图窗（v2.3.12 最终形态）：DPI 子进程建无边框置顶全屏窗
-    （=物理屏幕，底图 1:1），标注完成收图落 uploads+剪贴板+SEE snip_done。
-    端口取自请求 Host（截图窗页面回连本服务）。"""
+    """触发截图：抓屏 → SSE snip_open → Electron 壳建覆盖窗（P4 迁移）。
+    完成/另存走壳 IPC，保存结果经 /api/snip/save + SSE snip_done 回前端。"""
     import src.snip as _snip
     try:
         port = int((request.host or "").rsplit(":", 1)[-1])
@@ -3686,11 +3709,17 @@ def snip_start():
 
 @app.route("/api/snip/save", methods=["POST"])
 def snip_save():
-    """标注完成（v2.3.12）：{data_url} → 落 harness_uploads + 复制剪贴板，
-    返回 path 供前端直接挂对话附件（同页调用，不走 SSE 广播）。"""
+    """标注完成：{data_url} → 落 harness_uploads + 复制剪贴板 → SSE
+    snip_done 让主窗挂附件（Electron 覆盖窗完成/另存路径共用）。"""
     import src.snip as _snip
     data = request.get_json(force=True, silent=True) or {}
     ok, r = _snip.save_png(data.get("data_url") or "")
+    if ok:
+        try:
+            _broadcast_to_ai({"kind": "ui_action", "action": "snip_done",
+                              "path": r})
+        except Exception:
+            pass
     return jsonify({"ok": ok, "path": r if ok else None, "err": None if ok else r})
 
 

@@ -1,28 +1,13 @@
 # -*- coding: utf-8 -*-
-"""启动资源闸门（v4.1，用户拍板）。
+"""离线资源探测（v4.1 / Electron 换壳 P4）。
 
-背景（用户需求）：WebView2 运行时从发布包里挪进离线资源包——发布包
-318MB → 65MB。代价是「干净机器上必须先装资源包才能用」，所以启动前
-必须先检测，缺了引导用户装包。
+安装包自足：Python 运行时随 PyInstaller、Chromium 随 Electron——不再有
+WebView2/.NET 启动硬闸，也没有「建不出窗口」的引导链。本模块只服务可选
+外部集成的状态探测与离线包清单：Node/npm、Git、Claude Code CLI、
+OnlyOffice、pydeps、codegraph，以及 bili 存量探测。前端设置页「外部依赖
+安装」与 /api/resources/status 读这里。
 
-硬拦（不满足直接拦在窗口创建前，因为根本建不出窗口）：
-- WebView2 运行时：系统 Evergreen ≥109 就算满足（用户拍板）；否则要
-  offline_runtime 里解包出来的 Fixed Version
-- .NET Framework 4.8+（Release ≥ 528372）：pywebview 的 WebView2 后端
-  走 pythonnet，.NET 缺/过低时 `import webview` 本身就抛异常——它比
-  WebView2 更早崩，所以同属硬拦（用户拍板纳入）
-
-软提示（启动后再提示，不锁死工具——串口等核心功能与它们无关）：
-- Node.js / npm、Git、Claude Code CLI、工具自身 pydeps
-
-界面约束（关键）：WebView2 缺失时 pywebview 建不了任何窗口，tkinter
-又没打进发布包，所以引导只能用 Win32 原生：MessageBoxW 提问 +
-GetOpenFileNameW 选包 + IProgressDialog 进度条。三条 API 本项目已有
-先例（deps_bootstrap 的 MessageBoxW、tray.py 的 Win32 窗口、
-main.py:926 的 64 位句柄显式声明——新写的 ctypes 封装必须照抄那个教训：
-**指针参数不显式声明 argtypes 在 64 位下会静默截断**）。
-
-纯探测逻辑（probe_*）不碰 UI，可单测；UI 只在 preflight_gate 里用。
+纯探测逻辑不碰 UI，可单测。
 """
 import json
 import os
@@ -33,21 +18,8 @@ import sys
 
 from src import app_state as _st
 
-# 最低可接受版本（用户拍板：系统 Evergreen ≥109 就算满足；:has() /
-# content-visibility 全覆盖的最低线，与 main._WV2_MIN 同口径）
-WV2_MIN = (109, 0, 1518, 0)
-NETFX_MIN_RELEASE = 528372      # .NET Framework 4.8 / 4.8.1 的已知可用下限
-_WV2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-
 # 统一资源清单（唯一真源：后端探测、前端呈现、离线包表三者同口径）
 MANIFEST = [
-    {"kind": "webview2", "name": "WebView2 运行时", "hard": True,
-     "fix": "启动引导选「联网在线安装」（Evergreen，需管理员），或离线资源包内解出（无需管理员）"},
-    # C3（全审）：阈值取 528372（.NET 4.8）而不是 533320（4.8.1）——4.8 已足够
-    # 跑 pythonnet，且 Win10 21H2+ 自带 4.8 可免装。名称随之写 4.8+，不叫
-    # 「4.8.1」以免与阈值口径打架。
-    {"kind": "dotnet", "name": ".NET Framework 4.8+", "hard": True,
-     "fix": "启动引导选「联网在线安装」或离线资源包内安装器（需管理员，装完可能要重启）"},
     {"kind": "node", "name": "Node.js / npm", "hard": False,
      "fix": "离线资源包内静默安装"},
     {"kind": "git", "name": "Git", "hard": False,
@@ -67,6 +39,10 @@ MANIFEST = [
     {"kind": "codegraph", "name": "Claude 代码图引擎（codegraph）",
      "hard": False,
      "fix": "安装离线资源包（或设置→外部依赖安装单装）"},
+    # D（2026-11-23 用户拍板）：源码/调试形态离线起壳；正常发布 Setup 自带
+    {"kind": "electron", "name": "Electron 运行时（源码形态）",
+     "hard": False,
+     "fix": "安装离线资源包（解到 offline_runtime/electron，run.bat 免 npm 直起）"},
 ]
 
 
@@ -80,146 +56,6 @@ def app_dir():
 
 
 # --------------------------------------------------------------------- 探测
-
-def _fixed_ver(fixed_dir):
-    """从 Fixed Version 运行时目录名抽版本：
-    Microsoft.WebView2.FixedVersionRuntime.133.0.3065.92.x64 → 133.0.3065.92"""
-    import re
-    name = os.path.basename(fixed_dir.rstrip("\\/"))
-    m = re.search(r"FixedVersionRuntime[.\-_](\d+(?:\.\d+)+)", name)
-    if m:
-        return m.group(1)
-    m = re.search(r"(\d+(?:\.\d+){2,})", name)
-    return m.group(1) if m else name
-
-
-def probe_webview2():
-    """→ (state, ver, detail)。state ∈ ok / missing / outdated。
-    先看系统 Evergreen，再看资源包解出的 Fixed Version。"""
-    pv = _wv2_system_version()
-    if pv and _ver_tuple(pv) >= WV2_MIN:
-        return "ok", pv, "系统 Evergreen"
-    fixed = wv2_fixed_dir()
-    if fixed:
-        # C5（全审）：早前取 dirname(fixed) 的 basename，得到的是上层目录名
-        # `webview2`（前端显示「WebView2 运行时 webview2」）。fixed 本身就是
-        # 版本目录 Microsoft.WebView2.FixedVersionRuntime.<ver>.x64，从它抽版本。
-        v = _fixed_ver(fixed)
-        # 对抗审二轮 P2-1：fixed 目录也过 WV2_MIN（与系统 Evergreen 同口径
-        # ——低版本离线运行时不再无条件放行）
-        if _ver_tuple(v) >= WV2_MIN:
-            return "ok", v, "离线包运行时"
-        if not pv:
-            return "outdated", v, "离线包运行时版本过低（需 ≥%s）" % ".".join(
-                map(str, WV2_MIN))
-    if pv:
-        return "outdated", pv, "系统版本过低（需 ≥%s）" % ".".join(map(str, WV2_MIN))
-    return "missing", "", "系统未安装，资源包也未解出"
-
-
-def _wv2_system_version():
-    """注册表探测系统 Evergreen WebView2（HKLM/HKCU × 32/64 视图全扫）。
-
-    对抗审 P2-1 修正：早前**首个命中即返回**（HKLM 先于 HKCU）——HKLM 存
-    陈旧 per-machine 108 + HKCU 有新 per-user 133 的双写场景会误判 outdated
-    硬拦一台实际可用的机器。全扫取版本最大者。"""
-    try:
-        import winreg
-    except ImportError:
-        return ""
-    best, best_t = "", ()
-    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-        for wow in (0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY):
-            try:
-                with winreg.OpenKey(
-                        root,
-                        r"SOFTWARE\Microsoft\EdgeUpdate\Clients\\" + _WV2_GUID,
-                        0, winreg.KEY_READ | wow) as k:
-                    pv = str(winreg.QueryValueEx(k, "pv")[0] or "")
-                    t = _ver_tuple(pv)
-                    if pv and t > best_t:
-                        best, best_t = pv, t
-            except OSError:
-                continue
-    return best
-
-
-def _ver_tuple(v):
-    try:
-        return tuple(int(x) for x in str(v).split(".") if x.isdigit())
-    except Exception:
-        return ()
-
-
-def wv2_fixed_dir():
-    """找「可用的 WebView2 运行时目录」（含 msedgewebview2.exe 的那层）。
-
-    探测顺序（重要——新包解出的要优先于旧的随包 runtime，否则升级早期
-    两处并存时会用旧版）：
-      1. <app>/offline_runtime/webview2/**      v4.1 资源包解出的
-      2. <app>/runtime/WebView2Fixed/**          v2.3.7~v2.4.0 随包的
-      3. 上一级目录下的同名两处（onedir 形态兜底）
-    """
-    import glob as _gl
-    base = app_dir()
-    roots = [os.path.join(base, "offline_runtime", "webview2"),
-             os.path.join(base, "runtime", "WebView2Fixed"),
-             os.path.join(base, "runtime"),
-             os.path.join(os.path.dirname(base), "offline_runtime", "webview2"),
-             os.path.join(os.path.dirname(base), "runtime", "WebView2Fixed")]
-    import re as _re
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        # 对抗审 P0：offline_runtime 只认完成标记（.wv2ok 由 res_install 在
-        # 解包全程成功+关键文件校验后写入）——半装/损坏的「exe 在 DLL 缺」
-        # 不再骗过闸门；旧随包 runtime/（无人会半装）维持存在性判定
-        _need_mark = ("offline_runtime" in root)
-        if _need_mark and not os.path.isfile(
-                os.path.join(os.path.dirname(root), ".wv2ok")):
-            continue
-        for depth in range(1, 6):       # offline_runtime/webview2/<ver>/x.exe = 3 层
-            hit = sorted(_gl.glob(os.path.join(
-                root, *(["*"] * depth), "msedgewebview2.exe")))
-            if not hit:
-                continue
-            # 对抗审 P2：版本取新不取字典序（"109"<"133" 曾取旧弃新）；
-            # fixed 目录同样过 WV2_MIN 下限（v88 老随包不再无条件放行）
-            def _vt(p):
-                m = _re.search(r"(\d+(?:\.\d+){2,3})", os.path.basename(
-                    os.path.dirname(p)))
-                return _ver_tuple(m.group(1)) if m else ()
-            # 对抗审三轮 P2-A：不过滤直接取最新返回——版本下限由
-            # probe_webview2 统一判（这里过滤会让 probe 的「版本过低」
-            # 分支变死代码，用户装了旧版包得到的是 missing 而非 outdated，
-            # 重装同版死循环）
-            best = max(hit, key=_vt)
-            return os.path.dirname(best)
-    return ""
-
-
-def probe_dotnet():
-    """→ (state, ver, detail)。查 .NET Framework v4 Full 的 Release 值。"""
-    try:
-        import winreg
-    except ImportError:
-        return "unknown", "", "非 Windows，跳过"
-    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-        try:
-            with winreg.OpenKey(
-                    root,
-                    r"SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full") as k:
-                rel = int(winreg.QueryValueEx(k, "Release")[0])
-                if rel >= NETFX_MIN_RELEASE:
-                    # 4.8 = 528040 / 4.8.1 = 533320 及以上（阈值 528372 见上）
-                    ver = "4.8.1" if rel >= 533320 else "4.8"
-                    return "ok", ver, "Release %d" % rel
-                return "outdated", str(rel), "Release %d < %d" % (
-                    rel, NETFX_MIN_RELEASE)
-        except OSError:
-            continue
-    return "missing", "", "未安装 .NET Framework 4.8+"
-
 
 def _which(name):
     return shutil.which(name) or ""
@@ -326,7 +162,22 @@ def probe_bili():
     return "missing", "", ""
 
 
-_PROBES = {"webview2": probe_webview2, "dotnet": probe_dotnet,
+def probe_electron():
+    """Electron 运行时：源码形态两种落位任一命中即 ok——
+    ① offline_runtime/electron/electron.exe（资源包装出）
+    ② electron/node_modules/electron/dist/electron.exe（npm install 装出）。
+    正常发布（Setup.exe）自带，恒不需要本项。"""
+    for p in (
+        os.path.join(app_dir(), "offline_runtime", "electron", "electron.exe"),
+        os.path.join(app_dir(), "electron", "node_modules", "electron",
+                     "dist", "electron.exe"),
+    ):
+        if os.path.isfile(p):
+            return "ok", "", ""
+    return "missing", "", "源码形态离线起壳需要（发布版 Setup 不需要）"
+
+
+_PROBES = {"electron": probe_electron,
            "node": probe_node, "git": probe_git, "claude": probe_claude,
            "onlyoffice": probe_onlyoffice,
            "pydeps": probe_pydeps, "bili": probe_bili}
@@ -392,8 +243,8 @@ def probe_all(use_cache=True, kinds=None):
         {"ok": bool, "items": [...], "hard_missing": [...], "soft_missing": [...]}
     每项：{kind, name, hard, ok, state, ver, detail, fix}
 
-    kinds：只探指定子集（None=全部）。启动闸门必须只传硬项（_HARD）——
-    软项探测含 HTTP/子进程（onlyoffice 实测 4s），不能进开窗关键路径。
+    kinds：只探指定子集（None=全部）。全部为软项探测（含 HTTP/子进程，
+    onlyoffice 实测 4s）——只在设置页/状态轮询里用，不进启动关键路径。
     """
     state_file = _state_file()
     cache = _read_state() if use_cache else {}
@@ -445,7 +296,7 @@ def _now():
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
-_HARD = ("webview2", "dotnet")   # 硬资源：不可忽略（启动闸门拦的就是它们）
+_HARD = ()   # 换壳 P4：启动硬闸门已退役（Electron 自带 Chromium）
 _state_lock = __import__("threading").Lock()
 
 
@@ -493,382 +344,6 @@ def _write_state(d):
             os.replace(tmp, p)
         except OSError:
             pass
-
-
-# --------------------------------------------------------------------- 闸门
-
-def preflight_gate(force=False):
-    """启动硬闸门。返回 True=放行，False=用户取消/安装失败应退出。
-
-    必须在 `import webview` 之前调用（.NET 缺失时那一步就崩）。
-    已在 app_dir 落过 .fcpk.json 且探测通过 → 零开销直接放行。
-
-    force=True 走「测试模式」：环境变量 FC_FORCE_MISSING 可强制把指定
-    kind 判成缺失（本机 WebView2/.NET 都齐全时，用它验证引导链路）。
-    """
-    # 只探硬项（webview2/dotnet）——闸门判的就是这两项能不能建窗；
-    # 软项（node/git/claude/pydeps/onlyoffice…）与启动无关，探测含子进程
-    # 和 HTTP（onlyoffice 实测 4s），拖慢开窗 4s+（启动打点实锤）
-    res = probe_all(use_cache=False, kinds=_HARD)
-    forced = [x.strip() for x in
-              (os.environ.get("FC_FORCE_MISSING") or "").split(",") if x.strip()]
-    if forced:
-        for it in res["items"]:
-            if it["kind"] in forced:
-                it.update(ok=False, state="missing",
-                          detail="[测试模式强制]")
-        res["hard_missing"] = [i["kind"] for i in res["items"]
-                               if i["hard"] and not i["ok"]]
-    if not res["hard_missing"]:
-        return True
-    return _guide_install(res)
-
-
-def _guide_install(res):
-    """缺硬性资源 → 原生引导三选一：离线包 / 在线安装 / 退出。
-
-    a595（用户定调「有网一定装得上」，打开即用形态）：早前只有「选离线包」
-    一条路——干净机器 + 有网 + 手头没 .fcpk 包 = 死路（WebView2/.NET 缺失
-    连窗口都建不出来，用户连工具都进不去）。在线装 dotnet/webview2 不需要
-    任何已建窗口，Win32 原生进度条即可承载，放在闸门这里正好。
-    """
-    from src import res_ui
-
-    names = "、".join(it["name"] for it in res["items"]
-                     if it["kind"] in res["hard_missing"])
-    txt = ("缺少运行环境：%s\n\n"
-           "工具无法启动。请选择处理方式：\n\n"
-           "「是」— 使用离线资源包安装（.fcpk 文件，无需联网）\n"
-           "「否」— 联网在线安装（自动下载官方安装器，约 2~5 分钟）\n"
-           "「取消」— 退出"
-           % names)
-    rc = res_ui.msgbox(txt, "前端控制台 · 缺少运行环境",
-                       res_ui.MB_YESNOCANCEL | res_ui.MB_ICONWARNING
-                       | res_ui.MB_SETFOREGROUND | res_ui.MB_TOPMOST)
-    if rc == res_ui.IDYES:
-        return _guide_offline(res)
-    if rc == res_ui.IDNO:
-        return _guide_online(res)
-    if rc in (res_ui.IDCANCEL, 0):
-        return False    # 取消 / 关闭 / msgbox 自身故障（返回 0）都退出
-    # a647：兜底——返回值既不是是/否/取消（例如按钮组常量再写错、远程会话
-    # 截断、第三方弹窗接管），**不要直接退出**。内网机器没有外网，离线资源
-    # 包是唯一出路，把它当作「是」继续引导；用户仍可在下一步取消。
-    print("[res_boot] 未知弹窗返回值 %r，改走离线资源包引导" % rc)
-    return _guide_offline(res)
-
-def _guide_offline(res):
-    """原离线包引导：说明 → 选包 → 进度 → 重启。"""
-    from src import res_ui
-
-    try:
-        from src import fcpk
-    except ImportError:
-        # a595：缺 pycryptodome 的源码机读不了加密包——给人话后**回到三选
-        # 一**（审计 #5：早前文案承诺「返回改选在线安装」却直接退进程）
-        res_ui.msgbox("离线资源包功能需要 pycryptodome 模块。请在工具所用 "
-                      "Python 环境执行：pip install pycryptodome\n\n"
-                      "装完无需重启工具。现在回到处理方式选择，可改选"
-                      "「联网在线安装」。",
-                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
-        return _guide_install(res)
-
-    names = "、".join(it["name"] for it in res["items"]
-                     if it["kind"] in res["hard_missing"])
-    txt = ("缺少运行环境：%s\n\n"
-           "请准备好离线资源包（.fcpk 文件），点「确定」选择它，"
-           "工具会自动安装后重启。\n\n"
-           "点「取消」退出。" % names)
-    if res_ui.msgbox(txt, "前端控制台 · 缺少运行环境",
-                     res_ui.MB_OKCANCEL | res_ui.MB_ICONWARNING
-                     | res_ui.MB_SETFOREGROUND | res_ui.MB_TOPMOST) != res_ui.IDOK:
-        return False
-
-    path = res_ui.pick_fcpk()
-    if not path:
-        # 对话框不可用/取消 → 兜底自动找
-        path = res_ui.autofind_fcpk()
-        if not path:
-            res_ui.msgbox("没有选择资源包，工具无法启动。\n\n请把 .fcpk 资源包"
-                          "放在工具目录或桌面后重新打开工具。",
-                          "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
-            return False
-        if res_ui.msgbox("未手动选择，已自动使用：\n%s\n\n继续安装？" % path,
-                         "前端控制台", res_ui.MB_YESNO | res_ui.MB_ICONWARNING
-                         ) != res_ui.IDYES:
-            return False
-
-    if not fcpk.is_fcpk(path):
-        res_ui.msgbox("选中的不是资源包（%s）。\n\n请选择 .fcpk 文件。"
-                      % os.path.basename(path),
-                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
-        return False
-    info = fcpk.inspect(path)
-    if not info.get("ok"):
-        res_ui.msgbox("资源包有问题：%s" % (info.get("err") or "无法读取"),
-                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
-        return False
-
-    ok = _run_install_with_ui(path)
-    if not ok:
-        return False
-    res_ui.msgbox("运行环境安装完成，正在重新启动工具…", "前端控制台",
-                  res_ui.MB_OK | res_ui.MB_ICONINFORMATION)
-    _restart_self()
-    return False        # 本进程退出
-
-
-def _guide_online(res):
-    """a595：闸门在线安装（下载官方安装器 → 静默装 → 复验 → 重启）。
-
-    只覆盖 webview2/dotnet（闸门拦的硬资源本就只有它们）；装完复验仍缺
-    时区分「装了要重启 Windows」（.NET 3010）与真失败，前者提示重启电脑
-    而不是把用户按在重试循环里。"""
-    from src import res_ui
-    from src import res_install
-
-    kinds = [k for k in (res.get("hard_missing") or [])
-             if k in ("dotnet", "webview2")]
-    if not kinds:
-        res_ui.msgbox("在线安装不覆盖当前缺失项（%s）——请使用离线资源包。"
-                      % "、".join(res.get("hard_missing") or []),
-                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
-        return False
-
-    log_lines = []
-    state = {"done": False, "err": ""}
-
-    def log(msg):
-        log_lines.append(str(msg))
-
-    def work():
-        pg = None
-        try:
-            # IProgressDialog 必须在使用的线程内创建（STA）——work 线程内
-            # 建 prog/should_cancel 并由 install_online 在同线程回调，与
-            # _run_install_with_ui 同款。没有它，2~5 分钟下载静默无反馈
-            pg = res_ui.progress("前端控制台 · 在线安装运行环境")
-
-            def prog(done, total, label):
-                if pg:
-                    # done=None 是「不确定进度」段（跑外部安装器）——置 0
-                    # 保持对话框活动即可，别 None 传穿
-                    pg.set_progress(done if done is not None else 0,
-                                    total or 1)
-                    if label:
-                        pg.set_line("正在安装：" + label, 1)
-
-            def should_cancel():
-                return bool(pg and pg.cancelled())
-
-            res_install.install_online(kinds, log=log, progress=prog,
-                                       should_cancel=should_cancel)
-        except res_install.InstallCancelled:
-            # a595R（审计 #3）：取消不是失败——单独成态，别落进「未完全
-            # 成功」错误框（离线闸门路径 _run_install_with_ui 同款语义）
-            state["err"] = "已取消安装"
-            state["cancelled"] = True
-            log("用户取消安装")
-        except Exception as e:
-            state["err"] = str(e)[:400]
-            log("失败：%s" % e)
-        finally:
-            if pg:
-                pg.stop()
-            state["done"] = True
-
-    import threading
-    th = threading.Thread(target=work, daemon=False)
-    th.start()
-    while th.is_alive():
-        th.join(0.3)
-
-    log_path = os.path.join(os.environ.get("TEMP", "."),
-                            "fcpk_install_online.log")
-    try:
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-    except OSError:
-        pass
-
-    # 复验：装没装成以探测为准，不以安装器的自报为准
-    if state.get("cancelled"):
-        res_ui.msgbox("已取消安装。\n\n工具缺少必需运行环境，无法启动。\n"
-                      "重新打开工具即可再次选择（离线包或在线安装）。",
-                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONWARNING)
-        return False
-    re_probe = probe_all(use_cache=False)
-    if not re_probe["hard_missing"]:
-        res_ui.msgbox("运行环境在线安装完成，正在重新启动工具…", "前端控制台",
-                      res_ui.MB_OK | res_ui.MB_ICONINFORMATION)
-        _restart_self()
-        return False
-    joined = "\n".join(log_lines)
-    if "需重启 Windows" in joined or "需重启 Windows 后生效" in joined:
-        # .NET 3010 = 装成功但注册表要重启后才更新——复验必不过，别让
-        # 用户在「重试」里死循环
-        res_ui.msgbox("运行环境已安装成功，但需要重启 Windows 后生效。\n\n"
-                      "请重启电脑后再打开本工具。", "前端控制台",
-                      res_ui.MB_OK | res_ui.MB_ICONINFORMATION)
-        return False
-    res_ui.msgbox("在线安装未完全成功：%s\n\n详细日志：%s\n\n"
-                  "可重启工具改选离线资源包，或以管理员身份运行工具重试在线"
-                  "安装（WebView2/.NET 安装器需要提权）。"
-                  % (state["err"] or "部分组件安装失败", log_path),
-                  "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
-    return False
-
-
-def _run_install_with_ui(path):
-    """解包安装 + 进度条。返回 bool。失败弹窗给日志路径。"""
-    import threading
-    from src import res_ui, res_install
-
-    from src.res_boot import MANIFEST
-    need = [m["kind"] for m in MANIFEST if m["hard"]]
-    log_lines = []
-    state = {"done": False, "ok": False, "err": ""}
-
-    def log(msg):
-        log_lines.append(str(msg))
-
-    cancel = {"req": False}
-
-    def work():
-        pg = None
-        try:
-            pg = res_ui.progress("前端控制台 · 正在安装运行环境")
-
-            def prog(done, total, label):
-                if pg:
-                    pg.set_progress(done, total or 1)
-                    if label:
-                        pg.set_line("正在安装：" + os.path.basename(label), 1)
-
-            # 全审 C1：早前「取消」按钮完全没接线——用户点了取消安装照跑，
-            # 装完还自动重启。这里把 IProgressDialog.HasUserCancelled 接到
-            # install_from 的 should_cancel 上，每个 kind / 解包块之间检查。
-            def should_cancel():
-                if pg and pg.cancelled():
-                    cancel["req"] = True
-                return cancel["req"]
-
-            res = res_install.install_from(path, kinds=need, log=log,
-                                           progress=prog,
-                                           should_cancel=should_cancel)
-            errs = dict(res.get("errors") or {})
-            # a325R（第2轮对抗审 P1，实锤死循环）：包内缺 kind 时 install_from
-            # 只往 res["skipped"] 里记，errors 为空 → state["ok"]=True → 弹
-            # 「安装完成，正在重启」→ 重启后闸门硬拦仍在 → 再次选包 → 再跳，
-            # 每轮白等一次解包。用户拿到子集包（如只有 onlyoffice 的拓展包）
-            # 就必然踩。必需项在包内不存在必须判失败（已存在的那些走 skipped
-            # 但不在 absent 里，属正常，不能误判）。
-            absent = [k for k in need if k in (res.get("absent") or [])]
-            if absent:
-                names = [m.get("name") or m.get("kind") for m in MANIFEST
-                         if m.get("kind") in absent]
-                errs["资源包不完整"] = (
-                    "所选资源包不含以下必需资源：%s。请换完整的"
-                    "「前端控制台-资源包.fcpk」（子集包装不全）"
-                    % "、".join(names or absent))
-                log(errs["资源包不完整"])
-            state["ok"] = not errs
-            state["err"] = "; ".join("%s: %s" % kv for kv in errs.items())
-            state["res"] = res
-        except res_install.InstallCancelled:
-            state["ok"] = False
-            state["cancelled"] = True
-            state["err"] = "已取消安装"
-            log("用户取消安装")
-        except Exception as e:
-            state["ok"] = False
-            state["err"] = str(e)[:400]
-            log("失败：%s" % e)
-        finally:
-            if pg:
-                pg.stop()
-            state["done"] = True
-
-    th = threading.Thread(target=work, daemon=False)
-    th.start()
-    while th.is_alive():
-        th.join(0.3)
-    # 写日志备查（失败时告诉用户路径）
-    log_path = os.path.join(os.environ.get("TEMP", "."), "fcpk_install.log")
-    try:
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(log_lines))
-    except OSError:
-        pass
-    if state.get("cancelled"):
-        res_ui.msgbox("已取消安装。\n\n工具缺少必需运行环境，无法启动。\n"
-                      "双击工具后重新选择资源包即可继续。",
-                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONWARNING)
-    elif not state["ok"]:
-        res_ui.msgbox("安装未完全成功：\n%s\n\n详细日志：%s\n\n"
-                      "可重启工具后再次选择资源包重试。"
-                      % (state["err"] or "未知错误", log_path),
-                      "前端控制台", res_ui.MB_OK | res_ui.MB_ICONERROR)
-    return bool(state["ok"])
-
-
-def _restart_self():
-    """拉起新进程后本进程退出。
-
-    全审 C2 实锤：早前用 `[sys.executable, "-c", code, exe, ...]` 想让
-    「子进程先睡 1.5s 再拉起」——但 frozen 下 sys.executable 是 exe 本身，
-    `-c` 只是普通命令行参数，exe 收到会当未知参数忽略并**立刻**启动，
-    睡 1.5s 的助手脚本从不执行。实际靠父进程 CloseHandle(mutex) 后 0.2s
-    退出与子进程竞速，多数能赢但无保证。
-
-    改成：写一个 .bat 延迟拉起（cmd 的 timeout 可靠），然后释放 mutex 退出。
-    """
-    import subprocess
-    import tempfile
-    import time
-    # 对抗审 P2：早前 rel_args 丢了 argv[0]——源码形态拉起的是裸 python
-    # （REPL 挂死）；现 frozen 用 exe 本身、源码用 [python, main.py]
-    if getattr(sys, "frozen", False):
-        relaunch = [sys.executable] + list(sys.argv[1:])
-    else:
-        relaunch = ([sys.executable, os.path.abspath(sys.argv[0])]
-                    + list(sys.argv[1:]))
-    try:
-        bat = os.path.join(tempfile.gettempdir(),
-                           "fcpk_restart_%d.bat" % os.getpid())
-        lines = ["@echo off",
-                 "timeout /t 2 /nobreak >nul",
-                 'start "" "%s"%s' % (
-                     relaunch[0],
-                     "".join(' "%s"' % a for a in relaunch[1:])),
-                 'del "%~f0"']
-        # 对抗审 P2：mbcs+replace 会把非 ACP 字符（emoji 等）写成 '?'——
-        # 拉起失败且本进程已退出=工具消失。mbcs 编不进的路径直接放弃
-        # bat 重启（进程内 0.2s 兜底竞速仍可能赢），并让调用方知道
-        body = "\r\n".join(lines) + "\r\n"
-        try:
-            body.encode("mbcs")
-        except UnicodeEncodeError:
-            raise OSError("重启路径含当前代码页无法编码的字符")
-        with open(bat, "w", encoding="mbcs") as f:
-            f.write(body)
-        subprocess.Popen([bat], shell=True,
-                         creationflags=getattr(subprocess,
-                                               "CREATE_NO_WINDOW", 0))
-    except Exception:
-        # 对抗审 P2：Popen 失败早前照样退出=承诺重启后静默失约——
-        # 抛回调用方决定（msgbox 告知手动重启）
-        raise OSError("重启脚本启动失败，请手动重新打开工具")
-    try:
-        import src.main as _m
-        mut = getattr(_m, "mutex", None)
-        if mut:
-            import ctypes
-            ctypes.windll.kernel32.CloseHandle(mut)
-    except Exception:
-        pass
-    time.sleep(0.2)
-    os._exit(0)
 
 
 def soft_report():
