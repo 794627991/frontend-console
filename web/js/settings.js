@@ -1925,9 +1925,14 @@ async function _ddRefreshDataPane(pane) {
     const pathEl = pane.querySelector('#ddCurPath');
     if (!pathEl) return;  // 期间已切到别的分区（pane 被重渲染）
     pathEl.textContent = j.dir;
-    const subs = Object.entries(j.subdirs || {})
-      .map(([k, v]) => `${k} ${v.count} 项 / ${_ddFmtSize(v.size)}`).join(' · ');
-    pane.querySelector('#ddCurStat').textContent = subs + (j.total_size ? ` · 共 ${_ddFmtSize(j.total_size)}` : '');
+    // 2026-11-23（用户令「太丑，没用的显示删掉」）：此前这一行把每个子目录和
+    // 根级 json 逐个列成「name N 项 / 大小 · …」——又长又乱，且那个「共」
+    // 只数了其中几项，和下面「用户数据空间」的总大小对不上，两个数打架。
+    // 现在只显示整个数据目录的真实大小（dir_total = 全量深扫，与下面同一口径）。
+    const _statEl = pane.querySelector('#ddCurStat');
+    if (_statEl) {
+      _statEl.textContent = j.dir_total ? `共 ${_ddFmtSize(j.dir_total)}` : '';
+    }
     pane.querySelector('#ddDefault').textContent = j.default || '';
   } catch(_) {}
   // v3.5.92：存储感知——用户数据空间（可迁移）/锚点（固定，2026-11-23 退役
@@ -1964,7 +1969,9 @@ async function _ddRefreshUsage(pane) {
     // Electron 壳不读不写它；行由后端 targets 生成，这里只需删映射。
     const POLICY = {
       uploads: '按策略：删超半年 + 超量缩至 80%',
-      logs: '按策略：删 7 天前的串口日志',
+      // 2026-11-23 用户令：串口日志工具不替用户判断该不该删——「按策略清理」
+      // 对它不删任何东西，只有用户自己点「全部清空」才会删
+      logs: '不会自动删除，只在你主动「全部清空」时清除',
       idx: '按策略：删 3 天未用的索引',
       ask: '按策略：保留最近 500 个',
       nav: '删除全部代码索引（文件树右键可重建）',
@@ -1985,7 +1992,9 @@ async function _ddRefreshUsage(pane) {
       `</div>`).join('');
     el.innerHTML =
       row('用户数据空间（可迁移）', j.user || {}, '日志 / 笔记 / 附件 / 缓存——随上方迁移走') +
-      row('锚点（服务发现/指针）', j.anchor || {}, 'endpoint / data_dir 指针 / 崩溃取证——位置固定（%APPDATA%），KB 级') +
+      // 2026-11-23 用户令：原「锚点（服务发现/指针）」一行不再显示——指针文件
+      // 已废弃、config 已搬去工具目录 data，锚点里只剩 endpoint.json 与崩溃日志
+      // （几百字节），列出来既没用、描述也不对。
       `<div class="dd-label" style="margin-top:14px;">可清理项（衍生数据 · 笔记/命令库/配置不可触达）</div>` +
       trows +
       `<div id="ddCleanBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;` +
@@ -1995,11 +2004,15 @@ async function _ddRefreshUsage(pane) {
         `<button class="btn ghost" id="ddCleanAll" style="color:#e5484d;">全部清空</button>` +
         `<button class="btn ghost" id="ddCleanCancel">取消</button></div>`;
     const bar = el.querySelector('#ddCleanBar');
+    // 没有「按策略」动作的目标（如串口日志——工具不替用户判断，只在用户主动
+    // 全部清空时才删）：确认条上不显示「按策略清理」按钮，免得点了没反应
+    const NO_POLICY = { logs: true };
     let pending = '';
     el.querySelectorAll('[data-ddclean]').forEach(b => {
       b.onclick = () => {
         pending = b.dataset.ddclean;
         bar.style.display = 'flex';
+        bar.querySelector('#ddCleanPolicy').style.display = NO_POLICY[pending] ? 'none' : '';
         bar.querySelector('#ddCleanTip').innerHTML =
           `清理「${esc((j.targets[pending] || {}).name || pending)}」：${POLICY[pending] || ''}` +
           (DANGER[pending] ? `<br>${DANGER[pending]}` : '');

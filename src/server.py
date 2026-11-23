@@ -2819,9 +2819,18 @@ def api_data_dir_get():
             continue
         subs[fn] = {"exists": True, "count": 1, "size": sz}
         total += sz
+    # dir_total：整个数据目录的真实大小（全量深扫）。2026-11-23 用户令——面板
+    # 只显示这一个数。上面的 total 只数了几个子目录和根级 json，和「存储占用」
+    # 里的用户数据空间对不上；subdirs/total_size 仍原样返回（迁移预检等处在用）。
+    try:
+        from src.data_hygiene import _dir_size as _dds
+        dir_total = _dds(DATA_DIR)
+    except Exception:
+        dir_total = 0
     return jsonify({"ok": True, "dir": DATA_DIR,
                     "default": _st._default_data_dir(),
                     "subdirs": subs, "total_size": total,
+                    "dir_total": dir_total,
                     "home_anchor": HOME_DIR})
 
 @app.route("/api/data_dir/clean", methods=["POST"])

@@ -114,26 +114,23 @@ def usage_stats(force=False):
     ask = os.path.join(st.STATE_DIR, "harness_ask")
     # 2026-11-23（用户令）：原「cache」目标（数据目录 webview_cache\EBWebView，
     # 旧 WebView2 窗口体的缓存）已整体移除——Electron 壳不读不写它，旧目录已清除。
+    # 2026-11-23 用户令「太长了，简化」：目标名只留短名，细节挪到各自的说明文字里
     targets = {
         "uploads": {"path": up, "bytes": _dir_size(up), "name": "会话附件"},
         "logs": {"path": log_dir, "bytes": _dir_size(os.path.join(log_dir))
                  - sum(_dir_size(os.path.join(log_dir, d)) for d in ("idx",) if os.path.isdir(os.path.join(log_dir, d))),
                  "name": "串口日志"},
         "idx": {"path": idx_dirs[0], "bytes": sum(_dir_size(d) for d in idx_dirs),
-                "name": "日志索引（可重建，含 legacy 目录）"},
+                "name": "日志索引"},
         "ask": {"path": ask, "bytes": _dir_size(ask), "name": "提问状态"},
         # a333：代码跳转索引（ctags tags + 白名单 + ELF 符号表——可重建的
         # 衍生数据，手动建/删走文件树右键，存储感知可见可清）
         "nav": {"path": os.path.join(st.DATA_DIR, "nav"),
                 "bytes": _dir_size(os.path.join(st.DATA_DIR, "nav")),
-                "name": "代码跳转索引（各工程符号库）"},
+                "name": "代码索引"},
     }
     data = {
         "user": {"path": st.DATA_DIR, "bytes": _dir_size(st.DATA_DIR)},
-        # 2026-11-23 退役改造：原「工具数据空间(固定 HOME_DIR)」口径已合——
-        # 全部用户数据(含附件/子进程状态)都在数据目录(user 行)；固定不迁的
-        # 只剩锚点(endpoint/指针/崩溃取证，KB 级；config 已搬进数据目录)
-        "anchor": {"path": st.HOME_DIR, "bytes": _dir_size(st.HOME_DIR)},
         "uploads": {"path": up, "bytes": targets["uploads"]["bytes"],
                     "max_bytes": UPLOADS_MAX_BYTES,
                     "max_age_days": UPLOADS_MAX_AGE_S // (24 * 3600)},
@@ -204,17 +201,17 @@ def manual_clean(target, mode):
                     freed += sz
 
     elif target == "logs":
-        log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
-        cutoff = time.time() - 7 * 86400
-        for mt, sz, p in _files_in(log_dir, suffix=".log"):
-            if mode == "policy" and os.path.basename(p).startswith("serial_") \
-                    and mt >= cutoff:
-                continue   # policy：保留 7 天内的串口日志
-            if mode == "policy" and not os.path.basename(p).startswith("serial_"):
-                continue   # policy：只动 serial_* 日志，别的文件不碰
-            if _try_rm(p):
-                removed += 1
-                freed += sz
+        # 2026-11-23 用户令：「按策略：删 7 天前的串口日志」去掉——串口日志
+        # 工具**不替用户判断**该不该删，只在用户自己点「全部清空」时才删。
+        # （后台自动清理 cleanup_uploads 从来只管会话附件，从不碰串口日志。）
+        if mode == "policy":
+            pass                        # 按策略：对串口日志不删任何东西
+        else:
+            log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
+            for mt, sz, p in _files_in(log_dir, suffix=".log"):
+                if os.path.basename(p).startswith("serial_") and _try_rm(p):
+                    removed += 1
+                    freed += sz
 
     elif target == "idx":
         # 轻审R2-2 严重：cleanup_stale_idx(3) 内部只清 legacy BASE_DIR/idx，
