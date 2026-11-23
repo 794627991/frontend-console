@@ -8,6 +8,11 @@
 // 菜单 action，均为运行时调用）。
 'use strict';
 
+  // a570 对抗审计（P2·第十九轮）：本会话已发起取消的推荐 run_id（跨弹层共享）
+  const _deadRuns = new Set();
+  // 与后端 nav_index._TMP_NAMES 同口径（walk 无条件硬剪）
+  const _TMP_L = new Set(['tmp', 'temp', 'tmpdir', 'tempdir']);
+
   function monacoWordAt(model, position) {
     // 实测部分列位/语言下 getWordAtPosition 返回空——行内容手动提词兜底
     try {
@@ -820,6 +825,16 @@
         fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
       }
     }
+    // a570 对抗审计（P2·第十六轮）：切目录时三态树弹层必须一起收掉。
+    // 原实现只移除 navIdxPanel/navTierDialog，navScopePick 留成孤儿层——
+    // 它盖在新面板上、仍绑定已脱离 DOM 的旧 card，「建库」只写进死对象，
+    // 用户以为选好了实际没生效。
+    const _sp2 = document.getElementById('navScopePick');
+    if (_sp2) {
+      try { if (typeof _sp2._cleanup === 'function') _sp2._cleanup(true); }
+      catch (_e) { /* 忽略 */ }
+      if (_sp2.parentNode) _sp2.parentNode.removeChild(_sp2);
+    }
     const el = document.getElementById('navIdxPanel');
     if (el) el.remove();
   }
@@ -898,30 +913,50 @@
     const box = _h('div');
     box.style.cssText = 'margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;font-size:12px;';
     const sc = j.scope || null;
+    // a570 对抗审计（P2·第十七轮）：本次面板内已清除工程根配置
+    let _scCleared = false;
     const head = _h('div');
     head.style.cssText = 'margin-bottom:6px;';
-    const _headTxt = (t) => { head.textContent = t; };
+    const _headTxt = (t) => {
+      head.textContent = t;
+      head.style.color = '';   // a570 对抗审计：复用同一 head 元素，
+                               // 不复位颜色会把正常状态渲染成告警色
+    };
+    const _withCounts = (cfg) => {
+      const _d = (cfg && cfg.dirs) || {};
+      const _c = { whitelist: 0, full: 0, off: 0 };
+      // a570 对抗审计（P2·第二十轮）：与后端 `_norm_dirs` 同口径——导入的
+      // 合法值可能带空格/大写（" FULL "），精确匹配会显示「白 0 · 全 0」。
+      for (const k in _d) {
+        const _v = String(_d[k]).trim().toLowerCase();
+        if (_c[_v] !== undefined) _c[_v]++;
+      }
+      return Object.assign({}, cfg, { state_counts: _c });
+    };
     const _headCfg = (cfg, srcLabel) => {
       head.textContent = '';
+      head.style.color = '';   // 复位告警色（同 _headTxt）
       head.append('收录范围：');
       const b = _h('b', cfg.name || '未命名范围');
       head.appendChild(b);
-      head.append('（' + (cfg.tier || '') + '）——' + srcLabel +
-        ((cfg.include && cfg.include.length) ? '，' + cfg.include.length + ' 目录' : ''));
+      // a570：v2 摘要 = 白/全/不勾 计数
+      const _c = cfg.state_counts || {};
+      head.append('（' + (cfg.mode || 'manual') + '）——' + srcLabel +
+        '，白 ' + (_c.whitelist || 0) + ' · 全 ' + (_c.full || 0) +
+        ' · 不勾 ' + (_c.off || 0));
     };
     if (sc && sc.source === 'project') {
-      _headCfg(sc, '检测到工程配置 .fcpk-scope.json');
-    } else if (sc && sc.source === 'saved') {
-      _headCfg(sc, '上次保存的范围（换机不丢，删索引不影响）');
+      _headCfg(sc, '读取工程配置 .fcpk-scope.json');
+    } else if (sc && sc.source === 'v1-deprecated') {
+      _headTxt('收录范围：旧版（v1）配置已废弃——下次建库会按推荐重新生成并覆盖');
+      head.style.color = 'var(--neon-orange,#d29922)';
     } else if (sc && String(sc.source || '').startsWith('bad:')) {
-      _headTxt('收录范围：配置解析失败（' + sc.source.slice(4) + '）——将按全量');
+      _headTxt('收录范围：配置解析失败（' + sc.source.slice(4) + '）——将按推荐重新生成');
       head.style.color = 'var(--neon-red,#e5484d)';
     } else if (j.scope_detect && j.scope_detect.kind === 'sbuilder') {
-      // a400/a402：零配置形态识别（用户定调：只显示检测到 sbuilder 方案，
-      // 不写死平台模板）——产物树只读 .cmd/.o 不索引；档位按产物规模自动判
-      _headTxt('检测到 sbuilder 方案（产物外挂 sbuilder/output/build，只读产物不索引副本）——自动档按产物规模判白名单/全量；零产物目录如未收录可加 fallback_full');
+      _headTxt('检测到 buildroot/sbuilder 方案（产物外挂，只读 .cmd/.o 不索引副本）——点「选择目录…」查看推荐结果');
     } else {
-      _headTxt('收录范围：未配置——小工程自动全量；大工程建议导入 JSON 或手选目录（跳过 sbuilder/output 这类产物外挂树，实测快 8 倍）');
+      _headTxt('收录范围：未配置——点「选择目录…」由推荐器给出三态树，确认后建库');
     }
     box.appendChild(head);
     const row = _h('div');
@@ -931,18 +966,65 @@
     sel.style.cssText = 'padding:2px 6px;font-size:11px;';
     sel.title = '收录范围档位';
     const OPTS = [
-      ['follow', (sc && sc.source === 'project') ? '跟随工程配置' : (sc && sc.source === 'saved') ? '跟随已存范围' : '自动'],
-      ['whitelist', (j.scope_detect && j.scope_detect.kind === 'sbuilder')
-        ? '白名单（sbuilder 方案）' : '白名单'],
-      // a409：白名单优先——全量档仅在收录集零中间文件时实际生效
-      ['full', '全量（仅收录集零中间文件时生效）'],
+      ['follow', (sc && sc.source === 'project') ? '读取工程配置' : '自动（按需推荐）'],
+      ['whitelist', '白名单（只收编译产物推导出的源码）'],
+      ['full', '全量（整树收录）'],
     ];
     const renderSel = () => {
       const cfg = card._scopeCfg;
-      sel.innerHTML = OPTS.concat(cfg ? [['cfg', '本次导入/手选']] : [])
-        .map(([v, n2]) => '<option value="' + v + '"' + ((sel.value || 'follow') === v ? ' selected' : '') + '>' + n2 + '</option>').join('');
+      // a570 对抗审计（P2·第十七轮）：重建 options 前必须记下当前选择——
+      // innerHTML 会重置 sel.value 到第一项，原实现靠「(sel.value ||
+      // 'follow') === v」在重建**过程中**读，读到的是已被清空的值。
+      const _cur = sel.value || 'follow';
+      const _opts = OPTS.map(([v, n2]) => [v, v === 'follow' && _scCleared
+        ? '自动（按需推荐）' : n2]);
+      sel.innerHTML = _opts.concat(cfg ? [['cfg', '本次导入/手选']] : [])
+        .map(([v, n2]) => '<option value="' + v + '">' + n2 + '</option>').join('');
+      sel.value = (_cur === 'cfg' && !cfg) ? 'follow' : _cur;
+      if (!sel.value) sel.value = 'follow';
     };
     renderSel();
+    // a570 对抗审计（P2·第十六轮）：原下拉无 onchange，头部文字停在打开时的
+    // 状态（「读取工程配置」），切到「全量」后头部仍那样写，展示与生效相反。
+    const _syncSelHead = () => {
+      const v = sel.value || 'follow';
+      if (v === 'cfg' && card._scopeCfg) {
+        _headCfg(_withCounts(card._scopeCfg), '本次导入/手选，建库成功后写入工程根');
+        return;
+      }
+      if (v === 'whitelist') {
+        _headTxt('收录范围：白名单档（按编译产物推导源码，整树统一）——点「建立索引」生效'
+          + '（已有三态配置会被覆盖并备份为 .prev.bak）');
+        return;
+      }
+      if (v === 'full') {
+        _headTxt('收录范围：全量档（整树收录）——点「建立索引」生效'
+          + '（已有三态配置会被覆盖并备份为 .prev.bak）');
+        return;
+      }
+      // follow：回到打开面板时读到的状态
+      // a570 对抗审计（P2·第十七轮）：「清除已存范围」后 sc 快照已失效，
+      // 继续按它写「读取工程配置」与载荷(null)脱钩——这里按已清除处理。
+      if (_scCleared) {
+        _headTxt('收录范围：未配置（已清除已存范围）——小工程自动全量，'
+          + '或点「选择目录…」重新配置');
+        return;
+      }
+      if (sc && sc.source === 'project') {
+        _headCfg(sc, '读取工程配置 .fcpk-scope.json（建库按此范围）');
+      } else if (sc && sc.source === 'v1-deprecated') {
+        _headTxt('收录范围：旧版（v1）配置已废弃——下次建库会按推荐重新生成并覆盖');
+        head.style.color = 'var(--neon-orange,#d29922)';
+      } else if (sc && String(sc.source || '').startsWith('bad:')) {
+        _headTxt('收录范围：配置解析失败（' + sc.source.slice(4) + '）——将按推荐重新生成');
+        head.style.color = 'var(--neon-red,#e5484d)';
+      } else if (j.scope_detect && j.scope_detect.kind === 'sbuilder') {
+        _headTxt('检测到 buildroot/sbuilder 方案（产物外挂，只读 .cmd/.o 不索引副本）——点「选择目录…」查看推荐结果');
+      } else {
+        _headTxt('收录范围：未配置——点「选择目录…」由推荐器给出三态树，确认后建库');
+      }
+    };
+    sel.onchange = _syncSelHead;
     row.appendChild(sel);
     // 导入 JSON（a398#9：导入只挂 cfg+切档，不锁死下拉）
     const bImp = _h('button', '导入 JSON', false);
@@ -959,39 +1041,224 @@
         let cfg;
         try { cfg = JSON.parse(t); }
         catch (e) { showBanner('JSON 解析失败：' + e, 4000, true); return; }
-        if (!cfg || !Array.isArray(cfg.include) || !cfg.include.length) {
-          showBanner('配置缺 include 数组（内网报告 §五 格式）', 4000, true); return; }
-        cfg.tier = cfg.tier === 'full' ? 'full' : 'whitelist';
-        card._scopeCfg = cfg;
-        renderSel();            // a415R2 N12：先建选项再赋值（原顺序下拉仍显示「自动」）
+        // a570：只认 v2。v1 同文件会被后端当「旧格式已废弃」，此处直接拦下
+        // 比让用户建库后才发现更清楚。
+        // a570 对抗审计（P2·第十七轮）：与后端 `_norm_scope_v2` **逐字对齐**
+        // ——dirs 缺失/null 属合法（后端 `_norm_dirs(None)→{}`），此前前端
+        // 一律拒绝，导致「前端拒/后端放行」的过度拦截。
+        if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)
+          || cfg.version !== 2) {
+          showBanner('配置必须是 v2 格式（version:2 + dirs 对象）；旧 v1 格式已废弃',
+            5000, true);
+          return;
+        }
+        if (cfg.dirs !== undefined && cfg.dirs !== null
+          && (typeof cfg.dirs !== 'object' || Array.isArray(cfg.dirs))) {
+          showBanner('dirs 必须是对象（{相对路径: whitelist|full|off}）',
+            5000, true);
+          return;
+        }
+        const _dirsIn = cfg.dirs || {};
+        // dirs 的值必须全是合法状态（后端 strip+lower 后比对）
+        // a570 对抗审计（P2·第十八轮）：值必须是字符串——后端 `_norm_dirs`
+        // 要求 isinstance(v, str)，而 String(["full"]) 会得到 "full" 让
+        // 数组值被前端放行、建库才 400。
+        const _badV = Object.keys(_dirsIn).find(
+          k => typeof _dirsIn[k] !== 'string'
+            || ['whitelist', 'full', 'off'].indexOf(
+              _dirsIn[k].trim().toLowerCase()) < 0);
+        if (_badV !== undefined) {
+          showBanner('dirs 状态非法：' + _badV + ' = ' + _dirsIn[_badV] +
+            '（只认 whitelist/full/off）', 5000, true);
+          return;
+        }
+        // a570 对抗审计（P2·第三轮）：未知字段会被后端 `_norm_scope_v2`
+        // 整体拒绝（「未知字段：…」）——在建库前就拦下并指名字段，比让
+        // 用户在点「建立索引」后看到一条含糊的错误更清楚。
+        const _okKeys = ['version', 'name', 'mode', 'arch', 'dirs',
+          'artifact_roots', 'exclude_names'];
+        const _badKeys = Object.keys(cfg).filter(k => _okKeys.indexOf(k) < 0);
+        if (_badKeys.length) {
+          showBanner('配置含未知字段：' + _badKeys.slice(0, 5).join('、') +
+            '（只认 ' + _okKeys.join('/') + '）', 6000, true);
+          return;
+        }
+        // 键的形态：绝对路径 / 盘符 / .. / 空键后端都会拒，提前拦
+        // a570 对抗审计（P2·第十六轮）：反斜杠必须先归一（后端 _norm_dirs
+        // 是 replace("\\","/") 之后才校验），否则 `a\..\b` 在这里被放行、
+        // 到建库才 400。值与列表项同样按后端口径预校验。
+        // a570 对抗审计（P2·第十七轮）：完全照抄后端步骤——先 strip 再归一，
+        // 然后判绝对路径/空/../冒号。原来少了 strip，`{"  ":"off"}` 这类
+        // 空白键被放行到建库才 400。
+        const _normK = (k) => String(k).trim().replace(/\\/g, '/');
+        // a570 对抗审计（P1·第十九轮）：根键 ""/"." 是合法形态（后端
+        // `_norm_dirs` 接受并归一成 ""，用于表达「工程根自身」的收录状态）。
+        // 前端原先一律拒，导致**后端自己导出的配置导不回来**。
+        const _isRootKey = (k) => k === '' || k === '.';
+        const _badK = Object.keys(_dirsIn).find(
+          k => {
+            if (_isRootKey(k)) return false;
+            const raw = _normK(k);
+            // a570 对抗审计（P2·第十九轮）：tmp 类目录 walk 里无条件硬剪，
+            // 显式配它必然是死配置——与后端 `_norm_dirs` 同口径直接拒。
+            if (raw.split('/').some(x => _TMP_L.has(x.toLowerCase()))) return true;
+            if (raw.charAt(0) === '/') return true;
+            const p2 = raw.replace(/^\/+|\/+$/g, '');
+            if (p2 === '' || p2 === '.') return true;
+            const segs = p2.split('/').filter(s => s && s !== '.');
+            return !segs.length || segs.some(s => s === '..' || s.indexOf(':') >= 0);
+          });
+        if (_badK !== undefined) {
+          showBanner('dirs 含非法路径：' + JSON.stringify(_badK), 6000, true);
+          return;
+        }
+        // mode/arch 枚举 + mode=full/whitelist 时不允许 dirs（后端 _norm_scope_v2 同判）
+        const _mode = String(cfg.mode || 'manual').trim().toLowerCase();
+        if (['whitelist', 'manual', 'full'].indexOf(_mode) < 0) {
+          showBanner('mode 只认 whitelist/manual/full（当前 ' + cfg.mode + '）',
+            6000, true);
+          return;
+        }
+        const _arch = String(cfg.arch || 'auto').trim().toLowerCase();
+        if (['auto', 'arm', 'arm64'].indexOf(_arch) < 0) {
+          showBanner('arch 只认 auto/arm/arm64（当前 ' + cfg.arch + '）', 6000, true);
+          return;
+        }
+        // a570 对抗审计（P1·第十九轮）：根键例外——它只表达「根自身」，
+        // 与 mode 同义，后端 `_norm_scope_v2` 也给它开了例外。
+        const _nonRoot = Object.keys(_dirsIn).filter(k => !_isRootKey(k));
+        if ((_mode === 'whitelist' || _mode === 'full') && _nonRoot.length) {
+          showBanner('mode=' + _mode + ' 时全树统一，不能同时给 dirs 覆盖'
+            + '（要按目录配置请用 mode=manual）', 6000, true);
+          return;
+        }
+        // a570 对抗审计（P2·第二十轮）：`.` 与 `""` 是同一个根槽——同时出现时
+        // 后端按 dict 顺序让后者覆盖前者，前端若只校验第一个就会「导入放行、
+        // 建库 400」。直接拒，让用户明确选一个。
+        const _rootKeys = Object.keys(_dirsIn).filter(k => _isRootKey(k));
+        if (_rootKeys.length > 1) {
+          showBanner('根状态只能写一个键（"." 或 ""，不要同时给）：'
+            + _rootKeys.join('、'), 6000, true);
+          return;
+        }
+        if (_mode === 'whitelist' || _mode === 'full') {
+          // 与后端 `_norm_scope_v2` 同判：根键存在时取值必须等于 mode
+          const _rk2 = _rootKeys[0];
+          if (_rk2 !== undefined) {
+            const _rv = String(_dirsIn[_rk2]).trim().toLowerCase();
+            if (_rv !== _mode) {
+              showBanner('mode=' + _mode + ' 与根状态 dirs["."]=' + _dirsIn[_rk2]
+                + ' 矛盾', 6000, true);
+              return;
+            }
+          }
+        }
+        // 路径列表（artifact_roots 可多段；exclude_names 只认单段目录名）
+        for (const _key of ['artifact_roots', 'exclude_names']) {
+          if (cfg[_key] === undefined || cfg[_key] === null) continue;
+          if (!Array.isArray(cfg[_key])) {
+            showBanner(_key + ' 必须是数组', 6000, true);
+            return;
+          }
+          for (const _it of cfg[_key]) {
+            // 后端 `_lst`：非字符串/空白项**跳过**（不拒），空 segs 也跳过
+            if (typeof _it !== 'string' || !_it.trim()) continue;
+            const _p = _normK(_it);
+            const _sg = _p.split('/').filter(s => s && s !== '.');
+            if (_p.charAt(0) === '/'
+              || _sg.some(s => s === '..' || s.indexOf(':') >= 0)
+              || (_key === 'exclude_names' && _sg.length > 1)) {
+              showBanner(_key + ' 含非法路径：' + JSON.stringify(_it), 6000, true);
+              return;
+            }
+          }
+        }
+        card._scopeCfg = Object.assign({
+          name: '导入 ' + (cfg.name || '未命名'), mode: 'manual',
+          arch: 'auto', dirs: {}, artifact_roots: [], exclude_names: [],
+        }, cfg);
+        renderSel();
         sel.value = 'cfg';
-        _headCfg(cfg, '导入的 JSON，建库成功后保存复用');
-        showBanner('已载入范围配置：' + (cfg.name || '未命名') + '，点「建立索引」生效', 3500);
+        _syncSelHead();
+        // a570 对抗审计（P2·第五轮）：导入的 cfg 没有 state_counts，
+        // _headCfg 会显示「白 0 · 全 0 · 不勾 0」。用 dirs 现算一份。
+        _headCfg(_withCounts(card._scopeCfg),
+          '导入的 JSON，建库成功后写入工程根');
+        showBanner('已载入范围配置，点「建立索引」生效', 3500);
       }).catch(e => showBanner('读取失败: ' + e, 4000, true));
     };
     row.appendChild(bImp); row.appendChild(fi);
+    // a570 对抗审计（P2·第十六轮）：只有导入没有导出——用户无法备份当前
+    // 范围配置，只能去工程根翻 .fcpk-scope.json。
+    // a570 对抗审计（P1·第十七轮）：导出必须**走后端落盘**。`<a download>`
+    // 在 WebView2 里永远失败：init.js 捕获阶段对所有 a[href] 无条件
+    // preventDefault（防就地导航），且 pywebview 默认 ALLOW_DOWNLOADS=False
+    // ——两处都会吞掉下载，前端却无条件弹「已导出」（backend-log.js 已踩过
+    // 同一个坑）。另外 status 下发的 scope 只是摘要（无 dirs/arch/
+    // exclude_names，artifact_roots 还截断），拿它导出会丢配置。
+    // 这里改走 GET /api/nav/scope_export：后端读真实配置存盘并回传路径。
+    const bExp = _h('button', '导出 JSON', false);
+    bExp.className = 'btn ghost';
+    bExp.style.cssText = 'padding:2px 10px;font-size:11px;';
+    bExp.onclick = () => {
+      // a570 对抗审计（P2·第十八轮）：导出读的是**磁盘上已落盘的**配置，
+      // 不是当前面板里尚未建库的改动——必须说清楚，否则用户以为导出的是
+      // 刚导入/手选的那份。
+      const _sel = sel.value || 'follow';
+      if (_sel === 'cfg' || _sel === 'whitelist' || _sel === 'full') {
+        showBanner('导出的是工程根已落盘的配置（当前下拉档位尚未建库），'
+          + '若要导出本次选择请先建立索引', 7000, true);
+      }
+      showBanner('正在导出…', 1500);
+      fetch('/api/nav/scope_export', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: path }),
+      }).then(r => r.json()).then(j => {
+        if (j && j.ok) {
+          showBanner('已导出到 ' + j.path + '，可再次「导入 JSON」还原', 7000);
+        } else {
+          showBanner('导出失败：' + ((j && j.err) || '未知错误'), 5000, true);
+        }
+      }).catch(() => showBanner('导出失败（后端无响应）', 4000, true));
+    };
+    row.appendChild(bExp);
     // 目录树多选
     const bPick = _h('button', '选择目录…', false);
     bPick.className = 'btn ghost';
     bPick.style.cssText = 'padding:2px 10px;font-size:11px;';
-    bPick.onclick = () => _scopePick(path, dirs => {
-      if (!dirs || !dirs.length) return;
-      // a409（内网报告·用户令「只要有白名单一定用白名单」）：手选目录
-      // **不指定档位**（原写死 full=私自全建，实测 tags 撑到数百 MB）——
-      // 后端按收录集有无中间文件判：有→白名单，零→全量（唯一降档）。
-      // a415R3 BUG-2：勾「整个目录」根行时 dirs=[''] 映射成 '.'
-      card._scopeCfg = { version: 1, name: '手选 ' + dirs.length + ' 目录',
-        tier: 'auto', manual: true, include: dirs.map(d => d || '.'),
-        exclude_names: ['test', 'release_tmp'] };
-      renderSel();            // a415R2 N12：同上
+    bPick.onclick = () => _scopePick(path, res => {
+      if (!res) return;
+      const _n = Object.keys(res.dirs || {}).length;
+      // a570：三态树返回 {dirs, artifact_roots, mode, rootDefault}，
+      // 直接构成 v2 scope（后端 _norm_scope_v2 校验同形）
+      card._scopeCfg = {
+        version: 2,
+        name: '手选 ' + _n + ' 个目录',
+        mode: 'manual',
+        arch: 'auto',
+        dirs: res.dirs || {},
+        artifact_roots: res.artifact_roots || [],
+        exclude_names: [],
+      };
+      renderSel();
       sel.value = 'cfg';
-      _headTxt('收录范围：手选 ' + dirs.length + ' 目录（有中间文件只索引白名单，零中间文件才全量；自动排除 test/release_tmp）——' +
-        dirs.slice(0, 4).join('、') + (dirs.length > 4 ? ' 等' : ''));
-      showBanner('已选 ' + dirs.length + ' 个目录（整目录递归收录），点「建立索引」生效', 3500);
+      // a570 对抗审计（P1·第十五轮）：**不能**把 state_counts 写回
+      // `_scopeCfg`——_scopeSel 原样把它当载荷，后端 `_norm_scope_v2` 会以
+      // 「未知字段：state_counts」整单拒绝，建库必失败。只在展示处临时包裹。
+      _headTxt('收录范围：三态树（白 ' +
+        Object.values(res.dirs || {}).filter(v => v === 'whitelist').length +
+        ' · 全 ' + Object.values(res.dirs || {}).filter(v => v === 'full').length +
+        ' · 不勾 ' + Object.values(res.dirs || {}).filter(v => v === 'off').length +
+        (res.artifact_roots && res.artifact_roots.length
+          ? ' · 仅产物源 ' + res.artifact_roots.length : '') +
+        '）——点「建立索引」生效');
+      showBanner('已确认收录范围，点「建立索引」生效', 3500);
     });
     row.appendChild(bPick);
-    // 清除已存范围（a398#10：有 saved 才显示）
-    if (sc && sc.source === 'saved') {
+    // 清除已存范围。a570 对抗审计：判据原为 source==='saved'（v1 时代），
+    // v2 下 load_scope 只回 project / v1-deprecated / bad:*，该入口永不可见。
+    if (sc && (sc.source === 'project' || sc.source === 'v1-deprecated'
+      || String(sc.source || '').startsWith('bad:'))) {
       const bClr = _h('button', '清除已存范围', false);
       bClr.className = 'btn ghost';
       bClr.style.cssText = 'padding:2px 10px;font-size:11px;color:#e5484d;';
@@ -1003,8 +1270,10 @@
           const d2 = await r.json();
           if (d2.ok) {
             delete card._scopeCfg;
+            _scCleared = true;
             renderSel();
-            _headTxt('收录范围：未配置——小工程自动全量');
+            sel.value = 'follow';
+            _headTxt('收录范围：未配置（已清除已存范围）——小工程自动全量');
             showBanner('已清除保存的范围（回到自动/全量）', 3000);
           } else if (d2.err) showBanner('清除失败：' + d2.err, 3000, true);
         } catch (e) { showBanner('清除失败: ' + e, 3000, true); }
@@ -1016,15 +1285,33 @@
     card._scopeSel = () => {
       const cfg = card._scopeCfg || null;
       const v = sel.value || 'follow';
-      if (v === 'cfg' && cfg) return { scope: cfg };
-      if (v === 'full') return { scope: { version: 1, name: '全量', tier: 'full', include: ['.'] } };
-      if (v === 'whitelist') {
-        if (cfg) return { scope: Object.assign({}, cfg, { tier: 'whitelist' }) };
-        return { scope_tier: 'whitelist' };   // 后端发现工程/已存配置并强制档
+      // a570 对抗审计（P1·第十五轮）：只挑 v2 认的字段，避免任何展示用
+      // 附加键（state_counts 等）随载荷发给后端导致整单被拒。
+      if (v === 'cfg' && cfg) {
+        return { scope: {
+          version: 2, name: cfg.name, mode: cfg.mode || 'manual',
+          arch: cfg.arch || 'auto', dirs: cfg.dirs || {},
+          artifact_roots: cfg.artifact_roots || [],
+          exclude_names: cfg.exclude_names || [],
+        } };
       }
-      // follow：后端自动发现（工程>已存>全量）。a415R2 N12：导入/手选的
-      // cfg 只经 'cfg' 档生效——切回 follow 即放弃本次导入
-      return null;   // follow 且无导入：后端自动发现（工程>已存>全量）
+      // a570：v2 三档。全量/白名单档由后端按 mode 展开，不再带 include。
+      if (v === 'full') return { scope: { version: 2, name: '全量',
+        mode: 'full', arch: 'auto', dirs: {}, artifact_roots: [],
+        exclude_names: [] } };
+      if (v === 'whitelist') {
+        // a570 对抗审计：原 `Object.assign({}, cfg, {mode:'whitelist'})` 保留
+        // 了 dirs 里的显式 full/off 节点，实际是「白名单默认 + 手选覆盖」，
+        // 与下拉文案承诺的纯白名单不一致。切档即清空显式覆盖。
+        // a570 对抗审计（P2·第二十轮）：切「白名单」档必须**同时清空
+        // artifact_roots**——只清 dirs 会让残留产物源目录（_inside_art）
+        // 只收 .cmd/.o，其中源码被静默剪掉，与「纯白名单」文案不符。
+        if (cfg) return { scope: Object.assign({}, cfg,
+          { mode: 'whitelist', dirs: {}, artifact_roots: [] }) };
+        return { scope_tier: 'whitelist' };   // 后端形态检测补产物源
+      }
+      // follow：读工程根 .fcpk-scope.json（v1 会被后端当无配置，走推荐器）
+      return null;
     };
     return box;
   }
@@ -1034,140 +1321,634 @@
   // a398（审计#28）四修：顶层去重复渲染/折叠根隐藏子项/勾整根后子项
   // 继承锁定（inh!==null 判空串）/条目超限提示
   function _scopePick(root, cb) {
+    // a570 对抗审计（P2·第四轮）：单实例。原实现连点两次「选择目录…」会
+    // 叠出两个弹层共享同一后端任务，关闭任一个都会取消该 root 的推荐；
+    // 且切工程时旧弹层不会被 _closePanel 摘除，配置会静默落到旧 card。
+    // a570 对抗审计（P1·第五轮）：移除旧弹层必须**同时停它的轮询**——
+    // `_pollT` 是每个 _scopePick 各自的闭包变量，光 removeChild 会让旧
+    // interval 继续每 600ms 打后端、并对 detached 节点 render，还把全局
+    // 推荐槽占着（B 弹层只能看到「属于其他工程」）。
+    // 旧弹层在创建时把清理函数挂到元素上，这里统一调用。
+    const _prev = document.getElementById('navScopePick');
+    if (_prev) {
+      try { if (typeof _prev._cleanup === 'function') _prev._cleanup(true); }
+      catch (_e) { /* 忽略 */ }
+      if (_prev.parentNode) _prev.parentNode.removeChild(_prev);
+    }
     const ov = document.createElement('div');
     ov.id = 'navScopePick';
-    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:10001;display:flex;align-items:center;justify-content:center;';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10001;display:flex;align-items:center;justify-content:center;';
     const card = _h('div');
-    card.style.cssText = 'width:540px;max-width:94vw;padding:14px 16px;border-radius:12px;background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.45);';
-    const t = _h('div', '选择收录目录');
+    card.style.cssText = 'width:620px;max-width:96vw;padding:14px 16px;border-radius:12px;' +
+      'background:var(--bg-panel);border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.45);';
+    const t = _h('div', '收录范围配置');
     t.style.cssText = 'font-weight:600;margin-bottom:4px;';
     card.appendChild(t);
-    const hint = _h('div', '有编译产物的目录按白名单精准收录（快且准）；零产物目录自动整目录兜底；低覆盖目录建库日志会提示。勾了父目录，子目录随父收录；要细化子目录，先取消父目录。自动排除 test/release_tmp。');
-    hint.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:8px;';
-    card.appendChild(hint);
+    const head2 = _h('div', '按目录设置收录方式：白名单（按编译产物精准推导）／全量（整树收录）／不勾（不收录）。' +
+      '子目录默认继承最近的显式父级，可在子目录上覆盖。');
+    head2.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.6;';
+    card.appendChild(head2);
+
+    // ---- 顶部：推荐状态 + 操作 ----
+    const top = _h('div');
+    top.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;';
+    const stLab = _h('span', '尚未推荐');
+    stLab.style.cssText = 'flex:1;font-size:11px;color:var(--muted);min-width:160px;';
+    const bRec = _h('button', '重新推荐', false);
+    bRec.className = 'btn ghost';
+    bRec.style.cssText = 'padding:2px 10px;font-size:11px;';
+    const bExpand = _h('button', '全部展开', false);
+    bExpand.className = 'btn ghost';
+    bExpand.style.cssText = 'padding:2px 10px;font-size:11px;';
+    top.appendChild(stLab); top.appendChild(bExpand); top.appendChild(bRec);
+    card.appendChild(top);
+
+    // 搜索框（G10 有上千目录，必需）
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.placeholder = '过滤目录名…';
+    search.spellcheck = false;
+    search.style.cssText = 'width:100%;margin-bottom:6px;padding:4px 8px;font-size:12px;' +
+      'background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;';
+    card.appendChild(search);
+
     const tree = _h('div');
-    tree.style.cssText = 'max-height:330px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px;font-size:12px;';
+    tree.style.cssText = 'max-height:400px;overflow:auto;border:1px solid var(--border);' +
+      'border-radius:8px;padding:6px;font-size:12px;';
     card.appendChild(tree);
+
+    // 仅产物源汇总区
+    const artBox = _h('div');
+    artBox.style.cssText = 'margin-top:8px;padding:6px 8px;border:1px dashed var(--border);' +
+      'border-radius:6px;font-size:11px;';
+    card.appendChild(artBox);
+
     const foot = _h('div');
     foot.style.cssText = 'margin-top:10px;display:flex;gap:8px;justify-content:flex-end;align-items:center;';
     const cnt = _h('span', '');
     cnt.style.cssText = 'margin-right:auto;font-size:11px;color:var(--muted);';
     foot.appendChild(cnt);
-    const bClr = _h('button', '清空');
+    const bClr = _h('button', '全部清除');
     bClr.className = 'btn ghost';
     const bCancel = _h('button', '取消');
     bCancel.className = 'btn ghost';
-    const bOk = _h('button', '确定收录');
+    const bOk = _h('button', '建库');
     bOk.className = 'btn primary';
     foot.appendChild(bClr); foot.appendChild(bCancel); foot.appendChild(bOk);
     card.appendChild(foot);
+
     ov.appendChild(card);
-    ov.addEventListener('mousedown', e => { if (e.target === ov) ov.remove(); });
-    document.body.appendChild(ov);
-    const sel = new Set();        // 已勾目录 rel 集（''=整个根）
-    const expanded = new Set();   // 已展开目录
-    const kids = {};              // rel → {dirs:[], files:n, truncated}（懒加载缓存）
-    const ancSel = d => {
-      if (sel.has('')) return '';
-      if (sel.has(d)) return d;
-      const parts = d ? d.split('/') : [];
-      for (let i = parts.length - 1; i > 0; i--) {
-        const p = parts.slice(0, i).join('/');
-        if (sel.has(p)) return p;
+    // a570 对抗审计（P2·第十六轮）：本弹层这一轮推荐任务的 run_id。关闭时
+    // 带着它取消——同工程快速关/开时，旧弹层的 cancel 不会误杀新任务。
+    let _runId = '';
+    // a570 对抗审计：关闭弹层必须停轮询并请求后端取消——否则推荐任务
+    // 会继续跑完（最长 300s/顶层目录），把槽霸占住让别的工程无法推荐，
+    // 且 orphan interval 一直对已脱离 DOM 的节点执行 render。
+    // a570 对抗审计（P2·第十七轮）：关闭时必须递增 epoch——否则启动 POST
+    // 还在途时关闭，POST 返回后 `_myEpoch === _recEpoch` 成立，`_poll()` 会
+    // 被重新拉起来（每 600ms 打后端、对已脱离 DOM 的树 render），而用户再
+    // 没有取消入口，只能等后端守护超时。
+    const _closePick = (doCancel) => {
+      _stopPoll();
+      _recEpoch++;
+      if (doCancel && _runId) {
+        _deadRuns.add(_runId);
+        fetch('/api/nav/scope_recommend_cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: root, run_id: _runId }),
+        }).catch(() => {});
       }
-      return null;
+      if (ov.parentNode) ov.parentNode.removeChild(ov);
     };
-    const syncCnt = () => {
-      cnt.textContent = sel.size ? ('已选 ' + sel.size + ' 个目录' +
-        (sel.has('') ? '（整个目录）' : '')) : '未选';
+    // 供「单实例守卫」在移除旧弹层时调用（停轮询 + 取消该 root 的任务）
+    ov._cleanup = _closePick;
+    ov.addEventListener('mousedown', e => {
+      if (e.target === ov) _closePick(true);
+    });
+    document.body.appendChild(ov);
+
+    // ---- 状态 ----
+    // dirs: rel -> 'whitelist'|'full'|'off'  （只存显式节点）
+    const dirs = {};
+    const arts = new Set();        // artifact_roots（仅产物源）
+    // a570 对抗审计（P1·第十六轮）：区分「用户手改」与「上一次推荐的产物」。
+    // 原实现合并时拿整份 dirs 当手改，第二次推荐对已有目录全部失效且
+    // banner 谎称「已保留 N 个手动目录」。_userSet 只记用户亲手写的键。
+    const _userSet = new Set();
+    // a570 对抗审计（P2·第四轮）：记录用户**显式取消**的产物源。原只做
+    // 「保留新增的」单向合并，用户取消勾选后被下一次推荐结果静默覆盖。
+    const artsOff = new Set();
+    // a570 对抗审计（P2·第十七轮）：区分「用户手勾的产物源」与「推荐产出的」
+    const _userArts = new Set();
+    const expanded = new Set(['']); // 已展开 rel
+    const kids = {};               // rel -> {dirs:[{name,rel,sub}], files, truncated}
+    const counts = {};             // rel -> {src,code,o,cmd,state,reason,warn}
+    let rootDefault = 'whitelist';
+    let recNodes = null;           // recommend_scope 返回的 nodes（含三元组）
+
+    // 继承：向上找最近显式祖先
+    // a570 对抗审计（P1）：dirs 的键一律 lower——后端 `_norm_dirs` 归一成
+    // 小写、推荐器下发的也是小写，而树上 rel 来自磁盘（`Kernel`）。不统一
+    // 会让推荐结果全部显示成「继承自根默认」，用户按所见确认却按 off/full
+    // 剪枝。`kids` 仍用磁盘真实大小写（向后端请求目录时大小写要准）。
+    const _k = (rel) => (rel || '').toLowerCase();
+    const _ancState = (rel) => {
+      let cur = _k(rel);
+      while (true) {
+        if (Object.prototype.hasOwnProperty.call(dirs, cur)) return { st: dirs[cur], from: cur };
+        if (!cur) return { st: rootDefault, from: null };
+        cur = cur.includes('/') ? cur.slice(0, cur.lastIndexOf('/')) : '';
+      }
     };
+    const _effState = (rel) => _ancState(rel).st;
+
+    const _fmtN = (n) => {
+      n = Number(n) || 0;
+      if (n >= 1e4) return (n / 1e4).toFixed(1) + 'W';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+      return String(n);
+    };
+
+    const _syncCounts = () => {
+      let wl = 0, fu = 0, of = 0;
+      // 统计「显式节点 + 根默认」的分布（粗略：以显式节点计）
+      for (const k in dirs) {
+        if (dirs[k] === 'whitelist') wl++;
+        else if (dirs[k] === 'full') fu++;
+        else of++;
+      }
+      const files = (recNodes || []).reduce((a, n) => a + (n.code || 0), 0);
+      cnt.textContent = '白 ' + wl + ' · 全 ' + fu + ' · 不勾 ' + of +
+        (files ? ' · 预估 ' + _fmtN(files) + ' 文件' : '') +
+        (arts.size ? ' · 仅产物源 ' + arts.size : '');
+    };
+
+    const _syncArtBox = () => {
+      artBox.textContent = '';
+      if (!arts.size) {
+        artBox.style.display = 'none';
+        return;
+      }
+      artBox.style.display = '';
+      artBox.append('仅产物源（只读 .cmd/.o，不收录源码）：');
+      const sp = _h('span', [...arts].sort().join('、'));
+      sp.style.cssText = 'color:var(--accent);margin-left:4px;';
+      artBox.appendChild(sp);
+    };
+
+    // 三态按钮组（互斥）
+    const _stateBtns = (rel, current, onSet) => {
+      const g = _h('span');
+      g.style.cssText = 'display:inline-flex;gap:2px;flex:none;';
+      [['whitelist', '白'], ['full', '全'], ['off', '不']].forEach(([v, label]) => {
+        const b = _h('button', label, false);
+        b.className = 'btn ghost';
+        b.style.cssText = 'padding:0 6px;font-size:10px;line-height:16px;' +
+          (current === v ? 'background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:600;' : '');
+        b.title = v === 'whitelist' ? '白名单：按编译产物精准收录'
+          : v === 'full' ? '全量：该子树所有代码文件都收录'
+            : '不勾：该子树不进索引';
+        b.onclick = (e) => { e.stopPropagation(); onSet(v); };
+        g.appendChild(b);
+      });
+      return g;
+    };
+
     const render = () => {
-      syncCnt();
-      tree.innerHTML = '';
-      const mkRow = (rel, name, sub, depth) => {
+      _syncCounts();
+      _syncArtBox();
+      tree.textContent = '';
+      const kw = (search.value || '').trim().toLowerCase();
+
+      const mkRow = (rel, name, sub, depth, noState) => {
+        // a570 对抗审计：过滤必须看**整棵子树**（原只看本行名+一级子目录名，
+        // 深层匹配 a/b/foo 而 a/b 未展开时永远搜不到）。显式节点里也有名字。
+        if (kw && rel) {
+          const selfHit = name.toLowerCase().indexOf(kw) >= 0;
+          const kidHit = kids[rel] && kids[rel].dirs.some(
+            d => d.name.toLowerCase().indexOf(kw) >= 0);
+          // a570 对抗审计（P1·第四轮）：rel 是磁盘大小写，dirs 的键是
+          // lower——必须先归一再匹配，否则含大写的目录（Kernel/Src/
+          // MDK-ARM）的深层命中全部失效。
+          const rl = _k(rel);
+          const subHit = Object.keys(dirs).some(
+            k => k.indexOf(rl === '' ? '' : rl + '/') === 0 &&
+              k.split('/').pop().toLowerCase().indexOf(kw) >= 0);
+          if (!selfHit && !kidHit && !subHit) return;
+        }
+        const eff = _effState(rel);
+        const rk = _k(rel);       // dirs 的键一律 lower
+        const own = Object.prototype.hasOwnProperty.call(dirs, rk);
         const r = _h('div');
-        r.style.cssText = 'display:flex;align-items:center;gap:4px;padding:1px 0 1px ' + (depth * 16) + 'px;';
-        const chk = document.createElement('input');
-        chk.type = 'checkbox';
-        const inh = ancSel(rel);
-        chk.checked = inh !== null;
-        chk.disabled = inh !== null && !sel.has(rel);   // 继承态锁定（'' 也是合法 inh）
-        chk.title = (inh !== null && !sel.has(rel))
-          ? '随 ' + (inh || '整个目录') + ' 收录' : '';
-        chk.onchange = () => {
-          if (chk.checked) {
-            // 最小顶集语义：勾父清后代；勾根清全部
-            if (rel === '') { sel.clear(); sel.add(''); }
-            else {
-              if (sel.has('')) sel.clear();
-              for (const s of [...sel]) {
-                if (s.startsWith(rel + '/')) sel.delete(s);
-              }
-              sel.add(rel);
-            }
-          } else sel.delete(rel);
-          render();
-        };
-        r.appendChild(chk);
-        const lab = _h('span', name + '');
-        lab.style.cssText = 'flex:1;';
-        if (inh !== null && !sel.has(rel)) lab.style.color = 'var(--muted)';
+        r.style.cssText = 'display:flex;align-items:center;gap:4px;padding:2px 0 2px ' + (depth * 14) + 'px;';
+        // 展开三角
+        const ex = _h('button', expanded.has(rel) ? '▾' : '▸', false);
+        ex.style.cssText = 'border:none;background:none;color:var(--muted);cursor:pointer;' +
+          'padding:0 2px;font-size:10px;width:14px;flex:none;' + (sub ? '' : 'visibility:hidden;');
+        ex.onclick = (e) => { e.stopPropagation(); _toggleExpand(rel); };
+        r.appendChild(ex);
+        // 目录名
+        const lab = _h('span', name);
+        lab.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;' +
+          'white-space:nowrap;cursor:pointer;' +
+          (own ? '' : 'color:var(--muted);');
+        lab.title = own ? rel : (rel + '（继承自 ' + (_ancState(rel).from || '根默认') + '）');
+        // 注：_stateBtns 的 rel 参数只用于回传给 onSet，已统一 lower
+        lab.onclick = () => _toggleExpand(rel);
         r.appendChild(lab);
-        if (sub || kids[rel]) {
-          const ex = _h('button', expanded.has(rel) ? '▾' : '▸', false);
-          ex.style.cssText = 'border:none;background:none;color:var(--muted);cursor:pointer;padding:0 4px;font-size:10px;';
-          // a422（用户实锤：点名字不能展开、只有最右小三角能点，极易点串
-          // 行）：展开逻辑抽出，目录名本身与三角同权——label 占满整行
-          // （flex:1），点行即展开；复选框点击不受影响（不冒泡到 label）
-          const _doExpand = async () => {
-            if (expanded.has(rel)) { expanded.delete(rel); render(); return; }
-            if (!kids[rel]) {
-              ex.textContent = '⋯';
-              try {
-                const rj = await (await fetch('/api/nav/scope_tree?root=' +
-                  encodeURIComponent(root) + '&rel=' + encodeURIComponent(rel))).json();
-                if (!rj.ok) throw new Error(rj.err || '');
-                kids[rel] = { dirs: rj.dirs || [], files: rj.files || 0,
-                              truncated: !!rj.truncated };
-              } catch (e) { showBanner('目录读取失败: ' + e, 3000, true); ex.textContent = '▸'; return; }
+        // 三元组数据（若已推荐）
+        const c = counts[rel] || counts[rk];
+        if (c) {
+          const d = _h('span',
+            _fmtN(c.src) + '源 · ' + _fmtN(c.o) + 'o · ' + _fmtN(c.cmd) + 'cmd');
+          d.style.cssText = 'flex:none;font-size:10px;color:var(--muted);font-family:var(--font-mono);' +
+            'margin-left:6px;';
+          if (c.warn) d.style.color = 'var(--neon-orange,#d29922)';
+          r.appendChild(d);
+        }
+        // 三态按钮（根行不放——后端 _norm_dirs 拒绝空键，根默认态由
+        // mode 表达；a570 对抗审计：原根行也挂按钮，点「全」会提交
+        // dirs[''] 让后端建库直接失败）
+        if (!noState) {
+          r.appendChild(_stateBtns(rk, own ? dirs[rk] : eff, (v) => {
+            // a570 对抗审计（P2·第四轮）：继承态下点当前生效值 = 回到继承，
+            // 不要凭空造一个显式节点（否则父级改动不再影响它，且无视觉反馈）。
+            // a570 对抗审计（P2·第五轮）：这是纯 no-op 点击，**不要**继续
+            // 走下面的 arts 清理——原实现会把它塞进 artsOff 并静默清掉
+            // 子目录的「仅产物源」勾选。
+            const _backInherit = () => {
+              // a570 对抗审计（P2·第十七轮）：回继承必须同时清掉「仅产物源」
+              // 标记——否则载荷残留 artifact_roots:[该目录] 而该目录已不是
+              // off，复选框 disabled 但 checked，用户无法取消，且随建库落盘
+              // 成一条永不生效的死配置。
+              delete dirs[rk];
+              _userSet.delete(rk);
+              if (arts.delete(rk)) { /* 已从产物源移除 */ }
+              _userArts.delete(rk);
+              artsOff.delete(rk);
+              // a570 对抗审计（P2·第十八轮）：**后代**的仅产物源标记也要清
+              // ——父目录回继承后，后代不再是 off 区，那条 artifact_roots
+              // 永不生效且用户无法取消（与 set 分支的后代清理对称）。
+              // a570 对抗审计（P1·第二十轮）：根行 rk === '' 时 `rk + '/'`
+              // 是 "/"，而 artifact_roots 都是相对路径 —— 前缀匹配全部落空，
+              // 后代「仅产物源」标记留下且用户无法取消（整棵子树源码被
+              // _inside_art 静默剪掉）。空 rk 表示「整棵树」，匹配全部。
+              const pfx = rk ? rk + '/' : '';
+              for (const a of [...arts]) {
+                if (!pfx || a.indexOf(pfx) === 0) {
+                  arts.delete(a); _userArts.delete(a); artsOff.add(a);
+                }
+              }
+              render();
+            };
+            const _noop = (!own && eff === v);
+            if (_noop) {
+              // a570 对抗审计（P2·第十九轮）：本行没有显式节点、点的又是
+              // 当前生效值——这是**纯 no-op**，绝不能走 _backInherit（那会
+              // 清掉后代的「仅产物源」标记，用户没表达任何意图）。原实现
+              // 复用 _backInherit，把后代 arts 静默清空并写进 artsOff。
+              render();
+              return;
             }
-            expanded.add(rel);
+            if (own && dirs[rk] === v) {
+              // a570 对抗审计（P2·第十六轮）：own 且点自己当前值 = 回到继承
+              // ——原实现无任何路径能删显式节点，节点永久脱离父级继承
+              _backInherit();
+              return;
+            }
+            dirs[rk] = v;
+            _userSet.add(rk);
+            // 仅产物源只在 off 下有意义；切走时移除。a570 对抗审计：
+            // 还要清掉**后代**的标记——原只删本节点，父级改白/全后
+            // 子目录留着「灰掉但仍勾选」的矛盾态，且载荷仍把它写进
+            // artifact_roots。
+            if (v !== 'off') {
+              // a570 对抗审计（P1·第二十轮）：根行（rk === ''）改成白/全时
+              // 表示「整棵树都不再是 off 区」——后代所有「仅产物源」标记都
+              // 失效，必须全清（`rk + '/'` 对空键给的是 "/"，匹配不到任何
+              // 相对路径）。空 rk 也不要往 artsOff 里塞空串。
+              const pfx = rk ? rk + '/' : '';
+              if (rk) {
+                arts.delete(rk);
+                _userArts.delete(rk);
+                artsOff.add(rk);
+              }
+              for (const a of [...arts]) {
+                if (!pfx || a.indexOf(pfx) === 0 || a === rk) {
+                  arts.delete(a); _userArts.delete(a); artsOff.add(a);
+                }
+              }
+            }
             render();
+          }));
+          // 仅产物源复选框（只在 off 态可用）。a570 第十九轮：根行（rk=""）
+          // 不放——artifact_roots 的空段会被后端 `_lst` 拒绝。
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = arts.has(rk);
+          cb.disabled = eff !== 'off';
+          cb.title = eff !== 'off' ? '「仅产物源」只在「不勾」状态下可用'
+            : '该目录不收录源码，但仍扫描其中的 .cmd/.o 用于白名单推导';
+          cb.style.cssText = 'flex:none;margin-left:4px;' + (eff !== 'off' ? 'opacity:.35;' : '');
+          cb.onclick = (e) => e.stopPropagation();
+          cb.onchange = () => {
+            if (cb.checked) { arts.add(rk); _userArts.add(rk); artsOff.delete(rk); }
+            else { arts.delete(rk); _userArts.delete(rk); artsOff.add(rk); }
+            _syncArtBox(); _syncCounts();
           };
-          ex.onclick = _doExpand;
-          lab.style.cursor = 'pointer';
-          lab.onclick = _doExpand;
-          r.appendChild(ex);
+          if (rk) r.appendChild(cb);
         }
         tree.appendChild(r);
-        if (expanded.has(rel) && kids[rel]) {
-          for (const d of kids[rel].dirs) mkRow(d.rel, d.name, d.sub, depth + 1);
-          const _emp = _h('div', kids[rel].truncated
-            ? '（子目录过多，仅显示前 800 个）' : '（无子目录）');
-          _emp.style.cssText = 'color:var(--muted);padding-left:' + ((depth + 1) * 16) + 'px;font-size:11px;';
-          if (!kids[rel].dirs.length || kids[rel].truncated) tree.appendChild(_emp);
+        if (expanded.has(rel)) {
+          const k = kids[rel];
+          if (!k) {
+            const l = _h('div', '⋯');
+            l.style.cssText = 'color:var(--muted);font-size:11px;padding-left:' + ((depth + 1) * 14) + 'px;';
+            tree.appendChild(l);
+            return;
+          }
+          for (const d of k.dirs) mkRow(d.rel, d.name, d.sub, depth + 1);          if (!k.dirs.length || k.truncated) {
+            const emp = _h('div', k.truncated ? '（子目录过多，仅显示前 800 个）' : '（无子目录）');
+            emp.style.cssText = 'color:var(--muted);font-size:11px;padding-left:' + ((depth + 1) * 14) + 'px;';
+            tree.appendChild(emp);
+          }
         }
       };
-      // 根行展开由 mkRow 内部递归渲染（a398#28：去掉外层重复循环）
-      mkRow('', '（整个目录 ' + (root.split(/[\\/]/).pop() || root) + '）', true, 0);
+      // 根行（整个目录）。a570 对抗审计（P2·第十九轮）：后端现已接受根键
+      // `""`（表达「工程根自身」的收录状态）——没有它，根直下源码
+      // （rootfile.c / app.py）在建库时会被根默认 whitelist 排掉，面板
+      // 却只显示「白 0 · 全 1」，用户完全看不出漏了文件。这里挂上三态按钮。
+      const rootName = root.split(/[\\/]/).filter(Boolean).pop() || root;
+      mkRow('', rootName, true, 0, false);
     };
-    (async () => {
-      try {
-        const rj = await (await fetch('/api/nav/scope_tree?root=' +
-          encodeURIComponent(root) + '&rel=')).json();
-        if (!rj.ok) throw new Error(rj.err || '');
-        kids[''] = { dirs: rj.dirs || [], files: rj.files || 0, truncated: !!rj.truncated };
-      } catch (e) { showBanner('目录读取失败: ' + e, 3000, true); }
-      expanded.add('');
+
+    // a570 对抗审计（P2·第四轮）：把「按 recNodes 铺某层的子目录计数」抽成
+    // 独立函数——推荐结果到达后对**已展开**的层重新铺一遍，否则那层的
+    // 三元组列会被 counts 清空后永久消失（收起再展开也不恢复）。
+    const _fillSubs = (rel) => {
+      if (!recNodes) return;
+      const _byRel = {};
+      for (const n of recNodes) _byRel[n.rel] = n;
+      const _curTop = (rel || '').toLowerCase();
+      const _topNode = _byRel[_curTop];
+      if (!_topNode || !_topNode.subs) return;
+      for (const s of _topNode.subs) {
+        if (s.name === '__root__') continue;
+        counts[(_curTop + '/' + s.name).toLowerCase()] = {
+          src: s.src, code: s.code, o: s.o, cmd: s.cmd, warn: false,
+        };
+      }
+    };
+
+    const _toggleExpand = async (rel) => {
+      if (expanded.has(rel)) { expanded.delete(rel); render(); return; }
+      if (!kids[rel]) {
+        render();   // 先显示 ⋯
+        try {
+          const rj = await (await fetch('/api/nav/scope_tree?root=' +
+            encodeURIComponent(root) + '&rel=' + encodeURIComponent(rel))).json();
+          if (!rj.ok) throw new Error(rj.err || '');
+          kids[rel] = { dirs: rj.dirs || [], files: rj.files || 0,
+                        truncated: !!rj.truncated };
+          // 懒加载同时把该层子目录的推荐数据挂上（recommend 只到一级）
+          _fillSubs(rel);
+        } catch (e) {
+          showBanner('目录读取失败: ' + e, 3000, true);
+          render();
+          return;
+        }
+      }
+      expanded.add(rel);
       render();
-    })();
-    bClr.onclick = () => { sel.clear(); render(); };
-    bCancel.onclick = () => ov.remove();
-    bOk.onclick = () => {
-      const dirs = [...sel].sort();
-      ov.remove();
-      cb(dirs);
     };
+
+    // ---- 推荐 ----------
+    let _pollT = null;
+    // a570 对抗审计（P2·第十六轮）：推荐在途时用户点「全部清除」，结果到达
+    // 会把树重新填满且无提示——用户以为已清空，建库却按推荐收全树。
+    // 每次推荐带 epoch，清除动作递增 epoch 使在途结果作废。
+    let _recEpoch = 0;
+    // a570 对抗审计（P2·第十八/十九轮）：`_deadRuns` 是模块级 Set（文件
+    // 顶部声明）——必须跨弹层共享，否则关掉 A 再开 B 时 B 会接管一个
+    // 已被取消的任务，用户没做任何操作却看到「推荐失败：已取消」。
+    const _stopPoll = () => { if (_pollT) { clearInterval(_pollT); _pollT = null; } };
+    const _setBusy = (busy, txt) => {
+      bRec.disabled = busy;
+      bOk.disabled = busy;
+      stLab.textContent = txt || '';
+    };
+    const _runRecommend = async (force) => {
+      const _myEpoch = ++_recEpoch;
+      _setBusy(true, '推荐分析中…（首次需扫描全树，约 20~60 秒）');
+      try {
+        const r = await fetch('/api/nav/scope_recommend', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: root, force: !!force }),
+        }).then(x => x.json());
+        if (_myEpoch !== _recEpoch) {
+          // 期间被「全部清除」或弹层关闭作废；若本次启动真的成功，
+          // 必须把后端任务取消掉，别白占全局推荐槽。
+          if (r.ok && r.run_id) {
+            _deadRuns.add(r.run_id);
+            fetch('/api/nav/scope_recommend_cancel', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ root: root, run_id: r.run_id }),
+            }).catch(() => {});
+          }
+          return;
+        }
+        if (!r.ok) {
+          if (r.err && r.err.indexOf('进行中') >= 0) {
+            // a570 对抗审计（P2·第十八轮）：快速双击「选择目录…」时，
+            // 弹层 1 的迟到成功会取消它自己刚启动的任务，弹层 2 收到
+            // 「进行中」若直接接管，就会被那次取消打成「推荐失败：已取消」
+            // ——用户没做任何取消动作。已作废的 run_id 不接管。
+            if (r.run_id && _deadRuns.has(r.run_id)) {
+              _setBusy(false, '上一个推荐任务正在退出——请再点一次「重新推荐」');
+              return;
+            }
+            _poll(_myEpoch);
+            return;
+          }
+          _setBusy(false, '推荐启动失败：' + (r.err || ''));
+          return;
+        }
+        _runId = r.run_id || '';
+        _poll(_myEpoch);
+      } catch (e) {
+        // a570 对抗审计（P2·第十八轮）：旧请求的 reject 迟到时不能改写
+        // 新推荐的状态栏/按钮（否则用户可点「建库」按不完整范围落库）。
+        if (_myEpoch !== _recEpoch) return;
+        _setBusy(false, '推荐启动失败：' + e);
+      }
+    };
+    let _pollErr = 0;
+    const _poll = (_myEpoch) => {
+      _stopPoll();
+      _pollErr = 0;
+      _pollT = setInterval(async () => {
+        if (_myEpoch !== _recEpoch) { _stopPoll(); return; }
+        try {
+          const r = await fetch('/api/nav/scope_recommend_poll?root=' +
+            encodeURIComponent(root)).then(x => x.json());
+          // a570 对抗审计（P2·第十七轮）：await 期间用户可能点了「全部清除」
+          // （_recEpoch++）——只在 await 之前查会漏掉这次响应，结果照旧
+          // 填满树。这里补第二次比对，作废的响应直接丢弃。
+          if (_myEpoch !== _recEpoch) { _stopPoll(); return; }
+          if (!r.ok) {
+            // a570 对抗审计（P2·第五轮）：响应体 ok=false（版本错配的
+            // 全局 404/500 JSON）也要计入连续失败——原实现先清零再 return，
+            // 20 次上限永远触发不了，UI 永久 busy。
+            _pollErr++;
+            if (_pollErr >= 20) {
+              _stopPoll();
+              _setBusy(false, '推荐轮询失败（后端返回错误）——请点「重新推荐」重试');
+            }
+            return;
+          }
+          _pollErr = 0;      // 正常响应才清零
+          // a570 对抗审计：槽是全局的，若结果属于别的工程必须停——
+          // 否则会把 A 的 dirs 当 B 的建库范围（跨工程静默剪错目录）
+          if (r.mine === false) {
+            _stopPoll();
+            _setBusy(false, '推荐任务属于其他工程（' + (r.root || '') +
+              '），请稍后重试');
+            return;
+          }
+          if (r.running) {
+            if (!_runId && r.run_id) _runId = r.run_id;   // 接管别人同 root 的在途任务
+            stLab.textContent = '推荐分析中：' + (r.cur || r.phase || '') +
+              (r.total ? ' (' + Math.min(r.total, (r.percent || 0) / 100 * r.total | 0) + '/' + r.total + ')' : '');
+            return;
+          }
+          _stopPoll();
+          if (!r.ok_done) {
+            _setBusy(false, '推荐失败：' + (r.err || ''));
+            return;
+          }
+          const res = r.result || {};
+          recNodes = res.nodes || [];
+          // 应用推荐（原地替换，dirs 是 const——a570 对抗审计 P0：
+          // 原写 `dirs = res.dirs || {}` 必抛 TypeError，且被 catch 吞掉，
+          // 推荐结果永远应用不到树、busy 状态永不恢复）
+          // a570 对抗审计（P1·第十六轮）：只认 _userSet 里用户亲手写的键。
+          // 原实现整份 dirs 当手改，第二次推荐对已有目录全部失效。
+          const _manual = {};
+          for (const k of _userSet) {
+            if (Object.prototype.hasOwnProperty.call(dirs, k)) _manual[k] = dirs[k];
+          }
+          // a570 对抗审计（P2·第十七轮）：产物源也要区分「用户手勾」与
+          // 「上一次推荐的产物」——原 `_manualArts = new Set(arts)` 会把上次
+          // 推荐的 artifact_roots 当手改永久保留（工程形态变了也清不掉）。
+          const _manualArts = new Set();
+          for (const a of arts) {
+            if (_userArts.has(a)) _manualArts.add(a);
+          }
+          for (const k in dirs) delete dirs[k];
+          Object.assign(dirs, res.dirs || {}, _manual);
+          rootDefault = res.mode === 'full' ? 'full' : 'whitelist';
+          // 用户显式取消的产物源必须跨推荐保留（下一次推荐结果里还会带上）
+          for (const k of Object.keys(_manual)) _userSet.add(k);
+          arts.clear();
+          for (const a of res.artifact_roots || []) {
+            if (a) arts.add(a);
+          }
+          for (const a of _manualArts) arts.add(a);
+          // 用户的显式取消优先于推荐结果
+          for (const a of artsOff) arts.delete(a);
+          if (Object.keys(_manual).length) {
+            showBanner('推荐完成；你手动设置过的 ' + Object.keys(_manual).length +
+              ' 个目录已保留', 4500);
+          }
+          // 计数
+          for (const key in counts) delete counts[key];
+          for (const n of recNodes) {
+            counts[(n.rel || '').toLowerCase()] = {
+              src: n.src, code: n.code, o: n.o, cmd: n.cmd,
+              warn: !!n.warn, reason: n.reason || '',
+            };
+          }
+          // a570 对抗审计（P2·第四轮）：已展开的层要重新铺 subs，否则
+          // counts 被清空后那些行的三元组列永久消失。
+          for (const _r of Object.keys(kids)) _fillSubs(_r);
+          _setBusy(false, '推荐完成（' + (res.scan_seconds ? res.scan_seconds + 's' : '') + '）：' +
+            (res.detected && res.detected.length ? '检测到 ' + res.detected.join('、') : '未识别出特定构建系统'));
+          render();
+        } catch (_) {
+          // a570 对抗审计（P2·第三轮）：持续失败会永久 busy——加计数上限，
+          // 超限后恢复按钮并提示用户重试。
+          // a570 对抗审计（P2·第四轮）：必须是**连续**失败（成功即清零），
+          // 原按累计算，间歇抖动累计 20 次就会把正常任务判成失败。
+          _pollErr++;
+          if (_pollErr >= 20) {
+            _stopPoll();
+            _setBusy(false, '推荐轮询失败（网络/后端异常）——请点「重新推荐」重试');
+          }
+        }
+      }, 600);
+    };
+    bRec.onclick = () => _runRecommend(true);
+    bExpand.onclick = async () => {
+      // 只展开已加载的一层；不递归（大工程防爆）
+      // a570 对抗审计：expanded 初值含 ''（根），原逻辑先 add 全部再把根
+      // 交给 _toggleExpand，后者见根已展开就去**收起**——按钮实际做反了。
+      // 根未加载时先清掉展开标记再 toggle（让它走加载分支），然后展开其余。
+      if (!kids['']) {
+        expanded.delete('');
+        await _toggleExpand('');
+      }
+      for (const k of Object.keys(kids)) {
+        if (!expanded.has(k)) expanded.add(k);
+      }
+      // a570 对抗审计（P2·第十六轮）：根层加载失败时不能无条件标成已展开——
+      // 否则每帧 render 都走「!k → ⋯」分支，根行永久假加载态，点一次只收起。
+      if (kids[''] && !expanded.has('')) expanded.add('');
+      render();
+    };
+
+    search.oninput = () => render();
+    bClr.onclick = () => {
+      for (const k in dirs) delete dirs[k];
+      _userSet.clear();
+      // a570 对抗审计（P2·第十六轮）：artsOff 必须一起清——用户点「全部清除」
+      // 就是从头再来，残留的显式取消会在下一次推荐到达时静默删掉新结果。
+      arts.clear();
+      _userArts.clear();
+      artsOff.clear();
+      // 在途推荐结果作废（否则几秒后树被重新填满，用户以为清空失败），
+      // 同时把后端任务取消掉，别白占全局推荐槽。
+      _recEpoch++;
+      _stopPoll();
+      if (_runId) {
+        _deadRuns.add(_runId);
+        fetch('/api/nav/scope_recommend_cancel', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ root: root, run_id: _runId }),
+        }).catch(() => {});
+      }
+      _setBusy(false, '已清除（在途推荐结果不再回填）');
+      render();
+    };
+    bCancel.onclick = () => _closePick(true);
+    bOk.onclick = () => {
+      // 建库要用的推荐结果已拿到，任务本身无需再跑
+      _closePick(true);
+      const dirsCopy = Object.assign({}, dirs);
+      const artsCopy = [...arts].sort();
+      cb({ dirs: dirsCopy, artifact_roots: artsCopy,
+           mode: 'manual', rootDefault });
+    };
+
+    // 首次打开：直接跑推荐（用户定调：工具先配好，用户确认即可）
+    // a570 对抗审计（P1）：原实现只 render + 跑推荐，根层从未加载——
+    // 树里只有根行「⋯」假加载态，用户看到空树。先加载根层再推荐。
+    // 注意：expanded 初值含 ''（根），直接 _toggleExpand('') 会走「收起」
+    // 分支。必须像 bExpand 那样先删标记再展开，才会真正加载根层。
+    expanded.delete('');
+    render();
+    _toggleExpand('').catch(() => {});
+    _runRecommend(false);
   }
 
   async function _renderState(card, path, j, st) {
@@ -1223,9 +2004,12 @@
       st.appendChild(warn2);
     }
     if (m.scope && m.scope.name) {   // a398：本次建库所用范围（meta 记录）
+      // a570 对抗审计：meta.scope 已是 v2（version/name/mode/source/dirs/…），
+      // 原按 v1 读 tier/include 会永远显示「（，0 目录）」。
+      const _scn = (m.scope.dirs && Object.keys(m.scope.dirs).length) || 0;
       st.appendChild(_h('div', '本次建库范围：' + m.scope.name +
-        '（' + (m.scope.tier || '') + '，' +
-        ((m.scope.include && m.scope.include.length) || 0) + ' 目录）——换范围用下方控件重选后重建'));
+        '（' + (m.scope.mode || m.scope.source || '') + '，' +
+        _scn + ' 目录）——换范围用下方控件重选后重建'));
     }
     st.appendChild(_scopeRow(card, path, j));   // a398：换范围重选入口
     const bRe = _h('button', ICO16.refresh + ' 重建', true);
@@ -1454,6 +2238,8 @@
        '收录范围内所有 C/C++/汇编源码（' + (info.all_code || 0) + ' 个），索引更完整'],
       ['whitelist', '只收白名单',
        '仅收录能推出源的 ' + (info.units || 0) + ' 个单元，索引更小更快'],
+      ['reconfigure', '返回重新配置收录范围',
+       '回到三态树，按目录重新指定白名单/全量/不勾（适合「这个工程本身配错了」）'],
     ];
     const wrap = _h('div');
     wrap.style.cssText = 'margin-top:12px;display:flex;flex-direction:column;gap:8px;';
@@ -1494,7 +2280,8 @@
         .then(({ ok, j }) => {
           if (ok && j && j.ok) {
             if (txt) txt.textContent = '已选择：' +
-              ({ full: '全量收源码', whitelist: '只收白名单', cancel: '放弃建库' }[choice] || choice);
+              ({ full: '全量收源码', whitelist: '只收白名单',
+                 reconfigure: '重新配置收录范围', cancel: '放弃建库' }[choice] || choice);
           } else if (txt) {
             txt.textContent = '选择未生效（' + ((j && (j.err || j.msg)) || '任务已结束') + '）';
           }
@@ -1647,9 +2434,41 @@
             ? '✓ 完成：' + (res.files || 0) + ' 文件'
             : '✓ 完成：' + (res.code_files || 0) + ' 符号';
           txt.textContent = doneTxt;
+          // a570 对抗审计（P2·第十六轮）：后端随 meta 下发被放弃的超时子树
+          // （meta.scope.timeout_items），原来前端从不展示——用户看到「完成」，
+          // 实际有子树没进索引。这里必须显式告警。
+          const _tos = (res.scope && res.scope.timeout_items) || [];
+          if (_tos.length) {
+            // a570 对抗审计（P2·第十七轮）：元素是 {rel, elapsed} 对象，
+            // 直接 join 会渲染成 [object Object]。
+            const _tosN = _tos.slice(0, 3).map(x =>
+              (x && typeof x === 'object') ? (x.rel || '(未知)') : String(x));
+            const w = _h('div', '⚠ 本次有 ' + _tos.length +
+              ' 个子树扫描超时未收录（' + _tosN.join('、') +
+              (_tos.length > 3 ? ' 等' : '') + '）——可重建或调大超时');
+            w.style.cssText = 'margin-top:6px;color:var(--neon-orange,#d29922);font-size:12px;';
+            txt.parentNode.insertBefore(w, txt.nextSibling);
+          }
+          // a570 对抗审计（P2·第十六轮）：scope_saved=false 表示范围没写进
+          // 工程根（只对本次建库生效），用户下次重建会丢失配置——必须提示。
+          if (s.scope_saved === false) {
+            const w2 = _h('div', '⚠ 收录范围未能写入工程根——下次建库需重新配置');
+            w2.style.cssText = 'margin-top:6px;color:var(--neon-orange,#d29922);font-size:12px;';
+            txt.parentNode.insertBefore(w2, txt.nextSibling);
+          }
           showBanner('代码索引建立完成', 3000);
           bCancel.textContent = '关闭';
           bCancel.onclick = _closePanel;
+        } else if (s.reason === 'reconfigure') {
+          // a570：不是真取消——用户选了「重新配置收录范围」。
+          // 不显示「已取消」，直接重开三态树。
+          txt.textContent = '按你的选择返回配置…';
+          bCancel.textContent = '关闭';
+          bCancel.onclick = _closePanel;
+          setTimeout(() => {
+            _closePanel();
+            ui(path);
+          }, 200);
         } else {
           txt.textContent = (s.cancelled ? '已取消' : '失败：' + (s.err || ''));
           bCancel.textContent = '关闭';

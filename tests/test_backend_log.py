@@ -142,18 +142,48 @@ def test_partial_line_buffered_until_newline():
 
 
 def test_no_disk_write():
-    """日志缓冲本身不写盘。
+    """内存缓冲本身不写盘。
 
-    例外：audit_exit() 是「异常退出取证」的独立旁路（exit_reason.log），
-    不属于日志缓冲——把它从源码切片里剔除后再检查。
+    a659 起的**退出审计**（`audit_exit`）是另一项需求：非预期退出时落一个
+    小文件供事后排查。它不是这个缓冲的能力，所以断言范围止于
+    `_EXIT_AUDIT` 定义处——缓冲主体（采集/裁剪/脱敏/快照）仍然一行写盘
+    都不许有。
     """
     src = inspect.getsource(BL)
-    i = src.find("def audit_exit(")
-    j = src.find("def _install_exit_hooks(")
-    if i >= 0 and j > i:
-        src = src[:i] + src[j:]
+    head = src.split("_EXIT_AUDIT = {", 1)[0]
     for bad in ("open(", "os.makedirs", "FileHandler"):
-        assert bad not in src, "日志缓冲不该出现 %r" % bad
+        assert bad not in head, "日志缓冲不该出现 %r" % bad
+
+
+def test_exit_audit_not_written_under_pytest(tmp_path, monkeypatch):
+    """退出审计在 pytest 下必须静默——否则每跑一次测试就往家目录追加噪声。"""
+    assert "pytest" in sys.modules
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("FC_NO_EXIT_AUDIT", raising=False)
+    BL._EXIT_AUDIT.update({"why": "unknown", "done": False})
+    BL.audit_exit()
+    assert list(home.rglob("exit_reason.log")) == []
+
+
+def test_exit_audit_normal_reason_skips_disk(tmp_path, monkeypatch):
+    """正常退出（user_close 等）不落盘，只有异常退出才写。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("FC_NO_EXIT_AUDIT", "0")
+    # 骗过 pytest 判定
+    real = sys.modules.pop("pytest", None)
+    try:
+        BL._EXIT_AUDIT.update({"why": "user_close", "done": False})
+        BL.audit_exit()
+    finally:
+        if real is not None:
+            sys.modules["pytest"] = real
+    assert list(home.rglob("exit_reason.log")) == []
 
 
 def test_line_length_clamped():

@@ -207,11 +207,46 @@ def build(root, log=None, progress=None, should_cancel=None):
             try:
                 from src import nav_index as _ni
                 _sc, _src = _ni.load_scope(root)
+                # a570 对抗审计（P1）：sbuilder 外挂树必须**无条件**排除。
+                # 原实现只在「无配置」时兜底，用户选了「全量」档（生成
+                # mode=full + 空 dirs 并落盘）就不进兜底分支，a405 的 SMB
+                # 自链环重新进 codegraph（a385 已关其 watchdog，会卡死）。
+                _has_sb = os.path.isdir(
+                    os.path.join(root, "sbuilder", "output", "build"))
+                _dsc = None
+                if _has_sb or not _sc:
+                    _dsc, _dkind = _ni.detect_scope(root)
+                    if _dkind == "sbuilder":
+                        for _p in ("sbuilder/output", "sbuilder/output/build"):
+                            for pat in (_p, _p + "/**"):
+                                if pat not in need and pat not in excl:
+                                    need.append(pat)
                 if not _sc:
-                    _sc, _ = _ni.detect_scope(root)
+                    _sc = _dsc
                 if _sc:
-                    for p in (_sc.get("exclude_paths") or []) + \
-                            (_sc.get("artifact_roots") or []):
+                    # a570：v2 数据模型 → 外部 codegraph 的扁平 exclude。
+                    # codegraph 只认通配数组，表达不了三态树，所以只把
+                    # 「off 节点」降级成排除项。降级只需保证**不卡死**
+                    # （a405：SMB 自链环），不必精确。
+                    # a570 对抗审计：父子都 off 时冗余 pattern 去重；
+                    # 目录名统一 lower（Windows 大小写不敏感）以免漏排。
+                    _offs = sorted(
+                        ((_p or "").lower()) for _p, _st
+                        in (_sc.get("dirs") or {}).items() if _st == "off")
+                    _offs = [p for p in _offs if p]
+                    for _i, _p in enumerate(_offs):
+                        # 已被更短祖先覆盖的节点跳过
+                        if any(_p != _o and _p.startswith(_o + "/")
+                               for _o in _offs[:_i]):
+                            continue
+                        for pat in (_p, _p + "/**"):
+                            if pat not in need and pat not in excl:
+                                need.append(pat)
+                    # 产物源目录也要排除（只读产物，不进 codegraph 索引）
+                    for p in (_sc.get("artifact_roots") or []):
+                        p = (p or "").lower()
+                        if not p:
+                            continue
                         for pat in (p, p + "/**"):
                             if pat not in need and pat not in excl:
                                 need.append(pat)
