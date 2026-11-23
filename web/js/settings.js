@@ -1930,7 +1930,8 @@ async function _ddRefreshDataPane(pane) {
     pane.querySelector('#ddCurStat').textContent = subs + (j.total_size ? ` · 共 ${_ddFmtSize(j.total_size)}` : '');
     pane.querySelector('#ddDefault').textContent = j.default || '';
   } catch(_) {}
-  // v3.5.92：存储感知——用户数据空间（可迁移）/工具数据空间（固定）/
+  // v3.5.92：存储感知——用户数据空间（可迁移）/锚点（固定，2026-11-23 退役
+  // 改造后仅 config/endpoint/崩溃取证）/
   // 附件目录占用与自动清理策略（异步拉，不阻塞本页首屏）
   _ddRefreshUsage(pane);
 }
@@ -1959,17 +1960,18 @@ async function _ddRefreshUsage(pane) {
       `</div>`;
     // v3.5.93：可清理目标（衍生数据）——每行 🧹 手动清理，范围二选一
     //（按策略 / 全部清空）。笔记/命令库/配置不在此列，永远不可触达
+    // 2026-11-23：原 cache 项（旧 WebView2 缓存）已随后端目标一并移除——
+    // Electron 壳不读不写它；行由后端 targets 生成，这里只需删映射。
     const POLICY = {
       uploads: '按策略：删超半年 + 超量缩至 80%',
       logs: '按策略：删 7 天前的串口日志',
       idx: '按策略：删 3 天未用的索引',
-      cache: '清理可重建缓存（运行中被占用的文件自动跳过）',
       ask: '按策略：保留最近 500 个',
       nav: '删除全部代码索引（文件树右键可重建）',
     };
     const DANGER = {
       uploads: '全部清空后，历史会话里引用的图片将失效',
-      logs: '', idx: '', cache: '', ask: '',
+      logs: '', idx: '', ask: '',
     };
     const trows = Object.entries(j.targets || {}).map(([k, u]) =>
       `<div style="padding:8px 0;border-bottom:1px solid var(--border);">` +
@@ -1982,8 +1984,8 @@ async function _ddRefreshUsage(pane) {
       `<div style="font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:3px;word-break:break-all;">${esc(u.path)}</div>` +
       `</div>`).join('');
     el.innerHTML =
-      row('用户数据空间（可迁移）', j.user || {}, '日志 / 笔记 / 缓存——随上方迁移走') +
-      row('工具数据空间（固定）', j.tool || {}, '配置 / 附件 / 子进程状态——位置定死不随迁移') +
+      row('用户数据空间（可迁移）', j.user || {}, '日志 / 笔记 / 附件 / 缓存——随上方迁移走') +
+      row('锚点（服务发现/指针）', j.anchor || {}, 'endpoint / data_dir 指针 / 崩溃取证——位置固定（%APPDATA%），KB 级') +
       `<div class="dd-label" style="margin-top:14px;">可清理项（衍生数据 · 笔记/命令库/配置不可触达）</div>` +
       trows +
       `<div id="ddCleanBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;` +

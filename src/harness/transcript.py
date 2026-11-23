@@ -42,14 +42,14 @@ _IMG_META_RE = re.compile(r"\[Image: [^\]]+\]")
 # ---- from claude_harness.py:2233 (transcript_for) ----
 
 
-# v3.4.87：中断/退出痕迹持久化（~/.serialconsole_pro/harness_trace.jsonl，
+# v3.4.87：中断/退出痕迹持久化（数据目录/harness_trace.jsonl，
 # 审计卡同款机制）——事件账本是内存态，重启即空，此前 exit 行源
 # （get_events_after）在重启后拿不到中断帧=「关闭重开后什么都没有」。
 # emit 侧（session.py）落盘，回放侧（transcript_for）读盘
 def _trace_append(sid, kind, text):
     try:
         from .. import app_state as _st   # 复核观察1：HOME_DIR 单一事实源（与 audit 同源）
-        p = os.path.join(_st.HOME_DIR, "harness_trace.jsonl")
+        p = os.path.join(_st.STATE_DIR, "harness_trace.jsonl")
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps({"sid": sid, "kind": str(kind or ""),
                                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ",
@@ -70,7 +70,7 @@ def _trace_read(sid):
     out = []
     try:
         from .. import app_state as _st
-        p = os.path.join(_st.HOME_DIR, "harness_trace.jsonl")
+        p = os.path.join(_st.STATE_DIR, "harness_trace.jsonl")
         with open(p, "r", encoding="utf-8") as f:
             for ln in f:
                 ln = ln.strip()

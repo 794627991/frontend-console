@@ -8,7 +8,7 @@
 
 存储感知（设置→数据目录展示）：
 - 用户数据空间（可迁移）= DATA_DIR（日志/笔记/缓存，随迁移走）；
-- 工具数据空间（固定）= HOME_DIR（~/.serialconsole_pro：config/附件/
+- 工具数据空间 = STATE_DIR（数据目录：附件/
   各子进程状态，不随迁移改址）。
 """
 import os
@@ -22,7 +22,7 @@ UPLOADS_TARGET_PCT = 0.8                 # 超限删到剩余 80% 为止
 
 def uploads_dir():
     # v3.5.94（轻审R1-1）：复用 harness/consts._UPLOAD_DIR 单一源——此前两处
-    # 独立拼 HOME_DIR/harness_uploads，任一侧改址即清理与上传目标分家
+    # 独立拼 STATE_DIR/harness_uploads，任一侧改址即清理与上传目标分家
     from src.harness.consts import _UPLOAD_DIR
     return _UPLOAD_DIR
 
@@ -111,15 +111,9 @@ def usage_stats(force=False):
     log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
     idx_dirs = [os.path.join(st.DATA_DIR, "logs", "idx"),
                 os.path.join(getattr(st, "BASE_DIR", st.DATA_DIR), "idx")]
-    ask = os.path.join(st.HOME_DIR, "harness_ask")
-    cache_root = os.path.join(st.DATA_DIR, "webview_cache")
-    # 轻审R2-6：cache 行只统计可清理的 _CACHE_SUBS 子树（Local Storage/
-    # Cookies 等用户状态永不删，计入会「清空后仍剩字节数」的假不清干净）
-    cache_bytes = 0
-    for sub in _CACHE_SUBS:
-        d = os.path.join(cache_root, "EBWebView", *sub.split("/"))
-        if os.path.isdir(d):
-            cache_bytes += _dir_size(d)
+    ask = os.path.join(st.STATE_DIR, "harness_ask")
+    # 2026-11-23（用户令）：原「cache」目标（数据目录 webview_cache\EBWebView，
+    # 旧 WebView2 窗口体的缓存）已整体移除——Electron 壳不读不写它，旧目录已清除。
     targets = {
         "uploads": {"path": up, "bytes": _dir_size(up), "name": "会话附件"},
         "logs": {"path": log_dir, "bytes": _dir_size(os.path.join(log_dir))
@@ -127,8 +121,6 @@ def usage_stats(force=False):
                  "name": "串口日志"},
         "idx": {"path": idx_dirs[0], "bytes": sum(_dir_size(d) for d in idx_dirs),
                 "name": "日志索引（可重建，含 legacy 目录）"},
-        "cache": {"path": os.path.join(cache_root, "EBWebView"), "bytes": cache_bytes,
-                  "name": "WebView 缓存（可重建）"},
         "ask": {"path": ask, "bytes": _dir_size(ask), "name": "提问状态"},
         # a333：代码跳转索引（ctags tags + 白名单 + ELF 符号表——可重建的
         # 衍生数据，手动建/删走文件树右键，存储感知可见可清）
@@ -138,7 +130,10 @@ def usage_stats(force=False):
     }
     data = {
         "user": {"path": st.DATA_DIR, "bytes": _dir_size(st.DATA_DIR)},
-        "tool": {"path": st.HOME_DIR, "bytes": _dir_size(st.HOME_DIR)},
+        # 2026-11-23 退役改造：原「工具数据空间(固定 HOME_DIR)」口径已合——
+        # 全部用户数据(含附件/子进程状态)都在数据目录(user 行)；固定不迁的
+        # 只剩锚点(endpoint/指针/崩溃取证，KB 级；config 已搬进数据目录)
+        "anchor": {"path": st.HOME_DIR, "bytes": _dir_size(st.HOME_DIR)},
         "uploads": {"path": up, "bytes": targets["uploads"]["bytes"],
                     "max_bytes": UPLOADS_MAX_BYTES,
                     "max_age_days": UPLOADS_MAX_AGE_S // (24 * 3600)},
@@ -153,7 +148,7 @@ def usage_stats(force=False):
 # 目标只含**衍生数据**（附件/日志/索引/缓存/提问状态）——笔记、命令库、
 # 配置等用户数据永远不出现在这里
 
-_CLEANABLE = ("uploads", "logs", "idx", "cache", "ask", "nav")
+_CLEANABLE = ("uploads", "logs", "idx", "ask", "nav")
 
 
 def _files_in(root, suffix=None):
@@ -187,18 +182,11 @@ def _try_rm(p):
         return False
 
 
-# WebView 纯缓存子树清单（与 main._clean_webview_cache 同源——只删随时可
-# 重建的，保留 Local Storage/Cookies 等用户状态）
-_CACHE_SUBS = ("Default/Cache", "Default/Code Cache", "Default/GPUCache",
-               "Default/DawnWebGPUCache", "Default/DawnGraphiteCache",
-               "GrShaderCache", "ShaderCache", "component_crx_cache",
-               "Subresource Filter")
-
-
 def manual_clean(target, mode):
-    """手动清理入口。target ∈ uploads|logs|idx|cache|ask；mode ∈ policy|all。
-    返回 (removed, freed)。policy=按各自保留策略；all=清空该类（缓存类
-    policy 与 all 等价——缓存没有保留策略）。"""
+    """手动清理入口。target ∈ uploads|logs|idx|ask|nav；mode ∈ policy|all。
+    返回 (removed, freed)。policy=按各自保留策略；all=清空该类。
+    （2026-11-23 用户令：原 cache 目标——旧 WebView2 缓存——已随旧窗口体退役，
+    连同 _CACHE_SUBS 清单一并移除；Electron 壳的缓存在它自己的 userData 里。）"""
     from src import app_state as st
     removed = 0
     freed = 0
@@ -248,24 +236,8 @@ def manual_clean(target, mode):
                     removed += 1
                     freed += sz
 
-    elif target == "cache":
-        import shutil as _sh
-        root = os.path.join(st.DATA_DIR, "webview_cache", "EBWebView")
-        for sub in _CACHE_SUBS:
-            d = os.path.join(root, *sub.split("/"))
-            if not os.path.isdir(d):
-                continue
-            files = _files_in(d)
-            before = sum(sz for _m, sz, _p in files)
-            _sh.rmtree(d, ignore_errors=True)   # 运行中被占用的文件会跳过
-            after = _dir_size(d) if os.path.exists(d) else 0
-            freed += max(0, before - after)
-            # 轻审R2-4：按实际删掉的文件数计（目录消失=全删；残留=前后差）
-            gone = len(files) - (len(_files_in(d)) if os.path.exists(d) else 0)
-            removed += max(0, gone)
-
     elif target == "ask":
-        ask = os.path.join(st.HOME_DIR, "harness_ask")
+        ask = os.path.join(st.STATE_DIR, "harness_ask")
         items = _files_in(ask)
         if mode == "policy":
             items.sort(key=lambda x: x[0], reverse=True)   # 新在前

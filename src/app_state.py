@@ -5,6 +5,73 @@
 """
 import os, sys, json, threading, itertools, time
 
+# ---- 测试进程自动隔离（2026-11-23）----
+# 必须在任何路径定义之前执行。
+# 为什么需要：config 现在住在数据目录里，而源码形态下默认数据目录就是
+# **项目根\\data**——任何导入 app_state 的测试都会在那儿读写真实的开发
+# 配置。tests/conftest.py 只在 pytest 下加载；本项目多数测试是
+# `python tests/xxx.py` 直接跑的（21 个带 __main__），那条路径上没有任何
+# 隔离。所以由 app_state 自己认「我是不是在被测试」，是就把 FC_STATE_DIR
+# 指到临时目录——自举链各处已认这个开关（锚点、默认数据目录、不读历史
+# 位置、不写指针）。
+# 判定依据（任一成立即是测试）：
+#   ① 启动脚本在项目的 tests\\ 目录下，或 pytest 设了 PYTEST_CURRENT_TEST；
+#   ② 环境里有 FC_TEST_CHILD——测试进程传下来的血缘标记。
+# 正常运行（run.bat / exe / src\\main.py）不满足任一条，零影响。
+# 显式已设 FC_STATE_DIR 的，尊重不改。
+#
+# 【血缘标记能管什么、管不了什么——2026-11-23 受控实验的实话】
+# 能管：父进程**已经导入过 app_state**（于是已被标记）之后再起的子进程，
+#       不论 argv[0] 是什么（`python -c`、其它脚本）都认得出。
+# 管不了：测试文件自己不导入 app_state、却用 `python -c` 起子进程——
+#       父进程从未被标记，子进程 argv[0] 是 "-c" 又认不出来，于是子进程
+#       以「正常运行」身份读真实的锚点 config、把指针写进真实的 %APPDATA%
+#       （tests/test_harness_version.py 实锤过，已在文件顶部显式设
+#       FC_TEST_CHILD 修掉）。这类测试必须自己声明一次血缘标记。
+# 所以：**隔离是否成立不能靠机制推定，要由子进程自报路径来验证**。
+def _fc_test_isolation():
+    if os.environ.get("FC_TEST_CHILD"):
+        _is_test = True
+    else:
+        _argv0 = os.path.normcase(os.path.abspath(sys.argv[0] or "."))
+        _tests_dir = os.path.normcase(
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "tests"))
+        # pytest：`python -m pytest` 时 argv[0] 是 pytest 包里的 __main__.py；
+        # `pytest`/`py.test` 命令时 argv[0] 以 pytest.exe / py.test.exe 结尾。
+        # PYTEST_CURRENT_TEST 只在**每条用例执行期间**存在——收集阶段导入
+        # 测试模块时还没设，而测试模块正是在那时导入 app_state 的，所以
+        # 光靠它挡不住（第七轮 R7-1 实测：pytest 下隔离完全失效）。
+        _a0 = _argv0.replace("/", os.sep)
+        _pytest = (_a0.endswith(os.sep + "pytest" + os.sep + "__main__.py")
+                   or _a0.endswith(os.sep + "pytest.exe")
+                   or _a0.endswith(os.sep + "py.test.exe")
+                   or bool(os.environ.get("PYTEST_CURRENT_TEST")))
+        _is_test = (_argv0 == _tests_dir
+                    or _argv0.startswith(_tests_dir + os.sep)
+                    or _pytest)
+    if _is_test:
+        os.environ["FC_TEST_CHILD"] = "1"      # 血缘标记：传给所有后代进程
+    if os.environ.get("FC_STATE_DIR"):
+        return _is_test
+    if not _is_test:
+        return False
+    import tempfile as _tf
+    _root = os.path.join(_tf.gettempdir(), "fc_test_state_%d" % os.getpid())
+    os.makedirs(os.path.join(_root, "data"), exist_ok=True)
+    os.environ["FC_STATE_DIR"] = _root
+    # R7-10：测试沙箱退出即清，不在 %TEMP% 里堆残骸（此前每跑一次留一个）
+    try:
+        import atexit as _ae
+        import shutil as _sh
+        _ae.register(_sh.rmtree, _root, True)
+    except Exception:
+        pass
+    return True
+
+
+FC_TEST_ISOLATED = _fc_test_isolation()
+
 # ---- 路径常量 ----
 # app_state 在 src/ 下，上溯两层到项目根（server/main 等也从 src/ 以 src.* 引用本模块）
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -12,13 +79,24 @@ def _resource_base():
     return getattr(sys, "_MEIPASS", BASE_DIR)
 RES_DIR = _resource_base()
 
-# ---- home 锚点（用户定调：只有这两样放 home，data_dir 只管数据）----
-# endpoint.json：MCP 服务发现锚点，路径必须固定（main/mcp_server/
-#   harness_ask_mcp 各自本地定义 STATE_DIR=HOME_DIR 读写它，不随数据目录走）
-# config.json：配置本体（含 data_dir），也需稳定位置——数据目录本身由它决定，
-#   不能随数据目录搬。用户指定的 data_dir 只是现有数据所在，不含这两样。
-HOME_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-CONFIG_FILE = os.path.join(HOME_DIR, "config.json")
+# ---- 锚点（2026-11-23 用户令：config 搬进工具目录的 data，%APPDATA% 只留最基础的）----
+# 背景（事故实锤）：config.json 原先住在 %APPDATA%\...\backend\，卸载器清除
+# 用户数据时会连它一起删，而且它**不在任何备份流程里**——丢了只能靠运气找回。
+# 现行口径（用户令，最终版）：config.json **永远在 工具目录\data**。它是
+# 「数据迁到了哪」的唯一记录者（config 里的 data_dir），所以自己不跟着数据走。
+# 数据目录 = config 记的 data_dir（若那个目录存在），否则 工具目录\data。
+# 没有指针文件、不读历史位置、不搬不借、不做兼容。详见下方「数据目录」一节。
+# %APPDATA% 锚点只放最基础的东西：endpoint.json（服务发现，每轮重写）、
+# 崩溃取证日志。
+def _anchor_dir():
+    _env = os.environ.get("FC_STATE_DIR")
+    if _env:
+        return _env
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "frontend-console-shell", "backend")
+
+
+HOME_DIR = _anchor_dir()        # 锚点：endpoint.json 与取证日志，不放 config
 
 def _app_dir():
     """应用目录（exe 所在目录 / 源码项目根）——**用户数据必须落这里**。
@@ -75,11 +153,18 @@ def _default_data_dir():
     - 不允许临时目录——工具目录不可写时不偷偷落到别处（凭据会散落两处，
       同事机实锤踩坑），保持指向工具目录并记录告警：登录等写盘操作会
       显式报错，引导用户把工具挪到可写目录
-    - 实际生效值可被 config.json 的 data_dir 覆盖（设置界面可改+迁移），
-      迁移后以迁移的为准
+    - 实际生效值**固定**为 `工具目录\\data`——config 的 data_dir 键不再参与
+      启动决策（用户令 2026-11-23：不考虑任何其他位置）。
     a594：候选目录改用 APP_DIR（exe 旁），不再用 BASE_DIR（打包版指向
-    _internal/）——见 _app_dir 注释里的真实事故。"""
-    cand = os.path.join(APP_DIR, "data")
+    _internal/）——见 _app_dir 注释里的真实事故。
+
+    【隔离态】FC_STATE_DIR 已设时，默认数据目录 = <FC_STATE_DIR>\\data。
+    此前这个开关只管锚点、不管数据目录——于是「设了隔离开关」的测试进程
+    仍把 config 读写到真实的项目根\\data（2026-11-23 实锤：跑单元测试在
+    项目根 data\\ 留下了一份被洗成 2 个键的 config 残片）。一个开关必须
+    管住全部路径，隔离才算成立。"""
+    _iso = os.environ.get("FC_STATE_DIR")
+    cand = os.path.join(_iso, "data") if _iso else os.path.join(APP_DIR, "data")
     try:
         os.makedirs(cand, exist_ok=True)
         # 真实写测试替代 os.access——W_OK 在受控目录/网络盘上会误报可写
@@ -94,109 +179,149 @@ def _default_data_dir():
             "登录/凭据等写盘操作将失败", cand, e)
     return cand
 
-def _load_home_config():
-    """读 home 锚点 config.json；损坏时自动回退 .bak（a242：进程强杀半写/
-    磁盘异常后的自愈——上一版由 cfg_commit 滚动留底），再不行回空配置。"""
+def _bootstrap_anchor():
+    """导入期引导：只确保锚点目录存在（endpoint.json 与取证日志的落点）。
+    config 本体在数据目录里，锚点不承载它。
+    FC_STATE_DIR 隔离态下同样只建目录，不碰任何历史位置的文件。"""
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        os.makedirs(HOME_DIR, exist_ok=True)
     except Exception:
         pass
+
+
+# ---- config：只住在工具目录的 data 里，别无分号 ----
+# 【用户令 2026-11-23，最终版，不再改】
+#   config.json 就在 工具目录\data\config.json。
+#   不从任何别处读、不从任何别处搬、没有指针、不看历史位置、不考虑兼容。
+#   没有它就以空配置起步；坏了自己用同目录的副本恢复。
+# 这条规则之前的版本（指针文件 + 多处历史位置 + 按可信度挑）在今天 18:01
+# 把用户 39 项设置覆盖成 2 项：它「去别处借了一份配置」，借到的是垃圾。
+# 越复杂的找回逻辑，越多机会找错。所以只剩一条规则。
+#
+# 备份（用户令「本身要有备份」）——全部在**工具目录\data** 里，和 config 本体
+# 在一起（数据目录迁走后，备份不能跟着走——否则本体在工具目录、备份在 D 盘，
+# 工具目录一坏两边都指望不上）：
+#   config.json.bak                 上一版（cfg_commit 每次保存滚动留底）
+#   data_backup\config.json         镜像副本（cred_mirror，保存后通知）
+# 自愈顺序：config.json 坏 → .bak → data_backup 镜像；都救不了 → 空配置起步，
+# 但先把坏文件复制留证（.bad-<时间>），不让它被下一次保存悄悄盖掉。
+
+
+def _read_cfg(p):
+    # utf-8-sig：本仓库编辑链会产出带 BOM 的文件，裸 utf-8 会让 json.load 抛错
+    with open(p, "r", encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
+def _selfheal_cfg():
+    """读 工具目录/data/config.json；坏了按 .bak → data_backup 镜像 的顺序恢复。
+    返回 dict。文件不存在 → {}。存在但坏且无处恢复 → {}（坏件已留证）。
+
+    【恢复到的配置必须落盘】只在内存里用副本、盘上仍是坏文件的话，下一次
+    保存会以坏文件为底——实测把配置洗成只剩新加的那 1 个键。所以：坏件复制
+    成 .bad-<时间> 留证，再把可用副本写回 config.json。"""
+    import logging
+    import shutil as _sh
+    main = CONFIG_FILE
     try:
-        with open(CONFIG_FILE + ".bak", "r", encoding="utf-8") as f:
-            d = json.load(f)
-        logging.getLogger("app_state").warning(
-            "config.json 损坏，已从 .bak 自动恢复")
+        return _read_cfg(main)
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        pass                       # 文件在但读不出：坏了，找副本
+    for cand in (main + ".bak", CONFIG_BACKUP_FILE):
         try:
-            import shutil as _sh
-            _sh.copyfile(CONFIG_FILE + ".bak", CONFIG_FILE)
+            d = _read_cfg(cand)
+        except Exception:
+            continue
+        if not isinstance(d, dict) or not d:
+            continue
+        try:
+            _stamp = time.strftime("%Y%m%d-%H%M%S")
+            _sh.copy2(main, "%s.bad-%s" % (main, _stamp))      # 坏件留证
+        except OSError:
+            pass
+        try:
+            _sh.copyfile(cand, main)                           # 可用副本落盘
+            logging.getLogger("app_state").warning(
+                "config.json 损坏，已从 %s 恢复", os.path.basename(cand))
         except OSError:
             pass
         return d
-    except Exception:
-        return {}
+    try:
+        _stamp = time.strftime("%Y%m%d-%H%M%S")
+        _sh.copy2(main, "%s.bad-%s" % (main, _stamp))
+        logging.getLogger("app_state").warning(
+            "config.json 损坏且没有可用的恢复副本，已留证为 config.json.bad-%s；"
+            "本次以空配置起步", _stamp)
+    except OSError:
+        pass
+    return {}
 
-_HOME_CFG = _load_home_config()
-# 数据目录：config 的 data_dir > 默认值（config 里旧的 log_dir 是单独日志目录，继续生效）
-# v2.2.2 用户定调：迁移/指定过的 data_dir 以它为准；默认=工具目录\data。
-# makedirs 失败不换临时目录（同 _default_data_dir 口径），保持指向并让
-# 写盘操作显式报错
-DATA_DIR = _HOME_CFG.get("data_dir") or _default_data_dir()
-# a594 兼容兜底：config 里的 data_dir 指向已不存在的路径（换机器/删目录/
-# 盘符变更）时，`os.makedirs(exist_ok=True)` 会**新建一个空目录**——用户看到
-# 的是「凭据/笔记全没了」，而真实数据可能仍在默认位置。
+
+_bootstrap_anchor()
+# ============================================================
+# 数据目录——只有一条规则（用户令 2026-11-23，最终版，不再改）
 #
-# a602 审计修正：**只改运行时内存值，绝不改写 config.json**。原实现会永久
-# 改写配置，而「路径暂时不可用」（移动硬盘/网络盘没插、UNC 没挂）和「永久
-# 失效」在启动那一刻无法区分——写回去等于制造两份数据（默认目录一份、原盘
-# 接回来后又是一份），正是 a594 要消灭的分裂。运行时回落 + 明确日志已经够
-# 让用户找回数据；盘接回来的下次启动配置照旧生效。
-# 判据：配置值不存在、且默认位置**确实有有价值数据**、且两者不同。
+#   config.json  永远在  工具目录\data\config.json   （不跟着数据走）
+#   数据目录     = config 里记的 data_dir，若那个目录存在
+#               否则 = 工具目录\data
+#
+# config.json 是「数据迁到了哪」的唯一记录者，所以它自己必须留在工具目录——
+# 否则它跟着数据走了，就没人知道去哪找它。
+# 不看任何别的位置，不做任何兼容，没有指针文件。没有 config 就空配置起步。
+# ============================================================
+TOOL_DATA_DIR = _default_data_dir()            # 工具目录\data
 try:
-    _cfg_dd = _HOME_CFG.get("data_dir")
-    if _cfg_dd and not os.path.isdir(_cfg_dd):
-        _def_dd = _default_data_dir()
-        if (_looks_like_user_data(_def_dd) and
-                os.path.normpath(_def_dd) != os.path.normpath(_cfg_dd)):
-            import logging as _lg
-            _lg.getLogger("app_state").warning(
-                "配置的数据目录当前不可用（未挂载/已删？），本次启动临时使用"
-                "默认目录：原配置 %s → %s。若原路径恢复可用，重启即可继续"
-                "使用该目录；配置未做改动。", _cfg_dd, _def_dd)
-            DATA_DIR = _def_dd
-except Exception:
-    pass
+    os.makedirs(TOOL_DATA_DIR, exist_ok=True)
+except Exception as e:
+    import logging
+    logging.getLogger("app_state").error(
+        "数据目录创建失败：%s（%s）——请检查路径权限", TOOL_DATA_DIR, e)
+
+CONFIG_FILE = os.path.join(TOOL_DATA_DIR, "config.json")   # 固定，不随数据目录走
+# config 的镜像副本：固定在 工具目录/data/data_backup（不随数据目录迁走）
+CONFIG_BACKUP_FILE = os.path.join(TOOL_DATA_DIR, "data_backup", "config.json")
+_HOME_CFG = _selfheal_cfg()
+
+
+def _same_dir(a, b):
+    """两个路径是否指向同一目录（忽略大小写与斜杠写法——Windows 路径
+    d:\\X 和 D:\\x 是同一个目录，直接比字符串会误判成不同）。"""
+    try:
+        return (os.path.normcase(os.path.abspath(a))
+                == os.path.normcase(os.path.abspath(b)))
+    except Exception:
+        return False
+
+
+def _resolve_data_dir():
+    """config 记了 data_dir 且那个目录存在 → 用它；否则 工具目录\\data。
+    目录不存在时不认（a594）：移动硬盘没插时若认它，后面 makedirs 会凭空造出
+    一个空的数据目录，用户看到的就是「数据全没了」。"""
+    dd = _HOME_CFG.get("data_dir")
+    if isinstance(dd, str) and dd.strip() and os.path.isdir(dd):
+        return os.path.abspath(dd)
+    return TOOL_DATA_DIR
+
+
+DATA_DIR = _resolve_data_dir()
+STATE_DIR = DATA_DIR
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
 except Exception as e:
     import logging
     logging.getLogger("app_state").error(
         "数据目录创建失败：%s（%s）——请检查路径权限", DATA_DIR, e)
-# ⚠ 命名陷阱：本处 STATE_DIR=数据目录（mm_probe/迁移逻辑用）；而 main/
-# mcp_server/harness_ask_mcp 各自本地定义的 STATE_DIR=HOME_DIR
-# （endpoint.json 锚点）。同名不同义，互不相干——endpoint/config 永远固定
-# HOME_DIR，不随 data_dir 迁移（用户定调：指定目录只是数据所在）
-STATE_DIR = DATA_DIR
+# 日志目录：config 旧 log_dir（老用户自定义过）> 数据目录/logs
+DEFAULT_LOG_DIR = os.path.join(DATA_DIR, "logs")
+# 命令库持久化（跨端口/重启保留）——数据目录内（备份数据目录即备份全部用户数据）。
+CMD_LIB_FILE = os.path.join(DATA_DIR, "cmdlib.json")
 
 # ---- 用户数据写盘通知（a602）----
 # 凭据镜像（cred_mirror）要「写盘就备份」，而不是定时轮询整个数据目录。
 # app_state 不能反向 import cred_mirror（循环依赖），故留一个钩子表：
 # cred_mirror 启动时注册回调，各写入点在落盘成功后调用 notify_user_file_written。
-_write_hooks = []
-
-def notify_user_file_written(name):
-    """告知「数据目录下的某个用户文件刚写完」。回调异常一律吞掉——
-    备份是尽力而为，绝不能因为备份失败影响正常写盘。"""
-    for cb in _write_hooks:
-        try:
-            cb(name)
-        except Exception:
-            pass
-
-
-def replace_retry(src, dst, tries=6, wait=0.02):
-    """os.replace 带短重试。a602：备份镜像会短暂读同一文件（Windows 下
-    默认 open() 不带 FILE_SHARE_DELETE），替换可能吃 PermissionError；
-    而这绝不能让**业务落盘**失败——重试几次一般就过去了。
-    其它 OSError（磁盘满、路径非法）不重试，直接抛给调用方如实报错。"""
-    last = None
-    for i in range(tries):
-        try:
-            os.replace(src, dst)
-            return
-        except PermissionError as e:
-            last = e
-            if i + 1 < tries:
-                import time
-                time.sleep(wait)
-    raise last
-
-# 日志目录：config 旧 log_dir（老用户自定义过）> 数据目录/logs
-DEFAULT_LOG_DIR = os.path.join(DATA_DIR, "logs")
-# 命令库持久化（跨端口/重启保留）——数据目录内（备份数据目录即备份全部用户数据）。
-# 旧版本在 BASE_DIR/cmdlib.json：启动自动归位到数据目录（不覆盖，删旧位置）。
-CMD_LIB_FILE = os.path.join(DATA_DIR, "cmdlib.json")
-
 def _merge_small_first(src_dir, dst_dir):
     """导入期同步搬**小凭据**（白名单 + 根级小 json），大目录留给后台。
     a602：启动路径上几 KB 无感；几百 MB 的 nav/logs/webview_cache 绝不
@@ -519,6 +644,36 @@ def _migrate_legacy_user_data():
 
 _migrate_legacy_user_data()
 
+_write_hooks = []
+
+def notify_user_file_written(name):
+    """告知「数据目录下的某个用户文件刚写完」。回调异常一律吞掉——
+    备份是尽力而为，绝不能因为备份失败影响正常写盘。"""
+    for cb in _write_hooks:
+        try:
+            cb(name)
+        except Exception:
+            pass
+
+
+def replace_retry(src, dst, tries=6, wait=0.02):
+    """os.replace 带短重试。a602：备份镜像会短暂读同一文件（Windows 下
+    默认 open() 不带 FILE_SHARE_DELETE），替换可能吃 PermissionError；
+    而这绝不能让**业务落盘**失败——重试几次一般就过去了。
+    其它 OSError（磁盘满、路径非法）不重试，直接抛给调用方如实报错。"""
+    last = None
+    for i in range(tries):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as e:
+            last = e
+            if i + 1 < tries:
+                import time
+                time.sleep(wait)
+    raise last
+
+
 # ---- 配置 ----
 # v3.4.54：config.json 五方共写（roles/vision/prompts/routes×2/app_state/
 # tftp）互不加锁、_save_config 还是裸 "w" 直写——撕裂一旦发生，各读方
@@ -664,7 +819,7 @@ def cfg_commit(mutator):
                         except Exception:
                             pass
                         return False, "配置骤减 %d 键，拒绝写入" % lost
-            os.makedirs(HOME_DIR, exist_ok=True)
+            # config 在数据目录里（不在锚点）——目录导入期已建，不再动 HOME_DIR
             _prev = None
             try:
                 with open(CONFIG_FILE, "rb") as f:
@@ -687,16 +842,22 @@ def cfg_commit(mutator):
                     pass
             if isinstance(d, dict):
                 _CFG_LAST["d"] = d
+            # 通知 cred_mirror 把 config 镜像进 data_backup\（此前 config 的
+            # 保存从不通知——它也就从不在任何备份里；今天的事故正因如此）
+            try:
+                notify_user_file_written("config.json")
+            except Exception:
+                pass
             return True, None
         except Exception as e:
             return False, str(e)
 
 def _load_config():
-    """读取持久化配置（home 锚点 config.json：数据目录/日志目录/主题/最近记录）。"""
+    """读取持久化配置（数据目录里的 config.json：数据目录/日志目录/主题/最近记录）。"""
     return cfg_read()
 
 def _save_config(cfg):
-    """保存配置到 home 锚点 config.json。整量替换语义（历史 22 调用点不
+    """保存配置到数据目录里的 config.json。整量替换语义（历史 22 调用点不
     改）；v3.4.54 起锁内原子写（此前裸 "w" 直写是撕裂的头号来源）。"""
     def _whole(d):
         d.clear()

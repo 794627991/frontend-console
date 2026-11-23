@@ -20,6 +20,8 @@ import tempfile
 
 sys.path.insert(0, '.')
 
+import pytest
+
 import src.app_state as st
 
 
@@ -35,7 +37,18 @@ def _write(p, obj):
         json.dump(obj, f)
 
 
-def test_default_data_dir_uses_app_dir_when_frozen(monkeypatch):
+# 这两个用例测的是 _default_data_dir 的**路径推导**（frozen 用 exe 旁、源码用
+# 项目根）。app_state 的测试自隔离（FC_STATE_DIR）在它前面多了一层「隔离态
+# 优先」的分支——挡住了被测逻辑，于是断言拿到的是沙箱路径。这里显式关掉
+# 隔离开关，让推导逻辑露出原貌；**断言本身一个字不改**。
+# （关掉后 _default_data_dir 会在真实项目根\data 下做一次可写性探针并
+#   立刻删掉 .wprobe——这是它本来的行为，不写任何配置。）
+@pytest.fixture(autouse=False)
+def _no_test_isolation(monkeypatch):
+    monkeypatch.delenv("FC_STATE_DIR", raising=False)
+
+
+def test_default_data_dir_uses_app_dir_when_frozen(monkeypatch, _no_test_isolation):
     """frozen 下默认数据目录必须在 exe 旁，不能在 _internal 下。"""
     root = tempfile.mkdtemp(prefix="fc_dd_")
     try:
@@ -53,7 +66,7 @@ def test_default_data_dir_uses_app_dir_when_frozen(monkeypatch):
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_default_data_dir_source_mode_unchanged(monkeypatch):
+def test_default_data_dir_source_mode_unchanged(monkeypatch, _no_test_isolation):
     """源码形态（非 frozen）行为必须与改动前一致：项目根/data。"""
     monkeypatch.delattr(sys, "frozen", raising=False)
     got = st._default_data_dir()

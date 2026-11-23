@@ -271,8 +271,8 @@ def _profile_direct_url():
     快照制）。base_url 卡在代理地址且无 proxy_state 记忆时（旧版切的代理）
     的可靠真源——方案快照是用户显式保存的直连配置，比 DEFAULT 兜底可信。"""
     try:
-        p = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                         "claude_profiles.json")
+        import src.app_state as _st
+        p = os.path.join(_st.STATE_DIR, "claude_profiles.json")
         with open(p, encoding="utf-8") as f:
             d = json.load(f)
         name = d.get("active") or ""

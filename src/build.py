@@ -101,8 +101,37 @@ def build():
                     os.makedirs(os.path.dirname(_dp), exist_ok=True)
                     shutil.copy2(_sp, _dp)
                     _n += 1
+            # 密钥外发问题用户拍板（2026-11-23）：调试包只自用、绝不对外发布，
+            # 完整性优先——**必须带全部源码**（含 _fcpk_key.py），不做排除。
             print(f"调试包: src 源码明文外置 {_n} 个 .py → _internal/src/")
+            # 2026-11-23 内网实锤「启动巨慢」：frozen 环境不写 __pycache__，
+            # 每次启动全量重编几百个明文 .py（内网再叠杀软逐文件实时扫描，
+            # 每个明文读都过一遍引擎）。打包时预编译 .pyc 随包——同解释器
+            # 3.14 出的缓存 magic 匹配，运行时 SourceFileLoader 直接命中、
+            # 跳过编译；改 .py 调试不受影响（mtime 变了自动失效重编）。
+            # 对抗审计修订：①pyc 命中率被 zip 的 DOS 时间戳偶数秒取整打掉
+            # （奇数秒 mtime 的源解压后 pyc 判 stale）——先把源 mtime 归一
+            # 到偶数秒再编译；②compile_dir 返回 bool 而非计数、失败不抛——
+            # 必须显式拦包（a635 精神：编译失败禁止出包）
+            import compileall
+            _int_dir = os.path.join(app_dir, "_internal")
+            for _r, _ds, _fs in os.walk(_int_dir):
+                _ds[:] = [d for d in _ds if d != "__pycache__"]
+                for _f in _fs:
+                    if _f.endswith(".py"):
+                        _p = os.path.join(_r, _f)
+                        _st = os.stat(_p)
+                        _even = int(_st.st_mtime) & ~1
+                        os.utime(_p, (_even, _even))
+            if not compileall.compile_dir(_int_dir, quiet=2, force=True,
+                                          workers=4):
+                raise SystemExit("[发布守卫] pyc 预编译失败（源码语法错？）"
+                                 "——禁止发布")
+            _npc = sum(len([f for f in fs if f.endswith(".pyc")])
+                       for _, _, fs in os.walk(_int_dir))
+            print(f"调试包: 预编译 pyc 完成（{_npc} 个 .pyc）")
             print("调试包模式（HG_NO_ENCRYPT=1）：源码明文，zip 输出到 dist 根")
+            _stamp_harness_version(app_dir)
             _publish_debug(app_dir)
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
@@ -156,6 +185,7 @@ def build():
                              "（找到 %d 个，version.pyd=%s）——禁止发布"
                              % (_npyd, _has_ver))
         print("[发布守卫] src pyd 校验通过（%d 个）" % _npyd)
+        _stamp_harness_version(app_dir)
         _publish(app_dir)
         _build_offline_fcpk()    # v4.1：统一加密离线资源包（.fcpk）
         return dist
@@ -164,22 +194,51 @@ def build():
         return None
 
 
+def _stamp_harness_version(app_dir):
+    """把 git 推导的 harness 版本盖进包（用户实锤 exe 显示 a467 旧常量：
+    frozen 无 .git 只能手 bump，80 个提交没人记得）。章落 _internal/
+    harness_version.txt，_git_harness_version 的 frozen 分支读它——与
+    源码 git 推导同源同格式（4.1.0-aNNN-<hash>）。"""
+    sys.path.insert(0, BASE)
+    try:
+        from src.harness import _git_version_sync
+    except Exception as e:
+        raise SystemExit("[发布守卫] harness 版本盖章导入失败（%r）"
+                         "——检查 src/harness 可导入性" % e)
+    v = _git_version_sync(BASE)
+    if not v:
+        print("==============================================")
+        print("[严重警告] harness 版本盖章取不到（git 异常/超时？）")
+        print("  包内将回退兜底常量——exe 里显示旧版本号的老病会复发！")
+        print("==============================================")
+        return
+    with open(os.path.join(app_dir, "_internal", "harness_version.txt"),
+              "w", encoding="utf-8") as f:
+        f.write(v + "\n")
+    print("harness 版本盖章:", v)
+
+
 def _publish_debug(app_dir):
     """v3.5.248：调试包压缩——同 _publish 的 zip 口径（顶层壳目录、跳运行时
     产物），但输出 dist 根、不写 manifest、不进 releases：压缩是给用户拿去
     别处调试用的，升级分发服务（检查更新）绝不收录调试包。
 
     D（2026-11-23 用户拍板）：调试包**必须自带 Electron 运行时**——内网/
-    无网机器解压即用（正常发布走 Setup.exe）。zip 内追加：
+    无网机器解压即用（正常发布走 Setup.exe）。壳/运行时/ico 直接落调试树
+    （dist/前端控制台_debug/ 下与 前端控制台/ 同层），zip 与磁盘树同构：
       electron-shell/        壳五件 + package.json（复制自 electron/）
       electron-shell/dist/   Electron 运行时（node_modules/electron/dist 全量）
-      启动调试版.bat         设 FC_BACKEND_CMD 指向后端 exe 后起壳
+      ico/                   壳 dev 形态托盘图标
+    免启动器（2026-11-23 用户令）：不出 bat——双击 前端控制台.exe 直启，
+    exe 自动拉起 ..\\electron-shell 壳（见 src/main.py 调试包直启分支）。
     """
     import zipfile
     sys.path.insert(0, BASE)
     from src.version import APP_VERSION
     dst = os.path.join(BASE, "dist", "%s_debug-v%s.zip" % (APP_NAME, APP_VERSION))
-    skip_dirs = {".update", "data"}          # 运行时产物不进包
+    # 运行时产物不进包（offline_runtime：试跑过的树上会残留资源包解压物，
+    # 对抗审计实锤——不清会随下次出包进 zip）
+    skip_dirs = {".update", "data", "offline_runtime"}
     skip_files = {"update.bat"}
     top = APP_NAME + "_debug"
 
@@ -195,14 +254,40 @@ def _publish_debug(app_dir):
     for f in shell_files:
         if not os.path.isfile(os.path.join(ed, f)):
             raise SystemExit("[发布守卫] 调试包缺壳文件 %s（electron/ 不完整）" % f)
-    launcher = ("@echo off\r\n"
-                "chcp 936 >nul\r\n"
-                "rem D（2026-11-23 用户令：调试包必须自带 Electron）：本 bat 起\r\n"
-                "rem 自带壳+自带后端 exe，全离线可用。正常发布走 Setup.exe。\r\n"
-                "cd /d \"%~dp0\"\r\n"
-                "set \"FC_BACKEND_EXE=%~dp0" + APP_NAME + "\\" + APP_NAME + ".exe\"\r\n"
-                "start \"\" \"electron-shell\\dist\\electron.exe\" \"%~dp0electron-shell\"\r\n"
-                "exit /b 0\r\n")
+    # 免启动器（2026-11-23 用户令：启动调试版.bat 不要）——壳/运行时/ico
+    # 直接落调试树（与 前端控制台/ 同层），双击内层 exe 即直启（exe 探测
+    # ..\electron-shell 自动拉壳，见 src/main.py），zip 与磁盘树同构。
+    # 顺带消灭前 bat 方案的编码坑：bat 声明 chcp 936 却按 UTF-8 落盘，cmd
+    # 按 GBK 解析时中文路径乱码且 GBK 双字节吞 '\'（0x5C 在尾字节区间）。
+    import shutil
+    dbg_root = os.path.dirname(app_dir)           # dist/前端控制台_debug
+    shell_dst = os.path.join(dbg_root, "electron-shell")
+
+    def _mirror_rm(p, what):
+        # 复审 N2：rmtree 不许静默半删——被占用（调试壳没关）就明败拦包，
+        # 否则半镜像/新旧运行时合并正是要杀的东西借尸还魂
+        try:
+            shutil.rmtree(p)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise SystemExit("[发布守卫] %s 被占用，整树清理失败（调试壳"
+                             "没关？）：%s——禁止半镜像出包" % (what, e))
+
+    # 对抗审计：先清再拷（镜像语义）——合并会把上一版淘汰的 DLL/删掉的
+    # ico/调试杂物带进新包。复审 N1：copytree 必须 dirs_exist_ok=True
+    # （rmtree 已保证镜像前提，此参只兜「清理与拷贝之间的并发重建窗口」，
+    # 绝不再承担合并语义；也不要先 makedirs 再裸 copytree——对已存在目录
+    # 哪怕是空的也抛 FileExistsError，出包必崩，实测）
+    _mirror_rm(shell_dst, "electron-shell/")
+    os.makedirs(shell_dst, exist_ok=True)
+    for f in shell_files:
+        shutil.copy2(os.path.join(ed, f), os.path.join(shell_dst, f))
+    shutil.copytree(dist_rt, os.path.join(shell_dst, "dist"),
+                    dirs_exist_ok=True)
+    ico_dir = os.path.join(BASE, "ico")           # 壳 dev 形态托盘图标 <root>/ico
+    _mirror_rm(os.path.join(dbg_root, "ico"), "ico/")
+    shutil.copytree(ico_dir, os.path.join(dbg_root, "ico"))
 
     with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for r, ds, fs in os.walk(app_dir):
@@ -213,20 +298,13 @@ def _publish_debug(app_dir):
                 p = os.path.join(r, f)
                 z.write(p, os.path.join(top, os.path.relpath(p, app_dir)))
         # 后端 exe 在 onedir 内层：dist/前端控制台_debug/前端控制台/前端控制台.exe
-        z.writestr(os.path.join(top, "启动调试版.bat"), launcher)
-        for f in shell_files:
-            z.write(os.path.join(ed, f), os.path.join(top, "electron-shell", f))
-        # ico/：壳 dev 形态托盘图标指 <root>/ico/app.ico（缺了托盘建不出）
-        ico_dir = os.path.join(BASE, "ico")
-        for r, _ds, fs in os.walk(ico_dir):
-            for f in fs:
-                p = os.path.join(r, f)
-                z.write(p, os.path.join(top, "ico", os.path.relpath(p, ico_dir)))
-        for r, ds, fs in os.walk(dist_rt):
-            for f in fs:
-                p = os.path.join(r, f)
-                z.write(p, os.path.join(top, "electron-shell", "dist",
-                                        os.path.relpath(p, dist_rt)))
+        for sub in ("electron-shell", "ico"):
+            _sub_src = os.path.join(dbg_root, sub)
+            for r, ds, fs in os.walk(_sub_src):
+                for f in fs:
+                    p = os.path.join(r, f)
+                    z.write(p, os.path.join(
+                        top, sub, os.path.relpath(p, _sub_src)))
     print("调试 zip: %s (%.1f MB，含 Electron 运行时)"
           % (dst, os.path.getsize(dst) / 1024 / 1024))
 

@@ -40,7 +40,7 @@ MANIFEST = [
      "hard": False,
      "fix": "安装离线资源包（或设置→外部依赖安装单装）"},
     # D（2026-11-23 用户拍板）：源码/调试形态离线起壳；正常发布 Setup 自带
-    {"kind": "electron", "name": "Electron 运行时（源码形态）",
+    {"kind": "electron", "name": "Electron 运行时（源码/调试形态）",
      "hard": False,
      "fix": "安装离线资源包（解到 offline_runtime/electron，run.bat 免 npm 直起）"},
 ]
@@ -163,14 +163,21 @@ def probe_bili():
 
 
 def probe_electron():
-    """Electron 运行时：源码形态两种落位任一命中即 ok——
+    """Electron 运行时：四种落位任一命中即 ok——
     ① offline_runtime/electron/electron.exe（资源包装出）
-    ② electron/node_modules/electron/dist/electron.exe（npm install 装出）。
+    ② electron/node_modules/electron/dist/electron.exe（npm install 装出）
+    ③ electron-shell/dist/electron.exe（调试包 zip 扁平整：_publish_debug
+       按 relpath(app_dir) 剥掉内层目录，exe 与壳同级 = 内网实机形态）
+    ④ ../electron-shell/dist/electron.exe（dist 树嵌套形）。
+    ③④ 漏哪个都会让对应形态误报「缺少 Electron 运行时」。
     正常发布（Setup.exe）自带，恒不需要本项。"""
     for p in (
         os.path.join(app_dir(), "offline_runtime", "electron", "electron.exe"),
         os.path.join(app_dir(), "electron", "node_modules", "electron",
                      "dist", "electron.exe"),
+        os.path.join(app_dir(), "electron-shell", "dist", "electron.exe"),
+        os.path.join(app_dir(), "..", "electron-shell", "dist",
+                     "electron.exe"),
     ):
         if os.path.isfile(p):
             return "ok", "", ""

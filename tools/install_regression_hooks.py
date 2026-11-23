@@ -29,7 +29,7 @@ POST_COMMIT = """#!/bin/sh
 {header}
 # 提交后静态门禁：秒级、零额度、不阻断（结果写本地日志，不弄脏工作区）
 cd "$(git rev-parse --show-toplevel)" 2>/dev/null || exit 0
-LOG="$HOME/.serialconsole_pro/regression_last.log"
+LOG="$APPDATA/frontend-console-shell/backend/regression_last.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 if command -v python >/dev/null 2>&1; then PY=python
 elif command -v python3 >/dev/null 2>&1; then PY=python3
@@ -47,7 +47,7 @@ PRE_PUSH = """#!/bin/sh
 # 推送前：只跑 L0 静态门禁（秒级、不打真实应用）。
 # L1/L2 会向正在使用的会话发真实请求，必须由用户发起，禁止自动跑。
 cd "$(git rev-parse --show-toplevel)" 2>/dev/null || exit 0
-LOG="$HOME/.serialconsole_pro/regression_last.log"
+LOG="$APPDATA/frontend-console-shell/backend/regression_last.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 if command -v python >/dev/null 2>&1; then PY=python
 elif command -v python3 >/dev/null 2>&1; then PY=python3
@@ -89,7 +89,7 @@ def _write_hook(name, body):
 def install():
     for name, body in (("post-commit", POST_COMMIT), ("pre-push", PRE_PUSH)):
         print("已写入", _write_hook(name, body))
-    print("完成。post-commit=L0；pre-push=L0（L1/L2 由用户发起）；日志 ~/.serialconsole_pro/regression_last.log")
+    print("完成。post-commit=L0；pre-push=L0（L1/L2 由用户发起）；日志 %APPDATA%/frontend-console-shell/backend/regression_last.log")
 
 
 def remove():

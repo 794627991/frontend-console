@@ -2,8 +2,7 @@
 chcp 936 >nul
 rem 唯一启动入口（2026-11-23 用户令：run 只留一个）。Electron 壳 + 后端。
 rem 运行时三优先级：
-rem   1) electron
-ode_modules\electron\dist（npm 装出）
+rem   1) electron\node_modules\electron\dist（npm 装出）
 rem   2) ..\offline_runtime\electron（离线资源包装出——免 npm/网络）
 rem   3) 都没有 → 本脚本自动安装（npm install，Electron ~100MB，镜像兜底）
 rem 壳日志：工具内诊断面板 tag=shell（仅致命路径落 electron-shell.log）
@@ -48,8 +47,7 @@ if not exist "node_modules\electron\dist\electron.exe" (
 if not exist "node_modules\electron\dist\electron.exe" (
   echo [失败] Electron 安装不完整。国内网络重试方法：
   echo    1. set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-  echo    2. 删除 electron
-ode_modules 目录
+  echo    2. 删除 electron\node_modules 目录
   echo    3. 重新运行本脚本
   echo        或改用离线资源包 / 调试包（免网络）。
   pause

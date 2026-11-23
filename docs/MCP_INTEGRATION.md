@@ -135,7 +135,7 @@ AI 操作的是**你正在用的同一个工具**——你在 GUI 里连的串�
 
 MCP server 启动时不会立即连接后端（避免阻塞）。第一次工具调用时才**懒发现**后端：
 
-1. 读 `~/.serialconsole_pro/endpoint.json` 获取后端 HTTP 地址
+1. 读 `锚点 endpoint.json(%APPDATA% 下 frontend-console-shell/backend/)` 获取后端 HTTP 地址
 2. 探活 `/api/status`，若存活则复用
 3. 若工具未运行，自动拉起（优先源码 `main.py`，其次 `dist/串口控制台Pro.exe`），最多等 25 秒
 

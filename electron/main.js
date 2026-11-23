@@ -33,16 +33,31 @@ app.commandLine.appendSwitch('remote-debugging-port', '9222');
 // 用户令壳启动后即安静，内容侧问题走统一日志，DevTools
 
 
-const STATE_DIR = path.join(os.homedir(), '.serialconsole_pro');
+// 2026-11-23 退役改造：~/.serialconsole_pro 退役——锚点=固定公式（与后端
+// app_state._anchor_dir 同步）：appData 下 frontend-console-shell\backend。
+// 对抗审计修正：不用 app.getPath('userData')——文件尾部有 userData 统一
+// setPath（前端控制台），依赖求值顺序才能对齐太脆；显式公式两形态恒同址。
+// 复审 N7①：FC_STATE_DIR 覆盖口——测试/隔离给壳与后端同设同一值，消除
+// 「known-folder 不认 APPDATA 环境变量覆盖」的分叉面（生产环境不设即走公式）。
+const STATE_DIR = process.env.FC_STATE_DIR ||
+  path.join(app.getPath('appData'), 'frontend-console-shell', 'backend');
 const SHELL_LOG = path.join(STATE_DIR, 'electron-shell.log');
 // 与后端 main.py ENDPOINT_FILE 同源（默认同路径；测试可两边同设 FC_ENDPOINT_FILE）
 const ENDPOINT_FILE = process.env.FC_ENDPOINT_FILE ||
   path.join(STATE_DIR, 'endpoint.json');
 // 窗口记忆落盘（userData 随 productName，与双实例互斥同一套语义）
 const SHELL_STATE = () => path.join(app.getPath('userData'), 'shell-state.json');
-// 后端 config（close_to_tray 等用户设置——与旧 pywebview 形态共用同一份，
-// 用户在设置页改的值两边都认）
-const CONFIG_FILE = path.join(STATE_DIR, 'config.json');
+// 后端 config 的位置（close_to_tray 等用户设置——用户在设置页改的值两边都认）。
+// 2026-11-23（用户令，最终版）：config.json **永远在 工具目录\data**，不跟着
+// 数据目录迁移走——它是「数据迁到了哪」的唯一记录者。
+// 工具目录（与后端 app_state._app_dir 同口径）：
+//   打包形态  resources\backend（后端 exe 所在处）
+//   开发形态  项目根（本文件的上一级）
+// 没有指针文件、不看任何别的位置。测试可用 FC_TOOL_DATA_DIR 覆盖。
+const TOOL_DATA_DIR = process.env.FC_TOOL_DATA_DIR || (app.isPackaged
+  ? path.join(process.resourcesPath, 'backend', 'data')
+  : path.join(__dirname, '..', 'data'));
+const CONFIG_FILE = path.join(TOOL_DATA_DIR, 'config.json');
 // P3 密码库（用户令：壳内保存/自动填充）：主进程 safeStorage 加密存储 +
 // guest 极简 preload（隔离世界、不向页面暴露 API）。guest 由
 // will-attach-webview 强制挂载，renderer 传入的 preload 一律被覆盖。
@@ -332,8 +347,10 @@ function pipeTag(stream, tag) {
 
 function readConfigBool(key, dft) {
   // 尊重 dft：key 缺失用默认（原先 !== false 写法忽略 dft 参数）
+  // 容忍 UTF-8 BOM（本仓库编辑链会产出带 BOM 的文件）
   try {
-    const v = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'))[key];
+    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8').replace(/^\uFEFF/, '');
+    const v = JSON.parse(raw)[key];
     return v === undefined ? dft : v !== false;
   } catch (_) { return dft; }
 }
@@ -1323,11 +1340,12 @@ ipcMain.handle('fc-pw:site-fill', (event, body) => {
 });
 
 // ---- 生命周期 ----
-// userData 统一到 productName 目录：dev 形态 Electron 用 package.json 的
-// name 字段（frontend-console-shell）、装机版用 productName（前端控制台）
-// ——不统一则两者 userData 不同目录，单实例锁互不感知 = dev 壳与装机版
-// 可同时双开、两个后端互踩 endpoint.json（实测实锤）。统一后锁跨形态
-// 互斥，兑现用户定调「只能有一个」
+// userData 统一到 productName 目录（前端控制台）。复审 N8 修正旧说法：
+// asar 内 package.json 保留 name 字段（electron-builder 不注入 productName），
+// dev/装机两形态 getName() 都是 frontend-console-shell → 本 setPath 两形态
+// 都会执行。不统一则 dev 壳与装机版 userData 不同目录，单实例锁互不感知
+// = 可同时双开、两个后端互踩 endpoint.json（实测实锤）。统一后锁跨形态
+// 互斥，兑现用户定调「只能有一个」。锚点不受影响（上方显式公式与此解耦）
 if (app.getName() !== '前端控制台') {
   try {
     app.setPath('userData',

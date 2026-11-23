@@ -16,7 +16,7 @@ MCP 协议又只有 stdin/stdout 一条同步通道（tools/call 必须就地返
 所以「等」只能靠 HTTP 轮询实现。请求在工具调用发出的那一刻就发出去，
 用户实际作答几乎总在几秒内，轮询间隔 1s 对用户无感。
 
-后端地址从 ~/.serialconsole_pro/endpoint.json 读（与 mcp_server.py 同一套
+后端地址从锚点 endpoint.json 读（app_state.HOME_DIR，与 mcp_server.py 同一套
 服务发现，工具启动时写入）。sid 由 --mcp-config 的 env 传入，用于让后端
 定位到是哪个 harness 会话在问。
 """
@@ -27,8 +27,8 @@ import time
 import urllib.error
 import urllib.request
 
-STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
+from src import app_state as _st
+ENDPOINT_FILE = os.path.join(_st.HOME_DIR, "endpoint.json")
 
 # 后端地址与 sid：env 优先（--mcp-config 注入），endpoint.json 兜底
 SID = (os.environ.get("HARNESS_SID") or "").strip()

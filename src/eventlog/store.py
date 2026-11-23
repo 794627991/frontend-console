@@ -27,8 +27,8 @@ from .types import (SessionEventType, make_envelope, new_epoch,
 # a116 十六次全审：wseq 高水位独立小文件目录。放 HOME_DIR 下与 meta 同级
 # （用户数据目录，重启存活）；不进 meta 是为了同步写——meta 是全量读写，
 # 每条事件都同步会让流式 token 变成磁盘风暴。
-_WSEQ_DIR = os.path.join(
-    os.path.expanduser("~"), ".serialconsole_pro", "v4wseq")
+from src import app_state as _st
+_WSEQ_DIR = os.path.join(_st.STATE_DIR, "v4wseq")
 
 # a116 十六次全审：`_save_wseq` 的句柄/游标是**跨对象**共享的底层资源
 # （`_commit` 持 feed._lock，`restore` 持 store._lock——两把不同的锁，

@@ -87,7 +87,7 @@ from src.tree_search import tree_search_bp
 
 app = Flask(__name__)
 # v3.5.223 请求看门狗：在途请求 >2s 自动转储全部线程栈（复现 SSH 卡死类
-# 后端阻塞的取证基建，dump 落 ~/.serialconsole_pro/watchdog_dump.log）
+# 后端阻塞的取证基建，dump 落 数据目录/watchdog_dump.log）
 try:
     from src.watchdog import install_watchdog
     install_watchdog(app)
@@ -2683,14 +2683,93 @@ def api_update_server_toggle():
 # ---- 数据目录管理（顶栏机器人图标点开的设置面板）----
 # 数据目录收纳：logs/（串口日志，唯一日志目录）、files/（笔记）、根级 *.json
 # （cmdlib.json/retry_config.json 等关键配置——v2.27.1 起自动全量纳入：凡是
-# 落在数据目录根的 .json 都是关键配置，迁移时严格校验，新增文件不用改这里）、
-# webview_cache/（WebView2 缓存——也迁：新位置缓存连续，不产生旧位置孤儿残留；
-# 被运行中 WebView2 锁定的文件跳过，纯缓存丢了自动重建）。
+# 落在数据目录根的 .json 都是关键配置，迁移时严格校验，新增文件不用改这里）。
+# 2026-11-23（用户令）：webview_cache/ 整体移出——那是换壳前旧 WebView2 窗口体
+# 的缓存，Electron 壳用自己的 userData、不读也不写它；旧目录已从用户数据目录
+# 清除。此处原注释「也迁」与下方「不迁」自相矛盾，随删除一并了结。
 # 迁移铁律（用户强调）：迁移前后数据必须都能找到——采用「先复制后切换」而非「先删后搬」：
 # 复制全部内容 → 校验大小一致 → 写 config 切换 → 旧目录完整保留不删（用户自查后手动删）。
-_DATA_SUBDIRS = ["logs", "files", "webview_cache",
+#
+# 【迁移拷什么：不维护清单】（第七轮 R7-3 高危，静默丢数据）
+# 此前迁移按一张写死的清单 _DATA_SUBDIRS 复制，复制完 rmtree 整个旧目录。
+# 状态目录退役改造把 harness_uploads（会话附件）/harness_ask（问答状态）/
+# v4wseq（序号水位）/data_backup（凭据备份）/devtools 都搬进了数据目录，
+# 却没人把它们加进清单——于是「在设置里改一次数据目录」= 这些数据静默消失。
+# 清单这种东西每加一个目录都要记得更新，迟早会漏。改为**运行时列出数据目录
+# 下的全部子目录**，只排除可再生的缓存（_MIGRATE_SKIP）。
+_DATA_SUBDIRS = ["logs", "files",
                 # v3.5.320（用户需求）：技能数据随数据空间迁移/统计
                 "skill_zh", "skill_cache", "skill_exports"]
+
+# 迁移时不拷的子目录：全部可原地重建，丢了不算丢数据。
+#   nav  代码跳转索引（ctags/符号库）——文件树右键可重建，上百 MB
+_MIGRATE_SKIP = {"nav"}
+
+
+def _migrate_subdirs(root):
+    """数据目录 root 下**需要随迁移走**的全部子目录名。
+    列全部、排除 _MIGRATE_SKIP；不维护清单。目录读不了时退回写死的那几个，
+    宁可少拷已知的也不整体放弃。reparse point（联接/符号链接）不拷——
+    它指向目录外，拷过去要么把外部数据复制进来，要么断链。"""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return [s for s in _DATA_SUBDIRS if s not in _MIGRATE_SKIP]
+    out = []
+    for n in names:
+        p = os.path.join(root, n)
+        try:
+            if not os.path.isdir(p):
+                continue
+            if n in _MIGRATE_SKIP:
+                continue
+            if os.path.islink(p) or (os.stat(p, follow_symlinks=False).st_file_attributes
+                                     & 0x400):        # FILE_ATTRIBUTE_REPARSE_POINT
+                continue
+        except OSError:
+            continue
+        out.append(n)
+    return out
+
+
+def _migrate_root_files(root):
+    """数据目录 root 下**需要随迁移走**的全部文件名（不按扩展名筛）。
+    （第七轮 R7-3 同类缺口：此前根级只拷 *.json，复制完旧目录被整个删除——
+    web_h2_key.pem / web_h2_cert.pem（工具自签 HTTPS 证书）、*.json.bak
+    （凭据与 config 的回滚副本）、harness_audit_log.jsonl、harness_trace.jsonl
+    等全部静默消失；实测用户数据目录根上有 27 个这样的文件。）
+    不拷的只有迁移自身与运行期的临时物：
+      *.tmp.<pid>.* / *.fcnew.<pid>   cfg_commit / _replay_file 的半成品
+      *.lock                           进程持有的锁文件——拷过去是没人持有的死锁
+      .wprobe                          数据目录可写性探针
+    reparse point 不拷（同 _migrate_subdirs）。"""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        p = os.path.join(root, n)
+        try:
+            if not os.path.isfile(p):
+                continue
+            if n == ".wprobe" or n.endswith(".lock"):
+                continue
+            if ".tmp." in n or ".fcnew." in n:
+                continue
+            # config.json 及其备份**不随数据迁移走**（用户令 2026-11-23：config
+            # 永远在 工具目录\data，它是「数据迁到了哪」的唯一记录者）。
+            # 迁移时若把它拷进新数据目录，那里就会多出第二份 config——
+            # 而它记录的 data_dir 会随每次保存变化，两份很快就不一致。
+            if n == "config.json" or n.startswith("config.json."):
+                continue
+            if os.path.islink(p) or (os.stat(p, follow_symlinks=False).st_file_attributes
+                                     & 0x400):        # FILE_ATTRIBUTE_REPARSE_POINT
+                continue
+        except OSError:
+            continue
+        out.append(n)
+    return out
 
 def _data_root_json_files():
     """数据目录根级 *.json 清单（关键配置，迁移时严格校验逐个比对大小）。"""
@@ -2846,7 +2925,8 @@ def api_data_dir_check():
     if _naked.upper().startswith("C:"):
         warnings.append("目标在 C 盘（数据默认应放其他盘，确认要放 C 盘吗？）")
     preview = []
-    for s in _DATA_SUBDIRS:
+    # 与实际迁移同一份清单（_migrate_subdirs）：预检说会拷的，迁移必须真拷
+    for s in _migrate_subdirs(DATA_DIR):
         src = os.path.join(DATA_DIR, s)
         try:
             n = len(os.listdir(src))
@@ -2854,7 +2934,8 @@ def api_data_dir_check():
             n = 0
         if n:   # 与统计口径一致：只列有内容的
             preview.append({"name": s, "count": n})
-    for s in _data_root_json_files():
+    # 根级文件：与实际迁移同一份清单（_migrate_root_files）
+    for s in _migrate_root_files(DATA_DIR):
         preview.append({"name": s, "count": 1})
     return jsonify({"ok": True, "dir": target, "warnings": warnings, "preview": preview})
 
@@ -2864,8 +2945,7 @@ def api_data_dir_migrate():
     1. 逐子目录复制（merge 到目标，不覆盖目标已有同名文件）；
     2. 逐文件校验大小一致（校验失败返回 err，不切换）；
     3. 全部通过后写 config.data_dir + 更新运行时（日志目录/笔记目录立即生效）；
-    4. 旧目录完整保留，由用户确认后手动删（杜绝「迁移了就找不到了」）。
-    webview_cache 不迁：纯浏览器缓存，重启自动重建。"""
+    4. 旧目录完整保留，由用户确认后手动删（杜绝「迁移了就找不到了」）。"""
     # 迁移切换要更新本模块按值导入的 DATA_DIR/STATE_DIR/CMD_LIB_FILE/LOG_DIR
     #（改 _st 属性不会同步到 import 绑定），global 声明必须在函数内首次使用前
     global DATA_DIR, STATE_DIR, CMD_LIB_FILE, LOG_DIR
@@ -2910,6 +2990,9 @@ def _do_data_dir_migrate(target):
     # a238 P1-2：源/旧目录在入口快照一次——中途全局被切（防御纵深）不再影响本次
     src_data_dir = os.path.abspath(DATA_DIR)
     old_data_dir = src_data_dir
+    # 要随迁的子目录：入口算一次、复制与尾差补拷共用（R7-3）——列全部、不靠
+    # 写死清单；与源目录同一时刻快照，理由同上一行
+    mig_subdirs = _migrate_subdirs(src_data_dir)
     if os.path.realpath(target).lower() == os.path.realpath(src_data_dir).lower():
         return jsonify({"ok": False, "err": "目标与当前目录相同"}), 400
     target = os.path.abspath(target)
@@ -2937,14 +3020,12 @@ def _do_data_dir_migrate(target):
     conflicted = set()
     conflict_errs = 0
     try:
-        for s in _DATA_SUBDIRS:
+        for s in mig_subdirs:
             src = os.path.join(src_data_dir, s)
             if not os.path.isdir(src):
                 continue
-            # 分级（用户口径）：cmdlib/笔记 严格校验（必须完整）；logs 尽力复制；
-            # webview_cache 仅搬壳（关工具自动清，不值得复制 300M）
+            # 分级（用户口径）：cmdlib/笔记 严格校验（必须完整）；其余尽力复制
             strict = (s == "files")
-            tolerant = (s == "webview_cache")
             dst = os.path.join(target, s)
             os.makedirs(dst, exist_ok=True)
             n = 0
@@ -2990,25 +3071,51 @@ def _do_data_dir_migrate(target):
                             raise   # 笔记内容不一致：迁移失败（用户红线：笔记必须完整）
                         skipped += 1   # log 单文件异常跳过
                     except (PermissionError, OSError):
-                        if tolerant or not strict:
+                        if not strict:
                             skipped += 1
                         else:
                             raise
             copied.append({"name": s, "files": n,
                            **({"skipped": skipped} if skipped else {}),
                            **({"conflicts": conflicts} if conflicts else {})})
-        # 根级关键配置（cmdlib.json/retry_config.json 及一切 *.json）：
-        # 严格校验逐个迁——大小不一致直接判迁移失败，不切换
-        for s in _data_root_json_files():
+        # 根级文件：**全部**随迁，不按扩展名筛（R7-3 同类缺口，见
+        # _migrate_root_files）。分级不变——*.json（cmdlib/config/凭据等关键
+        # 配置）严格校验，大小不一致/拷不动直接判迁移失败、不切换；
+        # 其余（证书 pem、*.json.bak 回滚副本、审计 jsonl、各 .log）尽力复制。
+        _root_skipped = []
+        _root_conflicts = 0
+        for s in _migrate_root_files(src_data_dir):
             sf = os.path.join(src_data_dir, s)
             if not os.path.isfile(sf):
                 continue
+            strict_root = s.lower().endswith(".json")
             df = os.path.join(target, s)
-            if not os.path.exists(df):
-                _mig_copy_atomic(sf, df)
-            if os.path.getsize(sf) != os.path.getsize(df):
-                raise RuntimeError(f"校验失败: {df} 与源大小不一致")
-            copied.append({"name": s, "files": 1})
+            _entry = {"name": s, "files": 1}
+            try:
+                if not os.path.exists(df):
+                    _mig_copy_atomic(sf, df)
+                elif os.path.getsize(sf) != os.path.getsize(df):
+                    if strict_root:
+                        raise RuntimeError(f"校验失败: {df} 与源大小不一致")
+                    # 非 json：目标预放了同名且不同的文件——冲突保真，源当前版
+                    # 另存（与子目录的非 strict 分支同款），两边都不丢
+                    _mig_copy_atomic(sf, df + ".migrate-conflict")
+                    _root_conflicts += 1
+                    _entry["files"] = 0
+                    _entry["conflicts"] = 1
+            except RuntimeError:
+                raise
+            except (PermissionError, OSError) as e:
+                if strict_root:
+                    raise RuntimeError(
+                        f"校验失败: 无法复制 {sf}（{e}）") from e
+                _root_skipped.append(s)
+                continue
+            copied.append(_entry)
+        if _root_skipped:
+            copied.append({"name": "（根级文件未能复制）", "files": 0,
+                           "skipped": len(_root_skipped),
+                           "names": list(_root_skipped)})
     except Exception as e:
         return jsonify({"ok": False, "err": f"迁移失败（未切换，数据仍在原处）: {e}",
                         "copied": copied}), 500
@@ -3017,14 +3124,12 @@ def _do_data_dir_migrate(target):
     # 的位置不会重拷，rmtree 却照删 = 新写入被静默删除。rmtree 前二次增量补拷：
     # ctime/mtime 任一 >= t0 的文件覆盖重拷（copy2 保 mtime，首轮已拷的旧文件
     # 不会误判）。固定点收敛最多 3 轮（持续追加的活跃日志容忍尾差）；files/ 与
-    # 根级 json 仍严格校验；webview_cache 跳过（缓存可再生，删了不算丢数据）。
+    # 根级 json 仍严格校验。
     late_total = 0
     try:
         for _catch_round in range(3):
             late = 0
-            for s in _DATA_SUBDIRS:
-                if s == "webview_cache":
-                    continue
+            for s in mig_subdirs:
                 src = os.path.join(src_data_dir, s)
                 if not os.path.isdir(src):
                     continue
@@ -3077,7 +3182,8 @@ def _do_data_dir_migrate(target):
                         except (PermissionError, OSError):
                             if strict:
                                 raise
-            for s in _data_root_json_files():
+            # 根级文件补拷：与首轮同一份清单（全部文件，不按扩展名筛，R7-3）
+            for s in _migrate_root_files(src_data_dir):
                 sf = os.path.join(src_data_dir, s)
                 if not os.path.isfile(sf):
                     continue
@@ -3094,9 +3200,15 @@ def _do_data_dir_migrate(target):
                         continue
                 except OSError:
                     pass
-                _mig_copy_atomic(sf, df)
+                strict_root = s.lower().endswith(".json")
+                try:
+                    _mig_copy_atomic(sf, df)
+                except (PermissionError, OSError) as e:
+                    if strict_root:
+                        raise RuntimeError(f"校验失败: 无法补拷 {sf}（{e}）") from e
+                    continue        # 正在被写的日志等：容忍尾差
                 late += 1
-                if os.path.getsize(sf) != os.path.getsize(df):
+                if strict_root and os.path.getsize(sf) != os.path.getsize(df):
                     raise RuntimeError(f"校验失败: {df} 与源大小不一致")
             late_total += late
             if not late:
@@ -3114,6 +3226,26 @@ def _do_data_dir_migrate(target):
     # 复制校验全过 → 切换运行时 + 持久化
     # 日志目录合一：迁移后固定走新 data/logs（清掉旧 log_dir 配置，只留一个 logs）
     new_log_dir = os.path.join(target, "logs")
+    # config 跟着数据目录走（用户令：永远只使用数据目录）。
+    # 顺序不能乱——下方 rmtree 会把旧目录连同旧 config 一起删掉：
+    #   ① 先把 config 三件套带进新目录，**以旧目录那份为准**（它是现行配置；
+    #      目标里若碰巧有个旧 config，保留它会让用户改完目录发现设置回退）
+    # 【config 不跟着数据走】用户令 2026-11-23：config.json 永远在
+    # 工具目录\data，它记录 data_dir（数据迁到了哪）。所以迁移时：
+    #   · 不重绑 CONFIG_FILE（它固定）
+    #   · 不往新目录拷 config（上方 _migrate_root_files 已排除）
+    #   · 只把 config 里的 data_dir 改成新目录——由下方 _save_config 完成
+    # 【删旧目录前的硬闸】config 是一切设置的唯一真本，旧目录马上要被
+    # rmtree——若旧目录恰好就是工具目录\data（config 的家），而 config
+    # 不见了，用户全部设置随旧目录消失。宁可迁移中止（数据仍在原处、未切换）。
+    _cfg_home = _st.TOOL_DATA_DIR
+    if _st._same_dir(old_data_dir, _cfg_home) and \
+            not os.path.isfile(os.path.join(_cfg_home, "config.json")):
+        return jsonify({"ok": False,
+                        "err": "迁移中止：工具目录里没有 config.json（设置文件），"
+                               "未切换、未删除，数据仍在原处",
+                        "copied": copied, "deleted": False,
+                        "old_dir": old_data_dir}), 500
     _st.DATA_DIR = target
     _st.STATE_DIR = target
     _st.LOG_DIR = new_log_dir
@@ -3173,11 +3305,64 @@ def _do_data_dir_migrate(target):
         _pu.USAGE_PATH = os.path.join(target, "proxy_usage.json")
     except Exception:
         pass
+    # 2026-11-23 退役改造补绑（对抗审计 P4；复审 N1 修正：必须打在**按值
+    # 导入的真正写端**上——consts 源头 patch 触达不了 meta.py/routes.py 的
+    # 本地绑定）。【offload 形态局限】worker 进程的绑定 patch 不到，与 lanzi
+    # 段 a672 同病——彻底修需迁移后重启 worker，此处仅 inline 形态完全生效。
+    import logging as _lg
+    try:
+        import src.harness.meta as _hm
+        _hm._META_FILE = os.path.join(target, "claude_harness.json")
+    except Exception as _e:
+        _lg.getLogger("server").warning("数据目录迁移:meta._META_FILE 补绑失败: %r", _e)
+    try:
+        import src.harness.routes as _hr
+        _hr._UPLOAD_DIR = os.path.join(target, "harness_uploads")
+        _hr._SKILL_ZH_FILE = os.path.join(target, "skill_zh_cache.json")
+    except Exception as _e:
+        _lg.getLogger("server").warning("数据目录迁移:routes 补绑失败: %r", _e)
+    try:
+        from src.harness import consts as _hc     # 属性访问型消费者兜底
+        _hc._META_FILE = os.path.join(target, "claude_harness.json")
+        _hc._UPLOAD_DIR = os.path.join(target, "harness_uploads")
+        _hc._SKILL_ZH_FILE = os.path.join(target, "skill_zh_cache.json")
+    except Exception as _e:
+        _lg.getLogger("server").warning("数据目录迁移:consts 兜底补绑失败: %r", _e)
+    try:
+        from src.eventlog import store as _es
+        _es._WSEQ_DIR = os.path.join(target, "v4wseq")
+    except Exception as _e:
+        _lg.getLogger("server").warning("数据目录迁移:store._WSEQ_DIR 补绑失败: %r", _e)
+    try:
+        import src.cred_mirror as _cm
+        _cm.BACKUP_DIR = os.path.join(target, "data_backup")
+    except Exception as _e:
+        _lg.getLogger("server").warning("数据目录迁移:cred_mirror 补绑失败: %r", _e)
     # 日志索引缓存全部失效（路径已变）
     with _log_index_lock:
         _log_index_cache.clear()
     cfg = {**_load_config(), "data_dir": target, "log_dir": new_log_dir}
     _save_config(cfg)
+    # ---- 删旧目录前：把 config 的备份文件收回工具目录 data ----
+    # config 本体不随数据迁移走（它的家是工具目录\data），它的备份
+    # （.bak / .bad-*）也一样该和本体在一起。上方根级文件通道按
+    # 「config.json 开头」把它们排除在迁移之外——所以它们不会被拷进新
+    # 数据目录；但旧数据目录里若留着这种文件（老规则下 config 跟着数据
+    # 走时产生的），下面的 rmtree 会把它们静默删掉。沙箱实测抓到过：
+    # config.json.bak 就这么丢了。收回工具目录；那里已有同名文件则另存留证。
+    for _n in os.listdir(old_data_dir):
+        if not (_n == "config.json.bak" or _n.startswith("config.json.")):
+            continue
+        _s = os.path.join(old_data_dir, _n)
+        if not os.path.isfile(_s):
+            continue
+        _d = os.path.join(_st.TOOL_DATA_DIR, _n)
+        if os.path.exists(_d):
+            _d = _d + ".from-old-data-" + time.strftime("%Y%m%d-%H%M%S")
+        try:
+            shutil.copy2(_s, _d)
+        except OSError:
+            pass
     # ---- 校验已过（cmdlib/笔记严格校验，log 尽力、缓存仅搬壳），直接删旧目录 ----
     # 用户口径：不要旧目录备份，迁移完自动删。注意（a245复审F5）：被打开句柄
     # 锁定的文件（活跃日志）rmtree 删不掉会残留在旧目录，直到写端重开——
@@ -3974,9 +4159,9 @@ def ai_mcp_info():
     with _mcp_calls_lock:
         calls = list(_mcp_calls)
     # 读 endpoint 信息
-    # 注意：endpoint.json 永远在 ~/.serialconsole_pro（main.py 写入端固定 HOME，
-    # 不随数据目录迁移）——不能用 STATE_DIR：数据目录迁移后被切到数据目录。
-    # HOME_DIR 本身就是 ~/.serialconsole_pro，直接拼文件名（上版多拼了一层目录）。
+    # 注意：endpoint.json 永远在锚点 HOME_DIR（2026-11-23 起
+    # =%APPDATA%\frontend-console-shell\backend，与 config 同家）——
+    # 不随数据目录迁移，直接拼文件名。
     ep_info = {}
     try:
         ep_path = os.path.join(HOME_DIR, "endpoint.json")

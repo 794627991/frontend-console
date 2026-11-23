@@ -23,8 +23,8 @@ import os
 import time
 import urllib.request
 
-STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
+from src import app_state as _st
+ENDPOINT_FILE = os.path.join(_st.HOME_DIR, "endpoint.json")
 _DEBUG_PORT = 9222          # 主 UI CDP 端口（a624 起常开，main.py 硬编码）
 _WEBTAB_PORT = 9223         # R4 审计 D2（W4）：网页 tab 独立 CDP 端口（web_tabs._ensure_env）
 # （R9 审计 W39：find_cdps 死代码已删——零调用方；9223 探活并入设置卡

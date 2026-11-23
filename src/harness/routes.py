@@ -1868,7 +1868,7 @@ def harness_delete():
         _meta_tombstones.add(sid)   # 盘面上那条也别让 _meta_save 合并回来
     _meta_save()
     # a116 十六次全审：会话删除 → wseq 高水位小文件一并清（否则每删一个
-    # 会话就在 ~/.serialconsole_pro/v4wseq 留一个几十字节的孤儿，长期累积）
+    # 会话就在 数据目录/v4wseq 留一个几十字节的孤儿，长期累积）
     try:
         from ..eventlog.store import drop_wseq_file
         # 先关常开句柄再删文件（Windows 下打开的文件删不掉）
@@ -2039,7 +2039,10 @@ def harness_recover():
     except OSError:
         pass
     st = os.stat(hit)
-    s = HarnessSession(uuid.uuid4().hex, cwd=cwd or _st.HOME_DIR,
+    # 退役改造(对抗审计 P11):cwd 兜底改用户主目录——HOME_DIR 语义已
+    # 变成 %APPDATA% 锚点,别让 Claude 的 .claude/ 落进锚点
+    s = HarnessSession(uuid.uuid4().hex,
+                       cwd=cwd or os.path.expanduser("~"),
                        session_id=csid,
                        title=(data.get("title") or "").strip()[:60] or "恢复的会话")
     s.created = int(st.st_mtime * 1000)
@@ -2117,7 +2120,7 @@ def harness_vision_status():
         if not m:
             try:
                 meta = json.load(open(os.path.join(
-                    os.path.expanduser("~"), ".serialconsole_pro",
+                    _st.STATE_DIR,
                     "claude_harness.json"), encoding="utf-8"))
                 mm = meta.get(sid) or {}
                 m = (mm.get("live_model") or "").strip()

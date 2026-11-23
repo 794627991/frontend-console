@@ -608,12 +608,13 @@ def claude_models_probe():
 
 
 # ---- API 配置方案（多套一键切换，设置界面「配置方案」区）----
-# 存 ~/.serialconsole_pro/claude_profiles.json（工具自己的数据目录，与
+# 存 数据目录/claude_profiles.json（2026-11-23 随退役改造搬家；与
 # settings.json 分离）。v2.22 快照制：每个方案存整份 settings.json——
 # 不同网关的 TOKEN/BASE_URL/模型映射/上下文窗口都不同，切换时整份写回。
 
 def _profiles_path():
-    d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+    from src import app_state as _st
+    d = _st.STATE_DIR
     try:
         os.makedirs(d, exist_ok=True)
     except OSError:

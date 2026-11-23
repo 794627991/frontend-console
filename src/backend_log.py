@@ -861,8 +861,8 @@ def audit_exit():
     if _normal:
         return
     try:
-        path = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                            "exit_reason.log")
+        from src import app_state as _st
+        path = os.path.join(_st.STATE_DIR, "exit_reason.log")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             if os.path.exists(path) and os.path.getsize(path) > 64 * 1024:

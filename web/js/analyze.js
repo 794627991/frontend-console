@@ -134,7 +134,7 @@ function _renderAnaCards(c) {
 }
 
 // ---- 命令标签 ----
-// 命令库：后端持久化（~/.serialconsole_pro/cmdlib.json），跨端口/重启保留
+// 命令库：后端持久化（数据目录/cmdlib.json），跨端口/重启保留
 // 内存缓存避免每次渲染都异步拉取
 
 // 模块化一期：转 ES module——跨文件/Python 裸引用消费名挂 window。

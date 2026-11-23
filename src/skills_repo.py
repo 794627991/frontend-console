@@ -26,7 +26,7 @@ import urllib.request
 import urllib.error
 import logging
 
-from src.app_state import HOME_DIR, DATA_DIR
+from src.app_state import DATA_DIR
 
 _log = logging.getLogger("skills_repo")
 
@@ -36,46 +36,10 @@ UA = "frontend-console-skills/1.0"
 # 这是技能仓库翻译恒失败的真因）；vision_mcp._API_UA 同源同因。
 _API_UA = "claude-cli/2.0.0 (external, cli)"
 _SKILLS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "skills")
-# v3.5.320（用户需求「翻译文件跟着数据空间走」）：技能数据落数据目录——
-# 随数据空间迁移/统计/清理走（server._DATA_SUBDIRS 已收录）；模块加载时把
-# 旧 HOME_DIR 位置的缓存一次性搬过来（老用户翻译缓存不丢不重翻）
+# 技能数据一律落数据目录（用户令 2026-11-23：不考虑旧位置，不搬不借）
 _CACHE_DIR = os.path.join(DATA_DIR, "skill_cache")       # SKILL.md 原文缓存
 _ZH_DIR = os.path.join(DATA_DIR, "skill_zh")             # 汉化缓存
 _EXPORT_DIR = os.path.join(DATA_DIR, "skill_exports")    # 离线包导出目录
-
-
-def _migrate_legacy_dirs():
-    """旧 HOME_DIR 位置的技能缓存一次性搬到数据目录（都存在时以新位置为准
-    ——迁移是 best-effort，失败静默留旧位置，下次加载不再重试因为新位置
-    已有内容）。
-
-    a602 审计 P1：本函数在模块导入期执行，而 skill_cache 实测 49MB——跨盘时
-    shutil.move 是同步全量复制，会卡启动（用户红线）。改为：**只同步搬小的
-    skill_meta.json（几十字节），目录交给后台线程**。"""
-    dirs = [(os.path.join(HOME_DIR, sub), os.path.join(DATA_DIR, sub))
-            for sub in ("skill_cache", "skill_zh", "skill_exports")]
-    dirs = [(o, n) for o, n in dirs
-            if os.path.isdir(o) and not os.path.isdir(n)]
-    old_meta = os.path.join(HOME_DIR, "skill_meta.json")
-    new_meta = os.path.join(DATA_DIR, "skill_meta.json")
-    if os.path.isfile(old_meta) and not os.path.isfile(new_meta):
-        try:
-            shutil.move(old_meta, new_meta)
-        except OSError:
-            pass
-    if dirs:
-        def _bg():
-            for o, n in dirs:
-                try:
-                    if not os.path.isdir(n):
-                        shutil.move(o, n)
-                except OSError:
-                    pass
-        try:
-            threading.Thread(target=_bg, daemon=True,
-                             name="legacy-skill-move").start()
-        except Exception:
-            pass
 
 
 # a623R 复审（严重 N1）历史：迁移执行点曾放在这里——早于后面定义的函数
@@ -1531,7 +1495,3 @@ def status():
 
 
 _STAT = {}
-
-# a623R 复审（严重 N1）：迁移执行点挪到模块底部——_notify_mirror/_META_FILE
-# 全部定义完成后（老布局升级机导入期触发迁移不再 NameError）。
-_migrate_legacy_dirs()

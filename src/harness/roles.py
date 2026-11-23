@@ -143,7 +143,9 @@ def _agents_dir_audit(action, detail):
     永远可查。失败静默（日志不可用不拖垮安装）。"""
     try:
         import src.app_state as _st2
-        p = os.path.join(_st2.HOME_DIR, "agents_dir_audit.log")
+        # 2026-11-23 退役改造(对抗审计 P6):与旧件同家——迁移清单把它
+        # 搬去数据目录,新追加也必须写数据目录,否则审计线劈成两半
+        p = os.path.join(_st2.STATE_DIR, "agents_dir_audit.log")
         with open(p, "a", encoding="utf-8") as f:
             f.write("%s | %s | %s\n" % (
                 time.strftime("%Y-%m-%d %H:%M:%S"), action, detail))

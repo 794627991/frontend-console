@@ -1,0 +1,124 @@
+# AGENTS.md —— 本工程 AI 会话约束与速览
+
+<!-- 权限铁律（2026-11-23 用户设定，任何会话必须遵守） -->
+
+## 权限铁律
+
+### 绝对禁止
+- **打包/构建**：不执行 `打包.bat` / `打包_debug.bat` / `python src/build.py` /
+  PyInstaller / electron-builder / `npm install` 等任何构建、安装链。
+  AI 只改代码；构建验证一律由用户本人执行，有问题用户会反馈。
+- **git push**：任何形式的推送一律禁止，也不碰 remote 配置。
+- **批量纳入**：永久禁用 `git add .` / `git add -A` / `git commit -a`；
+  即使获准提交，也只逐文件点名。
+- **提交他人改动**：仓库存在并行会话改动的可能——不属于本会话的改动一律
+  不碰；同文件混入他人改动时报用户裁定。
+- **未证明隔离生效，不得运行任何会写盘/删盘的验证**（2026-11-23 事故
+  铁律）。起因：AI 跑卸载器实验，以为 `set APPDATA=沙箱` 就能引开 NSIS
+  的 `$APPDATA`——实测它走 Windows 已知文件夹接口，**不读环境变量**，
+  重定向从第一次起就没生效；同时用的「数据指纹」函数有 bug、永远返回
+  一致。两道防护同时失效却都信了，结果删掉了用户真实的锚点配置。
+  规则：
+  1. 先弄清被测代码**实际**从哪读路径。本项目已知事实：`APP_DIR`/默认
+     数据目录 = 被导入的 `app_state.py` 所在的项目根，**不读环境变量**
+     （要隔离就把 `src` 拷进沙箱再从那里导入）；NSIS 的 `$APPDATA`、
+     `$INSTDIR` 不读环境变量。
+  2. 隔离是否生效，要由**被测进程自己**报告它看到的路径来证明，不能看
+     启动器/包装脚本里的变量。自检不通过立即中止。
+  3. 「数据没变」的结论必须来自**先自检过会变化**的比对函数（拿两个已知
+     不同的东西比一次，确认它报不同）。
+  4. 「没出事」≠「被挡住」。结果异常时先排除最坏可能（确实动了真实
+     数据），不要先归因于测试脚手架。
+  5. 运行前后对真实用户目录做指纹，出现差异必须查清来源再继续。
+
+### 需用户明确指示才做
+- git commit（走下方 aNNN 提交协议）
+- 版本号变更（`src/version.py` 等版本语义文件）
+- 删除 / 整体重写既有文件（常规改代码除外）
+
+### 可自主做
+- 读代码、搜索、分析、只读诊断（`git status|log|diff`、tasklist、
+  curl 探活、`py_compile` 语法检查）
+- 修改源码修复问题——改动只留工作区，绝不顺手提交
+- 验证性启动应用、清理自己拉起的进程（先说明）；重打包前需关闭运行中
+  实例这类操作只提醒用户，不代杀，除非用户明确让做
+
+## aNNN 提交协议（获准提交时逐条执行）
+1. `git log --oneline` 查最近提交，取最大 aNNN → 新号 = 最大 + 1
+2. `git status` + `git diff` 逐文件核对，确认每处改动确属本会话所为
+3. 逐个点名 `git add <自己的文件>`，其余一律不动
+4. 提交信息沿用项目格式：`v4.1.0-aNNN 中文摘要`（结论开头风格）
+5. 提交即止、不 push，把提交号报给用户
+
+<!-- 语言铁律（2026-11-03 用户设定，同 ~/.claude/CLAUDE.md） -->
+
+## 语言铁律
+- 思考过程和回复全部用中文；代码、命令、专有名词可保留英文原文。
+
+<!-- UI 禁 emoji 铁律（2026-11-05 用户设定，同 ~/.claude/CLAUDE.md） -->
+
+## UI 禁 emoji 铁律
+- 前端控制台**渲染到界面的文本**绝对禁止彩色 emoji（⚠❌✅🟢 等）。
+- 图标一律用 ICO16 SVG 图标库（`web/js/icons.js`，如 ICO16.robot/search/trash）；
+  不适合图标的用纯文字。
+- 边界：✓ ✗ ⟳ ▾ 等单色文本字形是工程既有风格，允许；代码注释不受限。
+
+## CodeGraph
+- 仓库根有 `.codegraph/` 时，优先用 `codegraph explore "<符号/问题>"`
+  （或 MCP `codegraph_explore`），先于 grep/find。
+
+<!-- 工程速览（形态与入口，帮助新会话快速对齐） -->
+
+## 工程速览
+- **P4（2026-11-22 用户拍板）**：Electron 壳是唯一入口——单实例锁/文件
+  关联/窗口语义全归壳；后端 exe 只是 sidecar，由壳以 `--headless` 拉起。
+- **状态布局（2026-11-23 用户令：~/.serialconsole_pro 退役）**：全部用户
+  数据只进数据目录（用户指定或默认 `工具目录\data`，即 `app_state.STATE_DIR`）；
+  **config.json 住在数据目录里**（2026-11-23 用户令：永远只使用数据目录；
+  此前它住 `%APPDATA%`，卸载即删、又不在任何备份里——AI 做卸载器实验时
+  亲手删过一次，靠退役存档里的副本才恢复）。`.bak`/`.bad`/`data_backup\`
+  全留（用户定调「怎么安全怎么来」），config 已进 cred_mirror 白名单。
+  锚点 `%APPDATA%\frontend-console-shell\backend\`（= 壳 userData\backend）
+  **只放最基础的**：`endpoint.json`（服务发现，每轮重写）、`data_dir.txt`
+  （指针，一行路径）、崩溃取证日志。
+  **指针必须有**：config 记着 data_dir 而自己住在数据目录里，目录迁走后
+  得有固定位置指路。自举见 `app_state._bootstrap_data_dir()`，顺序：
+  ① 指针 → ② **历史位置里记着「数据迁到了别处」的 config**（`~\.serialconsole_pro`
+  / 旧锚点）→ ③ 默认数据目录 → ④ 历史位置有 config 但没记 → 搬进默认
+  → ⑤ 全新。老用户一定有 `~\.serialconsole_pro`，所以一定知道数据在哪。
+  **②必须排在③前**：默认目录里可能有一份不完整的 config（没有 data_dir），
+  若先认它就不会去看历史位置，用户真实的数据目录被完全忽略（实测过）。
+  **回落态（指针指向的盘没插）绝不改写指针**——改了就永久丢失原数据目录。
+  旧目录由 `app_state.migrate_legacy_state()`（main() 开机调用）一次性
+  搬空并改名 `.retired-<日期>`。新代码一律 `st.HOME_DIR`（锚点）/
+  `st.STATE_DIR`（数据）/ `st.CONFIG_FILE`（配置，禁止自己拼路径）。
+- **测试自隔离**（`app_state._fc_test_isolation`，导入期最先执行）：
+  以 `python tests/xxx.py` 或 pytest 运行时，app_state 自动把 `FC_STATE_DIR`
+  指到临时目录——锚点、默认数据目录、旧目录、config 全部落沙箱
+  （`FC_STATE_DIR` 一个开关管全部路径）。正常运行零影响。
+  **边界（受控实验的实话）**：测试文件**自己不导入 app_state**、却用
+  `python -c` 起子进程时，子进程认不出测试身份，会碰真实的 `%APPDATA%`。
+  这类测试必须**在文件顶部显式 `os.environ["FC_TEST_CHILD"] = "1"`**
+  （见 `tests/test_harness_version.py`）。隔离是否成立不能靠机制推定，
+  要由子进程自报路径来验证。
+- 源码开发：根目录 `run.bat`（唯一启动入口；Electron 运行时三级兜底）
+- 调试包：zip 解压后 `前端控制台.exe` 直接在 `前端控制台_debug\` 顶层
+  （打包按 relpath 剥掉内层目录，**扁平形**）；dist 树里则是嵌套形
+  （`前端控制台_debug\前端控制台\`）。**双击 exe 直启**，exe 对两种形态
+  都认（exe 同级或上一级找 `electron-shell\`，见 `src/main.py` 调试包
+  直启分支）；免启动器 bat（2026-11-23 用户令：不出 bat）
+- 正式发布：Setup.exe（electron-builder）；调试包不进 releases 分发流
+- **重打包前必须先关掉运行中的调试包实例**（PyInstaller 要删重建 dist 目录）
+- **安装包数据保障 + 过程显示（2026-11-23 用户令，经对抗审计修订）**：
+  `electron/build/installer.nsh` 定制 NSIS——升级/卸载一律保留真实数据目录
+  `$INSTDIR\resources\backend\data`（Setup 形态后端 _app_dir=resources\backend；
+  customRemoveFiles 接管内置 RMDir /r：顶层跳过 resources，backend 下只保
+  data\）；交互卸载弹「是否保留用户数据」（静默/升级默认保留；选清除时连
+  两处 userData：frontend-console-shell 锚点 + 前端控制台壳目录一起删）；
+  安装/卸载过程详情强开（隐藏 section 抢跑 `SetDetailsView show`——官方
+  ShowInstDetails 属性被模板后置覆盖，实测后写胜，只能走运行时指令）。
+  **该文件必须保持 UTF-8 带 BOM**（手工 makensis 对无 BOM 中文 .nsh 报
+  Bad text encoding；electron-builder 流程两者皆可，BOM 防手工踩坑）；
+  `Var fcKeepUserData` 必须包在 `!ifdef BUILD_UNINSTALLER` 里（否则安装器趟
+  warning 6001 × -WX 构建失败）。
+- 惯例：用户拍板/用户令的历史一律写进对应代码的注释；提交号 aNNN 递增

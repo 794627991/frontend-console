@@ -742,19 +742,19 @@ Claude Code → 压缩层（18788，可选）→ 重试代理（37349）→ 上�
 
 | 数据 | 位置 |
 |---|---|
-| 配置本体（含数据目录设置） | `%USERPROFILE%\.serialconsole_pro\config.json` |
-| MCP 服务发现锚点 | `%USERPROFILE%\.serialconsole_pro\endpoint.json` |
+| 配置本体（含数据目录设置） | `锚点 %APPDATA%\frontend-console-shell\backend\config.json` |
+| MCP 服务发现锚点 | `锚点 %APPDATA%\frontend-console-shell\backend\endpoint.json` |
 | 数据目录（默认） | 源码运行：项目根 `data\`；exe：exe 旁 `data\` |
 | 日志 | 数据目录下 `serial_logs\`（可在日志库改） |
 | 笔记与附件 | 数据目录下 `files\`（图片在 `files\images\`） |
 | SSO 凭据 | 数据目录 `lanz_credentials.json`（明文） |
 | 机器人会话 | 数据目录 `hiklink_session.json`（写前留 `.bak`） |
 | 代理状态 / 重试配置 / 用量 | 数据目录 `proxy_state.json`、`retry_config.json`、`proxy_usage.json` |
-| Claude 会话注册表 | `%USERPROFILE%\.serialconsole_pro\claude_harness.json` |
+| Claude 会话注册表 | 数据目录 `claude_harness.json` |
 | Claude 会话转写 | `%USERPROFILE%\.claude\projects\<项目>\<sid>.jsonl`（本工具只读不删） |
-| 对话附件暂存 | `%USERPROFILE%\.serialconsole_pro\harness_uploads`（超 180 天或超 1GB 自动清理） |
+| 对话附件暂存 | 数据目录 `harness_uploads`（超 180 天或超 1GB 自动清理） |
 
-**备份建议**：备份整个数据目录 + `%USERPROFILE%\.serialconsole_pro\` 即备份全部用户数据。
+**备份建议**：备份整个数据目录 + 锚点目录（%APPDATA% 下 frontend-console-shell\backend）即备份全部用户数据。
 
 ---
 

@@ -19,3 +19,12 @@ os.environ.setdefault("CLAUDE_INLINE", "1")
 # a561 审计 F13：残留环境不得让 pytest 变成"真应用实例"起 bot/
 # 自动登录（hiklink._autostart / proxy_module_init 都认这个标志）
 os.environ.pop("FC_APP_BOOT", None)
+
+# 测试身份血缘标记（第七轮 R7-1 高危）：必须在这里设，且必须先于任何
+# 测试模块导入 app_state。
+# conftest.py 由 pytest 在**收集阶段**导入——早于测试模块；而
+# PYTEST_CURRENT_TEST 只在每条用例执行期间存在，收集阶段没有它，
+# app_state 的自隔离靠它认不出 pytest，于是「跑 pytest」会读写用户真实的
+# 数据目录、并把指针写进真实的 %APPDATA%。app_state 侧也加了按 argv[0]
+# 认 pytest 入口的判定，这里是第二道（不依赖 app_state 那条判定对不对）。
+os.environ.setdefault("FC_TEST_CHILD", "1")

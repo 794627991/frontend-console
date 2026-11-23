@@ -30,6 +30,8 @@ import src.app_state as _st
 # a631（用户定调）：skill_meta.json 移出——技能装了哪些丢了顶重重装，不是
 # 凭据也不在用户要备份的范围内（此前以「重装后可对账」纳入，撤销）
 _MIRROR_FILES = (
+    "config.json",                # 全部设置（含 data_dir）——2026-11-23 事故后纳入：
+                                  # 它原先住 %APPDATA%，卸载即删、又不在任何备份里
     "hiklink_session.json",       # 机器人 app_id/app_secret/robot_uid（最重要）
     "hiklink_session.json.bak",   # 上一版，session 损坏时可回滚
     "lanz_credentials.json",      # lanz 账号密码（机器人也复用它登录）
@@ -40,7 +42,7 @@ _MIRROR_FILES = (
     "pw_pending_del.json",        # 网页密码删除/修改挂起队列（加密 blob）
 )
 
-BACKUP_DIR = os.path.join(_st.HOME_DIR, "data_backup")
+BACKUP_DIR = os.path.join(_st.STATE_DIR, "data_backup")
 _MAX_BYTES = 256 * 1024          # 单文件上限：白名单里的都远小于此
 _log = logging.getLogger("cred_mirror")
 _last = {}                        # name -> (mtime_ns, size)，避免重复拷贝
@@ -59,11 +61,26 @@ def _sig(p):
 
 
 def _overlaps(a, b):
-    """两个目录是否相同/互相包含。算不清就当重叠（宁可不备份，也不写坏）。"""
+    """两个目录是否相同/互相包含。算不清就当重叠（宁可不备份，也不写坏）。
+
+    【备份目录是数据目录的子目录 → 不算重叠】（第七轮 R7-2 高危）
+    状态目录退役改造把 BACKUP_DIR 搬进了 数据目录\\data_backup，于是本函数
+    对「数据目录 vs 备份目录」恒为 True，_mirror_one_impl 一进门就返回——
+    **凭据镜像从那之后整体静默禁用**：config/凭据没有任何备份副本，
+    restore_missing 也永不发生（test_cred_mirror 是绿的，因为它把 BACKUP_DIR
+    改到了独立目录，没测真实布局）。
+    为什么子目录是安全的：镜像只处理 DATA_DIR **根级**的白名单文件，目标在
+    子目录里——源永远不是目标的祖先里的同一个文件，不存在自指/递归。
+    真正危险的只有两种：两者相同，或数据目录在备份目录**里面**（备份会把
+    备份目录自己再备份一遍）。这两种照旧拒绝。"""
     try:
         a = os.path.normcase(os.path.abspath(a)).rstrip("\\/")
         b = os.path.normcase(os.path.abspath(b)).rstrip("\\/")
-        return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
+        if a == b or a.startswith(b + os.sep):
+            return True             # 相同，或 a（数据目录）在 b（备份目录）里面
+        if b.startswith(a + os.sep):
+            return False            # 备份目录是数据目录的子目录：安全
+        return False
     except Exception:
         return True
 
@@ -246,6 +263,28 @@ def _mirror_one(name, deleting_ok=True):
         return _mirror_one_impl(name, deleting_ok=deleting_ok)
 
 
+def _mirror_config():
+    """config.json 的镜像——单独一条最简路径（用户令 2026-11-23）。
+    config.json 永远在 工具目录/data，不随数据目录迁移走，所以它的备份与
+    DATA_DIR / BACKUP_DIR / 重叠判定 / 墓碑全都无关：就是把本体拷到
+    工具目录/data/data_backup/config.json。内容没变不重复拷。
+    返回 1 表示实际拷贝了。"""
+    import shutil as _sh
+    sp, dp = _st.CONFIG_FILE, _st.CONFIG_BACKUP_FILE
+    sig = _sig(sp)
+    if sig is None:
+        return 0                    # 本体不存在：没什么可备份（也不删旧镜像）
+    if _last.get("config.json") == sig:
+        return 0
+    try:
+        os.makedirs(os.path.dirname(dp), exist_ok=True)
+        _sh.copyfile(sp, dp)
+        _last["config.json"] = sig
+        return 1
+    except OSError:
+        return 0
+
+
 def _mirror_one_impl(name, deleting_ok=True):
     """镜像单个文件。DATA_DIR 为准：文件在就同步副本，不在就删副本并留墓碑
     （用户主动删凭据后不能让它复活）。返回 1 表示实际拷贝了。
@@ -254,6 +293,8 @@ def _mirror_one_impl(name, deleting_ok=True):
     「补拷贝」，因为一份还来不及恢复的备份绝不是「用户删的」。此前
     _bootstrap 里 restore 有一项失败（被占用/坏 json）后，sync_once 会把
     那份唯一备份删掉并打墓碑，兜底机制被自己的启动流程一次性毁掉。"""
+    if name == "config.json":
+        return _mirror_config()     # 不走数据目录那套：见 _mirror_config
     src_dir = _st.DATA_DIR
     if _overlaps(src_dir, BACKUP_DIR):
         _warn_overlap_once(src_dir)
@@ -354,6 +395,11 @@ def notify(name):
     不再入队。写路径保持异步（写后状态完整，进程死亡不丢墓碑语义）。"""
     if name not in _MIRROR_FILES:
         return
+    if name == "config.json":
+        # config 的源在 工具目录/data（不在数据目录）——下面按 数据目录/name
+        # 判断「源在不在」对它恒为不在，会被误走「删除」分支。直接入队做镜像。
+        _q.put(name)
+        return
     if _sig(os.path.join(_st.DATA_DIR, name)) is None:
         try:
             _mirror_one(name)
@@ -441,6 +487,11 @@ def restore_missing():
     recovered, still_pending = [], set()
     tombstones = _tomb_load()
     for name in _MIRROR_FILES:
+        if name == "config.json":
+            # config 的家是 工具目录/data（不是数据目录），它的恢复由启动时的
+            # app_state._selfheal_cfg 负责（坏 → .bak → 镜像）。这里若把它
+            # 当凭据恢复进数据目录，数据目录迁走后就会在 D 盘多出一份 config。
+            continue
         if name in tombstones:
             continue          # 用户主动删过 → 绝不复活
         if in_use and name not in pending:

@@ -22,6 +22,12 @@ echo   前端控制台 调试打包（源码明文，不发布）
 echo ==============================================
 set PYTHONIOENCODING=gbk
 set HG_NO_ENCRYPT=1
+rem ---- line-ending guard (2026-11-23: LF pollution makes cmd split
+rem CJK lines into junk commands. Keep this block pure ASCII and
+rem blockless: no if-parens, no goto -- python does detect+msg+pause+exit)
+"%PY%" -c "import sys,os;b=open(sys.argv[1],'rb').read();bad=b.count(b'\n')!=b.count(b'\r\n');print('[FAIL] This script has LF-only line endings. Convert to CRLF, then rerun.') if bad else None;os.system('pause') if bad else None;sys.exit(1 if bad else 0)" "%~f0"
+if errorlevel 1 exit /b 1
+
 "%PY%" src\build.py
 if errorlevel 1 goto fail
 if not exist "dist\前端控制台_debug\前端控制台\前端控制台.exe" goto fail

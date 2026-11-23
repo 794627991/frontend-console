@@ -305,7 +305,7 @@ def list_sessions(limit=50):
 
 
 def _load_notes():
-    """读会话备注表（存 ~/.serialconsole_pro/config.json 的 claude_notes 键）。"""
+    """读会话备注表（存数据目录 config.json（app_state.CONFIG_FILE）的 claude_notes 键）。"""
     try:
         from src.app_state import _load_config
         return dict(_load_config().get("claude_notes") or {})

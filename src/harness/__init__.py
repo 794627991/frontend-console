@@ -14,7 +14,7 @@
 # 取最新 v4.1.0-aNNN**（源码运行机器都有 git）；打包版无 .git 回落常量
 #（发版打包时以当时 HEAD 为准改一次即可）。进程内缓存——版本反映的是
 # **正在运行的代码**，提交后不重启不换号（与「请重启生效」横幅语义一致）。
-_HARNESS_FALLBACK = "4.1.0-a467"
+_HARNESS_FALLBACK = "4.1.0-a685"   # 仅最后兜底：打包形态读 build 盖章(见_git_harness_version)
 
 
 def _parse_harness_version(subjects):
@@ -50,8 +50,8 @@ def _repo_head_sig(root):
 
 def _version_cache_path():
     import os
-    return os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                        "harness_version.cache")
+    from src import app_state as _st
+    return os.path.join(_st.STATE_DIR, "harness_version.cache")
 
 
 def _read_version_cache():
@@ -113,15 +113,38 @@ def _git_harness_version():
       · 指纹一致（仓库没提交/拉取过）→ 直接用缓存版本串，零子进程；
       · 指纹不一致/缓存缺失 → 同步跑 git 并刷新缓存（每次仓库变化只付一次）。
     正确性：git log 主题史是 HEAD sha 的函数——sha 不变历史必不变。
-    打包版无 .git 依旧走回落常量。"""
+    打包版读 build.py 盖的版本章；章也缺才落回落常量。"""
     import os
+    import sys
     d = os.path.dirname(os.path.abspath(__file__))
+
+    def _read_stamp():
+        """读打包时 build.py 盖的版本章（_internal/harness_version.txt，与
+        源码 git 推导同格式）。取不到返回空（走回落常量）。"""
+        try:
+            # utf-8-sig：本仓库编辑链会产出带 BOM 的文件（version.py/
+            # installer.nsh 皆然）——若章被带 BOM 保存，裸 utf-8 会把
+            # \ufeff 读进版本串（?v= 参数与显示都带脏字符）。-sig 两种都吃
+            with open(os.path.join(getattr(sys, "_MEIPASS", ""),
+                                   "harness_version.txt"),
+                      encoding="utf-8-sig") as f:
+                return f.readline().strip()
+        except Exception:
+            return ""
+
+    if getattr(sys, "frozen", False):
+        # 第三轮 M3：frozen 不做 .git 上溯——安装/调试目录若恰落在任一
+        # git 工作树 ≤6 层内，会被无关仓库劫持版本推导（绕过盖章）。
+        # 注意必须**先读章再返回**：早先的写法是裸 return ""，把读章一起
+        # 绕过了，frozen 直接落兜底常量（第四轮自审实锤，已修）。
+        return _read_stamp()
     for _ in range(6):                    # src/harness → 仓库根
         if os.path.isdir(os.path.join(d, ".git")):
             break
         d = os.path.dirname(d)
     else:
-        return ""
+        # 源码树内但找不到仓库根（嵌套解压等）：同样读章兜底
+        return _read_stamp()
     sig = _repo_head_sig(d)
     if sig:
         csig, cver = _read_version_cache()

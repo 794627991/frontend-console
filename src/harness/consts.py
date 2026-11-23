@@ -17,10 +17,11 @@ _QUEUE_MAX = 2000           # SSE 客户端队列上限
 _IDLE_KILL_S = 15 * 60      # 活进程闲置回收阈值（秒）
 
 # ---- from claude_harness.py:35 (_META_FILE) ----
-_META_FILE = os.path.join(_st.HOME_DIR, "claude_harness.json")
+# 2026-11-23 退役改造：用户数据随 ~/.serialconsole_pro 退役搬进数据目录
+_META_FILE = os.path.join(_st.STATE_DIR, "claude_harness.json")
 
 # ---- from claude_harness.py:36 (_UPLOAD_DIR) ----
-_UPLOAD_DIR = os.path.join(_st.HOME_DIR, "harness_uploads")
+_UPLOAD_DIR = os.path.join(_st.STATE_DIR, "harness_uploads")
 
 # ---- from claude_harness.py:37 (_UPLOAD_MAX) ----
 _UPLOAD_MAX = 20 * 1024 * 1024
@@ -69,4 +70,4 @@ _sessions_lock = threading.Lock()
 
 
 # ---- 技能描述汉化（v2.27：新增技能自动翻译，免长期手工维护映射表）----
-_SKILL_ZH_FILE = os.path.join(_st.HOME_DIR, "skill_zh_cache.json")
+_SKILL_ZH_FILE = os.path.join(_st.STATE_DIR, "skill_zh_cache.json")

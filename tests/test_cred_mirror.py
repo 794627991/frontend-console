@@ -25,22 +25,29 @@ def _write(p, obj):
 
 
 def _setup(monkeypatch):
+    """夹具：data 兼作「工具目录\\data」与「数据目录」（没迁移时的生产布局）。
+    config.json 永远在 工具目录\\data、镜像在其下的 data_backup（2026-11-23
+    用户令：config 不随数据迁移走）——所以这两个路径也要一起指进临时目录，
+    否则 sync_once 会对真实位置的工具目录 data 做镜像。"""
     root = tempfile.mkdtemp(prefix="fc_cm_")
     data = os.path.join(root, "data")
     backup = os.path.join(root, "home_backup")
     os.makedirs(data, exist_ok=True)
     monkeypatch.setattr(st, "DATA_DIR", data)
     monkeypatch.setattr(cm, "BACKUP_DIR", backup)
+    monkeypatch.setattr(st, "CONFIG_FILE", os.path.join(data, "config.json"))
+    monkeypatch.setattr(st, "CONFIG_BACKUP_FILE",
+                        os.path.join(data, "data_backup", "config.json"))
     monkeypatch.setattr(cm, "_last", {})
     monkeypatch.setattr(cm, "_q", __import__("queue").Queue())
     return root, data, backup
 
 
 def test_whitelist_excludes_big_and_derived():
-    """白名单只含小凭据；日志/笔记/使用量/网页缓存一律不在。"""
+    """白名单只含小凭据；日志/笔记/使用量/技能缓存一律不在。"""
     assert "hiklink_session.json" in cm._MIRROR_FILES
     assert "lanz_credentials.json" in cm._MIRROR_FILES
-    for bad in ("logs", "files", "proxy_usage.json", "nav", "webview_cache",
+    for bad in ("logs", "files", "proxy_usage.json", "nav",
                 "skill_cache", "web_passwords.json"):
         assert bad not in cm._MIRROR_FILES
 
@@ -254,18 +261,54 @@ def test_merge_small_first_no_overwrite():
 
 
 def test_overlap_dir_skipped(monkeypatch):
-    """备份目录与数据目录重叠时整体跳过（否则自己备份自己）。"""
+    """备份目录与数据目录的关系分三种（第七轮 R7-2 修正语义）：
+       相同 / 数据目录在备份目录里面 → 整体跳过（否则自己备份自己）
+       备份目录是数据目录的**子目录**   → 放行。这才是生产布局
+         （数据目录\\data_backup）。此前它也被当成「重叠」跳过，于是凭据镜像
+         在生产布局下整体静默禁用——config/凭据没有任何备份。
+    """
     root, data, _ = _setup(monkeypatch)
     try:
         _write(os.path.join(data, "cmdlib.json"), [{"cmd": "ls"}])
-        monkeypatch.setattr(cm, "BACKUP_DIR", os.path.join(data, "backup"))
-        assert cm.sync_once() == 0
-        assert cm.restore_missing() == []
-        assert not os.path.exists(os.path.join(data, "backup"))
 
+        # ① 子目录：必须放行——镜像真的发生
+        sub = os.path.join(data, "backup")
+        monkeypatch.setattr(cm, "BACKUP_DIR", sub)
+        assert cm.sync_once() == 1, "备份目录是数据目录子目录时镜像被跳过"
+        assert os.path.isfile(os.path.join(sub, "cmdlib.json"))
+
+        # ② 相同：仍然跳过
         monkeypatch.setattr(cm, "BACKUP_DIR", data)
         assert cm.sync_once() == 0
         assert cm.restore_missing() == []
+
+        # ③ 数据目录在备份目录里面（备份目录是数据目录的上级）：仍然跳过
+        monkeypatch.setattr(cm, "BACKUP_DIR", root)
+        assert cm.sync_once() == 0
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_real_layout_backup_dir_is_inside_data_dir(monkeypatch):
+    """**用生产布局**（BACKUP_DIR = 数据目录\\data_backup）验证 config 真的进
+    了备份。此前的测试都把 BACKUP_DIR 改到独立目录——所以 R7-2 那个「镜像
+    整体禁用」的洞在它们全绿的情况下存在。这条测试不许改 BACKUP_DIR。"""
+    import src.app_state as st
+    root, data, _ = _setup(monkeypatch)
+    try:
+        monkeypatch.setattr(cm, "BACKUP_DIR",
+                            os.path.join(data, "data_backup"))
+        _write(os.path.join(data, "config.json"),
+               {"data_dir": data, "theme": "prod-layout"})
+        _write(os.path.join(data, "hiklink_session.json"),
+               {"app_id": "aid", "app_secret": "sec"})
+        assert "config.json" in cm._MIRROR_FILES
+        cm.sync_once()
+        bk = os.path.join(data, "data_backup", "config.json")
+        assert os.path.isfile(bk), "生产布局下 config.json 没有进备份"
+        assert json.load(open(bk, encoding="utf-8"))["theme"] == "prod-layout"
+        assert os.path.isfile(os.path.join(data, "data_backup",
+                                           "hiklink_session.json"))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

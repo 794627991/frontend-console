@@ -12,7 +12,7 @@ reviewer 审已完成的改动，审过即开闸），未超/已送审/未启用
 铁律：闸是增强不是依赖——后端不在/超时/输入畸形/任何异常一律 exit 0
 放行，绝不因闸自身故障阻塞工作（回合结算审计仍在，双层兜底）。
 
-后端地址读 ~/.serialconsole_pro/endpoint.json（工具启动时写入，与
+后端地址读锚点 endpoint.json（app_state.HOME_DIR，工具启动时写入，与
 ask_mcp.py 同一套服务发现）；HARNESS_BACKEND 环境变量可覆盖
 （同 ask_mcp 的 URL_OVERRIDE 先例，测试用）。双形态入口：源码
 `python src/main.py --audit-hook` / 打包 `exe --audit-hook`。
@@ -23,8 +23,8 @@ import sys
 import urllib.parse
 import urllib.request
 
-STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
+from src import app_state as _st
+ENDPOINT_FILE = os.path.join(_st.HOME_DIR, "endpoint.json")
 
 # matcher 已在 settings 侧过滤，这里再核一遍双保险（hook stdin 字段以 CLI
 # 实际为准：{session_id, transcript_path, tool_name, tool_input, ...}）

@@ -30,15 +30,16 @@ import time
 import urllib.error
 import urllib.request
 
-# 可调项（env 覆盖，最高优先级；常规配置走 ~/.serialconsole_pro/config.json
-# 的 harness_vision 节——设置面板「识图配置」写的正是那里）
+# 可调项（env 覆盖，最高优先级；常规配置走 config.json（app_state.CONFIG_FILE，
+# 在数据目录里）的 harness_vision 节——设置面板「识图配置」写的正是那里）
 BASE_OVERRIDE = (os.environ.get("HARNESS_VISION_BASE_URL") or "").strip()
 KEY_OVERRIDE = (os.environ.get("HARNESS_VISION_KEY") or "").strip()
 DIRECT_FALLBACK = "https://open.bigmodel.cn/api/anthropic"
 
-# 识图配置文件（与主程序同源：HOME_DIR/config.json 的 harness_vision 节）
-CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                           "config.json")
+# 识图配置文件：直接用 app_state.CONFIG_FILE（数据目录里的那一份）。
+# 此前这里自己拼 HOME_DIR/config.json——config 搬进数据目录后会读空。
+from src import app_state as _st
+CONFIG_FILE = _st.CONFIG_FILE
 _VISION_CFG_KEY = "harness_vision"
 # v2.28.8 恢复默认 glm-5.3-flash（用户定调）：此前会话 AI 误把 [1M] 变体的
 # 1211 当成 flash 不存在（实为窗口后缀不被网关认，v2.28.6 裸名优先已修）。
@@ -48,8 +49,7 @@ DEFAULT_MODEL = "glm-5.3-flash"
 
 # 诊断日志（v2.28.4）：无头进程静默失败难排查（用户实锤两次 HTTP 400 无从
 # 定位入参）——每次调用记 imageSource/端点/模型/结果/耗时，超 512K 截半
-LOG_FILE = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                        "vision_mcp.log")
+LOG_FILE = os.path.join(_st.STATE_DIR, "vision_mcp.log")
 
 
 def _log(msg):

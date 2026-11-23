@@ -247,7 +247,7 @@ def _audit_hook_settings_path():
 # ---- from claude_harness.py:974 (_AUDIT_LOG_MAX) ----
 
 
-# v2.34.1：审计警示卡持久化（~/.serialconsole_pro/harness_audit_log.jsonl，
+# v2.34.1：审计警示卡持久化（数据目录/harness_audit_log.jsonl，
 # 每行 {sid, ts, text}，512K 截半——vision_mcp.log 同款惯例）。背景：warn/
 # 降级/中断档的卡只 emit 进事件缓冲，transcript_for 回放（解析 jsonl）没有
 # 对应行——刷新/切会话即失；auto 档实时卡与续发消息也是两份不同文本。
@@ -279,7 +279,7 @@ def _audit_iso_now():
 def _audit_log_append(sid, text):
     """审计卡落盘（追加一行；超限截半保后半）。失败静默——回放缺卡不致命。"""
     try:
-        p = os.path.join(_st.HOME_DIR, "harness_audit_log.jsonl")
+        p = os.path.join(_st.STATE_DIR, "harness_audit_log.jsonl")
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps({"sid": sid, "ts": _audit_iso_now(),
                                 "text": str(text or "")[:4000]},
@@ -299,7 +299,7 @@ def _audit_log_read(sid):
     """读该会话的全部审计卡（转写回放合并用）。返回 role='audit' 行列表。"""
     out = []
     try:
-        p = os.path.join(_st.HOME_DIR, "harness_audit_log.jsonl")
+        p = os.path.join(_st.STATE_DIR, "harness_audit_log.jsonl")
         with open(p, "r", encoding="utf-8") as f:
             for ln in f:
                 ln = ln.strip()

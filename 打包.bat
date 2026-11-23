@@ -22,10 +22,39 @@ if not exist "%PY%" (
   exit /b 1
 )
 
-rem ---- MSVC 工具链（本机 BuildTools 装在 D 盘，pyd 编译必需）----
-set "FC_MSVC_BT=D:\AI_PROJECT\msvc-buildtools"
+rem ---- line-ending guard (2026-11-23: LF pollution makes cmd split
+rem CJK lines into junk commands. Keep this block pure ASCII and
+rem blockless: no if-parens, no goto -- python does detect+msg+pause+exit)
+"%PY%" -c "import sys,os;b=open(sys.argv[1],'rb').read();bad=b.count(b'\n')!=b.count(b'\r\n');print('[FAIL] This script has LF-only line endings. Convert to CRLF, then rerun.') if bad else None;os.system('pause') if bad else None;sys.exit(1 if bad else 0)" "%~f0"
+if errorlevel 1 exit /b 1
+rem ---- MSVC 工具链（pyd 编译必需。2026-11-23 实锤：D 盘 BuildTools 已移除，
+rem 本机为 C 盘标准安装）——复审修订后的顺序与口径：
+rem   ① 用户预设 FC_MSVC_BT 优先（P2-5）② 缺失则 vswhere 兜底（挪窝场景，
+rem   N4：兜底必须排在深检前，否则成死代码）③ 深检对齐 python 侧
+rem   cythonize_build._msvc_env：cl.exe 真身 + Windows SDK（Include+Lib，N10）
+rem 行内反斜杠为字面量——GBK bat 补丁绝不走 heredoc 转义层（N1-N3 实锤）。
+if not defined FC_MSVC_BT set "FC_MSVC_BT=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools"
+if not exist "%FC_MSVC_BT%\VC\Tools\MSVC" for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "FC_MSVC_BT=%%i"
 if not exist "%FC_MSVC_BT%\VC\Tools\MSVC" (
-  echo [失败] 未找到 MSVC：%FC_MSVC_BT% —— BuildTools 被移动/删除？改本脚本的 FC_MSVC_BT
+  echo [失败] 未找到 MSVC BuildTools（含 VC.Tools 组件）——请安装 VS BuildTools
+  echo        或设环境变量 FC_MSVC_BT 指向安装根（其下有 VC\Tools\MSVC）。
+  pause
+  exit /b 1
+)
+set "FC_CL="
+for /d %%v in ("%FC_MSVC_BT%\VC\Tools\MSVC\*") do if not defined FC_CL if exist "%%v\bin\Hostx64\x64\cl.exe" set "FC_CL=1"
+if not defined FC_CL (
+  echo [失败] MSVC 工具链不完整：VC\Tools\MSVC 下无 Hostx64/x64/cl.exe
+  pause
+  exit /b 1
+)
+if not exist "%ProgramFiles(x86)%\Windows Kits\10\Include" (
+  echo [失败] 未找到 Windows SDK Include（Windows Kits\10）——pyd 编译必需
+  pause
+  exit /b 1
+)
+if not exist "%ProgramFiles(x86)%\Windows Kits\10\Lib" (
+  echo [失败] 未找到 Windows SDK Lib（Windows Kits\10）——pyd 链接必需
   pause
   exit /b 1
 )

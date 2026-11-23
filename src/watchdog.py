@@ -3,7 +3,7 @@
 阻塞 150s——send_raw/tftp/sessions 全挂起，关串口才恢复）。
 
 在途请求 >5s 未完成时，自动把**全部线程栈**转储到
-~/.serialconsole_pro/watchdog_dump.log（sys._current_frames——无需
+数据目录/watchdog_dump.log（sys._current_frames——无需
 py-spy）。
 
 v3.5.289（用户需求「不仅记录，还要能打断阻塞」）：同一请求持续超
@@ -26,8 +26,8 @@ import traceback
 _REQS = {}
 _LOCK = threading.Lock()
 _LAST = [0.0]
-_DUMP = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                     "watchdog_dump.log")
+from src import app_state as _st
+_DUMP = os.path.join(_st.STATE_DIR, "watchdog_dump.log")
 
 try:
     from flask import request

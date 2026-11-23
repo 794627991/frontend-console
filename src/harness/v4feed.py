@@ -375,8 +375,8 @@ class V4Feed(object):
 
     @staticmethod
     def _boot_path():
-        return os.path.join(
-            os.path.expanduser("~"), ".serialconsole_pro", "v4wseq", "BOOT")
+        from src import app_state as _st
+        return os.path.join(_st.STATE_DIR, "v4wseq", "BOOT")
 
     def _bump_hwm(self, w):
         """落账后推进本 epoch 桶的高水位（LRU：提到末尾）。"""

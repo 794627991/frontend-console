@@ -24,7 +24,7 @@ def _ask_mcp_cfg_path(sid, perm="auto", include_vision=True):
     路径用正斜杠：cmd.exe shim 会吞反斜杠转义，JSON 里带 \\ 的 Windows 路径
     经 shim 传递后解析失败（实测 --mcp-config 内联 JSON 会被引号处理吃掉）。
     """
-    d = os.path.join(_st.HOME_DIR, "harness_ask")
+    d = os.path.join(_st.STATE_DIR, "harness_ask")
     try:
         os.makedirs(d, exist_ok=True)
     except Exception:

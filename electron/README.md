@@ -24,7 +24,7 @@ npm start          # 壳拉起 python src/main.py --headless 并开窗
 |---|---|
 | `FC_PYTHON` | 指定 Python 解释器真身路径（默认自动绕开 WindowsApps 商店 shim 取 PATH 里第一个真身） |
 | `FC_BACKEND_CMD` | 完整覆盖后端命令，JSON 数组，如 `["python","src/main.py","--headless"]` |
-| `FC_ENDPOINT_FILE` | endpoint.json 路径覆盖（壳与后端同读；默认 `~/.serialconsole_pro/endpoint.json`） |
+| `FC_ENDPOINT_FILE` | endpoint.json 路径覆盖（壳与后端同读；默认锚点 `userData/backend/endpoint.json`——2026-11-23 退役改造，`~/.serialconsole_pro` 已退役） |
 
 ## 从远端拉取后直接用（公司环境）
 
@@ -64,7 +64,7 @@ run.bat            rem 等价 run.bat
 - **弹框全部走异步 `dialog.showMessageBox`**：`showErrorBox` 是原生模态、
   阻塞主进程直到用户点掉（实测会卡住后续退出）
 - **后端 stdout 收不到东西是正常的**：backend_log 在进程内截走进内存
-  环形缓冲（诊断面板可见）；壳自身日志落 `~/.serialconsole_pro/electron-shell.log`
+  环形缓冲（诊断面板可见）；壳自身日志落锚点 `userData/backend/electron-shell.log`
 
 ## P1（打包）布局约定
 

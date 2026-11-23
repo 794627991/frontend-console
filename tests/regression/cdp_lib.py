@@ -59,8 +59,14 @@ def _app_url():
     except Exception:
         pass
     try:
-        ep = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                          "endpoint.json")
+        # 退役改造(对抗审计 P9):锚点优先,旧目录兜底
+        _anc = (os.environ.get("FC_STATE_DIR")
+                or os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
+                                "frontend-console-shell", "backend"))
+        ep = os.path.join(_anc, "endpoint.json")
+        if not os.path.exists(ep):
+            ep = os.path.join(os.path.expanduser("~"),
+                              ".serialconsole_pro", "endpoint.json")
         with open(ep, encoding="utf-8") as f:
             u = (json.load(f) or {}).get("url") or ""
         if u.startswith("http"):

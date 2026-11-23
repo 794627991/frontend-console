@@ -18,7 +18,11 @@ def _fatal_hook(et, ev, tb):
     try:
         import time as _t
         import traceback as _tb
-        d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+        # 锚点公式与 app_state._anchor_dir 同步（此刻可能尚在解密前，不可 import src）
+        d = os.path.join(os.environ.get("FC_STATE_DIR")
+                         or os.path.join(os.environ.get("APPDATA")
+                                         or os.path.expanduser("~"),
+                                         "frontend-console-shell", "backend"))
         os.makedirs(d, exist_ok=True)
         p = os.path.join(d, "boot_error.log")
         try:
@@ -48,8 +52,14 @@ except Exception:
 # 致命信号都会把全线程栈写到 crash_dump.log，现场不再丢失
 try:
     import faulthandler as _fh
-    _CRASH_LOG = os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                              "crash_dump.log")
+    # 锚点公式与 app_state._anchor_dir 同步（解密前不可 import src；
+    # 2026-11-23 起 crash_dump.log 落锚点，与 endpoint 同在锚点）
+    _CRASH_LOG = os.path.join(
+        os.environ.get("FC_STATE_DIR")
+        or os.path.join(os.environ.get("APPDATA")
+                        or os.path.expanduser("~"),
+                        "frontend-console-shell", "backend"),
+        "crash_dump.log")
     os.makedirs(os.path.dirname(_CRASH_LOG), exist_ok=True)
     _fh.enable(file=open(_CRASH_LOG, "a", encoding="utf-8", errors="replace"),
                all_threads=True)
@@ -152,7 +162,10 @@ def resource_path(rel):
 
 # ---- Claude Code 直连入口：endpoint 文件 ----
 # 工具启动时把本地 HTTP 服务地址写到固定文件，任何 Claude Code 会话读它即可发现服务。
-STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+# 2026-11-23 退役改造：锚点=%APPDATA%\frontend-console-shell\backend（与壳
+# userData 同一家，见 app_state._anchor_dir）——不再写 ~/.serialconsole_pro
+from src import app_state as _st_anchor
+STATE_DIR = _st_anchor.HOME_DIR
 
 # ---- a663 退出原因审计已合并进 backend_log（单一真源，避免两套审计）----
 def _exit_reason(why):
@@ -420,7 +433,11 @@ def _write_boot_error(exc):
         import os
         import time as _t
         import traceback as _tb
-        d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
+        # 锚点公式与 app_state._anchor_dir 同步；boot_error.log 新家=锚点
+        d = os.path.join(os.environ.get("FC_STATE_DIR")
+                         or os.path.join(os.environ.get("APPDATA")
+                                         or os.path.expanduser("~"),
+                                         "frontend-console-shell", "backend"))
         os.makedirs(d, exist_ok=True)
         p = os.path.join(d, "boot_error.log")
         try:
@@ -446,6 +463,71 @@ def _boot_mark(label):
 
 
 def main():
+    # 2026-11-23 用户令：调试包免启动器——双击 前端控制台.exe 直启。exe 探测
+    # 调试包布局（同层 electron-shell\dist\electron.exe）即拉起自带壳后退出，
+    # 壳再以 --headless 把本 exe 拉回当后端（FC_BACKEND_EXE 契约，见
+    # electron/main.js resolveBackend），最终进程树与 run.bat/Setup 形态一致。
+    # 必须放 main() 最顶上：exe 跳板形态越早起壳越快（其后端日志装载等
+    # 一概不需要），也天然先于 _setup_job_object()——Job 是
+    # KILL_ON_JOB_CLOSE，本进程一退内核会杀光全部子进程，壳必须生在 Job 外。
+    # 仅零参数触发（sys.argv[1:] 为空）——selftest/--mcp 等工具模式一律
+    # 带参，不会被劫持，新增模式天然免疫。
+    # 内网实锤（2026-11-23）：窗口子系统 exe 的 stderr 双击时不可见，布局
+    # 不对会「零反应静默死」——致命路径一律 MessageBox + debug_launch.log
+    # 留证。壳根两种落位都认（zip 扁平整/dist 树嵌套形，实锤翻车点）：
+    #   扁平：<exe目录>\electron-shell     （zip 解压形态 = 内网实机形态）
+    #   嵌套：<exe目录>\..\electron-shell  （dist 树形态 = 开发机形态）
+    def _dbg_log(msg):
+        try:
+            # 对抗审计修正:落锚点(与 boot_error 同家)——数据目录可能被用户
+            # 配置挪走/不可写(内网解到受保护位置正是调试包场景),锚点恒在
+            from src import app_state as _st
+            _d = _st.HOME_DIR
+            os.makedirs(_d, exist_ok=True)
+            with open(os.path.join(_d, "debug_launch.log"), "a",
+                      encoding="utf-8") as _f:
+                _f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+        except Exception:
+            pass
+
+    def _dbg_msgbox(msg):
+        # 仅 exe（frozen）弹窗；源码形态走 stderr，别打断测试/CI
+        if not getattr(sys, "frozen", False):
+            return
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0, msg, "前端控制台（调试包）", 0x30)   # MB_ICONWARNING
+        except Exception:
+            pass
+
+    if getattr(sys, "frozen", False) and not sys.argv[1:]:
+        _exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        _dbg_root = ""
+        for _base in (_exe_dir, os.path.dirname(_exe_dir)):
+            if os.path.isfile(os.path.join(_base, "electron-shell", "dist",
+                                           "electron.exe")):
+                _dbg_root = _base
+                break
+        if _dbg_root:
+            _shell_exe = os.path.join(_dbg_root, "electron-shell", "dist",
+                                      "electron.exe")
+            print("[调试包] 拉起自带 Electron 壳…")
+            os.environ["FC_BACKEND_EXE"] = os.path.abspath(sys.executable)
+            import subprocess
+            try:
+                subprocess.Popen(
+                    [_shell_exe, os.path.join(_dbg_root, "electron-shell")],
+                    cwd=_dbg_root)
+            except Exception as _e:
+                _dbg_log("壳拉起失败 %s: %r" % (_shell_exe, _e))
+                _dbg_msgbox("Electron 壳拉起失败：%r\n%s" % (_e, _shell_exe))
+                sys.exit(2)
+            _dbg_log("壳已拉起: %s" % _shell_exe)
+            return
+        _dbg_log("未找到壳（布局不对/整包未拷全？）: %s" % os.path.join(
+            _exe_dir, "electron-shell", "dist", "electron.exe"))
+
     _boot_mark("===== boot =====")
     # 用户需求（2.4.4）：启动不再弹 cmd 黑框——日志由进程内环形缓冲接管
     # （src/backend_log.py，只驻内存不写盘），界面点标题栏版本号即可查看。
@@ -517,8 +599,13 @@ def main():
     # 进内存日志并改名为 .seen（保留证据、不重复提示）。
     try:
         import os as _os
-        _be = _os.path.join(_os.path.expanduser("~"), ".serialconsole_pro",
-                            "boot_error.log")
+        # boot_error.log 只在锚点（见 _fatal_hook/_write_boot_error）；
+        # 旧目录一概不看（用户令 2026-11-23：不考虑其他位置）
+        try:
+            from src import app_state as _st_be
+            _be = _os.path.join(_st_be.HOME_DIR, "boot_error.log")
+        except Exception:
+            _be = ""
         if _os.path.exists(_be):
             try:
                 from src import backend_log as _bl3
@@ -532,6 +619,8 @@ def main():
                 pass
     except Exception:
         pass
+    #（调试包直启分支已前置到 main() 顶部——exe 跳板形态越早起壳越快，
+    #  且必须先于 _setup_job_object()；此处不再重复）
     # 用户实锤（内网）：程序退出后主进程残留+rg.exe 占用——Job Object 绑杀
     # 全部子进程（rg/ctags/codegraph/worker 等）：主进程一退（含强杀），
     # Windows 内核自动 TERMINATE 全部子进程，零孤儿
@@ -573,12 +662,19 @@ def main():
         _run_mcp_mode()
         return
     # P4（2026-11-22，用户拍板）：Electron 壳是唯一入口——单实例锁 /
-    # 文件关联 / 窗口语义全部归壳（requestSingleInstanceLock）。源码直启
-    # 未带 --headless 直接报指引退出，避免起一个没有 UI 的后端。
+    # 文件关联 / 窗口语义全部归壳（requestSingleInstanceLock）。调试包 exe
+    # 零参数直启已在上方 _setup_job_object() 前自动拉壳；走到这里的只剩
+    # 源码直启 / 正包后端裸跑 / 调试包壳缺失——报指引退出，不起无 UI 后端。
     _headless = "--headless" in sys.argv
     if not _headless:
-        print("[错误] 本版本只支持 Electron 壳启动：请运行 run.bat 或安装后的"
-              "「前端控制台」快捷方式。", file=sys.stderr)
+        _msg = ("本版本只支持 Electron 壳启动：请运行 run.bat（源码目录）或"
+                "安装后的「前端控制台」快捷方式；调试包直接双击 前端控制台.exe"
+                "——若见此框，说明 electron-shell 壳目录缺失：请确保 "
+                "前端控制台_debug 目录完整（electron-shell\\ 与 ico\\ 在 exe "
+                "同级或其上一级均可），也不要在压缩包里直接双击。")
+        print("[错误] " + _msg, file=sys.stderr)
+        _dbg_log("直启指引退出（无 --headless）")
+        _dbg_msgbox(_msg)
         sys.exit(2)   # 非零退出码：脚本/CI 排障据此区分「形态错误」
 
     # 延迟导入，避免单实例检查失败时也加载重依赖

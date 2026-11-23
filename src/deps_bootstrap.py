@@ -68,14 +68,18 @@ def check_deps():
 
 # ---- 启动自检（每机一次）：config 标记 deps_selftest_ok ----
 def _selftest_flag_path():
-    """标记文件与 config.json 同目录（app_state.HOME_DIR）——源码/打包两态同一路径。"""
+    """标记文件落数据目录（app_state.STATE_DIR）——源码/打包两态同一路径。"""
     try:
-        from src.app_state import HOME_DIR
-        return os.path.join(HOME_DIR, "deps_selftest.json")
+        from src.app_state import STATE_DIR
+        return os.path.join(STATE_DIR, "deps_selftest.json")
     except Exception:
-        # app_state 依赖 flask 之外的纯标准库，但保险起见给独立回退
-        return os.path.join(os.path.expanduser("~"), ".serialconsole_pro",
-                            "deps_selftest.json")
+        # app_state 纯标准库，此回退几乎不可达；公式=默认数据目录
+        #（frozen=exe 旁 / 源码=项目根，同 _default_data_dir 口径）
+        import sys as _s
+        _base = (os.path.dirname(os.path.abspath(_s.executable))
+                 if getattr(_s, "frozen", False) else
+                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(_base, "data", "deps_selftest.json")
 
 
 def selftest_once():

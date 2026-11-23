@@ -8,7 +8,8 @@
   - 发命令、发原始字节（Ctrl-C 等）
   - 读取/搜索日志文件（含拖放进工具的任意路径日志）
 
-服务发现：读 ~/.serialconsole_pro/endpoint.json 找到工具后端 HTTP 地址。
+服务发现：读锚点 endpoint.json（app_state.HOME_DIR，位于 %APPDATA%
+下 frontend-console-shell/backend/）找到工具后端 HTTP 地址。
 工具没开时自动拉起（复用 serial_cli.py 的启动逻辑）。
 
 Claude Code 配置（~/.claude.json 或项目 .mcp.json）:
@@ -63,8 +64,10 @@ import urllib.parse
 import subprocess
 
 # ---- 服务发现（endpoint.json，工具启动时写入；serial_cli.py 已删） ----
-STATE_DIR = os.path.join(os.path.expanduser("~"), ".serialconsole_pro")
-ENDPOINT_FILE = os.path.join(STATE_DIR, "endpoint.json")
+from src import app_state as _st
+# 2026-11-23 退役改造：锚点=%APPDATA%\frontend-console-shell\backend
+#（app_state._anchor_dir），endpoint 服务发现与 config 同家
+ENDPOINT_FILE = os.path.join(_st.HOME_DIR, "endpoint.json")
 
 # 工具没开时自动拉起的候选入口
 # PyInstaller frozen（--mcp 模式）下 sys.executable 就是 exe 自己，放最前；
@@ -695,7 +698,7 @@ def tool_devtools_screenshot(url, args):
         cs.send("Page.enable")
         res = cs.send("Page.captureScreenshot", {"format": "png"}, timeout=15)
     data = base64.b64decode(res.get("data", ""))
-    d = os.path.join(os.path.expanduser("~"), ".serialconsole_pro", "devtools")
+    d = os.path.join(_st.STATE_DIR, "devtools")
     os.makedirs(d, exist_ok=True)
     fp = os.path.join(d, time.strftime("shot_%Y%m%d_%H%M%S")
                       + "_%03d.png" % (int(time.time() * 1000) % 1000))
@@ -1021,7 +1024,7 @@ _TOOLS = [
     },
     {
         "name": "devtools_screenshot",
-        "description": "DevTools：截取工具页面当前画面，保存 PNG 到 ~/.serialconsole_pro/devtools/ 并返回绝对路径（用 Read 查看）。截图含用户真实数据，注意敏感信息。",
+        "description": "DevTools：截取工具页面当前画面，保存 PNG 到用户数据目录 devtools/ 并返回绝对路径（用 Read 查看）。截图含用户真实数据，注意敏感信息。",
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
