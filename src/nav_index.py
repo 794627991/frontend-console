@@ -911,7 +911,11 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                         _soft_errs[0] = 0
                         # a424：暴露 worker 当前目录（停滞告警用——用户能看到
                         # 到底卡在哪个目录上，而不是只知道「没进展」）
-                        _cur_d[_th.current_thread().name] = r
+                        # 2026-11-23 总审计 a684-A4：看门狗摘键持 _dl、这里裸写
+                        # ——同一本账两种护法。GIL 下侥幸无害，全部收到 _dl 下
+                        # （锁内只有单键赋值，每目录一次，开销可忽略）。
+                        with _dl:
+                            _cur_d[me] = r
                         # a400（用户令·白名单优先）：产物目录存在即算"编译过"
                         # ——探测计数**在剪枝之前**（__pycache__ 里的 .pyc
                         # 目录一剪就永远扫不到）；探测完照常剪掉不索引
@@ -987,12 +991,9 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
             # a452（审计 P2）：worker 退出必须从 _cur_d 摘掉自己——否则停了
             # 告警仍会打印已结束 worker 的最后目录，并把「在跑 worker 数」
             # 算多（用户看到的进度信息是错的）。
-            me = _th.current_thread().name
-            try:
-                _cur_d.pop(me, None)
-            except Exception:
-                pass
+            # a684-A4：与其它三本账同一把锁摘。
             with _dl:
+                _cur_d.pop(me, None)
                 _sub_start.pop(me, None)
                 _live.discard(me)
                 _dead.pop(me, None)   # 世代号键随线程一起清，避免残留
@@ -1151,10 +1152,10 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                         "检查网络盘连接后重试" % (idle, _last_dir[0]))
                 if idle >= _IDLE_WARN and time.time() - _last_say[0] >= _IDLE_WARN:
                     _last_say[0] = time.time()
-                    try:                       # worker 并发写，遍历可能撞尺寸变化
+                    # a684-A4：_cur_d 的读写全部持 _dl——原先这里裸读，靠
+                    # try/except 兜「遍历中字典尺寸变化」。
+                    with _dl:
                         _workers = [v for v in list(_cur_d.values()) if v]
-                    except RuntimeError:
-                        _workers = []
                     # a452（审计 P2）：原实现逐个 worker 报当前目录，每次停滞
                     # 最多刷 9 行；那些目录名对用户没有价值（他只需要知道
                     # 「卡住了、还在跑」），却会把 400 条日志上限冲刷掉，让
@@ -1656,7 +1657,14 @@ def _make_state_of(sc):
     if not dirs and sc.get("mode") in ("whitelist", "full"):
         # 全树统一态：省掉逐级查表
         fixed = sc["mode"]
-        return lambda _rel: fixed
+        _fixed_of = lambda _rel: fixed    # noqa: E731
+        # 2026-11-23 总审计 a684-A10：两个能力查询在统一态下恒 False——全树
+        # 统一没有「显式节点」概念，用户排除名命中的子树整棵剪。原实现不挂
+        # 这两个属性，靠消费侧 getattr 取不到时的默认值巧合成立；这里把
+        # 契约摆到明面上，行为不变。
+        _fixed_of.has_live_desc = lambda _rel_l: False
+        _fixed_of.under_live = lambda _rel_l: False
+        return _fixed_of
     dflt = _scope_root_default(sc)
 
     def _state_of(rel_l):
@@ -2216,68 +2224,16 @@ def detect_scope(root, say=None):
                   "app", "rootfs", "tools"))
     if not (has_sbuilder or kernel_roots or _has_code_dirs):
         return None, ""
-    hdr = []
-    for k in kernel_roots:
-        hdr += [k + "/include", k + "/include/asm-generic",
-                k + "/include/uapi/asm-generic",
-                k + "/arch/${arch}/include",
-                k + "/arch/${arch}/include/uapi"]
-    if os.path.isdir(os.path.join(root, "uboot")):
-        # a428（实测：部分 u-boot 是 SCons 等非 Kbuild 工程，**没有**
-        # arch/<arch>/include——原实现硬编码这一条，会报「头文件区未命中
-        # 收录集(0 文件)」）→ 按目录存在性逐条探测，不假设标准布局。
-        _ub = os.path.join(root, "uboot")
-        try:
-            _ub_sub = [d for d in sorted(os.listdir(_ub))
-                       if not d.startswith(".") and
-                       os.path.isdir(os.path.join(_ub, d))]
-        except OSError:
-            _ub_sub = []
-        _added_ub = False
-        for _d in _ub_sub:
-            # a428：逐架构探测（u-boot 只有 arch/arm/include 时不该再列
-            # arch/arm64/include，否则日志报「头文件区未命中收录集(0 文件)」）
-            _arch_dir = os.path.join(_ub, _d, "arch")
-            if not os.path.isdir(_arch_dir):
-                continue
-            try:
-                _a_list = sorted(os.listdir(_arch_dir))
-            except OSError:
-                continue
-            for _a in _a_list:
-                if _a.startswith(".") or not os.path.isdir(
-                        os.path.join(_arch_dir, _a, "include")):
-                    continue
-                _pat = "uboot/%s/arch/%s/include" % (_d, _a)
-                if _pat not in hdr:
-                    hdr.append(_pat)
-                _added_ub = True
-        if not _added_ub:
-            # 非标准布局：头文件分散在 arch/*/mach-*/include、
-            # drivers/*/include、lib/*/include、components/*/include
-            say("  u-boot 非标准布局（无 arch/<arch>/include），"
-                "按 drivers/lib/components 探测头文件区")
-            hdr += ["uboot/*/drivers/*/include", "uboot/*/lib/*/include",
-                    "uboot/*/components/*/include",
-                    "uboot/*/arch/arm/mach-*/include"]
+    # （2026-11-23 总审计 A-3）此处原有 v1 遗留的 `hdr`（头文件目录模式表：
+    # kernel_roots 下的 include/*、逐架构探测 uboot/<d>/arch/<a>/include、
+    # 非标准布局再补四个通配）——a570 改写为 v2 形态后只填「档位 + 产物源」，
+    # hdr 构造完从未被读取：白做十几次 listdir，还会打一条「按 drivers/lib/
+    # components 探测头文件区」的日志而探测结果根本不用。整段删除。）
     art_roots = []
     if has_sbuilder:
         art_roots = ["sbuilder/output/build"]
-    src_roots = list(kernel_roots)
-    if os.path.isdir(os.path.join(root, "uboot")):
-        # uboot 下真实源码根各平台命名不同（uboot_sdk/hik_uboot/hvb_uboot/
-        # 等），同层还有 plat_private/release 等非源码目录——全纳入
-        # （source_roots 只是解析基准，多列不影响正确性，漏列才解析失败）
-        try:
-            _src_sub = sorted(os.listdir(os.path.join(root, "uboot")))
-        except OSError:
-            _src_sub = []
-        for d in _src_sub:
-            if d.startswith("."):
-                continue
-            if os.path.isdir(os.path.join(root, "uboot", d)):
-                src_roots.append("uboot/" + d)
-    src_roots.append(".")
+    # （同上：v1 遗留的 `src_roots`——kernel_roots + uboot 下各子目录 + "."，
+    # 注释称「解析基准」，v2 形态下没有任何读取方。一并删除。）
     # a570：改写为 v2 形态。这是 **推荐器上线前的临时形态检测**——
     # 它只填「档位 + 产物源」，不填三态树（树由 recommend_scope 给）。
     # a570 对抗审计（P1·第三轮）：v1 的 exclude_paths=["sbuilder/output", …]
@@ -2313,7 +2269,13 @@ def detect_scope(root, say=None):
 _SCOPE_RULES_VERSION = 2
 # L1 名称先验（经验默认值，非数据推导）
 _L_NAME_OFF = {"rootfs", "eroot", "buildroot", "build_root", "rootfs_build"}
-_L_NAME_ZOO = ("zoo", "zoos", "zmo")
+# 「成果物目录」的词根。2026-11-23 总审计 a684-A8：原为子串匹配
+# （`zoo in n`，且 zoos 是 zoo 的冗余项）——`kazoo_lib` 这类前缀里带 zoo 的
+# 目录被整棵推荐成 off。改词边界匹配：zoo 必须是一个完整的词（前后不紧
+# 挨字母），`zoo_tmp` / `my-zoo` / `zoos` 仍命中。
+_L_NAME_ZOO = ("zoo", "zmo")
+_L_NAME_ZOO_RE = re.compile(
+    "(?<![a-z])(?:%s)s?(?![a-z])" % "|".join(_L_NAME_ZOO))
 _L_NAME_REL = {"release", "release_tmp", "temp_log"}
 # 源代码后缀（用于统计 src）。定稿 §3.1：.S 与 .s 都要（内核有 1343 个 .S）
 _SRC_EXTS = {".c", ".cpp", ".cc", ".cxx", ".s"}
@@ -2336,7 +2298,7 @@ def _rule_level1(name):
     n = name.lower()
     if n in _L_NAME_OFF:
         return "off", "根文件系统，第三方代码为主，推荐不收录"
-    if any(z in n for z in _L_NAME_ZOO):
+    if _L_NAME_ZOO_RE.search(n):
         return "off", "成果物目录"
     if n in _L_NAME_REL:
         return "off", "发布/日志目录"
@@ -2603,6 +2565,16 @@ def _under_any(rel, dirs):
         if rl == dl or rl.startswith(dl + "/"):
             return True
     return False
+
+
+def _top_dirs_of(rels):
+    """文件 rel 集合 → 顶层**目录**首段（小写）。
+
+    2026-11-23 总审计 a684-A2：rel 是文件相对路径，根直下文件（`Makefile`、
+    不含 /）的首段是文件名而不是目录——落盘范围时把它补成 `makefile: full`
+    等于往 dirs 里写一个不存在的节点。这里直接把不含 / 的排掉。
+    """
+    return {r.split("/", 1)[0].lower() for r in rels if "/" in r}
 
 
 def _scope_summary(sc):
@@ -3757,9 +3729,10 @@ def build(root, log=None, progress=None, should_cancel=None,
                 # 落盘后 `_norm_dirs` 逐条 lower，后写者覆盖前者，把用户的
                 # `kernel: off` 翻成 full。
                 _known_l = {k.lower() for k in _d2}
-                for _r0 in sorted({r.split("/")[0] for r in all_rels}):
-                    if _r0.lower() not in _known_l:
-                        _d2[_r0.lower()] = "full"
+                # a684-A2：只补顶层目录（_top_dirs_of 已排掉根直下文件）
+                for _r0 in sorted(_top_dirs_of(all_rels)):
+                    if _r0 not in _known_l:
+                        _d2[_r0] = "full"
                 _sp["mode"] = "manual"
                 _sp["dirs"] = _d2
             _sv_ok, _sv_err = save_scope(root, _sp)

@@ -939,39 +939,41 @@ def test_export_filename_sanitized():
     assert " " not in out
 
 
-def test_save_concurrent_unique_paths():
-    """并发导出不能互相覆盖（原来 TOCTOU 导致 8 个请求只落 4 个文件）。"""
+def test_save_concurrent_unique_paths(tmp_path, monkeypatch):
+    """并发导出不能互相覆盖（原来 TOCTOU 导致 8 个请求只落 4 个文件）。
+
+    走的是「不带 path」的回落分支（无壳环境：浏览器/自动化）。回落落点
+    （桌面）在用例里改指临时目录——不在用户桌面上生文件。
+    （2026-11-23：原先这里给 pywebview 时代的 main._save_file_dialog 赋值来
+    「强制走桌面分支」，那个函数已随 P4 删除，赋值是死代码，一并移除。）"""
     import os
     import threading
     from src.server import app as A
-    import src.main as M
+    monkeypatch.setattr(os.path, "expanduser", lambda _p: str(tmp_path))
     BL.install()
     BL.clear()
     BL.log("x", "并发保存探针")
-    orig = getattr(M, "_save_file_dialog", None)
-    M._save_file_dialog = lambda fn: ""          # 强制走桌面目录分支
     paths = []
     lock = threading.Lock()
-    try:
-        def go():
-            j = A.test_client().post("/api/backend_log/save").get_json()
-            with lock:
-                paths.append(j["path"])
-        ts = [threading.Thread(target=go) for _ in range(6)]
-        for t in ts:
-            t.start()
-        for t in ts:
-            t.join()
-    finally:
-        if orig is not None:
-            M._save_file_dialog = orig
-        for p in paths:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
+
+    def go():
+        j = A.test_client().post("/api/backend_log/save").get_json()
+        with lock:
+            paths.append(j["path"])
+    ts = [threading.Thread(target=go) for _ in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    for p in paths:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
     assert len(paths) == 6
     assert len(set(paths)) == 6, paths
+    # 全部落在临时目录里，没有碰真实桌面
+    assert all(os.path.dirname(p) == str(tmp_path) for p in paths), paths
 
 
 def test_snapshot_reports_gap_when_cursor_behind_buffer():

@@ -28,6 +28,7 @@ _rec_lock = threading.Lock()
 # 上界兜底，防止单次 scandir 卡死把槽永久占住（cancel 后 30s 也放行）。
 _REC_GUARD = 1800.0
 _REC_CANCEL_GRACE = 30.0
+_REC_GUARD_TICK = 5.0        # 守护线程巡检间隔（测试可调小以快速触发）
 _rec_state = {"running": False, "phase": "", "done": False, "ok": False,
               "err": "", "root": "", "root_key": "", "cancel": False,
               "percent": 0, "cur": "", "total": 0, "result": None,
@@ -201,7 +202,7 @@ def nav_scope_tree():
             ents = list(it)
     except OSError as e:
         return jsonify({"ok": False, "err": "读取失败：%s" % e}), 400
-    dirs, files = [], 0
+    dirs, files, _trunc = [], 0, False
     _skip_l = {s.lower() for s in nav_index._SKIP_DIRS}
     # a570 对抗审计（P2·第十八轮）：tmp 类在 walk 里是**无条件硬剪**的，
     # 面板若照常展示、后端还接受显式配置，用户勾了「全」却零文件（实测）。
@@ -214,6 +215,7 @@ def nav_scope_tree():
                         or e.name.startswith("."):
                     continue
                 if len(dirs) >= 800:   # 巨目录封顶（浏览器渲染保护）
+                    _trunc = True      # a684-A7：以「确有目录被截」为准
                     continue
                 sub = False
                 try:
@@ -234,7 +236,7 @@ def nav_scope_tree():
             continue
     dirs.sort(key=lambda x: x["name"].lower())
     return jsonify({"ok": True, "rel": rel, "dirs": dirs, "files": files,
-                    "truncated": len(dirs) >= 800})
+                    "truncated": _trunc})
 
 
 def ntpath_isabs(p):
@@ -244,16 +246,25 @@ def ntpath_isabs(p):
 
 @nav_bp.route("/api/nav/scope_export", methods=["POST"])
 def nav_scope_export():
-    """a570 对抗审计（P1·第十七轮）：导出当前范围配置。
+    """导出当前范围配置。
 
-    为什么必须走后端：WebView2 里 `<a download>` 永远拿不到文件——init.js 在
-    捕获阶段对所有 a[href] preventDefault（防就地导航），且 pywebview 默认
-    ALLOW_DOWNLOADS=False（backend-log.js 已为同一原因改走后端落盘）。
-    另外 status 下发的是摘要（无 dirs/arch/exclude_names、artifact_roots
-    截断 8 条），拿它导出会丢配置。这里读工程根真实配置原样写出。
+    为什么必须走后端：壳内渲染层 `<a download>` 永远拿不到文件——init.js 在
+    捕获阶段对所有 a[href] preventDefault（防就地导航）。另外 status 下发的
+    是摘要（无 dirs/arch/exclude_names、artifact_roots 截断 8 条），拿它导出
+    会丢配置。这里读工程根真实配置原样写出。
+
+    body {root, path?}：path 是用户在 Electron 壳保存框（fc:save-as）里选定的
+    绝对路径，经 app_state.export_target_err 校验（只拦「覆盖工具自身的
+    config/凭据/日志」）后按选定路径原样写。不带 path（无壳：浏览器/自动化）
+    回落：桌面 → 用户目录，O_EXCL 抢名。
+    （2026-11-23 评审修正：此前去找 pywebview 时代的 main._save_file_dialog
+    弹保存框，那个函数已随 P4 删除——保存框从未弹出，每次导出都静默落桌面
+    并按序号堆文件。）
+    不写工程根——那是运行时配置位，导出是给用户备份用的副本。
     """
     import os
     from src import nav_index
+    from src import app_state as _st
     d = request.get_json(force=True, silent=True) or {}
     root = str(d.get("root") or "").strip()
     if not root or not os.path.isabs(root):
@@ -271,28 +282,15 @@ def nav_scope_export():
                       ensure_ascii=False, indent=2)
     fn = "fcpk-scope-%s.json" % (os.path.basename(root.rstrip("\\/")) or
                                  "project")
-    # 落盘位置：原生保存框（main.py 注入）→ 桌面 → 用户目录。
-    # 不写工程根——那是运行时配置位，导出是给用户备份用的副本。
-    path = ""
-    _picked = False       # 是否来自原生保存框（用户已确认过覆盖）
-    # a570 对抗审计（P2·第十八轮）：发布包把 main.py 排除在打包清单外，
-    # `from src import main` 必 ImportError，原生保存框永不弹出（注释却
-    # 声称三级回落）。按顺序找：源码模式的 src.main → frozen 下的 __main__。
-    import sys as _sys
-    _picker = None
-    for _modname in ("src.main", "__main__"):
-        _m = _sys.modules.get(_modname)
-        _p = getattr(_m, "_save_file_dialog", None)
-        if callable(_p):
-            _picker = _p
-            break
-    if _picker is not None:
-        try:
-            path = _picker(fn) or ""
-            _picked = bool(path)
-        except Exception:
-            path = ""
-    if not path:
+    path = str(d.get("path") or "").strip()
+    if path:
+        _perr = _st.export_target_err(path)
+        if _perr:
+            return jsonify({"ok": False, "err": _perr}), 400
+        _picked = True
+    else:
+        _picked = False
+        # 回落：桌面 → 用户目录
         try:
             home = os.path.expanduser("~")
             desk = os.path.join(home, "Desktop")
@@ -302,9 +300,7 @@ def nav_scope_export():
         path = os.path.join(base, fn)
     try:
         if _picked:
-            # a570 对抗审计（P2·第十八轮）：用户在原生保存框里已确认覆盖，
-            # 不能再走 O_EXCL 改名——原来会静默写成 xxx-1.json，用户以为
-            # 选中的文件被更新，实际原文件没动、目录里多出一份。
+            # 用户已在保存框里确认过位置（含覆盖已有文件）
             with open(path, "w", encoding="utf-8") as f:
                 f.write(body)
         else:
@@ -461,8 +457,13 @@ def nav_build():
             # a570 对抗审计（P2·第二十轮）：清除也必须占槽——否则它与并发
             # build 无互斥：用户被告知「已清除」，实际被随后落盘的配置覆盖。
             _cleared_only = True
+            # 2026-11-23 总审计 a684-A9：轻量 reset 也清「上一次任务的结论」
+            # ——留着 result/reason 时，终态 poll 会带着旧建库结果返回，全靠
+            # 前端分支碰巧先判 cleared 才不串台。
             _state.update(running=True, phase="清除范围", root=root,
-                          done=False, ok=False, err="", cancel=False)
+                          done=False, ok=False, err="", cancel=False,
+                          result=None, reason="", cancelled=False,
+                          scope_saved=None)
         else:
             _state.update(running=True, phase="准备", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
                           err="", ts=time.time(), result=None, cancel=False,
@@ -472,6 +473,7 @@ def nav_build():
     # 往返，原在 `_lock` 内做——并发 poll 被阻塞近 2 秒（实测）。
     # a570 对抗审计（P2·第十七轮）：删除同样要先备份——`.prev.bak` 机制
     # 原来只接「覆盖」不接「清除」，用户点红字按钮后精细三态配置不可恢复。
+    _clr_err = ""
     if d.get("scope_clear"):
         try:
             _sp = os.path.join(root, nav_index.SCOPE_FILE)
@@ -481,11 +483,18 @@ def nav_build():
                 if not os.path.isfile(_bak):
                     _sh.copy2(_sp, _bak)
                 os.remove(_sp)
-        except OSError:
-            pass
+        except OSError as _e:
+            # 2026-11-23 复核 a684-A9 时发现：原为 `except OSError: pass`——
+            # 文件被占用（编辑器开着 .fcpk-scope.json）时删除失败，仍返回
+            # ok/cleared，用户看到「已清除」而工程根配置还在。如实上报。
+            _clr_err = "已存范围删除失败（%s）" % _e
         if _cleared_only:
             with _lock:
-                _state.update(running=False, done=True, ok=True, phase="已完成")
+                _state.update(running=False, done=True, ok=not _clr_err,
+                              phase="已完成" if not _clr_err else "清除失败",
+                              err=_clr_err)
+            if _clr_err:
+                return jsonify({"ok": False, "err": _clr_err}), 500
             return jsonify({"ok": True, "cleared": True})
     # 备份必须用最终载荷（scope_tier 分支可能补出 detect 的 artifact_roots）
     if scope is not None:
@@ -738,11 +747,22 @@ def nav_scope_recommend():
                           percent=0, cur="", total=0, result=None,
                           ts=time.time(), run_id=uuid.uuid4().hex)
 
-    def should_cancel():
-        return bool(_rec_state.get("cancel"))
-
     with _rec_lock:
         _run_id = _rec_state.get("run_id")
+
+    def should_cancel():
+        """本次任务是否该停：显式 cancel，**或本次 run_id 已被作废**（守护
+        线程强制释放槽 / 被新任务顶替）。
+        （2026-11-23 总审计 P0-2）此前只看 cancel 标志：守护线程强制释放槽时
+        没置 cancel，被作废的线程要等自然结束才停——每 top 上限 300s、剩十几个
+        top 就是白扫一小时；用户立刻点「重新推荐」时新旧线程并发扫同一棵树。
+        只在守护线程里补 cancel=True 还不够：新任务启动会把 cancel 重置，
+        旧线程下一个检查点又活了——所以同时比对 run_id。
+        必须在**不持 _rec_lock** 时调用（recommend_scope 的工作线程）；持锁处
+        直接读字段，否则重入死锁。"""
+        with _rec_lock:
+            return bool(_rec_state.get("cancel")) or \
+                _rec_state.get("run_id") != _run_id
 
     def on_prog(i, n, label):
         # a570 对抗审计（P1·第十七轮）：进度写回也要校验 run_id——旧任务被
@@ -766,7 +786,7 @@ def nav_scope_recommend():
         def _guard_slot():
             _t_cancel = None
             while True:
-                time.sleep(5)
+                time.sleep(_REC_GUARD_TICK)
                 with _rec_lock:
                     if not _rec_state.get("running") \
                             or _rec_state.get("run_id") != _run_id:
@@ -785,7 +805,11 @@ def nav_scope_recommend():
                         # a570 对抗审计（P1·第十七轮）：必须作废本次任务的
                         # run_id——否则旧线程苏醒后 `run_id` 仍相等，会把槽
                         # 改写成「ok=True + 超时错误」的自相矛盾状态。
-                        run_id=uuid.uuid4().hex)
+                        run_id=uuid.uuid4().hex,
+                        # 2026-11-23 总审计 P0-2：同时置 cancel——让被作废的
+                        # 工作线程在 recommend_scope 的下一个检查点自行退出，
+                        # 不再白扫到自然结束。
+                        cancel=True)
 
         threading.Thread(target=_guard_slot, daemon=True).start()
         try:
@@ -794,7 +818,7 @@ def nav_scope_recommend():
             with _rec_lock:
                 if _rec_state.get("run_id") != _run_id:
                     return          # 已被守护线程释放，结果作废
-                if should_cancel():
+                if _rec_state.get("cancel"):     # 持锁中：直接读字段，不调 should_cancel
                     _rec_state.update(done=True, ok=False, err="已取消",
                                       phase="已取消")
                 elif not res.get("ok"):

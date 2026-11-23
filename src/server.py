@@ -21,6 +21,7 @@ import mimetypes
 from queue import Queue
 
 from flask import Flask, Response, request, jsonify, send_from_directory, g, redirect
+from werkzeug.serving import WSGIRequestHandler as _WSGIRequestHandler
 import threading as _threading
 # 模块化一期（js-modularization 分支）：type="module" 脚本对 MIME 严格——
 # 服务器必须回 JavaScript MIME 类型，octet-stream 会被浏览器整文件拒绝。
@@ -477,19 +478,14 @@ def start_background():
         except Exception:
             pass
 
-    def _cleanup():
-        while True:
-            time.sleep(30)
-            # 清理超过 7 天的日志
-            try:
-                cutoff = time.time() - 7*86400
-                for f in glob.glob(os.path.join(LOG_DIR, "serial_*.log")):
-                    if os.path.getmtime(f) < cutoff:
-                        os.remove(f)
-            except Exception:
-                pass
-    t = threading.Thread(target=_cleanup, daemon=True)
-    t.start()
+    # 2026-11-23 用户令：串口日志后台**永不删除**——只有用户在「设置 →
+    # 数据目录」里手动点击（按天数挡位 / 全部清空）才允许删。
+    # 此处原有 _cleanup 守护线程：每 30 秒删 LOG_DIR 下修改时间超过 7 天的
+    # serial_*.log（v0.x 起就有、无开关）。a687 把手动「按策略清理」入口改成
+    # 不删并在界面写明「不会自动删除」，却漏了这条后台链路——界面承诺与实际
+    # 行为相反。现整段删除；不要再加回任何自动清理串口日志的后台逻辑
+    # （tests/test_serial_log_no_auto_delete.py 守着）。会话附件的自动清理
+    # （data_hygiene.cleanup_uploads：超半年 / 超 1GB）是另一项功能，不在此列。
     # Claude Proxy 模块初始化（启动自愈+压缩模式记忆+额度 worker；不自动启动代理）
     # ——进程隔离时随 proxy 移驻 worker（worker_app.main 调），本进程跳过
     if _proxy_module_init is not None:
@@ -1092,6 +1088,45 @@ def _ssh_last_disconnect(max_age=3.0):
         if now - ts <= max_age:
             best = "Disconnect (code %d): %s" % (code, desc)   # deque 时间序，取最新
     return best
+
+
+# ---- 主进程 werkzeug 访问日志降噪（2026-11-24 设计书）：只吞 307+轮询族 ----
+# 前端/壳对 worker 族的轮询（lanzi/proxy/harness 版本）每 30s 一对，每条
+# 307 转发都刷一行 werkzeug 访问日志（实测 800 条日志里 240 条是它）。
+# 判据必须**带状态码**：只跳过 code==307 且路径命中轮询族的行——请求照常
+# 转发，404/500/503 一条不少（同路径将来出错必须能看见）。不走
+# _LOGGED_PREFIX_SKIP（那是纯路径一刀切，会连错误一起吞）。
+# 注意：backend_log 的 stdout 过滤（_ACCESS_RE）挡不住这些行——werkzeug 的
+# 彩色输出在引号后带 ANSI 转义（"\x1b[32mGET ..."），正则按 "GET 开头不匹配；
+# 在 log_request 产生点拦截与输出格式无关，是设计书首选方案。
+_QUIET_307_EXACT = ("/api/proxy/status", "/api/proxy/events",
+                    "/api/harness/version")
+
+
+def _is_quiet_307(code, path):
+    """307 且路径命中轮询族 → True（该访问日志行不记）。纯函数供测试。"""
+    try:
+        if int(code) != 307:
+            return False
+    except (TypeError, ValueError):
+        return False
+    p = str(path or "").split("?", 1)[0]
+    if p.startswith("/api/lanzi/"):
+        return True
+    return p in _QUIET_307_EXACT
+
+
+class QuietAccessHandler(_WSGIRequestHandler):
+    """主进程访问日志降噪 handler（设计书首选：handler 层过滤，不碰全局
+    logger、不解析日志格式——日志格式漂移也失效不了）。"""
+
+    def log_request(self, code="-", size="-"):
+        try:
+            if _is_quiet_307(code, getattr(self, "path", "")):
+                return
+        except Exception:
+            pass
+        super().log_request(code, size)
 
 
 # 2.4.4（用户定调「任何报错、警告、有用信息都往缓冲里放」）：API 结果
@@ -2480,10 +2515,9 @@ def api_backend_log_export():
     版本号，好追溯」。返回 text/plain。
 
     注意：壳内渲染层 `<a download>` 被 init.js 的全局链接拦截器
-    preventDefault 掉（该拦截器为防就地导航而拦所有 a[href]），且 pywebview
-    默认 ALLOW_DOWNLOADS=False，浏览器下载路径**走不通**。前端因此改走
-    /api/backend_log/save（原生保存对话框 + 后端写盘）。此接口保留给
-    浏览器/自动化直连使用。
+    preventDefault 掉（该拦截器为防就地导航而拦所有 a[href]），浏览器下载
+    路径**走不通**。前端因此改走 /api/backend_log/save（壳的保存框 +
+    后端写盘）。此接口保留给浏览器/自动化直连使用。
     """
     from src.version import APP_VERSION
     # a601 对抗审计 D9：文件名净化（版本号含中文/特殊字符时 CD 头会非法）
@@ -2496,28 +2530,31 @@ def api_backend_log_export():
 
 @app.route("/api/backend_log/save", methods=["POST"])
 def api_backend_log_save():
-    """导出日志到用户选择的文件（渲染层内唯一可行的导出路径）。
+    """导出日志到文件。body 可带 {path}（用户在 Electron 壳保存框里选定的
+    绝对路径）；不带则回落到桌面/用户目录直接写。
 
-    保存框由 Electron 壳弹出（fc:pick），HTTP 路由侧只收路径；旧形态
-    桌面/下载目录直接写——两条路都**真的落盘**了才返回 ok，前端据此提示
-    （原来浏览器下载被拦却无条件弹「已导出」，用户永远拿不到文件）。
+    2026-11-23 评审修正（此前注释与实现不符）：注释写「保存框由 Electron 壳
+    弹出」，实现却仍去找 pywebview 时代的 main._save_file_dialog——那个函数
+    已随 P4 删除，于是保存框永远弹不出来、每次导出都静默落桌面。现在保存框
+    由前端经壳的 fc:save-as 弹出、把路径回传到这里；无壳（浏览器/自动化）
+    调用不带 path，走原来的回落。
+    path 经 export_target_err 校验：只拦「覆盖工具自身的 config/凭据/日志」。
+    **真的落盘**了才返回 ok，前端据此提示。
     """
     import os
     from src.version import APP_VERSION
     body = _backend_log_export_text()
-    fn = _safe_filename("backend-log-v%s-%s.txt" % (
-        APP_VERSION, time.strftime("%Y%m%d-%H%M%S")))
-    path = ""
-    # 1) 优先：原生保存对话框（main.py 注入的回调）
-    try:
-        from src import main as _m
-        picker = getattr(_m, "_save_file_dialog", None)
-        if callable(picker):
-            path = picker(fn) or ""
-    except Exception:
-        path = ""
-    # 2) 退回：桌面 → 用户目录（保证一定有落点）
-    if not path:
+    picked = str((request.get_json(force=True, silent=True) or {}).get("path")
+                 or "").strip()
+    if picked:
+        _perr = _st.export_target_err(picked)
+        if _perr:
+            return jsonify({"ok": False, "err": _perr}), 400
+        path = picked
+    else:
+        fn = _safe_filename("backend-log-v%s-%s.txt" % (
+            APP_VERSION, time.strftime("%Y%m%d-%H%M%S")))
+        # 回落：桌面 → 用户目录（保证一定有落点）
         try:
             home = os.path.expanduser("~")
             desk = os.path.join(home, "Desktop")
@@ -2526,10 +2563,15 @@ def api_backend_log_save():
             base = os.getcwd()
         path = os.path.join(base, fn)
     try:
-        # a601 对抗审计 D8：原来「os.path.exists 查重 + open 写入」是 TOCTOU，
-        # 8 个并发导出实测只落 4 个不同文件（后写覆盖先写，返回的 path 指向
-        # 被改写的文件）。用 "x" 模式（O_EXCL）原子抢名：抢占失败就递增序号。
-        path = _write_unique(path, body)
+        if picked:
+            # 用户已在保存框里确认过位置（含覆盖已有文件）：按选定路径原样写
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(body)
+        else:
+            # a601 对抗审计 D8：原来「os.path.exists 查重 + open 写入」是 TOCTOU，
+            # 8 个并发导出实测只落 4 个不同文件（后写覆盖先写，返回的 path 指向
+            # 被改写的文件）。用 "x" 模式（O_EXCL）原子抢名：抢占失败就递增序号。
+            path = _write_unique(path, body)
     except Exception as e:
         return jsonify({"ok": False, "err": "写入失败：%s" % e}), 500
     return jsonify({"ok": True, "path": path,
@@ -2738,6 +2780,23 @@ def _migrate_subdirs(root):
 #（对抗审计 P2-4；此前只按 .json 判，把私钥排除在了严格校验之外。）
 _MIGRATE_STRICT_EXT = (".json", ".pem", ".p12", ".pfx", ".key", ".crt")
 
+# 子目录通道里的「丢了不可恢复」后缀：证书 / 私钥。子目录通道整体是尽力
+# 复制（strict 只认 files/），此前子目录内的 .pem/.key 拷失败走 skipped、
+# 随后删旧目录 = 私钥静默丢失（2026-11-23 总审计 F3：根级补了、子目录没补）。
+# 刻意**不含 .json**：子目录里的 json 多是可重新下载的缓存或普通附件，一个
+# 文件被杀软占用就中止整次迁移过于激进——中止面只给真正不可再生的东西。
+_MIGRATE_KEYSTORE_EXT = (".pem", ".p12", ".pfx", ".key", ".crt")
+
+
+def _migrate_skip_rel(sub, rel, fn):
+    """子目录里**不随迁**的特定文件：data_backup\\config.json。
+
+    config 的镜像副本家固定在 工具目录\\data\\data_backup（不随数据迁走，
+    app_state.CONFIG_BACKUP_FILE），之后只写那一份。若随 data_backup 整个
+    子目录拷到新数据目录，那里就多出一份从此不再更新的过期副本——手工
+    恢复时拿到的是旧设置。（2026-11-23 评审）"""
+    return sub == "data_backup" and rel == "." and fn == "config.json"
+
 
 def _migrate_root_files(root):
     """数据目录 root 下**需要随迁移走**的全部文件名（不按扩展名筛）。
@@ -2829,11 +2888,13 @@ def api_data_dir_get():
     # dir_total：整个数据目录的真实大小（全量深扫）。2026-11-23 用户令——面板
     # 只显示这一个数。上面的 total 只数了几个子目录和根级 json，和「存储占用」
     # 里的用户数据空间对不上；subdirs/total_size 仍原样返回（迁移预检等处在用）。
+    # 60s 缓存（data_hygiene.data_dir_total）；统计不出来回 None——前端显示
+    # 「无法统计」，不再把读失败显示成「共 0 B」。
     try:
-        from src.data_hygiene import _dir_size as _dds
-        dir_total = _dds(DATA_DIR)
+        from src.data_hygiene import data_dir_total as _ddt
+        dir_total = _ddt()
     except Exception:
-        dir_total = 0
+        dir_total = None
     return jsonify({"ok": True, "dir": DATA_DIR,
                     "default": _st._default_data_dir(),
                     "subdirs": subs, "total_size": total,
@@ -2842,20 +2903,37 @@ def api_data_dir_get():
 
 @app.route("/api/data_dir/clean", methods=["POST"])
 def api_data_dir_clean():
-    """手动清理（v3.5.93 设置→数据目录→存储占用）。body: {target, mode}。
-    target ∈ uploads|logs|idx|cache|ask；mode ∈ policy|all。目标只含衍生
-    数据（附件/日志/索引/缓存/提问状态），笔记/命令库/配置不可触达。
+    """手动清理（v3.5.93 设置→数据目录→存储占用）。body: {target, mode, days?}。
+    target ∈ uploads|logs|idx|ask|nav；mode ∈ policy|all|older。目标只含衍生
+    数据（附件/日志/索引/提问状态），笔记/命令库/配置不可触达。
     v3.5.95（轻审R2-5）：非对象 body 显式 400；非法 target/mode 返回
-    ok:false——不再「假成功 0 项」。"""
+    ok:false——不再「假成功 0 项」。
+    older（2026-11-23 用户令新增，仅串口日志）：删除超过 days 天的旧日志。
+    days 只接受 7 / 30 / 90（data_hygiene.LOG_AGE_OPTIONS 白名单）——不接受
+    任意天数（0 天等同绕过确认的全部清空）。"""
     data = request.get_json(force=True, silent=True)
     if not isinstance(data, dict):
         return jsonify({"ok": False, "err": "参数必须是 JSON 对象"}), 400
     target = str(data.get("target") or "").strip()
     mode = str(data.get("mode") or "").strip()
-    from src.data_hygiene import _CLEANABLE, manual_clean
-    if target not in _CLEANABLE or mode not in ("policy", "all"):
+    from src.data_hygiene import _CLEANABLE, LOG_AGE_OPTIONS, manual_clean
+    days = None
+    if mode == "older":
+        if target != "logs":
+            return jsonify({"ok": False, "err": "按天数删除只支持串口日志"}), 400
+        try:
+            days = int(data.get("days"))
+        except (TypeError, ValueError):
+            days = -1
+        if days not in LOG_AGE_OPTIONS:
+            return jsonify({"ok": False, "err": "天数必须是 %s 之一" % "/".join(
+                str(d) for d in LOG_AGE_OPTIONS)}), 400
+    elif target not in _CLEANABLE or mode not in ("policy", "all"):
         return jsonify({"ok": False, "err": "非法 target/mode"}), 400
-    removed, freed = manual_clean(target, mode)
+    try:
+        removed, freed = manual_clean(target, mode, days=days)
+    except ValueError as e:
+        return jsonify({"ok": False, "err": str(e)}), 400
     return jsonify({"ok": True, "removed": removed, "freed": freed})
 
 
@@ -3058,6 +3136,8 @@ def _do_data_dir_migrate(target):
                 droot = dst if rel == "." else os.path.join(dst, rel)
                 os.makedirs(droot, exist_ok=True)
                 for fn in files:
+                    if _migrate_skip_rel(s, rel, fn):
+                        continue
                     sf, df = os.path.join(root, fn), os.path.join(droot, fn)
                     try:
                         if not os.path.exists(df):   # 不覆盖目标已有文件（目标可能已有数据）
@@ -3083,11 +3163,11 @@ def _do_data_dir_migrate(target):
                             continue
                         n += 1
                     except RuntimeError:
-                        if strict:
-                            raise   # 笔记内容不一致：迁移失败（用户红线：笔记必须完整）
+                        if strict or fn.lower().endswith(_MIGRATE_KEYSTORE_EXT):
+                            raise   # 笔记内容不一致 / 证书私钥拷坏：迁移失败
                         skipped += 1   # log 单文件异常跳过
                     except (PermissionError, OSError):
-                        if not strict:
+                        if not strict and not fn.lower().endswith(_MIGRATE_KEYSTORE_EXT):
                             skipped += 1
                         else:
                             raise
@@ -3160,6 +3240,8 @@ def _do_data_dir_migrate(target):
                     droot = dst if rel == "." else os.path.join(dst, rel)
                     os.makedirs(droot, exist_ok=True)
                     for fn in files:
+                        if _migrate_skip_rel(s, rel, fn):
+                            continue
                         sf, df = os.path.join(root, fn), os.path.join(droot, fn)
                         try:
                             st = os.stat(sf)
@@ -3193,10 +3275,10 @@ def _do_data_dir_migrate(target):
                             if os.path.getsize(sf) != os.path.getsize(df):
                                 raise RuntimeError(f"校验失败: {df} 与源大小不一致")
                         except RuntimeError:
-                            if strict:
+                            if strict or fn.lower().endswith(_MIGRATE_KEYSTORE_EXT):
                                 raise
                         except (PermissionError, OSError):
-                            if strict:
+                            if strict or fn.lower().endswith(_MIGRATE_KEYSTORE_EXT):
                                 raise
             # 根级文件补拷：与首轮同一份清单（全部文件，不按扩展名筛，R7-3）
             for s in _migrate_root_files(src_data_dir):
@@ -3239,27 +3321,48 @@ def _do_data_dir_migrate(target):
         return jsonify({"ok": False, "err": "安全校验未通过（新旧目录解析后重合），已取消删除旧目录",
                         "dir": target, "copied": copied, "deleted": False,
                         "old_dir": old_data_dir}), 500
-    # 复制校验全过 → 切换运行时 + 持久化
+    # 复制校验全过 → 持久化 + 切换运行时
     # 日志目录合一：迁移后固定走新 data/logs（清掉旧 log_dir 配置，只留一个 logs）
     new_log_dir = os.path.join(target, "logs")
-    # config 跟着数据目录走（用户令：永远只使用数据目录）。
-    # 顺序不能乱——下方 rmtree 会把旧目录连同旧 config 一起删掉：
-    #   ① 先把 config 三件套带进新目录，**以旧目录那份为准**（它是现行配置；
-    #      目标里若碰巧有个旧 config，保留它会让用户改完目录发现设置回退）
     # 【config 不跟着数据走】用户令 2026-11-23：config.json 永远在
     # 工具目录\data，它记录 data_dir（数据迁到了哪）。所以迁移时：
     #   · 不重绑 CONFIG_FILE（它固定）
     #   · 不往新目录拷 config（上方 _migrate_root_files 已排除）
-    #   · 只把 config 里的 data_dir 改成新目录——由下方 _save_config 完成
-    # 【删旧目录前的硬闸】config 是一切设置的唯一真本，旧目录马上要被
-    # rmtree——若旧目录恰好就是工具目录\data（config 的家），而 config
-    # 不见了，用户全部设置随旧目录消失。宁可迁移中止（数据仍在原处、未切换）。
-    # 【config 现状快照】只用于事后核对：迁移前 config 本体在不在。全新安装
-    # 从没存过设置时它不存在——这不叫丢（没有东西可丢），迁移照常进行，
-    # 下方 _save_config 会新建一份。真正要防的是「本来在、迁移后没了」，
-    # 由函数末尾的最终硬闸核对。（第八轮审计 R8-4：此前的硬闸把全新安装
-    # 第一次改数据目录也拦掉了。）
-    _cfg_had_before = os.path.isfile(os.path.join(_st.TOOL_DATA_DIR, "config.json"))
+    #   · 只把 config 里的 data_dir 改成新目录
+    # 【先落盘、再切换】（2026-11-23 评审）保存必须排在切换运行时与删旧目录
+    # **之前**，并且检查结果。旧实现 _save_config 的返回值被丢掉：cfg_commit
+    # 失败（读侧 IO 故障 / 「配置骤减」护栏拒绝 / 写失败）时迁移照样往下走、
+    # 照样删旧目录并报成功，而 config.data_dir 还是旧目录——下次启动回到
+    # 已被删空的旧目录，用户看到的就是「数据没了」。现在失败即中止：数据
+    # 仍在原处、未切换（已复制到新目录的副本无害）。
+    # 原地改两个键而不是 {**_load_config(), ...}：读侧瞬时失败不会让 cfg
+    # 残缺，也就不会误触「配置骤减」护栏。
+    def _set_dirs(d):
+        d["data_dir"] = target
+        d["log_dir"] = new_log_dir
+    _ok, _err = _st.cfg_commit(_set_dirs)
+    if not _ok:
+        return jsonify({"ok": False,
+                        "err": "设置保存失败，迁移已中止（未切换，数据仍在原处）：%s"
+                               % _err,
+                        "dir": target, "copied": copied, "old_dir": old_data_dir}), 500
+    # 【worker 重新绑定】（2026-11-23 评审 A）harness / lanzi / proxy /
+    # claude_default 的蓝图与凭据写端都在 worker 进程，路径常量按值导入，
+    # 下方的补绑够不到它——不重启的话，迁移后到下次重启之间它一直读写
+    # 旧目录（旧目录已删 → 从零重建），重启后读到的是新目录里迁移时刻的
+    # 快照，这段时间的改动静默回退。这里在删旧目录**之前**让它优雅退出并
+    # 等到真退（不再有句柄占着旧目录、不再往旧目录写），重拉交给
+    # supervisor：新进程启动即读刚落盘的 config。详见 worker_app.manage_restart。
+    # inline（单进程）形态无需重启；worker 不在跑时如实上报，前端提示重启工具。
+    try:
+        from src import worker_app as _wa
+        _worker_restart = _wa.manage_restart()
+    except Exception as _e:
+        import logging as _lg0
+        _lg0.getLogger("server").warning("数据目录迁移:worker 重启失败: %r", _e)
+        _worker_restart = "failed"
+    # 切换运行时。下方的删除会连旧目录里的东西一起删：旧目录恰好就是
+    # 工具目录\data 时（config 的家）走逐项删，config 相关一律留着。
     _st.DATA_DIR = target
     _st.STATE_DIR = target
     _st.LOG_DIR = new_log_dir
@@ -3297,10 +3400,10 @@ def _do_data_dir_migrate(target):
     except Exception:
         pass
     # a672：lanzi 的凭据/登录标记路径是模块级按值固化的，迁移目录必须同步。
-    # 【形态局限（审计确认，与迁移前 proxy.LANZ_CRED_PATH 同病）】offload 形态
-    # 下 lanzi.state / lanzi.bot 实际活在 worker 进程，这里 patch 的是主进程
-    # 的模块副本——worker 仍读写旧目录。彻底修需要让 worker 重新绑定路径
-    # （重启 worker）或走跨进程接口；当前只在 inline 形态完全生效。
+    # 【形态说明】offload 形态下 lanzi.state / lanzi.bot 实际活在 worker 进程，
+    # 这里 patch 的是主进程的模块副本；worker 那份靠上方 manage_restart
+    # 重拉新进程解决（新进程启动即读新 config）。这段补绑仍保留：inline
+    # 形态靠它，offload 形态是 worker 重拉前的过渡。
     try:
         import src.lanzi.state as _lz
         _lz.CRED_PATH = os.path.join(target, "lanz_credentials.json")
@@ -3321,8 +3424,7 @@ def _do_data_dir_migrate(target):
         pass
     # 2026-11-23 退役改造补绑（对抗审计 P4；复审 N1 修正：必须打在**按值
     # 导入的真正写端**上——consts 源头 patch 触达不了 meta.py/routes.py 的
-    # 本地绑定）。【offload 形态局限】worker 进程的绑定 patch 不到，与 lanzi
-    # 段 a672 同病——彻底修需迁移后重启 worker，此处仅 inline 形态完全生效。
+    # 本地绑定）。worker 进程里的那几份同样靠上方 manage_restart 重拉解决。
     import logging as _lg
     try:
         import src.harness.meta as _hm
@@ -3355,8 +3457,8 @@ def _do_data_dir_migrate(target):
     # 日志索引缓存全部失效（路径已变）
     with _log_index_lock:
         _log_index_cache.clear()
-    cfg = {**_load_config(), "data_dir": target, "log_dir": new_log_dir}
-    _save_config(cfg)
+    # （config 的 data_dir/log_dir 已在切换之前落盘并校验过——见上方
+    #   「先落盘、再切换」；这里不再保存。）
     # ---- 删旧目录前：config 及其备份必须活着 ----
     # config 本体不随数据迁移走（它的家是 工具目录\data）。两种现场：
     # ① 旧数据目录 ≠ 工具目录\data（已迁过一次）：旧目录里可能留着老规则下
@@ -3401,17 +3503,25 @@ def _do_data_dir_migrate(target):
         # 锁定的文件（活跃日志）rmtree 删不掉会残留在旧目录，直到写端重开——
         # ignore_errors 不中断，残留无害但不会自动清理
         shutil.rmtree(old_data_dir, ignore_errors=True)
-    # 【最终硬闸】无论走哪条路，config 本体现在必须在。不在就是出了岔子，
-    # 如实报错（数据已在新目录，不丢；但用户要知道设置没保住）。
+    # 【最终硬闸】无条件核对：到这里 config 本体必须在。上方保存已成功，正常
+    # 路径恒成立；这里兜的是保存之后、删除期间它又没了的意外。全新安装同样
+    # 适用——保存那一步会新建，不存在「误拦首次改数据目录」的问题（第八轮
+    # 审计 R8-4 担心的场景已由「保存前置且检查结果」从根上消除，不再需要
+    # 「迁移前在不在」的前置条件）。
+    # 走到这里时运行时**已经切换**、旧目录已删——报错必须如实，不能写
+    # 「未完成切换」。
     if not os.path.isfile(os.path.join(_st.TOOL_DATA_DIR, "config.json")):
-        return jsonify({"ok": False, "deleted": False,
-                        "err": "迁移后工具目录里没有 config.json（设置文件）——"
-                               "数据已复制到新目录但未完成切换，请立即检查",
-                        "dir": target, "copied": copied, "old_dir": old_data_dir}), 500
+        return jsonify({"ok": False, "deleted": True,
+                        "err": "数据已迁到新目录、旧目录已删除，但工具目录里没有 "
+                               "config.json——「数据在哪」没有记下来，下次启动会找不到"
+                               "新目录。请立即检查工具目录的 data 文件夹",
+                        "dir": target, "copied": copied, "old_dir": old_data_dir,
+                        "worker_restart": _worker_restart}), 500
     return jsonify({"ok": True, "dir": target, "copied": copied,
                     "deleted": True, "residual": 0, "late_copies": late_total,
                     **({"conflict_errs": conflict_errs} if conflict_errs else {}),
-                    "old_dir": old_data_dir, "note": "旧目录已删除"})
+                    "old_dir": old_data_dir, "note": "旧目录已删除",
+                    "worker_restart": _worker_restart})
 
 @app.route("/api/open_log_file", methods=["POST"])
 def api_open_log_file():
@@ -4714,4 +4824,5 @@ if __name__ == "__main__":
     except Exception:
         pass
     start_background()
-    app.run(host="127.0.0.1", port=8765, threaded=True, debug=False, use_reloader=False)
+    app.run(host="127.0.0.1", port=8765, threaded=True, debug=False,
+            use_reloader=False, request_handler=QuietAccessHandler)

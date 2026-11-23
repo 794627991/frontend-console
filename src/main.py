@@ -772,9 +772,11 @@ def main():
         _s.bind(("127.0.0.1", 0))
         port = _s.getsockname()[1]
         _s.close()
+        from src.server import QuietAccessHandler as _QuietHandler
         threading.Thread(
             target=lambda: app.run(host="127.0.0.1", port=port, threaded=True,
-                                   debug=False, use_reloader=False),
+                                   debug=False, use_reloader=False,
+                                   request_handler=_QuietHandler),
             daemon=True).start()
         import urllib.request
         _ready = False

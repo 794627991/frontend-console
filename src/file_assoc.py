@@ -7,7 +7,7 @@ r"""文件关联接管/还原（Flask Blueprint 路由 /api/assoc/*）。
 Windows 实现（ProgId 方案，同 VSCode/Notepad++ 的做法）：
 - 接管：
   1. HKCU\Software\Classes\SerialConsolePro.Text  注册 ProgId
-     defaulticon  → 工具 exe 图标（源码运行用 pythonw 的）
+     defaulticon  → 每后缀专属 ico（ico/ext/<design>.ico，见 _stable_icon_path）
      shell\open\command → "<exe>" --open-file "%1"
   2. HKCU\...\Software\Classes\<.ext>\OpenWithProgids  加 ProgId 引用
   3. HKCU\...\Software\Classes\<.ext>\(Default) = ProgId ——老式关联链
@@ -78,11 +78,20 @@ def _app_exe():
             if os.path.isfile(cand):
                 return f'"{cand}"'
         return f'"{sys.executable}"'
-    # 源码形态兜底：electron/node_modules/electron/dist/electron.exe <electron dir>
+    # 源码形态兜底：与 run.bat 同序探测——项目内安装的 dist → 上一级的离线
+    # 运行时（资源包装出，免 npm/网络）。2026-11-23 总审计 a683-A7：原只认
+    # 前者，离线形态旁路启动（没有 FC_SHELL_EXE）时注册的是不存在的路径。
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     appdir = os.path.join(root, "electron")
-    exe = os.path.join(appdir, "node_modules", "electron", "dist", "electron.exe")
-    return f'"{exe}" "{appdir}"'
+    local = os.path.join(appdir, "node_modules", "electron", "dist", "electron.exe")
+    offline = os.path.join(os.path.dirname(root), "offline_runtime", "electron",
+                           "electron.exe")
+    for exe in (local, offline):
+        if os.path.isfile(exe):
+            return f'"{exe}" "{appdir}"'
+    # 运行时还没装：仍写首选路径——装好即生效；至少不会把后端自身的
+    # sys.executable（无 UI 的 sidecar）写进注册表
+    return f'"{local}" "{appdir}"'
 
 
 def _open_command():

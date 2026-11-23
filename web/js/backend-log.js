@@ -161,18 +161,40 @@ let panel = null;
     return parts.filter(Boolean).join(' ');
   }
 
-  function doExport() {
-    // 走后端落盘。原来用 `<a download>` 触发浏览器下载——在 WebView2 里
-    // **永远失败**：init.js 在 document 捕获阶段对任意 a[href] 无条件
-    // preventDefault（防就地导航），`<a download>` 的下载动作被一并取消；
-    // 且 pywebview 6.2.1 默认 ALLOW_DOWNLOADS=False，第二道拦截。
-    // 两处都失败后原来还无条件弹「已导出」，用户永远拿不到文件。
-    // 现在改成 POST /api/backend_log/save：后端弹原生保存框（或退回桌面）
-    // 真写盘成功才提示，并显示保存路径。
+  async function doExport() {
+    // 走后端落盘。`<a download>` 在壳内渲染层走不通：init.js 在 document
+    // 捕获阶段对任意 a[href] 无条件 preventDefault（防就地导航），下载动作
+    // 被一并取消。后端**真的写盘**成功才提示，并显示保存路径。
+    // 保存位置：Electron 壳形态先经 fcShell.saveAs（壳的「另存为」IPC）弹保存框，
+    // 把选定路径回传后端；取消就中止。（此前后端去找已随 P4 删除的
+    // pywebview 保存框，永远弹不出来、静默落桌面。）非壳环境不带 path，
+    // 由后端回落到桌面。
     // 实测：临时 a 挂在 panel 外会触发「外部点击隐藏」，点导出后面板立刻
     // 关闭——所以第二参数 true 让捕获阶段的 hide 跳过这次点击。
+    let savePath = '';
+    if (window.fcShell && typeof window.fcShell.saveAs === 'function') {
+      showBanner('请选择保存位置…', 2500);
+      try {
+        const d = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        savePath = await window.fcShell.saveAs({
+          title: '导出后端日志',
+          defaultName: 'backend-log-' + d.getFullYear() + pad(d.getMonth() + 1)
+            + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes())
+            + pad(d.getSeconds()) + '.txt',
+          filters: [{ name: 'Text', extensions: ['txt', 'log'] }],
+        });
+      } catch (_) {
+        showBanner('导出失败：无法打开保存框', 5000, true);
+        return;
+      }
+      if (!savePath) return;   // 用户取消
+    }
     showBanner('正在导出…', 1500);
-    fetch('/api/backend_log/save', { method: 'POST' })
+    fetch('/api/backend_log/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: savePath }),
+    })
       .then(r => r.json())
       .then(j => {
         if (j && j.ok) {

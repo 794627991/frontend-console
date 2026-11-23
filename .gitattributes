@@ -3,6 +3,14 @@
 # 且让人误以为内容大改。锁死 eol，避免任何工具再翻转。
 * text=auto eol=lf
 
+# 2026-11-23：Windows 批处理例外——工作区必须 CRLF。cmd 解析纯 LF 行尾的
+# bat 会错位（错切位置随文件偏移变化），整脚本被切成碎片命令（run.bat
+# 双击打不开实锤：A/B 对照仅行尾不同，LF→exit 255、CRLF→exit 0；同病
+# 前例见 56b54f16）。上面的 eol=lf 会让任何 checkout/pull/clone 把 bat
+# 写成 LF，所以单独钉死：入库仍规范化为 LF（diff 干净），落盘恒 CRLF。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # v2.3.7b：WebView2 内置运行时一律按二进制——禁换行转换（CRLF 转换会损坏 pak/信任列表等数据件）
 runtime/WebView2Fixed/** -text
 *.exe -text

@@ -7,9 +7,10 @@
 - 触发时机：启动即清 + 每 24h 一次 + 上传成功后节流触发（10 分钟一次）。
 
 存储感知（设置→数据目录展示）：
-- 用户数据空间（可迁移）= DATA_DIR（日志/笔记/缓存，随迁移走）；
-- 工具数据空间 = STATE_DIR（数据目录：附件/
-  各子进程状态，不随迁移改址）。
+- 用户数据空间 = DATA_DIR（日志/笔记/附件/索引，随迁移走）。2026-11-23
+  状态目录退役后 STATE_DIR 就是 DATA_DIR（同一目录，一并随迁移改址），
+  config 单独住在工具目录 data、不随迁——面板只显示数据目录这一个数
+  （data_dir_total）。
 """
 import os
 import threading
@@ -18,6 +19,9 @@ import time
 UPLOADS_MAX_AGE_S = 180 * 24 * 3600      # 半年
 UPLOADS_MAX_BYTES = 1 << 30              # 1GB
 UPLOADS_TARGET_PCT = 0.8                 # 超限删到剩余 80% 为止
+# 2026-11-23 用户令：串口日志后台永不删除，只允许用户在设置里手动删。
+# 手动删除的「按天数」挡位（白名单：接口只认这几个值，不接受任意天数）
+LOG_AGE_OPTIONS = (7, 30, 90)
 
 
 def uploads_dir():
@@ -95,7 +99,52 @@ def _dir_size(root):
     return total
 
 
+def _serial_log_files():
+    """串口日志清单 [(mtime, size, path)]：只认工具自产的 serial_*.log。
+    占用统计与手动清理共用这一份口径（统计多少 = 能删多少）。"""
+    from src import app_state as st
+    log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
+    return [(mt, sz, p) for mt, sz, p in _files_in(log_dir, suffix=".log")
+            if os.path.basename(p).startswith("serial_")]
+
+
+def _serial_log_bytes_older(files, days):
+    """「删除超过 days 天」这个挡位能释放的字节数。"""
+    cutoff = time.time() - int(days) * 86400
+    return sum(sz for mt, sz, _p in files if mt < cutoff)
+
+
 _usage_cache = {"ts": 0.0, "data": None}
+
+_dir_total_cache = {"key": None, "ts": 0.0, "val": None}
+_DIR_TOTAL_TTL = 60     # 秒，与 usage_stats 同节奏
+
+
+def data_dir_total(force=False):
+    """整个数据目录的真实大小——设置→数据目录面板显示的那一个数。
+
+    60s TTL、按目录作键（数据目录迁移后自然失效）、manual_clean 后强制
+    失效。此前 /api/data_dir 每次 GET 都同步全量深扫（实测 636 文件 45ms，
+    数万文件的目录会上到秒级，卡住打开面板）。
+    失败返回 **None 而不是 0**：0 是「空目录」，读不了是「统计不出来」，
+    混在一起面板会把后者显示成「共 0 B」，用户误以为数据没了。
+    """
+    from src import app_state as st
+    raw = getattr(st, "DATA_DIR", "") or ""
+    key = os.path.normcase(os.path.abspath(raw)) if raw else ""
+    now = time.time()
+    c = _dir_total_cache
+    if not force and key and c["key"] == key and c["ts"] \
+            and now - c["ts"] < _DIR_TOTAL_TTL:
+        return c["val"]
+    val = None
+    if key and os.path.isdir(key):
+        try:
+            val = _dir_size(key)
+        except Exception:
+            val = None
+    c.update(key=key, ts=now, val=val)
+    return val
 
 
 def usage_stats(force=False):
@@ -115,11 +164,18 @@ def usage_stats(force=False):
     # 2026-11-23（用户令）：原「cache」目标（数据目录 webview_cache\EBWebView，
     # 旧 WebView2 窗口体的缓存）已整体移除——Electron 壳不读不写它，旧目录已清除。
     # 2026-11-23 用户令「太长了，简化」：目标名只留短名，细节挪到各自的说明文字里
+    _serial_logs = _serial_log_files()
     targets = {
         "uploads": {"path": up, "bytes": _dir_size(up), "name": "会话附件"},
-        "logs": {"path": log_dir, "bytes": _dir_size(os.path.join(log_dir))
-                 - sum(_dir_size(os.path.join(log_dir, d)) for d in ("idx",) if os.path.isdir(os.path.join(log_dir, d))),
-                 "name": "串口日志"},
+        # 占用只算**可被清理的那些**（serial_*.log）：此前数的是整个日志目录，
+        # 而「全部清空」只删 serial_ 前缀——目录里有外来 .log 时清空后数字
+        # 不归零。by_age = 各挡位「删除超过 N 天」能释放的字节数，供界面在
+        # 用户点之前就说明会删多少。
+        "logs": {"path": log_dir, "bytes": sum(sz for _mt, sz, _p in _serial_logs),
+                 "name": "串口日志",
+                 "age_options": list(LOG_AGE_OPTIONS),
+                 "by_age": {str(d): _serial_log_bytes_older(_serial_logs, d)
+                            for d in LOG_AGE_OPTIONS}},
         "idx": {"path": idx_dirs[0], "bytes": sum(_dir_size(d) for d in idx_dirs),
                 "name": "日志索引"},
         "ask": {"path": ask, "bytes": _dir_size(ask), "name": "提问状态"},
@@ -179,17 +235,26 @@ def _try_rm(p):
         return False
 
 
-def manual_clean(target, mode):
-    """手动清理入口。target ∈ uploads|logs|idx|ask|nav；mode ∈ policy|all。
-    返回 (removed, freed)。policy=按各自保留策略；all=清空该类。
-    （2026-11-23 用户令：原 cache 目标——旧 WebView2 缓存——已随旧窗口体退役，
+def manual_clean(target, mode, days=None):
+    """手动清理入口。target ∈ uploads|logs|idx|ask|nav；mode ∈ policy|all|older。
+    返回 (removed, freed)。policy=按各自保留策略；all=清空该类；
+    older=**仅串口日志**：删除修改时间早于 days 天前的 serial_*.log
+    （2026-11-23 用户令新增的手动挡位；days 必须是 LOG_AGE_OPTIONS 之一，
+    否则抛 ValueError——不接受任意天数，也不「假成功 0 项」）。
+    （2026-11-23 用户令：原 cache 目标——旧 WebView 缓存——已随旧窗口体退役，
     连同 _CACHE_SUBS 清单一并移除；Electron 壳的缓存在它自己的 userData 里。）"""
     from src import app_state as st
+    if mode == "older":
+        if target != "logs":
+            return 0, 0                # 按天数挡位只对串口日志有意义
+        if days not in LOG_AGE_OPTIONS:
+            raise ValueError("days 必须是 %s 之一" % (LOG_AGE_OPTIONS,))
+    elif target not in _CLEANABLE or mode not in ("policy", "all"):
+        return 0, 0
     removed = 0
     freed = 0
-    if target not in _CLEANABLE or mode not in ("policy", "all"):
-        return 0, 0
     _usage_cache["ts"] = 0.0   # 清理后占用缓存失效（下次 usage 强制重扫）
+    _dir_total_cache["ts"] = 0.0   # 数据目录总大小同理
 
     if target == "uploads":
         if mode == "policy":
@@ -201,15 +266,23 @@ def manual_clean(target, mode):
                     freed += sz
 
     elif target == "logs":
-        # 2026-11-23 用户令：「按策略：删 7 天前的串口日志」去掉——串口日志
-        # 工具**不替用户判断**该不该删，只在用户自己点「全部清空」时才删。
-        # （后台自动清理 cleanup_uploads 从来只管会话附件，从不碰串口日志。）
+        # 2026-11-23 用户令：串口日志**后台永不删除**（server.py 里每 30 秒
+        # 删 7 天前日志的 _cleanup 线程已删除）——只有用户在这里手动点击才删：
+        #   · older：删除超过 N 天（N ∈ LOG_AGE_OPTIONS）的旧日志
+        #   · all  ：全部清空
+        #   · policy：不删任何东西（工具不替用户判断）
+        # 三种都只碰工具自产的 serial_*.log，日志目录里别的文件不动。
         if mode == "policy":
             pass                        # 按策略：对串口日志不删任何东西
+        elif mode == "older":
+            cutoff = time.time() - int(days) * 86400
+            for mt, sz, p in _serial_log_files():
+                if mt < cutoff and _try_rm(p):
+                    removed += 1
+                    freed += sz
         else:
-            log_dir = getattr(st, "LOG_DIR", st.DEFAULT_LOG_DIR)
-            for mt, sz, p in _files_in(log_dir, suffix=".log"):
-                if os.path.basename(p).startswith("serial_") and _try_rm(p):
+            for _mt, sz, p in _serial_log_files():
+                if _try_rm(p):
                     removed += 1
                     freed += sz
 

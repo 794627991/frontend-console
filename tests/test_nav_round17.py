@@ -66,12 +66,9 @@ def test_export_goes_through_backend(tmp_path, monkeypatch):
         return outdir if p == "~" else real_expand(p)
 
     monkeypatch.setattr(nav_api.os.path, "expanduser", _expanduser)
-    # 防止真 src.main 的 picker 被调用后把文件写到用户真实目录
-    import sys as _sys
-    import types
-    _mod = _sys.modules.get("src.main") or types.ModuleType("src.main")
-    _sys.modules.setdefault("src.main", _mod)
-    monkeypatch.setattr(_mod, "_save_file_dialog", lambda _fn: "", raising=False)
+    # （2026-11-23：此前往 sys.modules["src.main"] 挂 pywebview 的
+    #   _save_file_dialog 桩——该函数已随 P4 删除，后端不再找它；而且那是
+    #   setdefault、用例结束不恢复，会把假模块永久留在 sys.modules 里。）
     import flask
     app = flask.Flask(__name__)
     app.register_blueprint(nav_api.nav_bp)
@@ -250,6 +247,12 @@ def _be_check(tmp_path, cfg):
     ({"version": 2, "dirs": {"/abs": "off"}}, False),
     ({"version": 2, "dirs": {"a/../b": "off"}}, False),
     ({"version": 2, "dirs": {"C:/x": "off"}}, False),
+    # tmp 类键：后端 `_norm_dirs` 忽略该键不判整份非法（a570 P1·第二十轮）；
+    # 前端原先整单拒——2026-11-23 总审计 a684-A6 改为同口径
+    ({"version": 2, "dirs": {"tmp": "off", "src": "off"}}, True),
+    ({"version": 2, "mode": "full", "dirs": {"tmp": "off"}}, True),
+    ({"version": 2, "dirs": {"../tmp": "off"}}, False),       # 路径校验先于 tmp
+    ({"version": 2, "dirs": {"tmp": "bogus"}}, False),        # 值校验先于 tmp
     ({"version": 1, "dirs": {}}, False),
     ({"version": 2, "mode": "bogus", "dirs": {}}, False),
     ({"version": 2, "mode": "full", "dirs": {"a": "off"}}, False),

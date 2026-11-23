@@ -153,8 +153,10 @@ def _default_data_dir():
     - 不允许临时目录——工具目录不可写时不偷偷落到别处（凭据会散落两处，
       同事机实锤踩坑），保持指向工具目录并记录告警：登录等写盘操作会
       显式报错，引导用户把工具挪到可写目录
-    - 实际生效值**固定**为 `工具目录\\data`——config 的 data_dir 键不再参与
-      启动决策（用户令 2026-11-23：不考虑任何其他位置）。
+    - 默认值是 `工具目录\\data`。实际数据目录由 _resolve_data_dir
+      决定：config 记了 data_dir 且那个目录存在就用它，否则才落到这里。
+      （2026-11-23 总审计 F2：此处原写「固定为工具目录 data、data_dir 不参与
+      启动决策」，是中途方案的残留，与几行之外的 _resolve_data_dir 矛盾。）
     a594：候选目录改用 APP_DIR（exe 旁），不再用 BASE_DIR（打包版指向
     _internal/）——见 _app_dir 注释里的真实事故。
 
@@ -207,10 +209,83 @@ def _bootstrap_anchor():
 # 但先把坏文件复制留证（.bad-<时间>），不让它被下一次保存悄悄盖掉。
 
 
+# 内容确实坏了的判据（a669）：只有解析失败才算坏。PermissionError、共享冲突
+# （WinError 32，另一个进程正持有）、杀软扫描占用等**读取侧 IO 故障不算坏**——
+# 文件内容可能是完好的。此处先定义：下方 _read_cfg_state 与后面的
+# _cfg_read_strict / cfg_read 共用同一口径。
+_CONFIG_CORRUPT_EXC = (json.JSONDecodeError, UnicodeDecodeError)
+# 读侧 IO 故障重试次数（间隔递增 0.05/0.10/0.15s，合计 0.30s——杀软扫描
+# 窗口量级；旧注释写 0.35s 是算错了）
+_CONFIG_READ_TRIES = 4
+
+
 def _read_cfg(p):
     # utf-8-sig：本仓库编辑链会产出带 BOM 的文件，裸 utf-8 会让 json.load 抛错
     with open(p, "r", encoding="utf-8-sig") as f:
         return json.load(f)
+
+
+def _cfg_bytes_ok(raw):
+    """一段字节是不是「能用的配置」（合法 JSON 且顶层是对象）。用于决定
+    要不要拿它覆盖 .bak 留底。"""
+    try:
+        return isinstance(json.loads(raw.decode("utf-8-sig")), dict)
+    except Exception:
+        return False
+
+
+def _read_cfg_state(p):
+    """三态读（与 _cfg_read_strict 同口径）。返回 (state, obj)：
+      ("ok", dict) | ("missing", None) | ("corrupt", None) | ("io_error", None)
+    io_error = 重试后仍读不到——**调用方不得把它当坏件处理**。
+    corrupt = 解析失败，或合法 JSON 但顶层不是对象（数组/字符串/数字）——
+    后面所有 .get() 都会炸，等同于坏文件。（此前对后者返回 ("ok", 非dict)，
+    与 _cfg_read_strict 判 corrupt 不一致；唯一调用方恰好自己又判了一次
+    isinstance 才没出事。）"""
+    for i in range(_CONFIG_READ_TRIES):
+        try:
+            obj = _read_cfg(p)
+        except FileNotFoundError:
+            return "missing", None
+        except _CONFIG_CORRUPT_EXC:
+            return "corrupt", None      # 内容坏：重试没有意义
+        except OSError:
+            if i < _CONFIG_READ_TRIES - 1:
+                time.sleep(0.05 * (i + 1))
+            continue
+        return ("ok", obj) if isinstance(obj, dict) else ("corrupt", None)
+    return "io_error", None
+
+
+def _preserve_bad_cfg(main):
+    """坏件留证，返回「现场是否保住」（True=已留证或同内容留证早已存在）。
+
+    文件名 config.json.bad-<时间>-<内容哈希前 12 位>：同一份坏件每次启动
+    都会再进恢复路径，按内容哈希去重后不会无限堆 .bad-*（此前每次启动
+    多一个）。读不出坏件（IO 故障）时返回 False——调用方据此**不覆盖**，
+    宁可本次用副本的内存内容，也不毁掉未能留证的现场。"""
+    import hashlib as _hl
+    import shutil as _sh
+    try:
+        with open(main, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return False
+    tail = "-" + _hl.sha1(raw).hexdigest()[:12]
+    d = os.path.dirname(main)
+    try:
+        for n in os.listdir(d):
+            if n.startswith("config.json.bad-") and n.endswith(tail) \
+                    and os.path.isfile(os.path.join(d, n)):
+                return True                     # 同内容已留证
+    except OSError:
+        pass
+    try:
+        _sh.copy2(main, "%s.bad-%s%s" % (
+            main, time.strftime("%Y%m%d-%H%M%S"), tail))
+        return True
+    except OSError:
+        return False
 
 
 def _selfheal_cfg():
@@ -218,21 +293,30 @@ def _selfheal_cfg():
     返回 dict。文件不存在 → {}。存在但坏且无处恢复 → {}（坏件已留证）。
 
     【恢复到的配置必须落盘】只在内存里用副本、盘上仍是坏文件的话，下一次
-    保存会以坏文件为底——实测把配置洗成只剩新加的那 1 个键。所以：坏件复制
-    成 .bad-<时间> 留证，再把可用副本写回 config.json。"""
+    保存会以坏文件为底——实测把配置洗成只剩新加的那 1 个键。所以：坏件留证
+    成 .bad-<时间>-<哈希>，再把可用副本写回 config.json。
+
+    【读不到 ≠ 坏】（a669 同口径；此前这里与 cfg_read 不一致）读侧 IO 故障
+    （占用/权限/杀软扫描）一律**不动盘**、返回 {}：旧实现在这种情况下把
+    完好的现行配置判成损坏，直接用 .bak 覆盖掉——实测 '{"a":1,"b":2,"new":3}'
+    被洗回 '{"a":1,"b":2}'，且因读不出坏件连 .bad 留证都没有。下一次
+    cfg_read 成功即拿回真实配置；期间任何写入都有 cfg_commit 的「配置骤减」
+    护栏兜底。"""
     import logging
     import shutil as _sh
     main = CONFIG_FILE
-    try:
-        _d0 = _read_cfg(main)
-        # 顶层必须是对象（第八轮审计 R8-3）：合法 JSON 但顶层是数组/字符串/数字
-        # 时，直接返回会让后面 .get() 抛 AttributeError——导入期崩溃，连自愈都走不到
-        if isinstance(_d0, dict):
-            return _d0
-    except FileNotFoundError:
+    state, d0 = _read_cfg_state(main)
+    if state == "ok":
+        return d0                    # _read_cfg_state 已保证是 dict
+    if state == "missing":
         return {}
-    except Exception:
-        pass                       # 文件在但读不出：坏了，找副本
+    if state == "io_error":
+        logging.getLogger("app_state").warning(
+            "config.json 暂时读不到（占用/权限/杀软扫描），本次不动盘；"
+            "读取恢复后自动回到真实配置")
+        return {}
+    # corrupt：解析失败，或合法 JSON 但顶层不是对象（第八轮审计 R8-3：
+    # 数组/字符串/数字会让后面 .get() 抛 AttributeError——导入期崩溃）
     for cand in (main + ".bak", CONFIG_BACKUP_FILE):
         try:
             d = _read_cfg(cand)
@@ -240,11 +324,11 @@ def _selfheal_cfg():
             continue
         if not isinstance(d, dict) or not d:
             continue
-        try:
-            _stamp = time.strftime("%Y%m%d-%H%M%S")
-            _sh.copy2(main, "%s.bad-%s" % (main, _stamp))      # 坏件留证
-        except OSError:
-            pass
+        if not _preserve_bad_cfg(main):
+            logging.getLogger("app_state").warning(
+                "config.json 损坏但坏件无法留证（读不出），本次不覆盖；"
+                "内存暂用 %s 的内容", os.path.basename(cand))
+            return d
         try:
             _sh.copyfile(cand, main)                           # 可用副本落盘
             logging.getLogger("app_state").warning(
@@ -252,14 +336,10 @@ def _selfheal_cfg():
         except OSError:
             pass
         return d
-    try:
-        _stamp = time.strftime("%Y%m%d-%H%M%S")
-        _sh.copy2(main, "%s.bad-%s" % (main, _stamp))
+    if _preserve_bad_cfg(main):
         logging.getLogger("app_state").warning(
-            "config.json 损坏且没有可用的恢复副本，已留证为 config.json.bad-%s；"
-            "本次以空配置起步", _stamp)
-    except OSError:
-        pass
+            "config.json 损坏且没有可用的恢复副本，坏件已留证为 "
+            "config.json.bad-<时间>-<哈希>；本次以空配置起步")
     return {}
 
 
@@ -697,12 +777,11 @@ _CONFIG_LOCK = threading.Lock()
 _CFG_LAST = {"d": {}}
 
 # a669（用户实锤 config 被洗成 2 个键）：只有「内容真的坏了」才允许隔离。
-# 判定用 json.JSONDecodeError / UnicodeDecodeError；PermissionError、共享
+# 判据用 json.JSONDecodeError / UnicodeDecodeError；PermissionError、共享
 # 冲突（WinError 32，另一个进程正持有）、杀软扫描占用等**读取侧 IO 故障
 # 一律不算坏**——文件内容可能是完好的，改个名就永久把它踢出视线。
-_CONFIG_CORRUPT_EXC = (json.JSONDecodeError, UnicodeDecodeError)
-# 读侧 IO 故障重试次数（间隔递增，总计约 0.35s——杀软扫描窗口量级）
-_CONFIG_READ_TRIES = 4
+# （_CONFIG_CORRUPT_EXC / _CONFIG_READ_TRIES 已前移到 _selfheal_cfg 之前：
+# 导入期自愈要用，且与这里必须同一口径。）
 
 
 def _cfg_read_strict():
@@ -798,7 +877,15 @@ def cfg_commit(mutator):
         d, _st = _cfg_read_strict()
         if _st == "io_error":
             return False, "config.json 暂时不可读（占用/权限），本次未写入"
-        if not isinstance(d, dict):
+        if _st == "corrupt":
+            # 运行期撞上坏文件（导入期自愈之后文件又坏了：外部编辑写坏、
+            # 磁盘错误）。走与导入期同一套自愈：坏件留证 → 从 .bak / 镜像
+            # 恢复并落盘 → 以恢复出来的配置为基线继续本次写入。
+            # （2026-11-23 总审计 W-1：旧行为是落到下面的 `d = {}`——以空
+            #   dict 为基线落盘，把全部设置洗成只剩本次改的键，且坏件没有任何
+            #   留证；同文件 cfg_read 对 corrupt 会隔离 .bad，唯独这里不对称。）
+            d = _selfheal_cfg()
+        elif not isinstance(d, dict):
             d = {}
         # 护栏基线 = 磁盘上刚读到的内容（不是内存缓存）：要防的是「这一次
         # 写入把盘上已有的配置写没」，拿盘上的现状比才对得上语义。
@@ -841,7 +928,13 @@ def cfg_commit(mutator):
                 with open(CONFIG_FILE, "rb") as f:
                     _prev = f.read()   # 上一版字节（替换前留底）
             except OSError:
-                pass
+                _prev = None
+            # 留底不能被坏件污染（2026-11-23 总审计 W-1 延伸）：主文件此刻
+            # 若是坏的（本次从损坏态恢复/新建），读到的「上一版」就是坏件——
+            # 原样写进 .bak 会把里面那份好副本盖掉，下次自愈就没得用了。
+            # 解析不了就不覆盖，保住已有的 .bak。
+            if _prev is not None and not _cfg_bytes_ok(_prev):
+                _prev = None
             tmp = "%s.tmp.%d.%d" % (CONFIG_FILE, os.getpid(), threading.get_ident())
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(d, f, ensure_ascii=False, indent=1)
@@ -1057,3 +1150,41 @@ def reject_win_devpath(path):
     b = base.rstrip(". ")
     stem = b.split(".")[0].rstrip(". ") if "." in b else b
     return stem.upper() in _WIN_RESERVED
+
+
+def export_target_err(path):
+    """导出类接口的「用户自选保存路径」校验。返回 None=通过，否则错误文案。
+
+    背景（2026-11-23 评审）：P4 删掉 pywebview 的 _save_file_dialog 后，日志
+    导出、代码索引范围配置导出都弹不出保存框，静默落桌面。现在改为前端先经
+    Electron 壳的保存框（fc:save-as）拿到路径、再回传后端落盘——于是后端
+    多了一个「按调用方给的路径写文件」的入口，必须收口。
+
+    只拦一件事：**覆盖工具自身的文件**。已存在的目标若落在 config 的家、
+    数据目录、锚点之内 → 拒绝（config / 凭据 / 命令库 / 日志 / endpoint
+    都在这些目录里，导出内容一写就把它们盖掉）。新建文件放哪都行；这些
+    目录之外已有的文件，由用户在保存框里自己确认覆盖。"""
+    try:
+        if not isinstance(path, str) or not path.strip():
+            return "路径无效"
+        p = path.strip()
+        if not os.path.isabs(p):
+            return "保存路径必须是绝对路径"
+        # 以 \\ 开头的一律拒：UNC 网络共享之外，也包括 \\?\ 与 \\.\ 设备命名
+        # 路径（ntpath.splitdrive 对它们同样返回 \\ 开头的 drive）——与
+        # _migrate_target_err「设备命名空间一律拒」同口径，属保守方向；
+        # Electron 保存框不会返回这种形态，实际拦不到正常使用。
+        if p.startswith("\\\\") or os.path.splitdrive(p)[0].startswith("\\\\"):
+            return "不支持网络路径（UNC）或设备命名空间路径作为保存位置"
+        if reject_win_devpath(p):
+            return "路径含 Windows 保留设备名"
+        if not os.path.exists(p):
+            return None
+        np_ = os.path.normcase(os.path.abspath(p))
+        for home in (TOOL_DATA_DIR, DATA_DIR, HOME_DIR):   # 运行时取值：迁移后 DATA_DIR 会变
+            h = os.path.normcase(os.path.abspath(home))
+            if np_ == h or np_.startswith(h.rstrip("\\/") + os.sep):
+                return "不能覆盖工具自身的数据或配置文件——请另选保存位置"
+    except Exception:
+        return "保存路径校验失败"
+    return None

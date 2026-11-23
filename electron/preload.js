@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('fcShell', {
   onState: (cb) => ipcRenderer.on('fc:win-state', (_e, st) => cb(st)),
   // 打开 DevTools（后端日志窗「原 F12」按钮的壳形态通道，独立窗）
   openDevtools: () => ipcRenderer.send('fc:devtools'),
+  // 通用「另存为」：导出类功能先经此拿到路径，再回传后端落盘。
+  // 返回 '' = 用户取消；对话框出错则 reject
+  saveAs: (opts) => ipcRenderer.invoke('fc:save-as', opts),
   // 拖放文件的绝对路径（Electron 32 起 File.path 移除，webUtils 是唯一正道）
   pathForFile: (f) => webUtils.getPathForFile(f),
   // 文件关联双击（--open-file）：壳解析 argv 后推给前端智能分发

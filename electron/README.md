@@ -30,7 +30,7 @@ npm start          # 壳拉起 python src/main.py --headless 并开窗
 
 ```bat
 git pull
-run.bat            rem 等价 run.bat
+run.bat            rem 唯一入口；第一次运行若没有 Electron 会自动装（见下）
 ```
 
 - `electron/node_modules/` **不入库**（`electron/.gitignore` 已排除）。首次运行

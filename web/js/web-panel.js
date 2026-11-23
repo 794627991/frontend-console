@@ -1322,7 +1322,7 @@ function _webPwMgr() {
         nm.textContent = '解密中…';
         api({ act: 'pw_reveal', origin: it.origin, user: it.user }).then(j => {
           nm.textContent = (j && j.ok) ? (it.user || '(无用户名)') + ' | ' + (j.pw || '(空)')
-            : '❌ ' + ((j && j.err) || '解密失败');
+            : '解密失败：' + ((j && j.err) || '未知原因');
         });
         return;
       }
@@ -1404,7 +1404,7 @@ function _webPwMgr() {
     if (!j || !j.ok) {
       menu.innerHTML = '<div class="web-fav-title">密码管理</div>' +
         '<div class="web-fav-empty">无法读取密码库：' + esc((j && j.err) || '请求失败') +
-        '' + '（再点一次 🔑 重试）</div>';
+        '' + '（再点一次「密码管理」按钮重试）</div>';
       pos();
       return;
     }

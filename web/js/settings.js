@@ -1888,7 +1888,7 @@ function _stRenderDataPane(pane) {
     const target = inp.value.trim();
     if (!target) return;
     const ok = await _ddConfirm('迁移数据目录',
-      `把命令库、笔记、日志复制到：\n${target}\n\n命令库与笔记严格校验（必须完整），日志尽力复制；完成后自动切换并删除旧目录。继续？`);
+      `把命令库、笔记、日志复制到：\n${target}\n\n命令库与笔记严格校验（必须完整），日志尽力复制；完成后自动切换并删除旧目录。\nAI 数据服务会随之重启（约数秒），进行中的 AI 对话会中断。继续？`);
     if (!ok) return;
     // 过程 UI：覆盖式进度面板（迁移在同步请求里跑，无法真流式报进度——
     // 阶段动画按预期节奏推进，请求返回即终态，数据量小时最后一闪而过属正常）
@@ -1903,8 +1903,18 @@ function _stRenderDataPane(pane) {
       if (j.ok) {
         $('settingsModal').classList.remove('show');
         const parts = (j.copied || []).map(c => `${c.name}×${c.files}${c.skipped ? `（跳过${c.skipped}）` : ''}`).join('、');
-        showBanner(`迁移完成（${parts}），旧目录已自动删除`, 6000);
+        // worker_restart（后端 manage_restart 的回执）：AI/机器人/代理的数据面
+        // 在 worker 进程，它要重启才认新目录——没重启成功必须让用户重启工具，
+        // 否则迁移后到重启之间的写入会落回旧目录。
+        const wr = j.worker_restart;
+        const tail = wr === 'restarted' ? '；AI 数据服务将在数秒内自动重启'
+          : wr === 'inline' ? ''
+          : '；请重启工具，让 AI 数据服务切到新目录';
+        showBanner(`迁移完成（${parts}），旧目录已自动删除${tail}`, wr === 'restarted' ? 6000 : 9000);
         _ddRefreshDataPane(pane);   // 面板若再开显示新目录
+      } else if (j.deleted) {
+        // 数据已迁、旧目录已删，只是收尾出了岔子——不能再写「数据仍在原处」
+        showBanner('迁移未完成：' + (j.err || '未知'), 9000, true);
       } else {
         showBanner('迁移失败（未切换，数据仍在原处）：' + (j.err || '未知'), 6000, true);
       }
@@ -1931,7 +1941,10 @@ async function _ddRefreshDataPane(pane) {
     // 现在只显示整个数据目录的真实大小（dir_total = 全量深扫，与下面同一口径）。
     const _statEl = pane.querySelector('#ddCurStat');
     if (_statEl) {
-      _statEl.textContent = j.dir_total ? `共 ${_ddFmtSize(j.dir_total)}` : '';
+      // null = 后端统计不出来（读不了/目录失联）——显示「无法统计」而不是空，
+      // 更不能是「共 0 B」（用户会以为数据没了）
+      _statEl.textContent = typeof j.dir_total === 'number' ? `共 ${_ddFmtSize(j.dir_total)}`
+        : (j.dir_total === null ? '无法统计' : '');
     }
     pane.querySelector('#ddDefault').textContent = j.default || '';
   } catch(_) {}
@@ -1969,16 +1982,17 @@ async function _ddRefreshUsage(pane) {
     // Electron 壳不读不写它；行由后端 targets 生成，这里只需删映射。
     const POLICY = {
       uploads: '按策略：删超半年 + 超量缩至 80%',
-      // 2026-11-23 用户令：串口日志工具不替用户判断该不该删——「按策略清理」
-      // 对它不删任何东西，只有用户自己点「全部清空」才会删
-      logs: '不会自动删除，只在你主动「全部清空」时清除',
+      // 2026-11-23 用户令：串口日志后台永不删除，工具不替用户判断——只有
+      // 用户在这里手动选挡位（超过 7/30/90 天）或点「全部清空」才会删
+      logs: '工具不会自动删除串口日志；可按天数删除旧日志，或全部清空',
       idx: '按策略：删 3 天未用的索引',
       ask: '按策略：保留最近 500 个',
       nav: '删除全部代码索引（文件树右键可重建）',
     };
     const DANGER = {
       uploads: '全部清空后，历史会话里引用的图片将失效',
-      logs: '', idx: '', ask: '',
+      logs: '全部清空：该目录下所有串口日志都会被删除，无法恢复',
+      idx: '', ask: '',
     };
     const trows = Object.entries(j.targets || {}).map(([k, u]) =>
       `<div style="padding:8px 0;border-bottom:1px solid var(--border);">` +
@@ -2000,6 +2014,10 @@ async function _ddRefreshUsage(pane) {
       `<div id="ddCleanBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;` +
         `margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;">` +
         `<span id="ddCleanTip" style="font-size:11px;color:var(--muted);flex:1;min-width:200px;"></span>` +
+        `<span id="ddCleanOlder" style="display:none;gap:6px;align-items:center;flex-shrink:0;">` +
+          `<span style="font-size:11px;color:var(--muted);">删除超过</span>` +
+          `<select id="ddCleanDays" class="dd-input" autocomplete="off" style="width:auto;flex:none;padding:2px 6px;font-size:12px;"></select>` +
+          `<button class="btn ghost" id="ddCleanOlderGo">删除旧日志</button></span>` +
         `<button class="btn ghost" id="ddCleanPolicy">按策略清理</button>` +
         `<button class="btn ghost" id="ddCleanAll" style="color:#e5484d;">全部清空</button>` +
         `<button class="btn ghost" id="ddCleanCancel">取消</button></div>`;
@@ -2007,29 +2025,47 @@ async function _ddRefreshUsage(pane) {
     // 没有「按策略」动作的目标（如串口日志——工具不替用户判断，只在用户主动
     // 全部清空时才删）：确认条上不显示「按策略清理」按钮，免得点了没反应
     const NO_POLICY = { logs: true };
+    // 按天数挡位（2026-11-23 用户令：串口日志只能手动删，给 7/30/90 天可选）。
+    // 挡位与「可释放多少」都来自后端 targets[k].age_options / by_age——用户点
+    // 之前就看到会删多少；天数是后端白名单，前端不自己造
     let pending = '';
+    let pendingDays = 0;
+    const olderWrap = bar.querySelector('#ddCleanOlder');
+    const daysSel = bar.querySelector('#ddCleanDays');
+    daysSel.onchange = () => { pendingDays = +daysSel.value || 0; };
+    const _fillDays = (u) => {
+      const opts = Array.isArray(u && u.age_options) ? u.age_options : [];
+      olderWrap.style.display = opts.length ? 'inline-flex' : 'none';
+      if (!opts.length) return;
+      daysSel.innerHTML = opts.map(d =>
+        `<option value="${esc(String(d))}">${esc(String(d))} 天前（可释放 ${_ddFmtSize((u.by_age || {})[String(d)] || 0)}）</option>`
+      ).join('');
+      pendingDays = +opts[0] || 0;
+    };
     el.querySelectorAll('[data-ddclean]').forEach(b => {
       b.onclick = () => {
         pending = b.dataset.ddclean;
         bar.style.display = 'flex';
         bar.querySelector('#ddCleanPolicy').style.display = NO_POLICY[pending] ? 'none' : '';
+        _fillDays(j.targets[pending]);
         bar.querySelector('#ddCleanTip').innerHTML =
           `清理「${esc((j.targets[pending] || {}).name || pending)}」：${POLICY[pending] || ''}` +
           (DANGER[pending] ? `<br>${DANGER[pending]}` : '');
       };
     });
     bar.querySelector('#ddCleanCancel').onclick = () => { pending = ''; bar.style.display = 'none'; };
-    const _do = async (mode) => {
+    const _do = async (mode, days) => {
       if (!pending) return;
       const tip = bar.querySelector('#ddCleanTip');
       tip.textContent = '清理中…';
-      // 轻审R2-7：请求在途禁用全部清理入口（🧹 与确认条），防双击并发
-      const btns = el.querySelectorAll('[data-ddclean], #ddCleanPolicy, #ddCleanAll');
+      // 轻审R2-7：请求在途禁用全部清理入口（垃圾桶与确认条），防双击并发
+      const btns = el.querySelectorAll('[data-ddclean], #ddCleanPolicy, #ddCleanAll, #ddCleanOlderGo, #ddCleanDays');
       btns.forEach(b => b.disabled = true);
       try {
+        const body = days ? {target: pending, mode, days} : {target: pending, mode};
         const r = await fetch('/api/data_dir/clean', {method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({target: pending, mode})});
+          body: JSON.stringify(body)});
         const j2 = await r.json();
         if (!j2.ok) { showBanner('清理失败: ' + (j2.err || ''), 3000, true); }
         else showBanner(`已清理 ${j2.removed} 项，释放 ${_ddFmtSize(j2.freed || 0)}`, 3200);
@@ -2039,6 +2075,9 @@ async function _ddRefreshUsage(pane) {
       _ddRefreshUsage(pane);
     };
     bar.querySelector('#ddCleanPolicy').onclick = () => _do('policy');
+    bar.querySelector('#ddCleanOlderGo').onclick = () => {
+      if (pendingDays) _do('older', pendingDays);
+    };
     bar.querySelector('#ddCleanAll').onclick = () => _do('all');
   } catch(_) { el.textContent = '统计不可用'; }
 }
@@ -2048,7 +2087,7 @@ async function _stRenderAssocPane(pane) {
   pane.innerHTML = `
     <div class="dd-body">
       <div class="dd-label">文件关联接管</div>
-      <div class="dd-sub">接管后双击文件用本工具打开；「还原」恢复系统默认。只改当前用户注册表，可逆。。</div>
+      <div class="dd-sub">接管后双击文件用本工具打开；「还原」恢复系统默认。只改当前用户注册表，可逆。</div>
       <div class="assoc-list" id="assocList">加载中…</div>
       <div class="dd-actions" style="margin-top:14px;">
         <button class="btn ghost" id="assocAll" disabled>全部接管</button>

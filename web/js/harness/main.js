@@ -1732,7 +1732,7 @@ function buildClaudeHarnessTab(opts = {}) {
   // 英文技能配中文一句话说明（命中优先显示；未命中的显示原 desc，
   // 用户自装的中文技能天然中文）。
   // v2.27「技能需要翻译」长期方案：静态映射兜底常见技能；新装技能的英文
-  // desc 由后端调 settings.json 配的模型翻译，落 ~/.serialconsole_pro/
+  // desc 由后端调 settings.json 配的模型翻译，落数据目录的
   // skill_zh_cache.json 持久缓存——零人工维护，缓存命中后零延迟。
 
 

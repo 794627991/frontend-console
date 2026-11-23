@@ -729,6 +729,63 @@ def manage_start(prefer_port=0, main_port=0, blocking=False):
             "worker 拉起失败（Claude 面板将不可用，串口不受影响）: %s", e)
 
 
+def manage_restart():
+    """数据目录迁移后让 worker 重新绑定路径（2026-11-23 评审修复 A）。
+
+    背景：harness / lanzi / proxy / claude_default 的蓝图和凭据写端都在本
+    worker 进程，路径常量是按值导入的——主进程迁移函数里的补绑够不到这里。
+    迁移前 worker 一直读写旧数据目录，而旧目录迁移完就被删：迁移后到重启
+    之间新写入落回（被删后重建的）旧路径，重启后读到的是新目录里迁移时刻
+    的快照，这段时间的改动静默回退。
+
+    做法：只让 worker 进程**优雅退出**，不碰 _stop / _proc。supervisor 的
+    既有重拉路径（poll 发现死亡 → 退避 → _spawn_once → _apply_base）会拉
+    起新进程，新进程启动时读 config 自然绑到新数据目录。
+    为什么不走 manage_stop()+manage_start()：_stop 置位后从不清除，旧
+    supervisor 线程也没有退出同步——硬清有「旧 supervisor 复活 + 新 bringup
+    双拉」的风险（a668 修过的事故形态）。
+
+    代价（调用方需告知用户）：进行中的 AI 会话被收尾、代理短暂中断后按
+    autostart 记忆恢复、机器人重连；重拉最坏约 8s（supervisor 5s 巡检 +
+    2s 退避 + 握手），期间 harness 请求走既有的 503「未就绪」。
+
+    返回 "restarted"（已退出，等 supervisor 重拉）/ "inline"（单进程形态，
+    路径补绑已在主进程生效，无需重启）/ "not_running"（worker 本来就不在
+    跑，多半正处于重拉途中——调用方应提示用户重启工具兜底）。"""
+    if os.environ.get("CLAUDE_INLINE") == "1":
+        return "inline"
+    with _lock:
+        p = _proc
+    if p is None or p.poll() is not None:
+        return "not_running"
+    base = _base
+    _log = logging.getLogger("claude_worker")
+    try:
+        if base:
+            import urllib.request
+            # 同 manage_stop：POST（不是 GET）才触发 /worker_shutdown 的
+            # 优雅收尾——base_url 回滚、逐会话 kill、停 bot
+            _req = urllib.request.Request(
+                base + "/worker_shutdown", data=b"{}",
+                headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(_req, timeout=3).read()
+        try:
+            p.wait(timeout=3)       # 收尾并行、2.5s 封顶；给 3s 余量
+        except Exception:
+            pass
+        if p.poll() is None:
+            p.kill()                # 仍不退：硬杀兜底，supervisor 照样重拉
+    except Exception as e:
+        try:
+            p.kill()
+        except Exception:
+            pass
+        _log.warning("worker 重启：优雅退出失败，已硬杀（%s）", e)
+    _log.warning("数据目录已迁移：worker 已退出，等 supervisor 重拉"
+                 "（新进程启动即读新 config）")
+    return "restarted"
+
+
 def manage_stop():
     _stop.set()
     global _proc

@@ -49,21 +49,26 @@ def main():
     n = 0
     # ① app_state._anchor_dir 权威值
     for env_anchor, env_appdata, expect in _py_inline_formulas():
-        e = dict(os.environ)
-        if env_anchor:
-            e["FC_STATE_DIR"] = env_anchor
-        else:
-            e.pop("FC_STATE_DIR", None)
-        if env_appdata:
-            e["APPDATA"] = env_appdata
-        else:
-            e.pop("APPDATA", None)
         old_a, old_d = os.environ.get("FC_STATE_DIR"), os.environ.get("APPDATA")
-        os.environ.clear(); os.environ.update(e)
-        got = st._anchor_dir()
-        os.environ.clear()
-        if old_a: os.environ["FC_STATE_DIR"] = old_a
-        if old_d: os.environ["APPDATA"] = old_d
+        # 2026-11-23 总审计 a686-A11：原为 os.environ.clear() + 整份回填——
+        # 被别的测试 import 后会把进程环境整个洗一遍（PATH/tempfile 等全丢）。
+        # 这里只动 _anchor_dir 实际读的两个键，其余原样不碰。
+        try:
+            if env_anchor:
+                os.environ["FC_STATE_DIR"] = env_anchor
+            else:
+                os.environ.pop("FC_STATE_DIR", None)
+            if env_appdata:
+                os.environ["APPDATA"] = env_appdata
+            else:
+                os.environ.pop("APPDATA", None)
+            got = st._anchor_dir()
+        finally:
+            for _k, _old in (("FC_STATE_DIR", old_a), ("APPDATA", old_d)):
+                if _old is None:
+                    os.environ.pop(_k, None)
+                else:
+                    os.environ[_k] = _old
         assert got == expect, "_anchor_dir(%r,%r)=%r != 内联公式 %r" % (
             env_anchor, env_appdata, got, expect)
         n += 1

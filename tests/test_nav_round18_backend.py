@@ -161,6 +161,12 @@ def test_scope_tree_hides_tmp(tmp_path, monkeypatch):
 # ---- P2：O_EXCL 不覆盖用户已确认的保存框路径 -------------------------
 
 def test_export_respects_picked_overwrite(tmp_path, monkeypatch):
+    """用户确认覆盖的文件不能被改名成 -1。
+
+    （2026-11-23 改约定：pywebview 的 _save_file_dialog 已随 P4 删除——原
+    用例把它挂到 sys.modules["src.main"] 上取路径，那个机制已不存在。保存框
+    现在由前端经 Electron 壳的 fc:save-as 弹出，选定路径随 body.path 回传；
+    本用例直接给 path，验证的是同一个意图。）"""
     from src import nav_api
     root = str(tmp_path)
     with open(os.path.join(root, ni.SCOPE_FILE), "w", encoding="utf-8") as f:
@@ -170,20 +176,11 @@ def test_export_respects_picked_overwrite(tmp_path, monkeypatch):
         f.write("OLD CONTENT")
     monkeypatch.setattr(nav_api, "_guard", lambda p: True)
 
-    import sys as _sys
-    import types
-    mod = _sys.modules.get("src.main")
-    if mod is None:
-        mod = types.ModuleType("src.main")
-        monkeypatch.setitem(_sys.modules, "src.main", mod)
-    # 真实 src.main 可能已被其他用例导入——直接给它挂 picker，避免落到桌面
-    monkeypatch.setattr(mod, "_save_file_dialog", lambda _fn: mine,
-                        raising=False)
     import flask
     app = flask.Flask(__name__)
     app.register_blueprint(nav_api.nav_bp)
     j = app.test_client().post("/api/nav/scope_export",
-                               json={"root": root}).get_json()
+                               json={"root": root, "path": mine}).get_json()
     assert j["ok"], j
     assert j["path"] == mine, "用户确认覆盖的文件不能被改名成 -1"
     assert "OLD CONTENT" not in open(mine, encoding="utf-8").read()

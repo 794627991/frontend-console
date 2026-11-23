@@ -533,6 +533,9 @@
           // 触发（理论不可达，animationend 是异步的），_tm 仍是 0，setTimeout
           // 返回的 id 会随后 add 进集合而无人删。delete(0) 对集合是无害空操作，
           // 但单独留着这个 guard 才构成"永不残留"的完整保证。
+          // 2026-11-23 总审计 a685-F1：animationend 先到时兜底定时器还挂着，
+          // 空转到 _THINK_EXIT_MS 才被上面的 _done 早退——顺手清掉。
+          if (_tm) clearTimeout(_tm);
           if (_HG.thinkTimers) _HG.thinkTimers.delete(_tm);
         };
         gone.addEventListener('animationend', _drop, { once: true });

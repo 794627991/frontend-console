@@ -17,10 +17,14 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const util = require('util');
 
 // 后端冷启动超时：packaged=60s（exe 解压+Flask+worker 余量）；源码形态
-// 首启可能先跑 pip 补装（内网镜像慢），放宽到 180s（对抗审 F：60s 会把
-// 首次装依赖的 dev 形态误判「启动超时」杀掉）
+// 放宽到 180s。2026-11-23 总审计 a683-A8：原注释理由是「首启先跑 pip 补装
+// （内网镜像慢）」——deps_bootstrap 早已改为只打印 pip 指引并让后端退出、
+// 不自动装，该理由失效。数值保留：源码形态是纯 .py 导入（无 pyd）+ 首次
+// .pyc 编译 + 杀软扫描源码树，比打包形态慢得多；超时的代价是误杀一个
+// 其实能起来的后端，多等的代价只是慢机器上弹框晚一点——宁慢勿误杀。
 const BOOT_TIMEOUT_MS = 60 * 1000;   // 默认（packaged）
 const BOOT_TIMEOUT_DEV_MS = 180 * 1000;
 const POLL_MS = 250;
@@ -255,7 +259,7 @@ async function boot() {
   // 回拨/快慢机上不可靠，已由 token 取代）
   try { fs.unlinkSync(ENDPOINT_FILE); } catch (_) { /* 本就不存在 */ }
 
-  const BOOT_TOKEN = crypto.randomUUID ? crypto.randomUUID()
+  BOOT_TOKEN = crypto.randomUUID ? crypto.randomUUID()
     : String(Date.now()) + Math.random().toString(36).slice(2);
   const spawnMs = Date.now();
   log('spawn 后端：', JSON.stringify(cmd));
@@ -283,8 +287,25 @@ async function boot() {
   });
   pipeTag(backend.stdout, 'out');
   pipeTag(backend.stderr, 'err');
+  // spawn 报错后 'exit' 不保证再来、exitCode 仍为 null——就绪轮询靠它提前收手，
+  // 否则 fatal 弹框之后还要空转到 deadline
+  let spawnFailed = false;
+  // 2026-11-23 总审计 a683-A5：可执行不存在/无权限时 spawn 报的是 'error'
+  // 而不是 'exit'——原先没挂监听，异常冒成 uncaughtException，壳无声消失、
+  // 没有任何弹框。这里接管并走 fatal（与 exit 分支同一条告知链）。
+  backend.on('error', (err) => {
+    spawnFailed = true;
+    log(util.format('后端 spawn 失败：%s', err && err.message));
+    if (exiting || reallyQuitting) return;
+    fatal('后端启动失败',
+      '无法启动后端进程：' + String((err && err.message) || err) + '\n\n' +
+      '后端命令：' + cmd.join(' ') + '\n' +
+      '排查：' + SHELL_LOG);
+  });
   backend.on('exit', (code, signal) => {
-    log('后端退出 code=%s signal=%s（booted=%s）', code, signal, booted);
+    // 2026-11-23 总审计 a683-A4：log() 是 args.join(' ')，不解析占位符——
+    // 原先写 %s 的这行会把占位符原样留在日志里、数值甩到行尾
+    log(util.format('后端退出 code=%s signal=%s（booted=%s）', code, signal, booted));
     // 优雅退出链中后端先退是预期（quitApp→/api/quit→清理→自灭），静默
     if (exiting || reallyQuitting) return;
     if (!booted) {
@@ -306,7 +327,7 @@ async function boot() {
     + (app.isPackaged ? BOOT_TIMEOUT_MS : BOOT_TIMEOUT_DEV_MS);
   let epTokenWarned = false;
   while (Date.now() < deadline) {
-    if (backend.exitCode !== null) return; // exit 回调已接管报错
+    if (spawnFailed || backend.exitCode !== null) return; // error/exit 回调已接管报错
     const ep = readEndpoint();
     if (ep && !epTokenWarned && ep.boot_token !== BOOT_TOKEN) {
       epTokenWarned = true;
@@ -322,7 +343,7 @@ async function boot() {
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
-  if (backend.exitCode !== null) return;
+  if (spawnFailed || backend.exitCode !== null) return;
   fatal('后端启动超时',
     (app.isPackaged ? BOOT_TIMEOUT_MS : BOOT_TIMEOUT_DEV_MS) / 1000
     + ' 秒内后端未就绪。\n\n' +
@@ -345,6 +366,10 @@ function pipeTag(stream, tag) {
 
 // ---- P2 窗体收尾：窗口记忆 / IPC 窗控 / 托盘 / 优雅退出 ----
 
+// 本次 spawn 注入后端的启动亲和令牌（boot() 里赋值）。模块级是因为两处
+// 消费：就绪轮询（只认回写了同一 token 的 endpoint）与 readConfigBool。
+let BOOT_TOKEN = '';
+
 function readConfigBool(key, dft) {
   // 尊重 dft：key 缺失用默认（原先 !== false 写法忽略 dft 参数）
   // 容忍 UTF-8 BOM（本仓库编辑链会产出带 BOM 的文件）
@@ -354,7 +379,13 @@ function readConfigBool(key, dft) {
   let cfgFile = CONFIG_FILE;
   try {
     const ep = JSON.parse(fs.readFileSync(ENDPOINT_FILE, 'utf-8'));
-    if (ep && typeof ep.tool_data_dir === 'string' && path.isAbsolute(ep.tool_data_dir)) {
+    // 2026-11-23 总审计（a688 审计 A-3）：只采信**本次启动**的后端写的
+    // endpoint——工具目录挪位后启动失败时，残留文件里的 tool_data_dir
+    // 指向旧位置，不比对就会去读旧位置的 config.json。token 不符一律回落。
+    // （窗口只在就绪轮询认下同一 token 之后才开，所以这里不必再放宽）
+    if (ep && ep.boot_token === BOOT_TOKEN
+        && typeof ep.tool_data_dir === 'string'
+        && path.isAbsolute(ep.tool_data_dir)) {
       cfgFile = path.join(ep.tool_data_dir, 'config.json');
     }
   } catch (_) { /* 无 endpoint → 回落 */ }
@@ -694,7 +725,8 @@ function openWindow(url) {
     win.maximize();
     pinMaximizeToWorkArea();   // maximize 事件未必覆盖 show 前的越界态，启动即钉
   }
-  win.once('ready-to-show', () => { if (win) win.show(); });
+  let winShownOnce = false;   // ready-to-show 到过（首启窗口刻意晚显，见下）
+  win.once('ready-to-show', () => { if (win) { winShownOnce = true; win.show(); } });
   win.webContents.on('did-fail-load', (_e, code, desc, url2, isMainFrame) => {
     // 实测子帧失败也触发（isMainFrame=false）——只对主帧 fatal，
     // 否则主 UI 里任何一个 iframe 加载失败都会把整个工具杀掉
@@ -742,6 +774,11 @@ function openWindow(url) {
     if (pendingOpenFile && win && !win.isDestroyed()) {
       const p = pendingOpenFile;
       pendingOpenFile = null;
+      // 2026-11-23 总审计 a683-A6：补发路径原只 send 不唤起——窗口藏在
+      // 托盘、恰逢页面重载时双击文件，用户看不到任何反应。与
+      // notifyOpenFile 的即时路径同款唤起。首启除外：ready-to-show 未到
+      // 之前窗口是故意不显的（白屏闪避），不抢这个时机。
+      if (winShownOnce && !win.isVisible()) showWindowFromTray();
       win.webContents.send('fc:open-file', p);
     }
   });
@@ -907,6 +944,35 @@ ipcMain.handle('fc:pick-dir', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
   return r.canceled ? '' : (r.filePaths[0] || '');
 });
+// 通用「另存为」：导出类功能用（后端日志导出 / 代码索引范围配置导出）。
+// 旧 pywebview 形态靠 main.py 的 _save_file_dialog，P4 把它删了却没补等价物
+// ——两处导出从此弹不出保存框、静默落桌面。现在前端先经此拿到路径，再回传
+// 后端落盘。返回 '' = 用户取消；对话框本身出错则 reject（调用方据此报失败，
+// 不要回落成「悄悄写到桌面」）。只认主窗。
+ipcMain.handle('fc:save-as', async (event, opts) => {
+  // 2026-11-23 总审计 W-7：非主 UI 调用原先返回 ''——与「用户取消」无法
+  // 区分，多窗/非主 UI 场景静默当取消。拒绝就抛错：调用方的 catch 据此
+  // 报「无法打开保存框」，拒写语义不变。
+  if (!_isMainUi(event)) throw new Error('forbidden: save-as 只允许主界面调用');
+  const o = opts || {};
+  const safe = String(o.defaultName || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim().slice(0, 120) || 'export.txt';
+  let baseDir;
+  try { baseDir = app.getPath('desktop'); } catch (_) {
+    try { baseDir = app.getPath('home'); } catch (_) { baseDir = undefined; }
+  }
+  try {
+    const r = await dialog.showSaveDialog(win, {
+      title: String(o.title || '另存为'),
+      defaultPath: baseDir ? path.join(baseDir, safe) : safe,
+      filters: Array.isArray(o.filters) && o.filters.length ? o.filters : undefined,
+    });
+    return (r.canceled || !r.filePath) ? '' : r.filePath;
+  } catch (e) {
+    log('另存为对话框失败：', e.message);
+    throw e;
+  }
+});
 // 剪贴板（pywebview 兼容层等价实现，FileBridge 全量 7 方法就此齐平）
 ipcMain.handle('fc:clipboard-read', () => clipboard.readText());
 ipcMain.handle('fc:clipboard-write-image', (_e, p) => {
@@ -931,6 +997,15 @@ let snipIdleTimer = null;    // 隐藏待命 10 分钟后销毁（旧形态同�
 let snipLastArmTs = 0;       // 最近一次 arm 时刻（SSE 与 📷 按钮双触发的去重窗）
 let snipArming = false;      // arm 在途硬锁（探针实锤：双路径并发每次双 arm，
                              // 旧去重锁的 !isVisible 条件在透明预显示后恒失效）
+let snipArmActive = false;   // arm 之后、隐藏/销毁之前：一次截图流程进行中
+// 同一触发的双路径去重窗：前端点 📷 后既等 /api/snip/start 的响应直调
+// openSnip，又收后端在同一个接口里广播的 SSE snip_open——两份是同一次
+// 用户动作的回声。2026-11-23 总审计 P0-3：原先只有 snipArming 在途锁，函数
+// 一返回就松；SSE 回声排在大量 AI 流消息后面、晚到数百 ms 时（对话高峰期
+// 截图）会再 arm 一次，页面重新取图/重建插件——用户拖到一半的选区被重置。
+// 现以「流程进行中 + 落在窗口内」判为回声并流。窗口外的再次触发是用户在
+// 截图界面里重新按键（重新开始），行为照旧。
+const SNIP_DUP_WINDOW_MS = 2500;
 let snipBounds = null;       // 目标物理布局（DIP）——ready 时重钉尺寸/置顶用
 
 // 显示三连（ready 与 8s 兜底共用）：
@@ -979,6 +1054,8 @@ function _snipDeliverArm() {
 }
 
 function _snipArmStart(phys) {
+  snipLastArmTs = Date.now();
+  snipArmActive = true;
   snipPendingArm = phys;
   _snipDeliverArm();
   // 提前以全透明状态显示：DWM 开窗动画此刻播完（不可见），ready 后
@@ -999,6 +1076,7 @@ function _snipArmStart(phys) {
 }
 
 function _snipHide() {
+  snipArmActive = false;    // 流程结束（完成/另存/取消/取图失败）：去重窗关门
   if (snipShowTimer) { clearTimeout(snipShowTimer); snipShowTimer = null; }
   if (snipWin && !snipWin.isDestroyed()) {
     try { snipWin.hide(); } catch (_) {}
@@ -1020,6 +1098,7 @@ function _snipHide() {
 }
 
 function _snipDestroy() {
+  snipArmActive = false;
   if (snipShowTimer) { clearTimeout(snipShowTimer); snipShowTimer = null; }
   if (snipIdleTimer) { clearTimeout(snipIdleTimer); snipIdleTimer = null; }
   if (snipWin && !snipWin.isDestroyed()) {
@@ -1125,7 +1204,9 @@ function _snipCreate(bounds) {
     w.setMaximizable(false);
   } catch (_) {}
   w.on('closed', () => {
-    if (snipWin === w) { snipWin = null; snipPageReady = false; }
+    // snipArmActive 一并清：Alt+F4 等绕过 _snipHide/_snipDestroy 的关窗不留
+    // 「流程进行中」的假象（去重窗靠它判回声）
+    if (snipWin === w) { snipWin = null; snipPageReady = false; snipArmActive = false; }
   });
   // 意外最大化护栏（实测实锤）：reveal 里 setResizable(true) 临时放开边框
   // 会连带恢复 Windows 最大化开关（两开关联动），Win+Up/拖顶都能把透明
@@ -1166,8 +1247,11 @@ async function openSnipWindow() {
   if (!endpointUrl) return { ok: false, err: '后端未就绪' };
   // 双路径并发硬锁（探针实锤每次双 arm）：按钮直调与 SSE 各来一次，旧
   // 时间窗+isVisible 判据在透明预显示后恒放行 → 插件实例连环建/毁。
-  // 在途锁内第二调用直接并流
+  // 在途锁内第二调用直接并流；在途锁之外再看去重窗（P0-3，见常量处注释）
   if (snipArming) return { ok: true };
+  if (snipArmActive && Date.now() - snipLastArmTs < SNIP_DUP_WINDOW_MS) {
+    return { ok: true };
+  }
   snipArming = true;
   try {
     const geo = await _snipGeo();
@@ -1197,8 +1281,7 @@ async function openSnipWindow() {
         }
       } catch (_) {}
     }
-    snipLastArmTs = Date.now();
-    _snipArmStart(phys);
+    _snipArmStart(phys);     // 内部记 snipLastArmTs / 置 snipArmActive
     return { ok: true };
   } catch (e) {
     log('截图覆盖窗打开失败：', e.message);

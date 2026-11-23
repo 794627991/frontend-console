@@ -42,8 +42,9 @@ def register(app):
         req = request.get_json(force=True, silent=True) or {}
         act = str(req.get("act") or "")
         if act.startswith("pw_"):
+            # 文案会进界面：UI 禁 emoji 铁律——不写 🔑，直接点明按钮名
             return jsonify({"ok": False,
-                            "err": "密码管理已迁至 Electron 壳（设置/🔑 菜单）"})
+                            "err": "密码管理已迁至 Electron 壳（点网页工具栏的「密码管理」按钮）"})
         return jsonify({"ok": True})
 
     app.register_blueprint(bp)

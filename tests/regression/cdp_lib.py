@@ -49,7 +49,7 @@ def _free_port():
 def _app_url():
     """用户窗口的地址（headless 用同一后端）。
 
-    顺序：9222 页面 target → ~/.serialconsole_pro/endpoint.json → 环境变量。
+    顺序：9222 页面 target → 锚点 endpoint.json → 环境变量。
     绝不硬编码端口（应用每次启动随机端口）。
     """
     try:
@@ -59,14 +59,13 @@ def _app_url():
     except Exception:
         pass
     try:
-        # 退役改造(对抗审计 P9):锚点优先,旧目录兜底
+        # 锚点 = 固定公式（与 app_state._anchor_dir 同步；FC_STATE_DIR 覆盖口）。
+        # 2026-11-23 总审计 a686-A9：原还有「找不到就看 ~/.serialconsole_pro」
+        # 的旧目录兜底——该目录 a686 已退役，用户令「不看历史位置、不做兼容」。
         _anc = (os.environ.get("FC_STATE_DIR")
                 or os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
                                 "frontend-console-shell", "backend"))
         ep = os.path.join(_anc, "endpoint.json")
-        if not os.path.exists(ep):
-            ep = os.path.join(os.path.expanduser("~"),
-                              ".serialconsole_pro", "endpoint.json")
         with open(ep, encoding="utf-8") as f:
             u = (json.load(f) or {}).get("url") or ""
         if u.startswith("http"):

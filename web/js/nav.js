@@ -1099,9 +1099,6 @@
           k => {
             if (_isRootKey(k)) return false;
             const raw = _normK(k);
-            // a570 对抗审计（P2·第十九轮）：tmp 类目录 walk 里无条件硬剪，
-            // 显式配它必然是死配置——与后端 `_norm_dirs` 同口径直接拒。
-            if (raw.split('/').some(x => _TMP_L.has(x.toLowerCase()))) return true;
             if (raw.charAt(0) === '/') return true;
             const p2 = raw.replace(/^\/+|\/+$/g, '');
             if (p2 === '' || p2 === '.') return true;
@@ -1111,6 +1108,22 @@
         if (_badK !== undefined) {
           showBanner('dirs 含非法路径：' + JSON.stringify(_badK), 6000, true);
           return;
+        }
+        // 2026-11-23 总审计 a684-A6：tmp 类目录在 walk 里是无条件硬剪，显式
+        // 配它必然是死配置。后端 `_norm_dirs`（a570 P1·第二十轮）对这类键
+        // 是**忽略该键**并经 dropped 报告——判整份非法会让旧配置变 bad:，
+        // 建库当无配置整棵全量重生成。前端原先整单拒（注释还写着同口径）：
+        // 后端落盘的含 tmp 键配置走「导入 JSON」还原不了。现与后端同序：
+        // 路径/值校验先过，再剔除 tmp 键并提示。
+        const _tmpDropped = [];
+        for (const _tmpKey of Object.keys(_dirsIn)) {
+          if (_isRootKey(_tmpKey)) continue;
+          const _tsegs = _normK(_tmpKey).replace(/^\/+|\/+$/g, '').split('/')
+            .filter(s => s && s !== '.');
+          if (_tsegs.some(s => _TMP_L.has(s.toLowerCase()))) {
+            _tmpDropped.push(_tsegs.join('/'));
+            delete _dirsIn[_tmpKey];
+          }
         }
         // mode/arch 枚举 + mode=full/whitelist 时不允许 dirs（后端 _norm_scope_v2 同判）
         const _mode = String(cfg.mode || 'manual').trim().toLowerCase();
@@ -1184,23 +1197,30 @@
         // _headCfg 会显示「白 0 · 全 0 · 不勾 0」。用 dirs 现算一份。
         _headCfg(_withCounts(card._scopeCfg),
           '导入的 JSON，建库成功后写入工程根');
-        showBanner('已载入范围配置，点「建立索引」生效', 3500);
+        showBanner('已载入范围配置，点「建立索引」生效' +
+          (_tmpDropped.length ? '；已忽略 ' + _tmpDropped.length +
+            ' 个 tmp 类目录（建库时无条件跳过）：' +
+            _tmpDropped.slice(0, 5).join('、') +
+            (_tmpDropped.length > 5 ? ' 等' : '') : ''),
+          _tmpDropped.length ? 7000 : 3500);
       }).catch(e => showBanner('读取失败: ' + e, 4000, true));
     };
     row.appendChild(bImp); row.appendChild(fi);
     // a570 对抗审计（P2·第十六轮）：只有导入没有导出——用户无法备份当前
     // 范围配置，只能去工程根翻 .fcpk-scope.json。
     // a570 对抗审计（P1·第十七轮）：导出必须**走后端落盘**。`<a download>`
-    // 在 WebView2 里永远失败：init.js 捕获阶段对所有 a[href] 无条件
-    // preventDefault（防就地导航），且 pywebview 默认 ALLOW_DOWNLOADS=False
-    // ——两处都会吞掉下载，前端却无条件弹「已导出」（backend-log.js 已踩过
-    // 同一个坑）。另外 status 下发的 scope 只是摘要（无 dirs/arch/
-    // exclude_names，artifact_roots 还截断），拿它导出会丢配置。
-    // 这里改走 GET /api/nav/scope_export：后端读真实配置存盘并回传路径。
+    // 在壳内渲染层永远失败：init.js 捕获阶段对所有 a[href] 无条件
+    // preventDefault（防就地导航）——会吞掉下载，前端却无条件弹「已导出」
+    // （backend-log.js 已踩过同一个坑）。另外 status 下发的 scope 只是摘要
+    // （无 dirs/arch/exclude_names，artifact_roots 还截断），拿它导出会丢配置。
+    // 这里改走 POST /api/nav/scope_export：后端读真实配置存盘并回传路径。
+    // 保存位置（2026-11-23 评审修正）：壳形态先经 fcShell.saveAs 弹保存框、
+    // 把路径回传后端，取消即中止——此前后端去找已随 P4 删除的 pywebview
+    // 保存框，从未弹出，每次导出都静默落桌面并按序号堆文件。
     const bExp = _h('button', '导出 JSON', false);
     bExp.className = 'btn ghost';
     bExp.style.cssText = 'padding:2px 10px;font-size:11px;';
-    bExp.onclick = () => {
+    bExp.onclick = async () => {
       // a570 对抗审计（P2·第十八轮）：导出读的是**磁盘上已落盘的**配置，
       // 不是当前面板里尚未建库的改动——必须说清楚，否则用户以为导出的是
       // 刚导入/手选的那份。
@@ -1209,10 +1229,25 @@
         showBanner('导出的是工程根已落盘的配置（当前下拉档位尚未建库），'
           + '若要导出本次选择请先建立索引', 7000, true);
       }
+      let savePath = '';
+      if (window.fcShell && typeof window.fcShell.saveAs === 'function') {
+        try {
+          savePath = await window.fcShell.saveAs({
+            title: '导出范围配置',
+            defaultName: 'fcpk-scope-'
+              + ((path.replace(/[\\/]+$/, '').split(/[\\/]/).pop()) || 'project') + '.json',
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+          });
+        } catch (_) {
+          showBanner('导出失败：无法打开保存框', 5000, true);
+          return;
+        }
+        if (!savePath) return;   // 用户取消
+      }
       showBanner('正在导出…', 1500);
       fetch('/api/nav/scope_export', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ root: path }),
+        body: JSON.stringify({ root: path, path: savePath }),
       }).then(r => r.json()).then(j => {
         if (j && j.ok) {
           showBanner('已导出到 ' + j.path + '，可再次「导入 JSON」还原', 7000);
@@ -1470,6 +1505,25 @@
       return String(n);
     };
 
+    // 2026-11-23 总审计 a684-A5：预估文件数按**当前配置的生效状态**算。
+    // 原实现把推荐节点的 code 全加——推荐 rootfs:off（3.9 万文件）时仍显示
+    // 「预估 12W 文件」，建库后远小于预期。一级子目录能扣的也扣：off 顶层下
+    // 显式勾选的子目录加回、live 顶层下 off 的子目录扣除（与 _keep_dir 的
+    // 下钻规则同向）。白名单档实际只收编译过的，这里的 code 仍是上界。
+    const _estFiles = () => (recNodes || []).reduce((a, n) => {
+      if (!n || !n.rel) return a;
+      const topOff = _effState(n.rel) === 'off';
+      let v = topOff ? 0 : (Number(n.code) || 0);
+      for (const s of (n.subs || [])) {
+        if (!s || s.name === '__root__') continue;
+        const c = Number(s.code) || 0;
+        const subOff = _effState(n.rel + '/' + s.name) === 'off';
+        if (topOff && !subOff) v += c;
+        else if (!topOff && subOff) v -= c;
+      }
+      return a + Math.max(0, v);
+    }, 0);
+
     const _syncCounts = () => {
       let wl = 0, fu = 0, of = 0;
       // 统计「显式节点 + 根默认」的分布（粗略：以显式节点计）
@@ -1478,7 +1532,7 @@
         else if (dirs[k] === 'full') fu++;
         else of++;
       }
-      const files = (recNodes || []).reduce((a, n) => a + (n.code || 0), 0);
+      const files = _estFiles();
       cnt.textContent = '白 ' + wl + ' · 全 ' + fu + ' · 不勾 ' + of +
         (files ? ' · 预估 ' + _fmtN(files) + ' 文件' : '') +
         (arts.size ? ' · 仅产物源 ' + arts.size : '');
@@ -2443,7 +2497,7 @@
             // 直接 join 会渲染成 [object Object]。
             const _tosN = _tos.slice(0, 3).map(x =>
               (x && typeof x === 'object') ? (x.rel || '(未知)') : String(x));
-            const w = _h('div', '⚠ 本次有 ' + _tos.length +
+            const w = _h('div', '注意：本次有 ' + _tos.length +
               ' 个子树扫描超时未收录（' + _tosN.join('、') +
               (_tos.length > 3 ? ' 等' : '') + '）——可重建或调大超时');
             w.style.cssText = 'margin-top:6px;color:var(--neon-orange,#d29922);font-size:12px;';
@@ -2452,7 +2506,8 @@
           // a570 对抗审计（P2·第十六轮）：scope_saved=false 表示范围没写进
           // 工程根（只对本次建库生效），用户下次重建会丢失配置——必须提示。
           if (s.scope_saved === false) {
-            const w2 = _h('div', '⚠ 收录范围未能写入工程根——下次建库需重新配置');
+            // UI 禁 emoji 铁律把 ⚠ 点名为禁用字形——橙色文字本身即告警层级。
+            const w2 = _h('div', '注意：收录范围未能写入工程根——下次建库需重新配置');
             w2.style.cssText = 'margin-top:6px;color:var(--neon-orange,#d29922);font-size:12px;';
             txt.parentNode.insertBefore(w2, txt.nextSibling);
           }

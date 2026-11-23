@@ -63,9 +63,9 @@ def test_export_import_roundtrip(tmp_path):
     app.register_blueprint(nav_api.nav_bp)
     with mock.patch.object(nav_api, "_guard", lambda p: True), \
             mock.patch.object(nav_api.os.path, "expanduser",
-                              lambda p: outdir if p == "~" else p), \
-            mock.patch.dict(sys.modules, {"src.main": mock.MagicMock(
-                _save_file_dialog=lambda _f: "")}):
+                              lambda p: outdir if p == "~" else p):
+        # （2026-11-23：不再把带 _save_file_dialog 的假 src.main 塞进
+        #   sys.modules——后端已不找那个随 P4 删除的 picker。）
         j = app.test_client().post("/api/nav/scope_export",
                                    json={"root": root}).get_json()
     assert j["ok"], j

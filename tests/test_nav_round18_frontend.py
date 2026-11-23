@@ -72,9 +72,20 @@ def test_export_warns_when_unsaved_selection():
     assert "尚未建库" in seg, "导出读的是磁盘配置，必须提示与面板选择无关"
 
 
-def test_export_picker_falls_back_to_main_module():
+def test_export_goes_through_shell_save_dialog():
+    """导出必须经保存框，且后端不得再去找已删除的 picker。
+
+    （2026-11-23 改约定。原用例断言「回落查 __main__ 模块」——那是 pywebview
+    时代 main._save_file_dialog 的查找链，该函数已随 P4 删除：照原样找下去
+    永远找不到，导出静默落桌面。现在保存框由前端经 Electron 壳的
+    fc:save-as 弹出，路径回传后端并经 export_target_err 校验。）"""
     import inspect
     from src import nav_api
     src = inspect.getsource(nav_api.nav_scope_export)
-    assert '"__main__"' in src,         "发布包排除 src/main.py，frozen 下入口是 __main__，只查 src.main 会永不弹框"
-    assert "from src import main as _m" not in src
+    assert "_picker" not in src, "不得再按旧约定查找 _save_file_dialog"
+    assert '"__main__"' not in src
+    assert "export_target_err" in src, "用户自选路径必须过校验（防覆盖工具自身的文件）"
+    assert 'd.get("path")' in src, "选定路径由 body.path 回传"
+    seg = _seg("bExp.onclick", "row.appendChild(bExp)")
+    assert "fcShell.saveAs" in seg, "壳形态必须先弹保存框"
+    assert "path: savePath" in seg, "选定路径必须回传后端"
