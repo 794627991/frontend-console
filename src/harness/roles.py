@@ -197,7 +197,7 @@ def roles_cfg():
     """读角色配置（缺字段兜默认；**未知键原样保留**——旧版遗留的
     executor_model/coder_model 等键由此透传给降级逻辑，不丢）。"""
     try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
         r = d.get(_ROLES_KEY)
         if isinstance(r, dict):

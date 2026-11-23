@@ -52,7 +52,7 @@ class TftpServer:
     def _resolve_default_dir():
         try:
             from . import app_state as _st
-            with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(_st.CONFIG_FILE, "r", encoding="utf-8-sig") as f:
                 d = str((json.load(f) or {}).get("tftp_default_dir") or "")
             d = d.strip().strip('"').strip("'")
             if d and os.path.isdir(d):   # a246：目录黑名单按用户拍板拆除（不再限制任何目录）

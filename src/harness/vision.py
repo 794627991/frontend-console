@@ -59,7 +59,7 @@ def _vision_load():
     """读识图会话配置。缺字段兜默认（老 config 升级不炸）。"""
     cfg = _vision_default_cfg()
     try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
         raw = d.get(_VISION_KEY)
         if isinstance(raw, dict):
@@ -263,7 +263,7 @@ def _mm_probe_model(model):
 
 def _mm_probed_load():
     try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
         p = (d.get(_VISION_KEY) or {}).get("mm_probed")
         if isinstance(p, dict):

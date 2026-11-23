@@ -72,26 +72,27 @@
 ## 工程速览
 - **P4（2026-11-22 用户拍板）**：Electron 壳是唯一入口——单实例锁/文件
   关联/窗口语义全归壳；后端 exe 只是 sidecar，由壳以 `--headless` 拉起。
-- **状态布局（2026-11-23 用户令：~/.serialconsole_pro 退役）**：全部用户
-  数据只进数据目录（用户指定或默认 `工具目录\data`，即 `app_state.STATE_DIR`）；
-  **config.json 住在数据目录里**（2026-11-23 用户令：永远只使用数据目录；
-  此前它住 `%APPDATA%`，卸载即删、又不在任何备份里——AI 做卸载器实验时
-  亲手删过一次，靠退役存档里的副本才恢复）。`.bak`/`.bad`/`data_backup\`
-  全留（用户定调「怎么安全怎么来」），config 已进 cred_mirror 白名单。
-  锚点 `%APPDATA%\frontend-console-shell\backend\`（= 壳 userData\backend）
-  **只放最基础的**：`endpoint.json`（服务发现，每轮重写）、`data_dir.txt`
-  （指针，一行路径）、崩溃取证日志。
-  **指针必须有**：config 记着 data_dir 而自己住在数据目录里，目录迁走后
-  得有固定位置指路。自举见 `app_state._bootstrap_data_dir()`，顺序：
-  ① 指针 → ② **历史位置里记着「数据迁到了别处」的 config**（`~\.serialconsole_pro`
-  / 旧锚点）→ ③ 默认数据目录 → ④ 历史位置有 config 但没记 → 搬进默认
-  → ⑤ 全新。老用户一定有 `~\.serialconsole_pro`，所以一定知道数据在哪。
-  **②必须排在③前**：默认目录里可能有一份不完整的 config（没有 data_dir），
-  若先认它就不会去看历史位置，用户真实的数据目录被完全忽略（实测过）。
-  **回落态（指针指向的盘没插）绝不改写指针**——改了就永久丢失原数据目录。
-  旧目录由 `app_state.migrate_legacy_state()`（main() 开机调用）一次性
-  搬空并改名 `.retired-<日期>`。新代码一律 `st.HOME_DIR`（锚点）/
-  `st.STATE_DIR`（数据）/ `st.CONFIG_FILE`（配置，禁止自己拼路径）。
+- **状态布局（用户令 2026-11-23 最终版，不再改——不要加兼容）**：
+  - **config.json 永远在 `工具目录\data\config.json`**（源码=项目根\data；
+    安装版=exe 旁\data；隔离态=`FC_STATE_DIR\data`）。它是「数据迁到了哪」
+    的唯一记录者，所以自己不跟着数据走。不从任何别处读/搬；**没有指针文件、
+    不看历史位置、不做兼容**。没有它就空配置起步。
+  - **数据目录 = config 里记的 `data_dir`（若那个目录存在），否则
+    `工具目录\data`**。实现就三步：`_anchor_dir()`（锚点）→
+    `_selfheal_cfg()`（读 config + 自愈）→ `_resolve_data_dir()`。
+  - **config 的备份与本体在一起**：`config.json.bak`（每次保存滚动留底）+
+    `工具目录\data\data_backup\config.json`（cred_mirror 镜像）。坏了按
+    `.bak` → 镜像 的顺序自动恢复并落盘；都救不了就以空配置起步，坏件留证
+    （`.bad-<时间>`）。`_selfheal_cfg()` / `_mirror_config()`。
+  - **数据迁移功能保留**（设置里改数据目录，`server._do_data_dir_migrate`）：
+    用户数据全量拷到新目录，config 的 `data_dir` 改成新目录；config 本体与
+    备份**不随迁**。旧目录就是工具目录 data 时（第一次迁移）**逐项删、config
+    相关一律留着**，绝不整个 rmtree。
+  - `%APPDATA%\frontend-console-shell\backend\`（锚点，`st.HOME_DIR`）只放
+    `endpoint.json`（服务发现，每轮重写）与崩溃取证日志。壳的缓存在
+    `%APPDATA%\前端控制台\`。
+  - 新代码一律用 `st.TOOL_DATA_DIR`（config 的家）/ `st.CONFIG_FILE` /
+    `st.DATA_DIR`（数据目录）/ `st.HOME_DIR`（锚点），禁止自己拼路径。
 - **测试自隔离**（`app_state._fc_test_isolation`，导入期最先执行）：
   以 `python tests/xxx.py` 或 pytest 运行时，app_state 自动把 `FC_STATE_DIR`
   指到临时目录——锚点、默认数据目录、旧目录、config 全部落沙箱

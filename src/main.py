@@ -207,6 +207,10 @@ def write_endpoint(port):
             # 这里原样回写——壳只认与自己 token 匹配的 endpoint，杜绝
             # 认到旧形态/陈旧后端（boot_ms 时间窗在时钟回拨时会误判）
             "boot_token": os.environ.get("FC_BOOT_TOKEN") or "",
+            # 后端的工具目录\data（config 的家）。壳读 config（close_to_tray）
+            # 直接用它——两边永远同址，不必各自从 __dirname 推（嵌套形调试包
+            # 里壳与后端不在同一层，各推各的会错位；第八轮审计 R8-6）。
+            "tool_data_dir": _st_anchor.TOOL_DATA_DIR,
         }
         with open(ENDPOINT_FILE, "w", encoding="utf-8") as f:
             json.dump(ep, f, ensure_ascii=False, indent=2)
@@ -800,7 +804,7 @@ def main():
         # 抓屏子进程（Job Object 收编，壳树杀覆盖）。port 直接闭包更稳。
         try:
             from src.app_state import CONFIG_FILE
-            with open(CONFIG_FILE, encoding="utf-8") as _f:
+            with open(CONFIG_FILE, encoding="utf-8-sig") as _f:
                 _snip_hk = (json.load(_f).get("snip_hotkey") or "ctrl+alt+a")
         except Exception:
             _snip_hk = "ctrl+alt+a"
@@ -825,7 +829,7 @@ def main():
         try:
             import json as _json2
             from src.app_state import CONFIG_FILE
-            with open(CONFIG_FILE, encoding="utf-8") as _f:
+            with open(CONFIG_FILE, encoding="utf-8-sig") as _f:
                 if (_json2.load(_f) or {}).get("update_server_enabled"):
                     from src import update_server
                     update_server.start()

@@ -224,7 +224,11 @@ def _selfheal_cfg():
     import shutil as _sh
     main = CONFIG_FILE
     try:
-        return _read_cfg(main)
+        _d0 = _read_cfg(main)
+        # 顶层必须是对象（第八轮审计 R8-3）：合法 JSON 但顶层是数组/字符串/数字
+        # 时，直接返回会让后面 .get() 抛 AttributeError——导入期崩溃，连自愈都走不到
+        if isinstance(_d0, dict):
+            return _d0
     except FileNotFoundError:
         return {}
     except Exception:
@@ -322,6 +326,20 @@ CMD_LIB_FILE = os.path.join(DATA_DIR, "cmdlib.json")
 # 凭据镜像（cred_mirror）要「写盘就备份」，而不是定时轮询整个数据目录。
 # app_state 不能反向 import cred_mirror（循环依赖），故留一个钩子表：
 # cred_mirror 启动时注册回调，各写入点在落盘成功后调用 notify_user_file_written。
+
+_write_hooks = []
+
+def notify_user_file_written(name):
+    """告知「数据目录下的某个用户文件刚写完」。回调异常一律吞掉——
+    备份是尽力而为，绝不能因为备份失败影响正常写盘。"""
+    for cb in _write_hooks:
+        try:
+            cb(name)
+        except Exception:
+            pass
+
+
+
 def _merge_small_first(src_dir, dst_dir):
     """导入期同步搬**小凭据**（白名单 + 根级小 json），大目录留给后台。
     a602：启动路径上几 KB 无感；几百 MB 的 nav/logs/webview_cache 绝不
@@ -552,8 +570,13 @@ def _migrate_legacy_user_data():
       `<app>/data`。打包版曾把默认数据目录算成 _internal/ 下（见 _app_dir
       注释），升级后旧凭据/session/命令库都留在那些位置；自动搬回来，
       否则用户看到「凭据没了、要重配」。
-    归位原则：新位置已有同名不覆盖；全部搬入成功才删旧目录。"""
+    归位原则：新位置已有同名不覆盖；全部搬入成功才删旧目录。
+    隔离态（FC_STATE_DIR，测试/沙箱）下**整体不做**：它扫的 BASE_DIR/APP_DIR
+    是真实的项目根，不认隔离开关——在那些目录真实存在的开发机上跑测试，
+    会把真实的 cmdlib.json / serial_logs 搬进沙箱并删掉源（对抗审计 P2-1）。"""
     import shutil
+    if os.environ.get("FC_STATE_DIR"):
+        return
     try:
         # a594：先把错位的用户数据整体归位——必须排在 cmdlib/logs 归位之前
         # （那些逻辑把 BASE_DIR/data 当旧位置，顺序反了会对刚搬完的目录重复处理）
@@ -644,18 +667,6 @@ def _migrate_legacy_user_data():
 
 _migrate_legacy_user_data()
 
-_write_hooks = []
-
-def notify_user_file_written(name):
-    """告知「数据目录下的某个用户文件刚写完」。回调异常一律吞掉——
-    备份是尽力而为，绝不能因为备份失败影响正常写盘。"""
-    for cb in _write_hooks:
-        try:
-            cb(name)
-        except Exception:
-            pass
-
-
 def replace_retry(src, dst, tries=6, wait=0.02):
     """os.replace 带短重试。a602：备份镜像会短暂读同一文件（Windows 下
     默认 open() 不带 FILE_SHARE_DELETE），替换可能吃 PermissionError；
@@ -708,7 +719,12 @@ def _cfg_read_strict():
     state = "ok"
     for i in range(_CONFIG_READ_TRIES):
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            # utf-8-sig（第八轮审计 A 高危）：本仓库编辑链会产出带 BOM 的文件。
+            # 此前这里是裸 utf-8——带 BOM 的合法 config 在这里 json.load 抛错，
+            # 被判「损坏」并改名成 .bad，读到空 {}；随后一次保存就把用户
+            # 全部设置洗成只剩新加的那 1 个键（沙箱实测 14 → 1）。
+            # _selfheal_cfg 早就是 utf-8-sig，这里必须同口径。
+            with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             state = "ok"
             break
@@ -857,7 +873,7 @@ def _load_config():
     return cfg_read()
 
 def _save_config(cfg):
-    """保存配置到数据目录里的 config.json。整量替换语义（历史 22 调用点不
+    """保存配置到 工具目录/data/config.json（不随数据目录走）。整量替换语义（历史 22 调用点不
     改）；v3.4.54 起锁内原子写（此前裸 "w" 直写是撕裂的头号来源）。"""
     def _whole(d):
         d.clear()

@@ -128,7 +128,7 @@ def load_vision_cfg():
     """读识图配置（config.json 的 harness_vision 节）。每次调用时读——
     设置面板改完即刻生效，无需重启会话/MCP 进程。"""
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
         v = d.get(_VISION_CFG_KEY)
         return v if isinstance(v, dict) else {}

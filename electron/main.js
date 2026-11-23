@@ -348,8 +348,18 @@ function pipeTag(stream, tag) {
 function readConfigBool(key, dft) {
   // 尊重 dft：key 缺失用默认（原先 !== false 写法忽略 dft 参数）
   // 容忍 UTF-8 BOM（本仓库编辑链会产出带 BOM 的文件）
+  // config 的位置：优先用后端写在 endpoint.json 里的 tool_data_dir（两边永远
+  // 同址）；拿不到才回落到上面自己推的 TOOL_DATA_DIR（第八轮审计 R8-6：嵌套形
+  // 调试包里壳与后端不在同一层，各推各的会错位）。点 ✕ 一定在后端启动之后。
+  let cfgFile = CONFIG_FILE;
   try {
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8').replace(/^\uFEFF/, '');
+    const ep = JSON.parse(fs.readFileSync(ENDPOINT_FILE, 'utf-8'));
+    if (ep && typeof ep.tool_data_dir === 'string' && path.isAbsolute(ep.tool_data_dir)) {
+      cfgFile = path.join(ep.tool_data_dir, 'config.json');
+    }
+  } catch (_) { /* 无 endpoint → 回落 */ }
+  try {
+    const raw = fs.readFileSync(cfgFile, 'utf-8').replace(/^\uFEFF/, '');
     const v = JSON.parse(raw)[key];
     return v === undefined ? dft : v !== false;
   } catch (_) { return dft; }

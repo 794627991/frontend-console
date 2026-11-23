@@ -652,7 +652,7 @@ def _harness_roles_read():
     v3.5.98R：路径走 app_state 单一源（轻审 B3——硬编码双源漂移险）。"""
     try:
         from src.app_state import CONFIG_FILE
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             v = json.load(f).get("harness_roles")
         return v if isinstance(v, dict) else None
     except Exception:
@@ -758,7 +758,7 @@ def _harness_vision_user_read():
     None（调用方按「无配置」处理）。"""
     try:
         from src.app_state import CONFIG_FILE
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             v = json.load(f).get("harness_vision")
         if not isinstance(v, dict):
             return None

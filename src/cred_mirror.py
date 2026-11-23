@@ -78,6 +78,10 @@ def _overlaps(a, b):
         b = os.path.normcase(os.path.abspath(b)).rstrip("\\/")
         if a == b or a.startswith(b + os.sep):
             return True             # 相同，或 a（数据目录）在 b（备份目录）里面
+        # 「永远返回 False」? 不是。真正危险的两种（相等 / 数据目录在备份
+        # 目录里面）上面已经拦住；只有下面这一种放行——而它正是生产布局
+        # （config 的镜像必须在 工具目录/data/data_backup，用户令），放行是
+        # 必须的，否则备份整体禁用（第七轮 R7-2 实锤过）。
         if b.startswith(a + os.sep):
             return False            # 备份目录是数据目录的子目录：安全
         return False

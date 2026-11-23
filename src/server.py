@@ -2723,13 +2723,20 @@ def _migrate_subdirs(root):
                 continue
             if n in _MIGRATE_SKIP:
                 continue
-            if os.path.islink(p) or (os.stat(p, follow_symlinks=False).st_file_attributes
+            if os.path.islink(p) or (getattr(os.stat(p, follow_symlinks=False), "st_file_attributes", 0)
                                      & 0x400):        # FILE_ATTRIBUTE_REPARSE_POINT
                 continue
         except OSError:
             continue
         out.append(n)
     return out
+
+
+# 迁移时「拷不动就中止」的根级文件后缀：关键配置（*.json——cmdlib/config/
+# 凭据）+ 证书/私钥（web_h2_key.pem 等工具自签 HTTPS 证书）。这些丢了
+# 不是「尽力而为」能接受的：私钥复制失败却照常 rmtree 旧目录 = 静默丢失。
+#（对抗审计 P2-4；此前只按 .json 判，把私钥排除在了严格校验之外。）
+_MIGRATE_STRICT_EXT = (".json", ".pem", ".p12", ".pfx", ".key", ".crt")
 
 
 def _migrate_root_files(root):
@@ -2763,7 +2770,7 @@ def _migrate_root_files(root):
             # 而它记录的 data_dir 会随每次保存变化，两份很快就不一致。
             if n == "config.json" or n.startswith("config.json."):
                 continue
-            if os.path.islink(p) or (os.stat(p, follow_symlinks=False).st_file_attributes
+            if os.path.islink(p) or (getattr(os.stat(p, follow_symlinks=False), "st_file_attributes", 0)
                                      & 0x400):        # FILE_ATTRIBUTE_REPARSE_POINT
                 continue
         except OSError:
@@ -3097,7 +3104,7 @@ def _do_data_dir_migrate(target):
             sf = os.path.join(src_data_dir, s)
             if not os.path.isfile(sf):
                 continue
-            strict_root = s.lower().endswith(".json")
+            strict_root = s.lower().endswith(_MIGRATE_STRICT_EXT)
             df = os.path.join(target, s)
             _entry = {"name": s, "files": 1}
             try:
@@ -3209,7 +3216,7 @@ def _do_data_dir_migrate(target):
                         continue
                 except OSError:
                     pass
-                strict_root = s.lower().endswith(".json")
+                strict_root = s.lower().endswith(_MIGRATE_STRICT_EXT)
                 try:
                     _mig_copy_atomic(sf, df)
                 except (PermissionError, OSError) as e:
@@ -3247,14 +3254,12 @@ def _do_data_dir_migrate(target):
     # 【删旧目录前的硬闸】config 是一切设置的唯一真本，旧目录马上要被
     # rmtree——若旧目录恰好就是工具目录\data（config 的家），而 config
     # 不见了，用户全部设置随旧目录消失。宁可迁移中止（数据仍在原处、未切换）。
-    _cfg_home = _st.TOOL_DATA_DIR
-    if _st._same_dir(old_data_dir, _cfg_home) and \
-            not os.path.isfile(os.path.join(_cfg_home, "config.json")):
-        return jsonify({"ok": False,
-                        "err": "迁移中止：工具目录里没有 config.json（设置文件），"
-                               "未切换、未删除，数据仍在原处",
-                        "copied": copied, "deleted": False,
-                        "old_dir": old_data_dir}), 500
+    # 【config 现状快照】只用于事后核对：迁移前 config 本体在不在。全新安装
+    # 从没存过设置时它不存在——这不叫丢（没有东西可丢），迁移照常进行，
+    # 下方 _save_config 会新建一份。真正要防的是「本来在、迁移后没了」，
+    # 由函数末尾的最终硬闸核对。（第八轮审计 R8-4：此前的硬闸把全新安装
+    # 第一次改数据目录也拦掉了。）
+    _cfg_had_before = os.path.isfile(os.path.join(_st.TOOL_DATA_DIR, "config.json"))
     _st.DATA_DIR = target
     _st.STATE_DIR = target
     _st.LOG_DIR = new_log_dir
@@ -3352,31 +3357,57 @@ def _do_data_dir_migrate(target):
         _log_index_cache.clear()
     cfg = {**_load_config(), "data_dir": target, "log_dir": new_log_dir}
     _save_config(cfg)
-    # ---- 删旧目录前：把 config 的备份文件收回工具目录 data ----
-    # config 本体不随数据迁移走（它的家是工具目录\data），它的备份
-    # （.bak / .bad-*）也一样该和本体在一起。上方根级文件通道按
-    # 「config.json 开头」把它们排除在迁移之外——所以它们不会被拷进新
-    # 数据目录；但旧数据目录里若留着这种文件（老规则下 config 跟着数据
-    # 走时产生的），下面的 rmtree 会把它们静默删掉。沙箱实测抓到过：
-    # config.json.bak 就这么丢了。收回工具目录；那里已有同名文件则另存留证。
-    for _n in os.listdir(old_data_dir):
-        if not (_n == "config.json.bak" or _n.startswith("config.json.")):
-            continue
-        _s = os.path.join(old_data_dir, _n)
-        if not os.path.isfile(_s):
-            continue
-        _d = os.path.join(_st.TOOL_DATA_DIR, _n)
-        if os.path.exists(_d):
-            _d = _d + ".from-old-data-" + time.strftime("%Y%m%d-%H%M%S")
-        try:
-            shutil.copy2(_s, _d)
-        except OSError:
-            pass
-    # ---- 校验已过（cmdlib/笔记严格校验，log 尽力、缓存仅搬壳），直接删旧目录 ----
-    # 用户口径：不要旧目录备份，迁移完自动删。注意（a245复审F5）：被打开句柄
-    # 锁定的文件（活跃日志）rmtree 删不掉会残留在旧目录，直到写端重开——
-    # ignore_errors 不中断，残留无害但不会自动清理
-    shutil.rmtree(old_data_dir, ignore_errors=True)
+    # ---- 删旧目录前：config 及其备份必须活着 ----
+    # config 本体不随数据迁移走（它的家是 工具目录\data）。两种现场：
+    # ① 旧数据目录 ≠ 工具目录\data（已迁过一次）：旧目录里可能留着老规则下
+    #    产生的 config.json.bak / .bad-*——不迁走但也不能随 rmtree 丢，收回。
+    # ② 旧数据目录 **就是** 工具目录\data（用户第一次改数据目录，最常见）：
+    #    config.json 本体、.bak、data_backup\config.json 全在被删的目录里！
+    #    此时**绝不能 rmtree 整个目录**——那会把刚由 _save_config 写好的
+    #    config 本体一起删掉，下次启动读到空配置，用户全部设置消失。
+    #    （对抗审计 P0-2 实锤；我之前的沙箱只测了形态①，漏了②。）
+    _cfg_home_is_old = _st._same_dir(old_data_dir, _st.TOOL_DATA_DIR)
+    if _cfg_home_is_old:
+        # 逐项删，config 相关的一律留着：config.json / config.json.* / data_backup\
+        _keep = ("config.json", "data_backup")
+        for _n in os.listdir(old_data_dir):
+            if _n == "config.json" or _n.startswith("config.json.") or _n in _keep:
+                continue
+            _p = os.path.join(old_data_dir, _n)
+            try:
+                shutil.rmtree(_p) if os.path.isdir(_p) else os.remove(_p)
+            except OSError:
+                pass        # 被占用的留着，无害
+    else:
+        for _n in os.listdir(old_data_dir):
+            # 只收真正的备份（.bak / .bad-<时间>），不收垃圾（第八轮审计 R8-5）：
+            # .tmp.<pid>.<tid> 是写入半成品，.reject-<ts> 是「配置骤减拒绝写入」
+            # 的留证——它们不属于 config 的备份，收进工具目录只会堆垃圾。
+            if not (_n == "config.json.bak"
+                    or (_n.startswith("config.json.bad-") and ".tmp." not in _n)):
+                continue
+            _s = os.path.join(old_data_dir, _n)
+            if not os.path.isfile(_s):
+                continue
+            _d = os.path.join(_st.TOOL_DATA_DIR, _n)
+            if os.path.exists(_d):
+                _d = _d + ".from-old-data-" + time.strftime("%Y%m%d-%H%M%S")
+            try:
+                shutil.copy2(_s, _d)
+            except OSError:
+                pass
+        # ---- 校验已过（cmdlib/笔记严格校验，log 尽力、缓存仅搬壳），直接删旧目录 ----
+        # 用户口径：不要旧目录备份，迁移完自动删。注意（a245复审F5）：被打开句柄
+        # 锁定的文件（活跃日志）rmtree 删不掉会残留在旧目录，直到写端重开——
+        # ignore_errors 不中断，残留无害但不会自动清理
+        shutil.rmtree(old_data_dir, ignore_errors=True)
+    # 【最终硬闸】无论走哪条路，config 本体现在必须在。不在就是出了岔子，
+    # 如实报错（数据已在新目录，不丢；但用户要知道设置没保住）。
+    if not os.path.isfile(os.path.join(_st.TOOL_DATA_DIR, "config.json")):
+        return jsonify({"ok": False, "deleted": False,
+                        "err": "迁移后工具目录里没有 config.json（设置文件）——"
+                               "数据已复制到新目录但未完成切换，请立即检查",
+                        "dir": target, "copied": copied, "old_dir": old_data_dir}), 500
     return jsonify({"ok": True, "dir": target, "copied": copied,
                     "deleted": True, "residual": 0, "late_copies": late_total,
                     **({"conflict_errs": conflict_errs} if conflict_errs else {}),

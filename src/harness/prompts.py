@@ -15,7 +15,7 @@ def _prompts_load():
     """读 config.json 的 harness_prompts 列表。坏数据防御：过滤缺 id/text
     的条目，字段兜默认值。失败返回 []。"""
     try:
-        with open(_st.CONFIG_FILE, "r", encoding="utf-8") as f:
+        with open(_st.CONFIG_FILE, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
         raw = d.get(_PROMPTS_KEY)
         if not isinstance(raw, list):

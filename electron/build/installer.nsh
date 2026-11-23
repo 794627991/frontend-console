@@ -150,8 +150,11 @@ FunctionEnd
   ${andIfNot} ${Silent}
     ; 复审 N6:YESNOCANCEL——X/取消绝不能落入最破坏性的「清除」分支
     MessageBox MB_YESNOCANCEL|MB_ICONQUESTION "是否保留用户数据？$\n$\n\
-      保留：数据目录（含笔记/凭据/命令库/配置）留在原处，重装后可继续使用。$\n\
-      不保留：数据目录与配置（含网页登录态）将被彻底清除。$\n$\n\
+      保留：工具目录里的数据与配置、本工具在 %APPDATA% 下的设置（含已存$\n\
+      密码、网页登录态）留在原处；重装到同一目录即可继续使用。$\n\
+      不保留：以上内容将被清除。若你把数据目录迁到了别处（如 D 盘），$\n\
+      那里的数据不会被删除，但「数据在哪」的记录会一起清掉，$\n\
+      重装后需在设置里重新指定该目录。$\n$\n\
       （无论选哪个，程序文件都会被正常卸载；「取消」= 放弃本次卸载）" \
       /SD IDYES IDYES fcKeep IDNO fcWipe
     ; NSIS MessageBox 至多两对分支跳转（usage 实证）——取消/X 不占名额：
@@ -260,6 +263,8 @@ FunctionEnd
     !insertmacro _FC_RMTREE "$INSTDIR\resources\backend\data"
     !insertmacro _FC_RMTREE "$APPDATA\frontend-console-shell"
     !insertmacro _FC_RMTREE "$APPDATA\前端控制台"
+    ; 文件关联解压的图标缓存（后端 file_assoc.py 建的，属于本工具）
+    !insertmacro _FC_RMTREE "$LOCALAPPDATA\SerialConsolePro"
     ${if} $installMode == "all"
       SetShellVarContext all
     ${endif}
