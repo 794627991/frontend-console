@@ -174,5 +174,8 @@
 .nn-sug-it.on { background: var(--accent, #4a9eff); color: #fff; }
 @media (prefers-reduced-motion: reduce) {
   .hg-enter, .h-think-prev > .exit, .h-think-prev > .enter, .hg-flip { animation: none; }
+  /* a685：`.h-think-prev > .exit { display: none }` 已就近写在 harness.css
+     （审计 P2-1：不跨文件依赖加载顺序，misc.css 与 harness.css 同选择器
+     同 specificity，靠 link 先后决定胜者太脆）。此处不再重复。 */
   .h-tool.col .h-tool-coll, .h-turn-body { transition: none; }
 }

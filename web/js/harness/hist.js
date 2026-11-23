@@ -457,17 +457,91 @@
     }
     _hgThinkPlay(seg, ls);
   }
+  // a685（Electron 换壳后用户实锤「思考流残影」：上一条流过思考框的文字
+  // 一直残留，思考一多，框里的文字全叠加」）：旧行的离场动画靠
+  // `animationend` 事件自拆（.h-think-prev > .exit 绝对定位覆盖在新行上）。
+  // 只要该事件没到达，克隆节点就永久堆在 .h-think-prev 里——每 800ms 一条
+  // 行、几十秒就是几十个绝对定位 span 全叠在同一处，正是截图的观感。
+  //
+  // 为什么事件会缺席（两类）：
+  //   ① prefers-reduced-motion: reduce —— misc.css 把 animation 设为 none，
+  //      天然没有 animationend（用户开了「减少动画」必现）。更糟的是
+  //      `forwards` 的终态（opacity:0）也一并失效，旧行以**完全不透明**的
+  //      absolute 层压在新行上——这是残影的直接成因，不是单纯的"多留一个节点"。
+  //   ② 事件在 animation 已经开始之后才注册（cloneNode→appendChild→
+  //      addEventListener 的次序里，若样式已匹配且动画在同帧起跑，理论上
+  //      存在竞态）。
+  // 修：动画事件与定时器双保险，谁先到谁拆。定时器 900ms = 300ms 动画的
+  // 3 倍余量（浏览器节流/低端机也不至于误删正在播放的节点）。
+  const _THINK_EXIT_MS = 900;
+  // 审计 P3 次要观察：reduced-motion 下 .exit 被 CSS 直接 display:none，
+  // 克隆+插 DOM+挂定时器全是白做工。缓存一次（matchMedia 每次调用都新建
+  // 查询对象，不宜在 800ms 热路径里反复建），窗口可见性不参与判断。
+  // 审计 M2：**故意不做实时监听**——缓存只取一次，设置中途变更需重载页面
+  // 才生效。反方向的偏差都无害：用户中途开「减少动画」，CSS 侧 matchMedia
+  // 实时生效（.exit 立刻 display:none），JS 仍按 false 建克隆 → 多建一个
+  // 不可见节点（无害）；中途关掉则 JS 仍按 true 跳过克隆 → 少一个淡出动画
+  // （也只是少个装饰）。加媒体查询监听换来的是每行切换都可能重排一次状态，
+  // 不值得。
+  let _rmCache = null;
+  function _hgReducedMotion() {
+    if (_rmCache !== null) return _rmCache;
+    try {
+      _rmCache = !!(window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch (_) { _rmCache = false; }
+    return _rmCache;
+  }
   function _hgThinkShowLine(seg, line) {
     const prev = seg.querySelector('[data-hg-think-prev]');
     if (!prev || !line) return;
+    // a685R（审计 P1-1：原实现把这段放在 old.remove() 之后 → 查询结果里唯一
+    // 的 .exit 就是本轮刚建的 gone，`el !== old` 恒真，同一帧秒删离场层，
+    // 动画与双保险全部失效）。挪到建 gone 之前：此刻 prev 里不可能有本轮的
+    // 节点，扫到的必然是历史遗留。
+    // 审计 N3：正因为前置扫描每次换行都会清掉现存 .exit，稳态下**最多只有
+    // 一个** .exit 存活（≤ min(300ms 动画, 800ms 步进)），不是两个并存。
+    try {
+      prev.querySelectorAll(':scope > .exit').forEach(el => {
+        try { el.remove(); } catch (_) {}
+      });
+    } catch (_) {}
     const old = prev.querySelector('.h-think-line:not(.exit)');
     if (old) {
-      const gone = old.cloneNode(true);
-      gone.classList.remove('enter');
-      gone.classList.add('exit');
-      prev.appendChild(gone);
-      gone.addEventListener('animationend', () => gone.remove(), { once: true });
-      old.remove();
+      // 审计 P3 次要观察：reduced-motion 下 .exit 被 CSS 直接 display:none，
+      // 克隆+插 DOM+挂定时器全是白做工。开场判一次（matchMedia 结果有缓存，
+      // 成本可忽略），直接跳过整段。
+      if (_hgReducedMotion()) {
+        old.remove();
+      } else {
+        const gone = old.cloneNode(true);
+        gone.classList.remove('enter');
+        gone.classList.add('exit');
+        prev.appendChild(gone);
+        let _done = false;
+        // 审计 N1：_tm 必须前置声明——_drop 在 const 初始化之前就被
+        // addEventListener 引用，若用 const 会在首次触发时撞 TDZ。
+        let _tm = 0;
+        const _drop = () => {
+          if (_done) return;
+          _done = true;
+          gone.remove();          // remove() 对已脱离节点幂等
+          // 审计 N1：执行完把自己从集合里摘掉——否则 60s 思考会攒 ~75 个
+          // 已作废的 id，且 _HG.think 被切会话路径置 null 时集合无人清，
+          // id 会跨会话累积到下一次 endThinking。
+          // 审计 M1：去掉 `_tm &&` 前置判断——若 _drop 首次在 _tm 赋值之前
+          // 触发（理论不可达，animationend 是异步的），_tm 仍是 0，setTimeout
+          // 返回的 id 会随后 add 进集合而无人删。delete(0) 对集合是无害空操作，
+          // 但单独留着这个 guard 才构成"永不残留"的完整保证。
+          if (_HG.thinkTimers) _HG.thinkTimers.delete(_tm);
+        };
+        gone.addEventListener('animationend', _drop, { once: true });
+        // 审计 P2-2：定时器登记到当前段，endThinking 统一 clear，避免提前
+        // 销毁后仍空跑（对已脱离节点幂等，但不清就是脏实现）。
+        _tm = setTimeout(_drop, _THINK_EXIT_MS);
+        (_HG.thinkTimers || (_HG.thinkTimers = new Set())).add(_tm);
+        old.remove();
+      }
     }
     const sp = document.createElement('span');
     sp.className = 'h-think-line enter';
@@ -529,6 +603,14 @@
     return Math.floor(sec / 3600) + 'h' + Math.floor((sec % 3600) / 60) + 'm' + (sec % 60 ? sec % 60 + 's' : '');
   }
   function endThinking(hist) {
+    // 审计 N2：pending 离场定时器必须**先**清——原实现放在 `if (!t) return`
+    // 之后，而切会话（sessions/state/shell/main 四处）会把 _HG.think 置 null
+    // 却不清集合，迟到 result 帧再调 endThinking 时整段清理被早退跳过，
+    // 作废 id 就跨会话累积。
+    if (_HG.thinkTimers && _HG.thinkTimers.size) {
+      _HG.thinkTimers.forEach(tm => { try { clearTimeout(tm); } catch (_) {} });
+      _HG.thinkTimers.clear();
+    }
     const t = _HG.think;
     if (!t) return;
     _HG.think = null;
