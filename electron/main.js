@@ -426,14 +426,28 @@ let balloonShown = false; // 每进程一次「已驻留托盘」气泡（不碰
 // IPC 转给前端 openFileSmart；第二实例由 second-instance 的 argv 再送一次。
 let pendingOpenFile = parseOpenFileArg(process.argv);
 
+// 2026-11-24 用户实锤（源码形态：取消接管→重新接管→双击 txt 没反应）：窗口
+// 被唤起、文件不开。根因——Windows 上 second-instance 的 argv **不是**第二
+// 实例的原序命令行：Chromium 重新拼接时开关全排在前、位置参数排在后
+// （Electron 45.4.1 隔离实测）：
+//   [exe, --open-file, --allow-file-access-from-files, --remote-debugging-port=…,
+//    <app 目录>, <文件>]
+// 原实现取「--open-file 的下一个元素」= --allow-file-access-from-files，以 --
+// 开头即判空。首启（process.argv 原序，--open-file 后紧跟路径）没这个问题，
+// 所以「壳没开时双击」是好的、「壳已开时双击」是坏的。
+// 修：--open-file 开关存在为前提，路径到位置参数里找「是已存在文件的」，从后
+// 往前取第一个（源码形态的 app 目录是目录，自然跳过）；首启/第二实例两种
+// 顺序同一函数通吃。以 -- 开头的路径不认（资源管理器给的是绝对路径）。
 function parseOpenFileArg(argv) {
   const a = argv || [];
-  const i = a.indexOf('--open-file');
-  if (i >= 0 && a[i + 1] && !a[i + 1].startsWith('--')) {
-    const p = path.resolve(a[i + 1]);
+  if (a.indexOf('--open-file') < 0) return null;
+  for (let i = a.length - 1; i >= 1; i--) {
+    const s = a[i];
+    if (!s || s.startsWith('--')) continue;
+    const p = path.resolve(s);
     try {
       if (fs.statSync(p).isFile()) return p;
-    } catch (_) { /* 文件不存在/无权限 → 忽略 */ }
+    } catch (_) { /* 不是文件/不存在/无权限 → 继续往前找 */ }
   }
   return null;
 }
