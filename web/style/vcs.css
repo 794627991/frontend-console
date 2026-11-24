@@ -150,8 +150,14 @@
 /* v3.5.131：提交详情文件行（点提交行展开） */
 .hg-vcs-cfiles { padding: 0 8px 6px 26px; }
 .hg-vcs-cfrow { font-size: var(--fs-xs); font-family: var(--font-mono); color: var(--fg);
-  padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+  padding: 3px 6px; border-radius: 5px; cursor: pointer;
+  display: flex; align-items: baseline; gap: 6px; }
 .hg-vcs-cfrow:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* 2026-11-24 用户需求「看不到每个具体文件改了多少」：每行右端补 +增 -删 */
+.hg-vcs-cfpath { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hg-vcs-cfstat { flex: none; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.hg-vcs-cfstat .up { color: #6fbf73; font-weight: 600; }
+.hg-vcs-cfstat .del { color: #e06c75; font-weight: 600; }
 
 /* ---- v3.5.133 提交历史弹窗（designer 方案：master-detail，880px/84vh）---- */
 /* a650（用户实锤「面板有点窄」）：880 → 1240——master-detail 双栏 + 日期/作者/统计列在旧宽度下互相挤压 */

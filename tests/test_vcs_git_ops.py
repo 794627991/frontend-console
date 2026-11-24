@@ -250,6 +250,77 @@ def main():
     check("不带 graph 时不剥首段（保持既有解析）",
           (j2.get("commits") or [{}])[0].get("rev") == "* ", str(j2)[:160])
 
+    print("== 8. commit_files 带回每文件增删行数 ==")
+    # 2026-11-24 用户实锤「只能看到总的，看不到每个具体文件改了多少」
+    ns = "M\tAGENTS.md\nM\tsrc/a.py\nA\tsrc/b.py\n"
+    num = "38\t0\tAGENTS.md\n12\t34\tsrc/a.py\n928\t0\tsrc/b.py\n5\t1\tbinary.bin\n"
+    fake = _Fake([(("--name-status",), (0, ns, "")),
+                  (("--numstat",), (0, num, ""))])
+    _patch_run(fake)
+    j = _client().post("/api/vcs/commit_files",
+                       json={"root": "D:\\fake", "rev": "abc123"}).get_json()
+    fl = j.get("files") or []
+    by = {f["path"]: f for f in fl}
+    check("三个文件都在", len(fl) == 3, str(fl))
+    check("AGENTS.md +38 -0", by.get("AGENTS.md", {}).get("ins") == 38
+          and by.get("AGENTS.md", {}).get("del") == 0, str(by.get("AGENTS.md")))
+    check("src/a.py +12 -34", by.get("src/a.py", {}).get("ins") == 12
+          and by.get("src/a.py", {}).get("del") == 34, str(by.get("src/a.py")))
+    check("新增文件 src/b.py +928 -0", by.get("src/b.py", {}).get("ins") == 928, str(by.get("src/b.py")))
+    check("状态字母仍正确", by.get("src/b.py", {}).get("st") == "A", str(by.get("src/b.py")))
+
+    print("== 9. numstat 失败时行数为 null（不许画成 0/0）==")
+    fake = _Fake([(("--name-status",), (0, ns, "")),
+                  (("--numstat",), (1, "", "boom"))])
+    _patch_run(fake)
+    j = _client().post("/api/vcs/commit_files",
+                       json={"root": "D:\\fake", "rev": "abc123"}).get_json()
+    fl = j.get("files") or []
+    check("清单仍返回", len(fl) == 3, str(fl))
+    check("行数为 None 而非 0", all(f.get("ins") is None and f.get("del") is None
+                                    for f in fl), str(fl[:1]))
+
+    print("== 10. 二进制文件（numstat 给 -）不画 0/0 ==")
+    ns2 = "M\tbin.dat\n"
+    num2 = "-\t-\tbin.dat\n"
+    fake = _Fake([(("--name-status",), (0, ns2, "")),
+                  (("--numstat",), (0, num2, ""))])
+    _patch_run(fake)
+    j = _client().post("/api/vcs/commit_files",
+                       json={"root": "D:\\fake", "rev": "abc123"}).get_json()
+    f0 = (j.get("files") or [{}])[0]
+    check("二进制 ins/del 为 None", f0.get("ins") is None and f0.get("del") is None, str(f0))
+
+    print("== 11. svn 分支按 Index: 分段数 +/- ==")
+    svn_sum = "M       src/x.py\nA       src/y.py\n"
+    svn_diff = ("Index: src/x.py\n"
+                "===================================================\n"
+                "--- src/x.py\t(revision 10)\n"
+                "+++ src/x.py\t(revision 11)\n"
+                "@@ -1,2 +1,3 @@\n"
+                " keep\n"
+                "-gone\n"
+                "+new1\n"
+                "+new2\n"
+                "Index: src/y.py\n"
+                "===================================================\n"
+                "--- src/y.py\t(revision 0)\n"
+                "+++ src/y.py\t(revision 11)\n"
+                "@@ -0,0 +1,1 @@\n"
+                "+only line\n")
+    fake = _Fake([(("--summarize",), (0, svn_sum, "")),
+                  (("diff", "-c"), (0, svn_diff, ""))])
+    vcs._run = fake
+    vcs._guard = lambda root, need_tool=False: ("svn", "D:\\fake", None, True)
+    j = _client().post("/api/vcs/commit_files",
+                       json={"root": "D:\\fake", "rev": "11"}).get_json()
+    by = {f["path"]: f for f in (j.get("files") or [])}
+    check("svn 两文件都在", len(by) == 2, str(j)[:200])
+    check("svn x.py +2 -1", by.get("src/x.py", {}).get("ins") == 2
+          and by.get("src/x.py", {}).get("del") == 1, str(by.get("src/x.py")))
+    check("svn y.py +1 -0", by.get("src/y.py", {}).get("ins") == 1
+          and by.get("src/y.py", {}).get("del") == 0, str(by.get("src/y.py")))
+
     print("=" * 56)
     print("通过 %d / 失败 %d" % (len(_PASS), len(_FAIL)))
     for x in _FAIL:

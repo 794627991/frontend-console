@@ -674,11 +674,21 @@ function _vcsHistDetail(rev) {
     `<span>${esc(c.author || '')}</span><span>${esc(_vcsFmtDt(c.date))}</span></div>` +
     `<div class="hg-vcs-hmsg">${esc(c.msg || '')}</div>` +
     `<div class="hg-vcs-sec">改动文件</div>`;
+  // 2026-11-24 用户需求「只能看到总的，看不到每个具体文件改了多少」：
+  // 每个文件行右端补 +增 -删（后端 commit_files 已带回 ins/del；二进制或
+  // 取不到时为 null，此时不画，绝不画成 0/0 骗人）
+  const _cfRow = (f) =>
+    `<div class="hg-vcs-cfrow" data-hpath="${esc(f.path)}" data-hst="${esc(f.st)}">` +
+    `<span class="hg-vcs-cfpath">${esc(f.st)} ${esc(f.path)}</span>` +
+    (f.ins == null && f.del == null ? '' :
+      `<span class="hg-vcs-cfstat"><b class="up">+${esc(f.ins || 0)}</b> ` +
+      `<b class="del">-${esc(f.del || 0)}</b></span>`) +
+    `</div>`;
   if (cached) {
     dEl.innerHTML = _meta() + (cached instanceof Error
       ? `<div class="hg-vcs-empty">${esc(cached.message || '加载失败')}（点 ⟳ 刷新重试）</div>`
       : (cached.length
-        ? cached.map(f => `<div class="hg-vcs-cfrow" data-hpath="${esc(f.path)}" data-hst="${esc(f.st)}">${esc(f.st)} ${esc(f.path)}</div>`).join('')
+        ? cached.map(_cfRow).join('')
         : '<div class="hg-vcs-empty">该提交无文件级改动记录</div>'));
     dEl.querySelectorAll('.hg-vcs-cfrow').forEach(fr =>
       fr.onclick = () => _vcsFileDiffClick(rev, fr.dataset.hpath, fr.dataset.hst, fr));
@@ -696,7 +706,7 @@ function _vcsHistDetail(rev) {
         const fl = j.files || [];
         _vcsHist.files.set(rev, fl);
         dEl.innerHTML = _meta() + (fl.length
-          ? fl.map(f => `<div class="hg-vcs-cfrow" data-hpath="${esc(f.path)}" data-hst="${esc(f.st)}">${esc(f.st)} ${esc(f.path)}</div>`).join('')
+          ? fl.map(_cfRow).join('')
             + (fl.length >= 200 ? '<div class="hg-vcs-hlfoot">至多显示前 200 个文件</div>' : '')
           : '<div class="hg-vcs-empty">该提交无文件级改动记录</div>');
         dEl.querySelectorAll('.hg-vcs-cfrow').forEach(fr =>
@@ -1141,8 +1151,16 @@ function _vcsLoadCommitFiles(rev, box) {
   box.style.display = 'block';
   const render = (files) => {
     box.dataset.loaded = '1';
+    // 2026-11-24 用户实锤「最近提交没显示（每文件行数）」：左侧面板这套
+    // 渲染与弹窗各一份，改一行要改两处。行数口径同弹窗版：ins/del 都为
+    // null 时不画（二进制/取不到），绝不画成 0/0。
     box.innerHTML = files.map(f =>
-      `<div class="hg-vcs-cfrow" data-rev="${esc(rev)}" data-path="${esc(f.path)}" data-st="${esc(f.st)}" title="查看该提交中此文件的改动">${esc(f.st)} ${esc(f.path)}</div>`).join('')
+      `<div class="hg-vcs-cfrow" data-rev="${esc(rev)}" data-path="${esc(f.path)}" data-st="${esc(f.st)}" title="查看该提交中此文件的改动">` +
+      `<span class="hg-vcs-cfpath">${esc(f.st)} ${esc(f.path)}</span>` +
+      (f.ins == null && f.del == null ? '' :
+        `<span class="hg-vcs-cfstat"><b class="up">+${esc(f.ins || 0)}</b> ` +
+        `<b class="del">-${esc(f.del || 0)}</b></span>`) +
+      `</div>`).join('')
       || '<div class="hg-vcs-empty">该提交无文件级改动记录</div>';
     box.querySelectorAll('.hg-vcs-cfrow').forEach(fr => {
       // 轻审R4：改调公共 _vcsFileDiffClick——旧内联副本无 buildDiffViewerTab

@@ -970,15 +970,36 @@ def vcs_commit_files():
     if vcs == "git":
         # v3.5.132（轻审严重2）：quotepath=false——非 ASCII 文件名默认输出
         # 引号+八进制转义，下游 git show rev:path 实测 fatal 假无差异
+        # 2026-11-24 用户需求「只能看到总的，看不到每个具体文件改了多少」：
+        # 改命令行取每文件增删行数。--numstat 输出「增\t删\t路径」，但改名
+        # 记录形态不同（--no-renames 已排除重命名，仍是单路径），与
+        # --name-status 合并需按路径对齐——这里一次调用同时要两种视图不可行，
+        # 故拆两次只读查询：name-status（状态字母）+ numstat（行数）。
         rc, out, e = _run(["git", "-c", "core.quotepath=false", "show",
                            "--name-status", "--no-renames",
                            "--format=", rev], wc, VCS_TIMEOUT_RO)
         if rc != 0:
             return jsonify({"ok": False, "err": e or "git show 失败"}), 500
+        rc2, out2, _e2 = _run(["git", "-c", "core.quotepath=false", "show",
+                               "--numstat", "--no-renames",
+                               "--format=", rev], wc, VCS_TIMEOUT_RO)
+        stat = {}
+        if rc2 == 0:
+            for line in out2.splitlines():
+                _p = line.split("\t")
+                if len(_p) != 3:
+                    continue
+                _a, _d = _p[0].strip(), _p[1].strip()
+                # 二进制文件 numstat 给 "-"，保持 None 让前端不画 0/0
+                stat[_p[2]] = (int(_a) if _a.isdigit() else None,
+                               int(_d) if _d.isdigit() else None)
         for line in out.splitlines():
             m = re.match(r"^([AMD])\t(.+)$", line)
             if m:
-                files.append({"st": m.group(1), "path": m.group(2)})
+                _path = m.group(2)
+                _ins, _del = stat.get(_path, (None, None))
+                files.append({"st": m.group(1), "path": _path,
+                              "ins": _ins, "del": _del})
     else:
         rc, out, e = _run(["svn", "diff", "--summarize", "-c", rev, wc],
                           wc, VCS_TIMEOUT_RO)
@@ -996,6 +1017,33 @@ def vcs_commit_files():
                 _rr = str(_re.get("remote_root") or "").replace("\\", "/").rstrip("/")
         except Exception:
             _rr = ""
+        # 2026-11-24 用户需求：svn 侧同样给每文件增删行数。summarize 只给
+        # 状态字母，行数要另取——`svn diff -c rev` 全文按「Index: 路径」分段
+        # 数 +/- 行。整份 diff 可能很大，故超时比 summarize 宽，且失败不致命
+        # （行数缺失时前端不画，不影响清单本身）。
+        _st_lines = {}
+        if vcs == "svn":
+            rc3, out3, _e3 = _run(["svn", "diff", "-c", rev, wc],
+                                  wc, VCS_TIMEOUT_RO)
+            if rc3 == 0:
+                _cur = None
+                _ins = _dele = 0
+                def _flush():
+                    if _cur is not None:
+                        _st_lines[_cur] = (_ins, _dele)
+                for _ln in out3.splitlines():
+                    if _ln.startswith("Index: "):
+                        _flush()
+                        _cur = _ln[7:].strip().replace("\\", "/")
+                        _ins = _dele = 0
+                    elif _cur is not None:
+                        if _ln.startswith("+++") or _ln.startswith("---"):
+                            continue        # 文件头两行不算改动行
+                        elif _ln.startswith("+"):
+                            _ins += 1
+                        elif _ln.startswith("-"):
+                            _dele += 1
+                _flush()
         for line in out.splitlines():
             # v3.5.132（轻审严重1）：双捕获组——旧单组取路径首字符当状态字母
             m = re.match(r"^([AMD])\s+(.+)$", line.strip())
@@ -1007,7 +1055,9 @@ def vcs_commit_files():
             apath = path.replace("/", os.sep)
             if apath.startswith(wcp):   # svn summarize 可能输出绝对路径——剥工作副本前缀转 rel
                 path = apath[len(wcp):].replace(os.sep, "/")
-            files.append({"st": m.group(1), "path": path})
+            _ins, _dele = _st_lines.get(path, (None, None))
+            files.append({"st": m.group(1), "path": path,
+                          "ins": _ins, "del": _dele})
     return jsonify({"ok": True, "files": files[:200]})
 
 
