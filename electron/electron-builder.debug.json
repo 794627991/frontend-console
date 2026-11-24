@@ -1,0 +1,50 @@
+{
+  "appId": "com.hg.frontend-console",
+  "productName": "前端控制台",
+  "directories": {
+    "output": "../dist/electron_setup_debug"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "guest-preload.js",
+    "passwords.js",
+    "pw-ipc.js"
+  ],
+  "extraResources": [
+    {
+      "from": "../dist/前端控制台_debug/前端控制台",
+      "to": "backend",
+      "filter": [
+        "**/*",
+        "!data/**",
+        "!selftest_result.txt",
+        "!_fc_debug.txt",
+        "!**/__pycache__/**"
+      ]
+    }
+  ],
+  "asar": true,
+  "win": {
+    "icon": "../ico/app.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "perMachine": false,
+    "allowElevation": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "前端控制台",
+    "artifactName": "前端控制台调试版-Setup-${version}.exe",
+    "deleteAppDataOnUninstall": false
+  }
+}

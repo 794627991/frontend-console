@@ -1,6 +1,6 @@
 {
   "name": "frontend-console-shell",
-  "version": "0.1.0",
+  "version": "2.4.4",
   "private": true,
   "description": "前端控制台 Electron 壳（P1/P2/P3）——拉起 Python 后端 sidecar 并承载 web UI",
   "main": "main.js",

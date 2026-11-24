@@ -103,11 +103,13 @@
   （见 `tests/test_harness_version.py`）。隔离是否成立不能靠机制推定，
   要由子进程自报路径来验证。
 - 源码开发：根目录 `run.bat`（唯一启动入口；Electron 运行时三级兜底）
-- 调试包：zip 解压后 `前端控制台.exe` 直接在 `前端控制台_debug\` 顶层
-  （打包按 relpath 剥掉内层目录，**扁平形**）；dist 树里则是嵌套形
-  （`前端控制台_debug\前端控制台\`）。**双击 exe 直启**，exe 对两种形态
-  都认（exe 同级或上一级找 `electron-shell\`，见 `src/main.py` 调试包
-  直启分支）；免启动器 bat（2026-11-23 用户令：不出 bat）
+- 调试包（2026-11-24 用户令，旧 zip 形态退役）：`打包_debug.bat` 出
+  **安装包** `dist\electron_setup_debug\前端控制台调试版-Setup-*.exe`，
+  与正式版同一 electron-builder NSIS 流程（配置 `electron/electron-builder.debug.json`，
+  顶层扁平无 `build` 包裹）；唯一区别=后端 `_internal\src\` 是明文 .py
+  （正式版是 Cython pyd）。data 保全、安装/升级/卸载行为与正式版逐字节一致。
+  旧 `dist\前端控制台_debug\electron-shell`+`ico`+`前端控制台_debug-v*.zip`
+  构建时自动清理（残留会让后端直启分支误拉旧壳）。调试包不进 releases。
 - 正式发布：Setup.exe（electron-builder）；调试包不进 releases 分发流
 - **重打包前必须先关掉运行中的调试包实例**（PyInstaller 要删重建 dist 目录）
 - **安装包数据保障 + 过程显示（2026-11-23 用户令，经对抗审计修订）**：

@@ -121,8 +121,58 @@ def test_run_debug_bat_retired():
 
 def test_debug_packaging_kept():
     """打包_debug.bat 必须保留——它是独立的「源码明文调试包」，与运行期的
-    run_debug.bat 是两回事，不能一起退役。"""
+    run_debug.bat 是两回事，不能一起退役。
+
+    2026-11-24 用户令：debug 也出安装包（与 release 同一 electron-builder
+    NSIS 流程），唯一区别=后端源码明文；zip + electron-shell 目录形态退役。
+    """
     assert os.path.exists(os.path.join(ROOT, "打包_debug.bat"))
     build = _read("src/build.py")
     assert 'HG_NO_ENCRYPT' in build
-    assert '_publish_debug' in build
+    # 退役形态防回潮：_publish_debug（打 zip）不许再回来
+    assert '_publish_debug' not in build
+
+
+def test_debug_builder_config_flat_and_pointed_at_debug_backend():
+    """debug 的 electron-builder 配置必须是**顶层扁平**结构（单独指定
+    --config 时 electron-builder 只读这个文件，不读 package.json 的 build
+    字段，多包一层 "build" 会直接配置校验失败），且指向 debug 后端树、
+    输出到独立目录——否则两个 Setup 互相覆盖。"""
+    import json
+    path = os.path.join(ROOT, "electron", "electron-builder.debug.json")
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    assert "build" not in cfg, "独立配置文件不能有 build 外层包裹"
+    assert cfg["appId"] == "com.hg.frontend-console"
+    assert cfg["productName"] == "前端控制台"
+    assert cfg["directories"]["output"] == "../dist/electron_setup_debug"
+    res = cfg["extraResources"]
+    assert len(res) == 1
+    assert res[0]["from"] == "../dist/前端控制台_debug/前端控制台"
+    assert res[0]["to"] == "backend"
+    # 两处 Setup 文件名必须区分，否则装完分不清哪个是哪个
+    assert cfg["nsis"]["artifactName"] != "前端控制台-Setup-${version}.exe"
+
+
+def test_electron_version_follows_app_version():
+    """2026-11-24 用户实锤：安装包名是「调试版-Setup-0.1.0」，而工具是
+    2.4.4。electron-builder 的产品版本只认 electron/package.json 的
+    `version`（配置文件 schema 里没有 version 键），而那份是壳的占位号。
+    build.py 必须在打包前把它对齐 src/version.py 的 APP_VERSION。"""
+    import json, re as _re
+    build = _read("src/build.py")
+    assert "_sync_electron_version()" in build, "build() 里没调用版本同步"
+    with open(os.path.join(ROOT, "electron", "package.json"),
+              encoding="utf-8") as f:
+        pkg = json.load(f)
+    # 只断言是合法 semver：真正对齐发生在打包期（改完 src/version.py 还没
+    # 打包时两者必然不同，那是正常窗口，不该报红）。
+    assert _re.fullmatch(r"\d+\.\d+\.\d+", pkg["version"]), (
+        "electron/package.json version=%r 不是合法 semver" % pkg["version"])
+    # 配置文件里绝不能出现 version 键（schema 无此项，validate 会 FAIL）
+    with open(os.path.join(ROOT, "electron",
+                           "electron-builder.debug.json"),
+              encoding="utf-8") as f:
+        cfg = json.load(f)
+    assert "version" not in cfg, "electron-builder 配置不支持 version 键"
+

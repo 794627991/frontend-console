@@ -2,7 +2,7 @@
 """PyInstaller 打包脚本：前端控制台 → onedir 应用目录（v2.3.0 起）。
 源码整理后入口在 src/main.py，资源（web/、ico/、vendor、spec）在项目根。
 产物 = dist/前端控制台/（exe + _internal/ 依赖），发布形态 = zip。"""
-import os, sys, subprocess, shutil
+import os, re, sys, subprocess, shutil
 
 # v3.4.96：输出编码兜底——打包.bat 设 PYTHONIOENCODING=gbk，⚠/✓ 等
 # 字符在重定向（>file / CI）下 gbk 不可编码直接 UnicodeEncodeError 崩掉
@@ -28,6 +28,7 @@ def build():
     # 对抗审 P1-2：密钥必须在 encrypt_pkg（cython 收编 src/*.py）之前就绪
     # ——否则首发包的 exe 里没有密钥模块，用户机读不了同批产出的 .fcpk
     _ensure_fcpk_key()
+    _sync_electron_version()
     if not os.path.exists(ICON):
         print("图标不存在，跳过图标")
         icon_arg = []
@@ -130,9 +131,41 @@ def build():
             _npc = sum(len([f for f in fs if f.endswith(".pyc")])
                        for _, _, fs in os.walk(_int_dir))
             print(f"调试包: 预编译 pyc 完成（{_npc} 个 .pyc）")
-            print("调试包模式（HG_NO_ENCRYPT=1）：源码明文，zip 输出到 dist 根")
+            # 2026-11-24 用户令：debug **也出安装包**（与 release 同一
+            # electron-builder 流程，唯一区别=后端带源码明文）。原 zip +
+            # electron-shell 目录形态退役——安装包的 extraResources 会把
+            # 本目录搬进 resources\backend\，派生布局与 release 完全一致，
+            # installer.nsh 的数据保障（保留 resources\backend\data）自动
+            # 生效，壳的路径约定也不用改。
+            # 2026-11-24：退役形态残留清理。原 zip + electron-shell 目录形态
+            # 已不再生成，但开发机 dist 里可能留着旧残留——留着有实害：
+            # 双击 dist/前端控制台_debug/前端控制台/前端控制台.exe（无参数）时，
+            # src/main.py 的调试包直启分支会向上探测到同级的
+            # electron-shell/dist/electron.exe，拉起**旧壳**（界面与当前代码
+            # 不符）。构建产物自动生成，删之无损。
+            _ddir = os.path.join(BASE, "dist", APP_NAME + "_debug")
+            for _stale in ("electron-shell", "ico"):
+                _sp = os.path.join(_ddir, _stale)
+                if os.path.isdir(_sp):
+                    # 不用 ignore_errors：删不掉（旧进程占用）必须吭声，
+                    # 否则「旧壳被误拉」的实害原样留存却毫无提示。
+                    try:
+                        shutil.rmtree(_sp)
+                        print("已清理退役残留：%s" % _stale)
+                    except OSError as _e:
+                        print("[警告] 退役残留未清理干净：%s（%s）——"
+                              "退出占用它的进程后重打" % (_sp, _e))
+            import glob as _glob
+            for _z in _glob.glob(os.path.join(BASE, "dist",
+                                              APP_NAME + "_debug-v*.zip")):
+                try:
+                    os.remove(_z)
+                    print("已清理退役残留：%s" % os.path.basename(_z))
+                except OSError as _e:
+                    print("[警告] 旧 zip 未删除：%s（%s）" % (_z, _e))
             _stamp_harness_version(app_dir)
-            _publish_debug(app_dir)
+            print("调试包后端就绪（源码明文）：%s" % app_dir)
+            print("下一步由 打包_debug.bat 调 electron-builder 出安装包")
             return dist
         _refresh_offline_claude()   # v3.4.95：离线 claude-code 版本有变即刷新
         _refresh_offline_codegraph()   # a360：codegraph 同款（用户令工具内置——工作机无 npm 实锤）
@@ -194,6 +227,56 @@ def build():
         return None
 
 
+def _sync_electron_version():
+    """把 src/version.py 的 APP_VERSION 同步进 electron/package.json。
+
+    2026-11-24 用户实锤：安装包叫「调试版-Setup-0.1.0」，而工具版本是
+    2.4.4。根因是 electron-builder 的产品版本只认 electron/package.json 的
+    `version`（配置文件里**不允许** version 键，schema 无此项），那份是壳的
+    占位 0.1.0，与 APP_VERSION 从来没连过——release 包同样中标。
+    semver 原样写入；只有不同才改文件，避免每次打包都碰 git 工作区。
+    """
+    sys.path.insert(0, BASE)
+    from src.version import APP_VERSION
+    path = os.path.join(BASE, "electron", "package.json")
+    lock = os.path.join(BASE, "electron", "package-lock.json")
+    with open(path, encoding="utf-8") as f:
+        raw = f.read()
+    # 精确替换顶层 version 字段（electron/package.json 只有一处，见守卫）
+    n = raw.count('"version"')
+    if n != 1:
+        raise SystemExit("[发布守卫] electron/package.json 的 \"version\" 出现"
+                         " %d 次（应恰好 1 次），拒绝猜测改哪个" % n)
+    new = re.sub(r'("version"\s*:\s*)"[^"]*"', r'\1"%s"' % APP_VERSION, raw,
+                 count=1)
+    changed = new != raw
+    if changed:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(new)
+    # package-lock 的根版本同步跟走（另两处 "version" 是自身条目与依赖，
+    # 只改顶层与 packages[""]——按 JSON 结构改，不做文本替换）
+    try:
+        import json
+        with open(lock, encoding="utf-8") as f:
+            lk = json.load(f)
+        hit = False
+        if lk.get("version") != APP_VERSION:
+            lk["version"] = APP_VERSION
+            hit = True
+        _root = lk.get("packages", {}).get("")
+        if _root is not None and _root.get("version") != APP_VERSION:
+            _root["version"] = APP_VERSION
+            hit = True
+        if hit:
+            with open(lock, "w", encoding="utf-8", newline="\n") as f:
+                json.dump(lk, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+    except (OSError, ValueError) as e:
+        print("[警告] package-lock.json 版本同步跳过：%s" % e)
+    print(("壳版本已同步：" if changed else "壳版本已对齐：")
+          + "electron/package.json -> %s（源自 src/version.py）" % APP_VERSION)
+
+
 def _stamp_harness_version(app_dir):
     """把 git 推导的 harness 版本盖进包（用户实锤 exe 显示 a467 旧常量：
     frozen 无 .git 只能手 bump，80 个提交没人记得）。章落 _internal/
@@ -216,97 +299,6 @@ def _stamp_harness_version(app_dir):
               "w", encoding="utf-8") as f:
         f.write(v + "\n")
     print("harness 版本盖章:", v)
-
-
-def _publish_debug(app_dir):
-    """v3.5.248：调试包压缩——同 _publish 的 zip 口径（顶层壳目录、跳运行时
-    产物），但输出 dist 根、不写 manifest、不进 releases：压缩是给用户拿去
-    别处调试用的，升级分发服务（检查更新）绝不收录调试包。
-
-    D（2026-11-23 用户拍板）：调试包**必须自带 Electron 运行时**——内网/
-    无网机器解压即用（正常发布走 Setup.exe）。壳/运行时/ico 直接落调试树
-    （dist/前端控制台_debug/ 下与 前端控制台/ 同层），zip 与磁盘树同构：
-      electron-shell/        壳五件 + package.json（复制自 electron/）
-      electron-shell/dist/   Electron 运行时（node_modules/electron/dist 全量）
-      ico/                   壳 dev 形态托盘图标
-    免启动器（2026-11-23 用户令）：不出 bat——双击 前端控制台.exe 直启，
-    exe 自动拉起 ..\\electron-shell 壳（见 src/main.py 调试包直启分支）。
-    """
-    import zipfile
-    sys.path.insert(0, BASE)
-    from src.version import APP_VERSION
-    dst = os.path.join(BASE, "dist", "%s_debug-v%s.zip" % (APP_NAME, APP_VERSION))
-    # 运行时产物不进包（offline_runtime：试跑过的树上会残留资源包解压物，
-    # 对抗审计实锤——不清会随下次出包进 zip）
-    skip_dirs = {".update", "data", "offline_runtime"}
-    skip_files = {"update.bat"}
-    top = APP_NAME + "_debug"
-
-    # ---- D：Electron 运行时与壳（调试包自足） ----
-    ed = os.path.join(BASE, "electron")
-    dist_rt = os.path.join(ed, "node_modules", "electron", "dist")
-    if not os.path.isfile(os.path.join(dist_rt, "electron.exe")):
-        raise SystemExit("[发布守卫] 调试包缺 Electron 运行时（electron/"
-                         "node_modules/electron/dist 不在）——先跑 run.bat "
-                         "装齐再打调试包（用户令：调试包必须自带运行时）")
-    shell_files = ["main.js", "preload.js", "guest-preload.js",
-                   "passwords.js", "pw-ipc.js", "package.json"]
-    for f in shell_files:
-        if not os.path.isfile(os.path.join(ed, f)):
-            raise SystemExit("[发布守卫] 调试包缺壳文件 %s（electron/ 不完整）" % f)
-    # 免启动器（2026-11-23 用户令：启动调试版.bat 不要）——壳/运行时/ico
-    # 直接落调试树（与 前端控制台/ 同层），双击内层 exe 即直启（exe 探测
-    # ..\electron-shell 自动拉壳，见 src/main.py），zip 与磁盘树同构。
-    # 顺带消灭前 bat 方案的编码坑：bat 声明 chcp 936 却按 UTF-8 落盘，cmd
-    # 按 GBK 解析时中文路径乱码且 GBK 双字节吞 '\'（0x5C 在尾字节区间）。
-    import shutil
-    dbg_root = os.path.dirname(app_dir)           # dist/前端控制台_debug
-    shell_dst = os.path.join(dbg_root, "electron-shell")
-
-    def _mirror_rm(p, what):
-        # 复审 N2：rmtree 不许静默半删——被占用（调试壳没关）就明败拦包，
-        # 否则半镜像/新旧运行时合并正是要杀的东西借尸还魂
-        try:
-            shutil.rmtree(p)
-        except FileNotFoundError:
-            pass
-        except OSError as e:
-            raise SystemExit("[发布守卫] %s 被占用，整树清理失败（调试壳"
-                             "没关？）：%s——禁止半镜像出包" % (what, e))
-
-    # 对抗审计：先清再拷（镜像语义）——合并会把上一版淘汰的 DLL/删掉的
-    # ico/调试杂物带进新包。复审 N1：copytree 必须 dirs_exist_ok=True
-    # （rmtree 已保证镜像前提，此参只兜「清理与拷贝之间的并发重建窗口」，
-    # 绝不再承担合并语义；也不要先 makedirs 再裸 copytree——对已存在目录
-    # 哪怕是空的也抛 FileExistsError，出包必崩，实测）
-    _mirror_rm(shell_dst, "electron-shell/")
-    os.makedirs(shell_dst, exist_ok=True)
-    for f in shell_files:
-        shutil.copy2(os.path.join(ed, f), os.path.join(shell_dst, f))
-    shutil.copytree(dist_rt, os.path.join(shell_dst, "dist"),
-                    dirs_exist_ok=True)
-    ico_dir = os.path.join(BASE, "ico")           # 壳 dev 形态托盘图标 <root>/ico
-    _mirror_rm(os.path.join(dbg_root, "ico"), "ico/")
-    shutil.copytree(ico_dir, os.path.join(dbg_root, "ico"))
-
-    with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for r, ds, fs in os.walk(app_dir):
-            ds[:] = [d for d in ds if d not in skip_dirs]
-            for f in fs:
-                if f in skip_files:
-                    continue
-                p = os.path.join(r, f)
-                z.write(p, os.path.join(top, os.path.relpath(p, app_dir)))
-        # 后端 exe 在 onedir 内层：dist/前端控制台_debug/前端控制台/前端控制台.exe
-        for sub in ("electron-shell", "ico"):
-            _sub_src = os.path.join(dbg_root, sub)
-            for r, ds, fs in os.walk(_sub_src):
-                for f in fs:
-                    p = os.path.join(r, f)
-                    z.write(p, os.path.join(
-                        top, sub, os.path.relpath(p, _sub_src)))
-    print("调试 zip: %s (%.1f MB，含 Electron 运行时)"
-          % (dst, os.path.getsize(dst) / 1024 / 1024))
 
 
 def _publish(app_dir):
