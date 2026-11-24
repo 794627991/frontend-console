@@ -1,5 +1,6 @@
 [
  "$",
+ "AI_BR",
  "B",
  "CT_FIELDS",
  "Checklist",
@@ -69,6 +70,7 @@
  "_H_TOOL_CFG",
  "_NOTIFY_ICON",
  "_SINGLE_KINDS",
+ "_SUB_AIBR",
  "_SUB_DIR",
  "_SUB_DYN",
  "_TS_SYM_RULES",

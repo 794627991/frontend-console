@@ -10,7 +10,7 @@
 //   日志看诊断面板（/api/backend_log），壳自身日志落 electron-shell.log
 // - 窗口控制/截图/对话框全部走本进程 IPC；后端不再注册 /api/window/*
 const { app, BrowserWindow, dialog, ipcMain, Tray, Menu, nativeImage, shell,
-        clipboard, webContents, screen } = require('electron');
+        clipboard, webContents, screen, session: eSession } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const crypto = require('crypto');
@@ -726,14 +726,32 @@ function openWindow(url) {
     opts.height = Math.max(600, saved.bounds.height | 0);
   }
   win = new BrowserWindow(opts);
-  win.webContents.on('will-attach-webview', (_e, webPreferences) => {
-    webPreferences.preload = GUEST_PRELOAD;
+  win.webContents.on('will-attach-webview', (_e, webPreferences, params) => {
+    // 2026-11-24 AI 浏览器视图不挂密码填充 guest-preload（AI 自动操作登录页
+    // 不该弹「保存密码」/候选填充）；其余加固项照旧。分区名只在这个事件里
+    // 有（did-attach-webview 的 params 里没有，实测）——所以在这里凭它决定
+    // 挂不挂 preload，并记下标记给 did-attach-webview 兜底（那里的首选判据
+    // 是直接看 guest 的分区，不依赖两个事件的先后）
+    aibrPending = !!(params && params.partition === AIBR_PARTITION);
+    if (aibrPending) {
+      delete webPreferences.preload;
+    } else {
+      webPreferences.preload = GUEST_PRELOAD;
+    }
     webPreferences.nodeIntegration = false;
     webPreferences.nodeIntegrationInSubFrames = false;
     webPreferences.contextIsolation = true;
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
+  });
+  // 认领进集合：首选不依赖事件顺序的分区判据，aibrPending（will-attach 认出来
+  // 的标记）只在分区判不出来时兜底。挂载即登记——它的第一批弹窗（页面初始
+  // 脚本就能 window.open）也会被改道，不必等到 attach 取到 CDP 标识之后
+  win.webContents.on('did-attach-webview', (_e, gwc) => {
+    const byPartition = aibrIsAiGuest(gwc);
+    if (byPartition === true || (byPartition === null && aibrPending)) aibrRegister(gwc);
+    aibrPending = false;
   });
   if (saved && saved.max) {
     win.maximize();
@@ -851,7 +869,13 @@ app.on('web-contents-created', (_e, contents) => {
     // 只放行 http(s) 推送开 tab；about:blank/其他 scheme 纯 deny
     //（防空白 tab 与无效推送——二轮复审建议）
     if (/^https?:/i.test(url) && win && !win.isDestroyed()) {
-      win.webContents.send('fc:webtab-open', url);
+      // 2026-11-24 AI 浏览器视图的弹窗留在它自己里（用户正看着它被 AI 操作，
+      // 不该跳去别的 tab）；其余 webview 照旧推到主 tab 栏开网页 tab
+      if (aibrIds.has(contents.id)) {
+        win.webContents.send('fc:aibr-open-url', url);
+      } else {
+        win.webContents.send('fc:webtab-open', url);
+      }
     }
     return { action: 'deny' };
   });
@@ -874,6 +898,94 @@ app.on('web-contents-created', (_e, contents) => {
       () => popupGuestMenu(contents, p, true, true)
     );
   });
+});
+
+// ---- AI 浏览器（2026-11-24 用户需求：AI 用 CDP 操作网页时，页面显示在 AI
+// 会话右侧分屏，用户看着 AI 操作）----
+// 前端（web/js/harness/ai-browser.js）在分屏里建
+// <webview partition="persist:fc-ai-browser">；本进程三件事：
+//   ① will-attach-webview 凭分区名认出它，不挂密码填充 guest-preload（见 openWindow）；
+//   ② 前端 dom-ready 后交来 webContentsId → 用 webContents.debugger 取该
+//      guest 的 CDP targetId，POST 给后端登记（后端 src/ai_browser.py 按它
+//      直连发导航/点击/输入）。不走「/json/list 取第一个 webview」——多个
+//      网页视图时有歧义；主进程映射法实测与列表一一对应。取完即 detach；
+//   ③ 它的弹窗改道回它自己（见 web-contents-created），guest 销毁时通知
+//      后端清登记。
+const AIBR_PARTITION = 'persist:fc-ai-browser';
+const aibrIds = new Set();     // 已认定的 AI 浏览器 guest（webContents.id）
+// will-attach-webview 凭分区名认出 AI 浏览器视图后置位，紧随其后的
+// did-attach-webview 据此把 guest 认领进上面的集合（见 openWindow）
+let aibrPending = false;
+
+function aibrIsAiGuest(gwc) {
+  // 不依赖 will-attach / did-attach 先后交替的判据：直接看这个 guest 用的是不是
+  // AI 浏览器的分区。判不出来给 null（交给 aibrPending 兜底）。
+  // （原先只靠「will-attach 认出来 → 紧随其后的 did-attach 认领」，两个 webview
+  //   的挂载事件一旦交错就会漏认或认错——对抗复审指出，顺序没有保证）
+  try { return gwc.session === eSession.fromPartition(AIBR_PARTITION); }
+  catch (_) { return null; }
+}
+
+function aibrRegister(gwc) {
+  // 挂载即登记：弹窗改道与 attach 校验都从这一刻起生效。guest 销毁时通知
+  // 后端清登记（页面刷新 / 舞台被回收都会走到这里）
+  aibrIds.add(gwc.id);
+  gwc.once('destroyed', () => {
+    aibrIds.delete(gwc.id);
+    aibrPost('/api/ai_browser/detach', { wc_id: gwc.id });
+  });
+}
+
+function aibrPost(path, body) {
+  // 与后端 AI 浏览器登记表通信。失败返回 null（下次 attach 会重新登记）
+  if (!endpointUrl) return Promise.resolve(null);
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000);
+  return fetch(endpointUrl + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}), signal: ctl.signal,
+  }).then((r) => r.json()).catch(() => null).finally(() => clearTimeout(t));
+}
+
+async function aibrAttach(wcId) {
+  const n = Number(wcId);
+  const wc = webContents.fromId(n);
+  // 只认分区名认定过的 AI 浏览器视图：主界面就算传来别的 webview（比如用户
+  // 自己的网页 tab）也不给它登记——登记什么，devtools_* 的默认目标就是什么
+  if (!wc || wc.isDestroyed() || wc.getType() !== 'webview' || !aibrIds.has(n)) {
+    return { ok: false, err: '不是 AI 浏览器的网页视图（wcId=' + wcId + '）' };
+  }
+  let targetId = null;
+  let lastErr = '';
+  for (let attempt = 0; attempt < 6 && !targetId; attempt++) {
+    // guest 刚挂上时 target 可能还没就绪：短重试（实测 dom-ready 后一次即中）
+    try {
+      wc.debugger.attach('1.3');
+      const r = await wc.debugger.sendCommand('Target.getTargetInfo');
+      targetId = (r && r.targetInfo && r.targetInfo.targetId) || null;
+    } catch (e) {
+      lastErr = (e && e.message) || String(e);
+    }
+    try { if (wc.debugger.isAttached()) wc.debugger.detach(); } catch (_) {}
+    if (!targetId) await new Promise((r) => setTimeout(r, 300));
+  }
+  if (!targetId) return { ok: false, err: '取不到该网页视图的 CDP 标识：' + lastErr };
+  const r = await aibrPost('/api/ai_browser/attach',
+    { wc_id: n, target_id: targetId, partition: AIBR_PARTITION });
+  // 后端没明确回 ok 就算失败：aibrPost 在后端不通 / 回非 JSON 时给 null，原先
+  // 照样回「成功」——前端徽标谎报「已连接」，每次操作空等满超时（对抗审计实锤）
+  if (!r || r.ok !== true) {
+    return { ok: false, err: (r && r.err) || '后端没有确认登记（后端未启动或不通）' };
+  }
+  return { ok: true };
+}
+
+ipcMain.handle('fc:aibr-attach', (e, wcId) => {
+  // 只认主界面发来的（外站 guest 没有 preload，拿不到 ipcRenderer——双保险）
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) {
+    return { ok: false, err: '只允许主界面调用' };
+  }
+  return aibrAttach(wcId);
 });
 
 // guest 网页右键菜单（模块级：context-menu 回调异步取态后调用）

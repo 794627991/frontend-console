@@ -25,7 +25,22 @@ import urllib.request
 
 from src import app_state as _st
 ENDPOINT_FILE = os.path.join(_st.HOME_DIR, "endpoint.json")
-_DEBUG_PORT = 9222          # 主 UI CDP 端口（a624 起常开，main.py 硬编码）
+# 主 UI CDP 端口（a624 起常开，electron/main.js 固定 appendSwitch 9222）。
+# FC_CDP_PORT 仅供隔离验证改指别的端口（AI 浏览器端到端验证用独立实验壳，
+# 绝不能碰真实壳的 9222），生产环境不设。抽成函数是为了能直接测——别在测试里
+# reload 本模块：reload 后 CdpError 等异常类是新类，ai_browser / mcp_server 用
+# from-import 持有的还是旧类，之后真实会话抛的异常会穿过 except 落成「未知错误」
+def _resolve_debug_port(raw):
+    """FC_CDP_PORT 的值 → 端口；空 / 0 / 非整数 / 超出端口范围一律 9222
+    （配错了就当没配：不能让后端导入期崩，也不能连到一个怪端口）。"""
+    try:
+        v = int(raw or 0)
+    except ValueError:
+        return 9222
+    return v if 0 < v <= 65535 else 9222
+
+
+_DEBUG_PORT = _resolve_debug_port(os.environ.get("FC_CDP_PORT"))
 _WEBTAB_PORT = 9223         # R4 审计 D2（W4）：网页 tab 独立 CDP 端口（web_tabs._ensure_env）
 # （R9 审计 W39：find_cdps 死代码已删——零调用方；9223 探活并入设置卡
 #   web_cdp_live 为 D2-b 后续项，落地时再引入多端口探活。）
@@ -203,8 +218,16 @@ class CdpSession(object):
                                "重试或先 devtools_screenshot 看状态"
                                % (method, timeout))
             try:
+                # 单次 recv 的 socket 超时对齐剩余等待时间。建连超时（_timeout，
+                # 默认 3s）只该管握手——留在 socket 上会让 send(timeout=15/20)
+                # 名存实亡：截图、导航这类慢命令 3 秒就被判「WS 读取失败」
+                self._ws.settimeout(max(0.05, remain))
                 raw = self._ws.recv()
             except Exception as e:
+                if time.time() >= deadline:
+                    raise CdpError("页面无响应（%s 超时 %.0fs）——可能导航中或忙，"
+                                   "重试或先 devtools_screenshot 看状态"
+                                   % (method, timeout))
                 raise CdpError("WS 读取失败: %r——页面可能刚刷新，直接重试即可" % e)
             if not raw:
                 continue
@@ -224,11 +247,15 @@ class CdpSession(object):
                     pass
             # 其余事件（非订阅期）丢弃
 
-    def collect(self, seconds, on_event):
-        """订阅窗口：seconds 内收到的事件喂 on_event（阻塞至 deadline）。"""
+    def collect(self, seconds, on_event, stop=None):
+        """订阅窗口：seconds 内收到的事件喂 on_event（阻塞至 deadline）。
+        stop（可选）：每次 socket 超时（0.5s）问一次，返回真即提前收手——
+        ai_browser 监听线程用它发现「登记的 target 已换」。
+        返回 "done"（窗口走完）/ "stopped"（stop 叫停）/ "closed"（断连）。"""
         prev = self._collector
         self._collector = on_event
         closed = False
+        why = "done"
         try:
             ws_mod = self._ws_mod
             deadline = time.time() + max(0.5, min(60.0, seconds))
@@ -237,10 +264,14 @@ class CdpSession(object):
                     self._ws.settimeout(0.5)
                     raw = self._ws.recv()
                 except ws_mod.WebSocketTimeoutException:
+                    if stop is not None and stop():
+                        why = "stopped"
+                        break   # 调用方要求收手（登记的 target 已换）
                     continue          # 窗口内正常超时，续等
                 except Exception:
                     # v3.5.187r1 全审G2：断连（页面刷新/关闭）不再空转到 deadline
                     closed = True
+                    why = "closed"
                     break
                 if not raw:
                     continue
@@ -264,11 +295,85 @@ class CdpSession(object):
                 self._ws.settimeout(self._timeout)
             except Exception:
                 pass
+        return why
+
+    def wait_event(self, names, timeout=20.0):
+        """等指定事件出现（names：方法名字符串或集合）。返回事件 dict；超时
+        返回 None；断连抛 CdpError。途中别的事件喂 collector（无则丢弃）。
+        ai_browser 用它等 Page.loadEventFired——collect 只会空转到 deadline。"""
+        want = {names} if isinstance(names, str) else set(names)
+        ws_mod = self._ws_mod
+        if self._ws is None:
+            raise CdpError("WS 未连接")
+        deadline = time.time() + timeout
+        try:
+            while True:
+                remain = deadline - time.time()
+                if remain <= 0:
+                    return None
+                try:
+                    self._ws.settimeout(min(0.5, max(0.05, remain)))
+                    raw = self._ws.recv()
+                except ws_mod.WebSocketTimeoutException:
+                    continue
+                except Exception as e:
+                    raise CdpError("WS 读取失败: %r——页面可能已关闭，稍后重试" % e)
+                if not raw:
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                if not msg.get("method"):
+                    continue           # 响应帧：等事件期间到的命令回包一律丢弃
+                if msg["method"] in want:
+                    return msg
+                if self._collector:
+                    try:
+                        self._collector(msg)
+                    except Exception:
+                        pass
+        finally:
+            # 必须恢复：把 0.5s 留在 socket 上，同一会话随后的命令（navigate 之后
+            # 还要读网址和标题）只要回包稍慢就被截断成「WS 读取失败」
+            try:
+                self._ws.settimeout(self._timeout)
+            except Exception:
+                pass
+
+
+def eval_on(cs, js_expression, timeout=10.0, max_len=4000):
+    """在已连的 CdpSession 上 Runtime.evaluate（awaitPromise+returnByValue）
+    → 结果文本（截断）。devtools_cdp.evaluate 与 ai_browser 共用这一段。"""
+    try:
+        res = cs.send("Runtime.evaluate", {
+            "expression": js_expression,
+            "returnByValue": True, "awaitPromise": True,
+        }, timeout=timeout)
+    except CdpError as e:
+        if getattr(e, "code", "") == "expr":
+            raise CdpError("表达式异常: %s" % e)
+        raise
+    if res.get("exceptionDetails"):
+        ed = res["exceptionDetails"]
+        txt = (ed.get("exception", {}).get("description")
+               or ed.get("text") or "未知异常")
+        raise CdpError("表达式异常: %s" % txt[:500])
+    r = res.get("result", {})
+    if r.get("subtype") == "unserializable":
+        out = str(r.get("description", ""))
+    else:
+        v = r.get("value")
+        out = v if isinstance(v, str) else json.dumps(
+            v, ensure_ascii=False, default=str)
+    if len(out) > max_len:
+        out = out[:max_len] + "\n…（已截断，全长 %d 字符）" % len(out)
+    return out
 
 
 def evaluate(js_expression, timeout=10.0, max_len=4000):
-    """便捷封装：找 CDP→找 target→Runtime.evaluate（awaitPromise+
-    returnByValue）→返回截断文本。供 mcp_server 五工具共用。"""
+    """便捷封装：找 CDP→找 target→Runtime.evaluate→返回截断文本。
+    供 mcp_server 五工具共用（**工具自身界面**这条链；AI 浏览器走 ai_browser）。"""
     port = find_cdp()
     info = {}
     try:
@@ -277,38 +382,17 @@ def evaluate(js_expression, timeout=10.0, max_len=4000):
     except Exception:
         pass
     origin = "http://127.0.0.1:%s" % info.get("port", "")
-    # R9 审计 W38：origin 匹配不到（网页 tab 等）→ 回落 9223 首个网页
-    # tab target——evaluate 族工具由此触达网页 tab（与 probe 同款链）
+    # R9 审计 W38：origin 匹配不到（网页 tab 等）→ 回落首个网页 tab
+    # target。2026-11-24 修：find_webtab_target 只返回 (port, target) 两个值，
+    # 原来这里按三个解包——真走到回落分支即 ValueError（从未被触发过：
+    # 工具开着时主页面 target 永远在）
     try:
         tid = find_page_target(port, origin)["id"]
     except TargetNotFound:
-        port, t2, _o = find_webtab_target()
+        port, t2 = find_webtab_target()
         tid = t2["id"]
     with CdpSession(port, tid) as cs:
-        try:
-            res = cs.send("Runtime.evaluate", {
-                "expression": js_expression,
-                "returnByValue": True, "awaitPromise": True,
-            }, timeout=timeout)
-        except CdpError as e:
-            if getattr(e, "code", "") == "expr":
-                raise CdpError("表达式异常: %s" % e)
-            raise
-        if res.get("exceptionDetails"):
-            ed = res["exceptionDetails"]
-            txt = (ed.get("exception", {}).get("description")
-                   or ed.get("text") or "未知异常")
-            raise CdpError("表达式异常: %s" % txt[:500])
-        r = res.get("result", {})
-        if r.get("subtype") == "unserializable":
-            out = str(r.get("description", ""))
-        else:
-            v = r.get("value")
-            out = v if isinstance(v, str) else json.dumps(
-                v, ensure_ascii=False, default=str)
-        if len(out) > max_len:
-            out = out[:max_len] + "\n…（已截断，全长 %d 字符）" % len(out)
-        return out
+        return eval_on(cs, js_expression, timeout=timeout, max_len=max_len)
 
 
 def page_target_origin_probe():

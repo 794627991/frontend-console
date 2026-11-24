@@ -568,9 +568,147 @@ def _dt_wrap(fn):
             return fn(url, args)
         except DevtoolsError as e:
             return "失败：%s" % e
+        except ValueError as e:
+            return "失败：%s" % e      # 参数不合法（如 target 取值）：文案直接给 AI 看
         except Exception as e:
             return "失败：未知错误 %r" % e
     return wrap
+
+
+# ---- AI 浏览器（2026-11-24 用户需求：AI 用 CDP 操作网页时，页面显示在会话
+# 右侧分屏，用户看着 AI 操作）。实现在后端 src/ai_browser.py（推前端展开视图、
+# 等壳上报 CDP targetId、发真实鼠标键盘事件）；本进程只转 HTTP 并取回文本。
+# 用户拍板：devtools_* 的**默认目标也改为 AI 浏览器**——要操作工具自身界面
+# 必须显式 target="app"（此前默认就是工具界面，AI「直接控制工具」看不见）。
+
+
+def _dt_target(args):
+    """devtools_* 的作用目标：browser（缺省，AI 浏览器视图）/ app（工具自身界面）。"""
+    t = str(args.get("target") or "browser").strip().lower()
+    if t not in ("browser", "app"):
+        raise ValueError("target 只能是 browser（AI 浏览器，缺省）或 app（工具自身界面）")
+    return t
+
+
+class _AibrFail(ValueError):
+    """后端 AI 浏览器端点回了 ok=false（或回了无法识别的内容）。message 是给 AI 的中文原因。"""
+
+
+_AIBR_WAIT_MAX = 60.0          # 等待上限（秒），与后端 navigate 的夹限一致
+_AIBR_HTTP_SLACK = 60.0        # HTTP 超时 = 等待上限 + 这么多（下限见 _aibr）
+
+
+def _clamp_wait(timeout):
+    """把调用方给的等待上限（秒）夹到 1–60；没给 / 非数字 / nan 给 None（后端用缺省）。
+    AI 把秒当毫秒传（30000）时不能原样往下传：后端自己会夹，但 MCP 这边的
+    HTTP 超时是按它算的，不夹就会等十个小时（对抗复审实锤）。"""
+    if timeout is None:
+        return None
+    try:
+        v = float(timeout)
+    except (TypeError, ValueError):
+        return None
+    if v != v:                   # nan
+        return None
+    return min(_AIBR_WAIT_MAX, max(1.0, v))
+
+
+def _aibr(url, path, body=None, timeout=None, http_timeout=None):
+    """调后端 AI 浏览器端点，取回已格式化的文本；失败抛 _AibrFail，由工具函数
+    外面的 @_dt_wrap 统一转成「失败：…」。不能在这里拼好字符串就返回：调用方
+    还会往上加「OK 」「用 Read 查看」之类，失败时就成了「OK 失败：…」
+    （对抗审计实锤）。timeout：透传给后端的等待上限（秒，先夹限）；HTTP 超时
+    按它留余量——后端最坏要等操作锁 20s + 视图就绪 12s + 监听接上 3s +
+    Page.navigate 15s + 等加载 timeout，所以取 timeout + 60、下限 100。"""
+    b = dict(body or {})
+    wait = _clamp_wait(timeout)
+    if wait is not None:
+        b["timeout"] = wait
+    j = _post(url, "/api/ai_browser/" + path, b,
+              timeout=http_timeout or max(100.0, (wait or 0) + _AIBR_HTTP_SLACK))
+    if not isinstance(j, dict):
+        raise _AibrFail("后端返回了无法识别的内容（不是 JSON 对象）")
+    if not j.get("ok"):
+        raise _AibrFail(j.get("err") or "后端没有说明原因")
+    return j.get("text") or "OK"
+
+
+def _pick(args, *keys):
+    """从工具参数里挑出显式给了的字段（None 不传，让后端用缺省）。"""
+    return {k: args[k] for k in keys if args.get(k) is not None}
+
+
+_SHOT_HINT = "\n用 Read 工具查看（图像）。截图含页面真实内容，转述时注意敏感信息。"
+
+
+@_dt_wrap
+def tool_browser_navigate(url, args):
+    return _aibr(url, "navigate", {"url": args.get("url")}, timeout=args.get("timeout"))
+
+
+@_dt_wrap
+def tool_browser_click(url, args):
+    return _aibr(url, "click", _pick(args, "selector", "index", "x", "y", "button"))
+
+
+@_dt_wrap
+def tool_browser_type(url, args):
+    return _aibr(url, "type", dict({"text": args.get("text")},
+                                   **_pick(args, "selector", "clear", "enter")))
+
+
+@_dt_wrap
+def tool_browser_press(url, args):
+    return _aibr(url, "press", {"key": args.get("key")})
+
+
+@_dt_wrap
+def tool_browser_wait(url, args):
+    return _aibr(url, "wait", _pick(args, "selector", "ms", "timeout"),
+                 timeout=args.get("timeout"))
+
+
+@_dt_wrap
+def tool_browser_screenshot(url, args):
+    return _aibr(url, "screenshot", {"full": bool(args.get("full"))}) + _SHOT_HINT
+
+
+@_dt_wrap
+def tool_browser_eval(url, args):
+    return "OK " + _aibr(url, "eval", {"expression": args.get("expression"),
+                                       "max_len": args.get("max_len")})
+
+
+@_dt_wrap
+def tool_browser_dom(url, args):
+    return _aibr(url, "dom", _pick(args, "selector", "limit"))
+
+
+@_dt_wrap
+def tool_browser_console(url, args):
+    live = float(args.get("live_seconds") or 0)
+    return _aibr(url, "console", _pick(args, "tail", "level", "live_seconds"),
+                 http_timeout=100 + live)
+
+
+@_dt_wrap
+def tool_browser_network(url, args):
+    return _aibr(url, "network", _pick(args, "seconds", "filter"))
+
+
+@_dt_wrap
+def tool_browser_back(url, args):
+    return _aibr(url, "back")
+
+
+@_dt_wrap
+def tool_browser_forward(url, args):
+    return _aibr(url, "forward")
+
+
+@_dt_wrap
+def tool_browser_reload(url, args):
+    return _aibr(url, "reload")
 
 
 @_dt_wrap
@@ -579,6 +717,8 @@ def tool_devtools_eval(url, args):
     if not expr:
         return "失败：缺少必填参数 'expression'"
     max_len = max(500, min(20000, int(args.get("max_len") or 4000)))
+    if _dt_target(args) == "browser":
+        return "OK " + _aibr(url, "eval", {"expression": expr, "max_len": max_len})
     return "OK " + devtools_cdp.evaluate(expr, max_len=max_len)
 
 
@@ -588,6 +728,8 @@ def tool_devtools_dom(url, args):
     if not sel:
         return "失败：缺少必填参数 'selector'"
     limit = max(1, min(50, int(args.get("limit") or 20)))
+    if _dt_target(args) == "browser":
+        return _aibr(url, "dom", {"selector": sel, "limit": limit})
     js = (
         "(function(){var els=document.querySelectorAll(%s);"
         "var items=[];for(var i=0;i<Math.min(els.length,%d);i++){"
@@ -624,6 +766,9 @@ def tool_devtools_console(url, args):
     tail = max(1, min(200, int(args.get("tail") or 50)))
     level = args.get("level") or "all"
     live = max(0, min(30, float(args.get("live_seconds") or 0)))
+    if _dt_target(args) == "browser":
+        return _aibr(url, "console", _pick(args, "tail", "level", "live_seconds"),
+                     http_timeout=45 + live)
     port, tid, _o = devtools_cdp.page_target_origin_probe()
     lines = []
     with devtools_cdp.CdpSession(port, tid) as cs:
@@ -693,6 +838,8 @@ def tool_devtools_console(url, args):
 @_dt_wrap
 def tool_devtools_screenshot(url, args):
     import base64
+    if _dt_target(args) == "browser":
+        return _aibr(url, "screenshot", {}) + _SHOT_HINT
     port, tid, _o = devtools_cdp.page_target_origin_probe()
     with devtools_cdp.CdpSession(port, tid) as cs:
         cs.send("Page.enable")
@@ -712,6 +859,8 @@ def tool_devtools_screenshot(url, args):
 def tool_devtools_network(url, args):
     seconds = max(1, min(30, float(args.get("seconds") or 5)))
     flt = str(args.get("filter") or "")
+    if _dt_target(args) == "browser":
+        return _aibr(url, "network", {"seconds": int(seconds), "filter": flt})
     port, tid, _o = devtools_cdp.page_target_origin_probe()
     reqs = {}          # requestId → 聚合 dict
     order = []
@@ -988,55 +1137,169 @@ _TOOLS = [
     },
     {
         "name": "devtools_eval",
-        "description": "DevTools：在工具真实页面执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。诊断万能底座——可查 DOM/状态/调用后端 API。警告：可改变页面状态与发起真实操作（含发串口命令），慎做破坏性操作；页面刷新即复位。CDP 常开可用。",
+        "description": "DevTools：执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。**默认在 AI 浏览器里执行**（AI 会话右侧分屏里那个可见的网页，用户能看着操作）。要操作前端控制台自己的界面须显式传 target=\"app\"——app 目标可改变工具页面状态与发起真实操作（含发串口命令），慎用；页面刷新即复位。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "expression": {"type": "string", "description": "JS 表达式（支持 await）"},
                 "max_len": {"type": "integer", "default": 4000, "description": "返回截断上限字符"},
+                "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
+                           "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
             "required": ["expression"],
         },
     },
     {
         "name": "devtools_dom",
-        "description": "DevTools：按 CSS 选择器查询页面元素（标签/id/class/文本/尺寸/可见性），附页面标题与 readyState。用于核对 DOM 结构与定位元素。",
+        "description": "DevTools：按 CSS 选择器查询页面元素（标签/id/class/文本/尺寸/可见性），附页面标题与 readyState。默认查 AI 浏览器里的网页；target=\"app\" 查前端控制台自身界面。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "selector": {"type": "string", "description": "CSS 选择器"},
                 "limit": {"type": "integer", "default": 20, "description": "最多列出元素数（≤50）"},
+                "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
+                           "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
             "required": ["selector"],
         },
     },
     {
         "name": "devtools_console",
-        "description": "DevTools：读页面 console 历史缓冲（含未捕获异常/unhandledrejection，环形 200 条，随页面加载起点）。可加 live_seconds 实时订阅窗口。报错定位首选。",
+        "description": "DevTools：读页面 console 历史（含未捕获异常，环形 200 条）。可加 live_seconds 实时订阅窗口。默认读 AI 浏览器里的网页；target=\"app\" 读前端控制台自身界面。报错定位首选。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "tail": {"type": "integer", "default": 50, "description": "取最近 N 条"},
                 "level": {"type": "string", "enum": ["all", "error", "warn"], "default": "all"},
                 "live_seconds": {"type": "number", "default": 0, "description": ">0 时追加实时订阅窗口（秒，≤30）"},
+                "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
+                           "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
         },
     },
     {
         "name": "devtools_screenshot",
-        "description": "DevTools：截取工具页面当前画面，保存 PNG 到用户数据目录 devtools/ 并返回绝对路径（用 Read 查看）。截图含用户真实数据，注意敏感信息。",
-        "inputSchema": {"type": "object", "properties": {}},
+        "description": "DevTools：截取页面当前画面，保存 PNG 到用户数据目录并返回绝对路径（用 Read 查看）。默认截 AI 浏览器里的网页；target=\"app\" 截前端控制台自身界面。截图含真实内容，注意敏感信息。",
+        "inputSchema": {"type": "object", "properties": {
+            "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
+                       "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
+        }},
     },
     {
         "name": "devtools_network",
-        "description": "DevTools：订阅 N 秒网络请求窗口并汇总（状态/方法/URL/类型/大小；失败与 4xx/5xx 全列，其余按序最多 40 行，不返回 body）。先用 devtools_eval 触发动作再开窗口，或窗口期内让用户操作。",
+        "description": "DevTools：汇总页面网络请求（状态/方法/URL/类型/大小；失败与 4xx/5xx 全列，其余按序最多 40 行，不返回 body）。默认返回 AI 浏览器网页**最近 N 秒已捕获**的请求（立即返回：先触发动作再调）；target=\"app\" 订阅前端控制台自身界面 N 秒窗口（阻塞）。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "seconds": {"type": "number", "default": 5, "description": "监听窗口秒数（1-30）"},
                 "filter": {"type": "string", "description": "URL 子串过滤（可选）"},
+            "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
+                       "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
         },
+    },
+    # ---- AI 浏览器（2026-11-24）：可见的受控网页，显示在 AI 会话右侧分屏 ----
+    {
+        "name": "browser_navigate",
+        "description": "AI 浏览器：打开网址。页面显示在前端控制台 AI 会话右侧的分屏里（用户能看着你操作），第一次调用会自动展开。等加载完成后返回最终网址与标题。",
+        "inputSchema": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "http/https 网址"},
+            "timeout": {"type": "number", "default": 20, "minimum": 1, "maximum": 60,
+                        "description": "等加载完成的秒数上限（1–60；超时不报错，照常返回）"},
+        }, "required": ["url"]},
+    },
+    {
+        "name": "browser_click",
+        "description": "AI 浏览器：点击元素。给 CSS 选择器（自动滚动到可见处、取中心点）或 x/y 坐标。真实鼠标事件——用户能在分屏里看到光标移过去并点击。",
+        "inputSchema": {"type": "object", "properties": {
+            "selector": {"type": "string", "description": "CSS 选择器（与 x/y 二选一）"},
+            "index": {"type": "integer", "default": 0, "description": "选择器匹配到多个时点第几个（从 0 起）"},
+            "x": {"type": "number", "description": "视口内 x 坐标（CSS 像素）"},
+            "y": {"type": "number", "description": "视口内 y 坐标（CSS 像素）"},
+            "button": {"type": "string", "enum": ["left", "right"], "default": "left"},
+        }},
+    },
+    {
+        "name": "browser_type",
+        "description": "AI 浏览器：输入文本。给 selector 就先点进去聚焦（默认先清空原内容）；不给就输入到当前焦点元素。逐字键入，用户能看到输入过程。",
+        "inputSchema": {"type": "object", "properties": {
+            "text": {"type": "string", "description": "要输入的文本（\\n 表示回车）"},
+            "selector": {"type": "string", "description": "输入框的 CSS 选择器（可选）"},
+            "clear": {"type": "boolean", "default": True, "description": "输入前是否清空原内容（仅给了 selector 时生效）"},
+            "enter": {"type": "boolean", "default": False, "description": "输完是否按回车"},
+        }, "required": ["text"]},
+    },
+    {
+        "name": "browser_press",
+        "description": "AI 浏览器：按键。如 Enter、Tab、Escape、ArrowDown、Control+a、Shift+Tab。",
+        "inputSchema": {"type": "object", "properties": {
+            "key": {"type": "string", "description": "按键或组合键，修饰键在前、加号连接"},
+        }, "required": ["key"]},
+    },
+    {
+        "name": "browser_wait",
+        "description": "AI 浏览器：等待。等某元素出现（selector），或固定等若干毫秒（ms）。页面异步加载后用。",
+        "inputSchema": {"type": "object", "properties": {
+            "selector": {"type": "string", "description": "等它出现的 CSS 选择器"},
+            "ms": {"type": "integer", "description": "固定等待的毫秒数（上限 10000）"},
+            "timeout": {"type": "number", "default": 15, "minimum": 1, "maximum": 30,
+                        "description": "等元素出现的秒数上限（1–30）"},
+        }},
+    },
+    {
+        "name": "browser_screenshot",
+        "description": "AI 浏览器：截图。保存 PNG 到用户数据目录 ai_browser/ 并返回绝对路径（用 Read 查看）。full=true 截整个页面。截图含页面真实内容，注意敏感信息。",
+        "inputSchema": {"type": "object", "properties": {
+            "full": {"type": "boolean", "default": False, "description": "是否截整个页面（含视口外）"},
+        }},
+    },
+    {
+        "name": "browser_eval",
+        "description": "AI 浏览器：在当前网页里执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。读页面状态、取数据用；点击和输入优先用 browser_click / browser_type（有可见操作）。",
+        "inputSchema": {"type": "object", "properties": {
+            "expression": {"type": "string", "description": "JS 表达式（支持 await）"},
+            "max_len": {"type": "integer", "default": 4000, "description": "返回截断上限字符"},
+        }, "required": ["expression"]},
+    },
+    {
+        "name": "browser_dom",
+        "description": "AI 浏览器：按 CSS 选择器列出网页元素（标签/id/class/文本/尺寸/可见性），附页面标题。定位元素用。",
+        "inputSchema": {"type": "object", "properties": {
+            "selector": {"type": "string", "description": "CSS 选择器"},
+            "limit": {"type": "integer", "default": 20, "description": "最多列出元素数（上限 50）"},
+        }, "required": ["selector"]},
+    },
+    {
+        "name": "browser_console",
+        "description": "AI 浏览器：读网页 console 历史（含未捕获异常，环形 200 条）。可加 live_seconds 追加实时订阅窗口。报错定位首选。",
+        "inputSchema": {"type": "object", "properties": {
+            "tail": {"type": "integer", "default": 50, "description": "取最近 N 条"},
+            "level": {"type": "string", "enum": ["all", "error", "warn"], "default": "all"},
+            "live_seconds": {"type": "number", "default": 0, "description": ">0 时追加实时订阅窗口（秒，上限 30）"},
+        }},
+    },
+    {
+        "name": "browser_network",
+        "description": "AI 浏览器：汇总网页最近 N 秒内的网络请求（状态/方法/URL/类型/大小；失败与 4xx/5xx 全列，不返回 body）。立即返回——先触发动作再调它。",
+        "inputSchema": {"type": "object", "properties": {
+            "seconds": {"type": "integer", "default": 10, "description": "回看最近多少秒（上限 300）"},
+            "filter": {"type": "string", "description": "URL 子串过滤（可选）"},
+        }},
+    },
+    {
+        "name": "browser_back",
+        "description": "AI 浏览器：后退一页。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "browser_forward",
+        "description": "AI 浏览器：前进一页。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "browser_reload",
+        "description": "AI 浏览器：重新加载当前页。",
+        "inputSchema": {"type": "object", "properties": {}},
     },
 ]
 
@@ -1050,6 +1313,9 @@ _RETRY_SAFE_TOOLS = {
     "list_open_logs", "compare_files", "diff_logs", "tftp_status",
     "devtools_console", "devtools_dom",
     "devtools_network", "devtools_screenshot",
+    # 2026-11-24 AI 浏览器只读族（eval/click/type/导航类有副作用，不进）
+    "browser_screenshot", "browser_dom",
+    "browser_console", "browser_network",
 }
 
 
@@ -1108,6 +1374,33 @@ def _dispatch(url, name, args):
         return tool_devtools_screenshot(url, args)
     if name == "devtools_network":
         return tool_devtools_network(url, args)
+    # AI 浏览器（2026-11-24）
+    if name == "browser_navigate":
+        return tool_browser_navigate(url, args)
+    if name == "browser_click":
+        return tool_browser_click(url, args)
+    if name == "browser_type":
+        return tool_browser_type(url, args)
+    if name == "browser_press":
+        return tool_browser_press(url, args)
+    if name == "browser_wait":
+        return tool_browser_wait(url, args)
+    if name == "browser_screenshot":
+        return tool_browser_screenshot(url, args)
+    if name == "browser_eval":
+        return tool_browser_eval(url, args)
+    if name == "browser_dom":
+        return tool_browser_dom(url, args)
+    if name == "browser_console":
+        return tool_browser_console(url, args)
+    if name == "browser_network":
+        return tool_browser_network(url, args)
+    if name == "browser_back":
+        return tool_browser_back(url, args)
+    if name == "browser_forward":
+        return tool_browser_forward(url, args)
+    if name == "browser_reload":
+        return tool_browser_reload(url, args)
     return f"未知工具: {name}"
 
 

@@ -733,6 +733,9 @@ html.fc-ui-ready .startup-splash { opacity: 0; pointer-events: none; }
 <script type="module" src="web/js/win-controls.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/backend-log.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/init.js?v=__HG_VER__"></script>
+<!-- 2026-11-24 AI 浏览器：AI 用 CDP 操作网页时显示在 AI 会话右侧分屏。只挂
+     window.AI_BR（sense.js 收到后端 ui_action 后调用），不依赖上方模块的初始化 -->
+<script type="module" src="web/js/harness/ai-browser.js?v=__HG_VER__"></script>
 <script>
 /* a664：启动自检自愈——资源请求偶发失败（并发/瞬时网络）会让 util.js 半执行，
    后续全部 module 连锁 ReferenceError（ICO16→$→各功能未初始化），页面卡死只能

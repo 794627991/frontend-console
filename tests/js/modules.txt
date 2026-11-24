@@ -9,6 +9,7 @@ js/diff-viewer.js
 js/editor.js
 js/file-icons.js
 js/file-tree.js
+js/harness/ai-browser.js
 js/harness/ask-md.js
 js/harness/base.js
 js/harness/chatctl.js

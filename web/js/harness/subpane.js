@@ -43,6 +43,9 @@
   // 绑定发生在用户点胶囊时，分屏 DOM 必然在场。sc 上 setAttribute('data-hg-dyn')
   // 让 20-main tick 的自愈重绑（querySelector('[data-hg-dyn]')）路径继续成立。
   const _SUB_DYN = '__dyn__';
+  // 2026-11-24 AI 浏览器伪 tab（内容与生命周期在 ai-browser.js；这里只管
+  // 档位键 / tab 条画法 / 残留豁免——与其余伪 tab 同款接入点）
+  const _SUB_AIBR = '__aibr__';
   const _HG_DYN_SKELETON =
     `<div class="hg-sub-dir-head">会话动态</div>` +
     `<section class="hg-dyn-sec" data-hg-sec="stat">` +
@@ -368,6 +371,7 @@
   // 记忆拖拽）；子代理实况/回放=宽档（hg-subpane-pct，默认 50%，既有记忆）
   function _subPanePctKey(tid) {
     const a = tid || _sub.active;
+    if (a === _SUB_AIBR) return 'hg-subpane-aibr-pct';   // AI 浏览器：网页要宽，独立记忆
     return (a === _SUB_DYN || a === _SUB_DIR)
       ? 'hg-subpane-narrow-pct' : 'hg-subpane-pct';
   }
@@ -401,7 +405,10 @@
     // v3.5.70（用户实锤「历史子代理分页有点宽了 缩小一点」）：宽档（实况/
     // 回放）按百分比在宽屏上同样过宽——cap 620px（resizer 拖拽仍受 25~75%
     // 记忆，仅默认/超宽收敛）
-    px = Math.min(px, _subPanePctKey() === 'hg-subpane-narrow-pct' ? 360 : 620);
+    // 2026-11-24：AI 浏览器档不设上限（网页视图越宽越好用；25~75% 仍受拖拽约束）
+    const _k = _subPanePctKey();
+    px = Math.min(px, _k === 'hg-subpane-narrow-pct' ? 360
+      : _k === 'hg-subpane-aibr-pct' ? 100000 : 620);
     _subPaneEl.style.width = px + 'px';
   }
   function _subShow(pendingTid, userIntent) {
@@ -804,9 +811,11 @@
                          // 非 silent=用户主动打开（历史代理也要保留）
                          _userOpened: !silent };
       _sub.order.push(tid);
-      // v3.2：上限 6 个 tab，最旧让位（目录/动态伪 tab 常驻不让位，v3.3 加豁免 __dyn__）
-      if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN).length > 6) {
-        const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN);
+      // v3.2：上限 6 个 tab，最旧让位（目录/动态伪 tab 常驻不让位，v3.3 加豁免 __dyn__；
+      // 2026-11-24 AI 浏览器伪 tab 同豁免——不豁免的话它排在队首时会被当最旧的
+      // 真实代理逐出，或者白占一个代理名额）
+      if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_AIBR).length > 6) {
+        const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_AIBR);
         if (old != null) {
           const otb = _sub.tabs[old];
           // a612（审计 D5）：被逐出的正好是当前 active 时清空，否则 active
@@ -881,7 +890,7 @@
     // 残留——留着只是噪音。用户主动点开的历史代理（_userOpened）保留。
     try {
       const _dead = Object.keys(_sub.tabs).filter(t => {
-        if (t === _SUB_DIR || t === _SUB_DYN) return false;
+        if (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_AIBR) return false;
         const tb = _sub.tabs[t];
         if (!tb || tb._userOpened) return false;
         const ag = (_HG.agents || {})[t]
@@ -895,7 +904,7 @@
       let want = null;
       try { want = (_subActiveBySid || {})[_HG.sid] || null; } catch (_) {}
       const real = _sub.order.find(t => t !== _SUB_DYN && t !== _SUB_DIR
-                                       && _sub.tabs[t]);
+                                       && t !== _SUB_AIBR && _sub.tabs[t]);
       const target = (want && _sub.tabs[want]) ? want : (real || _sub.order[0] || null);
       if (!target) return;
       // a638（用户实锤「子代理页我明确都关掉了，切会话切回来 tab 还是弹，
@@ -1068,7 +1077,7 @@
     // v3.2R1(P2)：目录不贴底滚动——_subScroll 为聊天流贴底设计，目录的主
     // 内容（正在运行）在顶部，贴底会直接落到已结束长列表尾
     // v3.3：动态页同豁免——状态总览主内容也在顶部（会话状态卡）
-    if (tid !== _SUB_DIR && tid !== _SUB_DYN) _subScroll(tid);
+    if (tid !== _SUB_DIR && tid !== _SUB_DYN && tid !== _SUB_AIBR) _subScroll(tid);
     if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
   }
   function _subTabsPaint() {
@@ -1082,7 +1091,7 @@
         && t !== _SUB_DYN && t !== _SUB_DIR));
     _subTabsEl.innerHTML = _paint.map(t => {
       const tb = _sub.tabs[t];
-      const _pseu = (t === _SUB_DIR || t === _SUB_DYN);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
+      const _pseu = (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_AIBR);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
       // v2.35（P1-4）：模型进 tab（短名+悬浮全名）；tokens 进悬浮（CLI 侧计数）
       // a93S（用户令「模型名不要在 tab 上显示」）：可见角标撤除，模型只留
       // 悬浮 tooltip（头部 idline 已有完整模型名）
@@ -1093,9 +1102,9 @@
            mdlFull ? '模型：' + mdlFull : '模型：主链模型（内置/无定义文件）',
            ag.tokens ? `用量：${ag.tokens} tokens · ${ag.toolN || 0} 次工具` : '']
           .filter(Boolean).join('\n');
-      return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}${t === _SUB_DIR ? ' dir' : t === _SUB_DYN ? ' dyn' : ''}"` +
+      return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}${t === _SUB_DIR ? ' dir' : t === _SUB_DYN ? ' dyn' : t === _SUB_AIBR ? ' aibr' : ''}"` +
         ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
-        (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉' : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
+        (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉' : t === _SUB_AIBR ? ((typeof ICO16 !== 'undefined' && ICO16.globe) || '◈') : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
         (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
         // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab
         // 提示「任务继续后台跑」防误触焦虑；点击走 _subDrop（tab 条委托分支）
@@ -1281,6 +1290,7 @@
 // let/var 走存取器（跨文件重赋值保语义）；const/function/class 普通挂载。
 window._SUB_DIR = _SUB_DIR;
 window._SUB_DYN = _SUB_DYN;
+window._SUB_AIBR = _SUB_AIBR;
 window._hgSubPctApply = _hgSubPctApply;
 window._hgSubRegion = _hgSubRegion;
 window._subActivate = _subActivate;

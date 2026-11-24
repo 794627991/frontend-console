@@ -29,6 +29,16 @@ function connectAiSSE() {
             && typeof window.harnessAddFilesByPath === 'function') {
           window.harnessAddFilesByPath([item.path]);
         }
+        // AI 浏览器（2026-11-24）：后端 src/ai_browser.py 推来——展开分屏 / 操作指示
+        // （光标、点击涟漪、状态条）。非壳形态没有 AI_BR，静默跳过
+        if (item.kind === 'ui_action' && item.action === 'ai_browser_open'
+            && window.AI_BR) {
+          window.AI_BR.open();
+        }
+        if (item.kind === 'ui_action' && item.action === 'ai_browser_op'
+            && window.AI_BR) {
+          window.AI_BR.op(item);
+        }
         return; // 跳过 screen/screenctl/ui_action 帧（不进感知流）
       }
       senseState.lines.push(item);

@@ -2507,3 +2507,69 @@
      四边+四角 6px 隐形条，cursor 提示拖拽方向；is-max 态隐藏 */
   .edge-hot { position: fixed; z-index: 12; background: transparent;
     pointer-events: auto; }
+
+/* ---- AI 浏览器（2026-11-24 用户需求：AI 用 CDP 操作网页时显示在 AI 会话右侧分屏）----
+   分屏里的「AI 浏览器」伪 tab = 工具栏 + 占位框 + 状态条；真正的 <webview> 在挂
+   body 的常驻舞台里（web/js/harness/ai-browser.js）。舞台两态：
+     前台 .hg-aibr-front —— 对齐占位框（JS 写 left/top/width/height），正常交互；
+     后台 .hg-aibr-bg    —— 近乎透明、固定 1280×800、不吃鼠标。
+   后台态不能用 display:none：实测 guest 不可见时 Page.captureScreenshot 挂死不返回；
+   近乎透明时截图正常（ZCode 同款手法）。 */
+.hg-aibr-pane { gap: 0; overflow: hidden; }
+.hg-aibr-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px;
+  border: 1px solid var(--border); border-bottom: 0; border-radius: 6px 6px 0 0;
+  background: var(--bg-panel); }
+.hg-aibr-btn { width: 24px; height: 24px; padding: 0; flex: none; display: inline-flex;
+  align-items: center; justify-content: center; border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted); cursor: pointer; }
+.hg-aibr-btn:hover { background: var(--bg-deep); color: var(--fg); }
+.hg-aibr-btn svg { width: 14px; height: 14px; }
+.hg-aibr-url { flex: 1; min-width: 0; margin: 0 6px; font-family: var(--font-mono);
+  font-size: var(--fs-sm, 11px); color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-aibr-badge { flex: none; font-size: var(--fs-sm, 11px); color: var(--muted); }
+.hg-aibr-badge.on { color: var(--accent); }
+.hg-aibr-pane > .hg-aibr-slot { flex: 1 1 0; min-height: 0;
+  border: 1px solid var(--border); background: var(--bg-deep); }
+.hg-aibr-status { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+  border: 1px solid var(--border); border-top: 0; border-radius: 0 0 6px 6px;
+  background: var(--bg-panel); font-size: var(--fs-sm, 11px); color: var(--muted); }
+.hg-aibr-status > span:last-child { min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.hg-aibr-dot { width: 6px; height: 6px; flex: none; border-radius: 50%;
+  background: var(--muted); }
+.hg-aibr-pane.busy .hg-aibr-dot { background: var(--accent);
+  animation: hgAibrPulse 1s ease-in-out infinite; }
+.hg-aibr-pane.busy .hg-aibr-status { color: var(--fg); }
+@keyframes hgAibrPulse { 50% { opacity: .25; } }
+
+/* 舞台：挂 body、固定定位。层级 8——高于面板内容（harness 内不超过 6），低于一切
+   弹层（.hg-pop 30 起）：菜单/弹窗仍能盖住网页视图 */
+.hg-aibr-stage { position: fixed; z-index: 8; overflow: hidden; }
+.hg-aibr-stage.hg-aibr-front { opacity: 1; pointer-events: auto; }
+.hg-aibr-stage.hg-aibr-bg { left: 0; top: 0; width: 1280px; height: 800px;
+  opacity: .001; pointer-events: none; }
+.hg-aibr-stage > webview { width: 100%; height: 100%; }
+/* 操作指示层：光标 + 点击涟漪。不吃鼠标——用户随时能接管点击输入 */
+.hg-aibr-fx { position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  overflow: hidden; pointer-events: none; }
+.hg-aibr-cursor { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0;
+  transition: transform .22s ease-out, opacity .18s ease; }
+.hg-aibr-cursor.on { opacity: 1; }
+.hg-aibr-cursor::before { content: ''; position: absolute; left: 0; top: 0;
+  border: 6px solid transparent; border-right: 0; border-bottom: 0;
+  border-top-color: var(--accent); filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+.hg-aibr-cursor::after { content: ''; position: absolute; left: -10px; top: -10px;
+  width: 20px; height: 20px; border: 1px solid var(--accent); border-radius: 50%; opacity: .4; }
+.hg-aibr-ripple { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+  border: 2px solid var(--accent); border-radius: 50%;
+  animation: hgAibrRipple .6s ease-out forwards; }
+@keyframes hgAibrRipple { from { transform: scale(.4); opacity: .95; }
+  to { transform: scale(5); opacity: 0; } }
+/* 分屏 tab 条上的「AI 浏览器」图标（ICO16 地球） */
+.hg-sub-tab.aibr .hg-sub-dir-tabico { display: inline-flex; align-items: center;
+  color: var(--accent); }
+.hg-sub-tab.aibr .hg-sub-dir-tabico svg { width: 13px; height: 13px; }
+/* 拖分屏分隔条期间：舞台不吃鼠标——guest 内的鼠标事件不冒泡到主窗口文档，
+   鼠标划进网页区域时分隔条就收不到 mousemove / mouseup，拖拽会断在那里 */
+.hg-aibr-stage.hg-aibr-drag { pointer-events: none; }

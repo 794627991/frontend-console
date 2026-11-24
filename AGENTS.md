@@ -124,4 +124,42 @@
   Bad text encoding；electron-builder 流程两者皆可，BOM 防手工踩坑）；
   `Var fcKeepUserData` 必须包在 `!ifdef BUILD_UNINSTALLER` 里（否则安装器趟
   warning 6001 × -WX 构建失败）。
+- **AI 浏览器（2026-11-24 用户需求 + 四项拍板）**：AI 用 CDP 操作网页时，页面
+  显示在 AI 会话右侧分屏，用户看着 AI 操作（此前 `devtools_*` 默认操作的是
+  工具自己的界面）。实现三处：后端 `src/ai_browser.py`（路由 `/api/ai_browser/*`；
+  MCP 的 `browser_*` 与 `devtools_*` 默认目标）、前端 `web/js/harness/ai-browser.js`
+  （分屏伪 tab + 挂 body 的常驻舞台）、壳 `electron/main.js` 的「AI 浏览器」段
+  （视图标识交接）。拍板：会话右侧分屏 / `devtools_*` 默认=AI 浏览器、显式
+  `target=app` 才操作工具自身界面 / 光标 + 点击涟漪 + 状态条 / AI 操作时自动
+  展开、收起后仍可后台运行和截图。总开关 `ai_browser_enabled`（缺省开）。
+  **实测硬约束（端到端踩出来的，别再踩）**：
+  - 分区名 `persist:fc-ai-browser` 在前端 / 壳 `will-attach-webview` / 后端三处
+    对齐；壳凭它认出视图并取消密码填充 guest-preload。
+  - 网页视图的 CDP targetId 由壳用 `webContents.debugger` 精确映射后 POST
+    `/api/ai_browser/attach` 登记——**不取 `/json/list` 第一个 webview**（多个
+    视图时有歧义）。`getWebContentsId()` / `getURL()` 必须等 `dom-ready` 才能调。
+  - **别用 CDP Page 域的导航类命令**（`Page.reload` / `Page.navigateToHistoryEntry`）：
+    guest 的框架挂在宿主页面的框架树上，实测会把整个前端控制台界面一起重载。
+    后退 / 前进 / 重载一律在网页内 `history.*` / `location.reload()`。
+  - 工具窗口不可见（最小化 / 被完全遮挡）时 Chromium 不派发输入、不出帧：
+    输入与截图会挂到超时——后端已前置检查，直接报「窗口不可见」。最小化再
+    还原后浏览器**不一定**把页面重新判为可见（干净窗口的对照实验里时好时坏，
+    环境现象）——用户点一下工具窗口即可，不是缺陷。
+  - 面板收起用近乎透明的后台态（`opacity: .001`），**不能 `display:none`**
+    （实测此时截图挂死不返回）。面板被整个移除（关 tab / 切会话清场 / 被逐出）
+    时 ResizeObserver **不报告**——必须另盯分屏 body 的子节点增删，否则网页层
+    会以不透明、吃鼠标的前台态盖住窗格。
+  - CDP 会话：`send(timeout=N)` 的 N 现在对齐单次等待（原先被建连超时 3s 封顶，
+    截图 / 导航的 15~20s 名存实亡）；`wait_event` / `collect` 返回后必须恢复
+    socket 超时。`Input.dispatchKeyEvent` 的 modifiers 位：Alt=1、Ctrl=2、Meta=4、
+    Shift=8（Alt 曾误写成 4）。
+  - 壳：`will-attach-webview` 凭分区名认出视图、紧随其后的 `did-attach-webview`
+    认领进集合（**挂载即登记**，弹窗改道从这一刻起生效）；attach 只认登记过的
+    视图；后端没明确回 `ok` 就算登记失败（不能默认成功，否则徽标谎报「已连接」）。
+    后端 attach 只认现存的 `type=webview` target。
+  - AI 自动展开**不是用户动作**：`_subShow(tid, false)`，不许把会话记成「想让
+    分屏开着」（a638：否则用户亲手关掉的分屏切回会话时会自己弹出来）。
+  - 验证：单测 `tests/test_ai_browser.py`（含三端契约字面量）；端到端走隔离
+    环境（独立 CDP 口 `FC_CDP_PORT` + 独立 userData + `FC_STATE_DIR`，壳的
+    三段代码从真实 main.js 切出），**不得连真实壳的 9222**。
 - 惯例：用户拍板/用户令的历史一律写进对应代码的注释；提交号 aNNN 递增

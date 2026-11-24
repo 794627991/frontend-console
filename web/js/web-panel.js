@@ -278,7 +278,7 @@ function buildWebPanelTab(url, opts) {
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">${ICO16.star}</button>
         <button class="btn ghost icon-btn" data-web="pw" title="密码管理：查看 / 显示 / 删除已保存的站点密码">${ICO16.key}</button>
         <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">${ICO16.book} 阅读</button>
-        <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框——需登录态的页面请让 AI 用 devtools 工具读">发给 Claude</button>
+        <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框">发给 Claude</button>
       </div>
       <div class="web-body" data-web-body>
         <!-- a544：WebView2 控件宿主区（控件由 Python 叠放其上，像素对齐） -->

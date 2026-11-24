@@ -40,6 +40,12 @@ contextBridge.exposeInMainWorld('fcShell', {
   // guest（webview）里 window.open/target=_blank 的路由落点：主进程按
   // webContents 类型 deny 后推送过来（元素级 handler 在 webview 上不存在）
   onWebTabOpen: (cb) => ipcRenderer.on('fc:webtab-open', (_e, url) => cb(url)),
+  // AI 浏览器（2026-11-24）：分屏里的 <webview partition="persist:fc-ai-browser">
+  // dom-ready 后交出 webContentsId → 主进程取它的 CDP 标识报给后端登记。
+  // 返回 {ok:boolean, err?}
+  aiBrowserAttach: (wcId) => ipcRenderer.invoke('fc:aibr-attach', wcId),
+  // 它的弹窗（window.open / target=_blank）改道回它自己
+  onAiBrowserOpenUrl: (cb) => ipcRenderer.on('fc:aibr-open-url', (_e, url) => cb(url)),
   // 密码保存/填充：存储由主进程 safeStorage 完成；保存提示只含 origin/user，
   // 候选弹层只含用户名，选中后才下发密码。
   onPwSavePrompt: (cb) => ipcRenderer.on('fc:pw-save-prompt', (_e, info) => cb(info)),

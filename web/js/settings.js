@@ -486,6 +486,7 @@ const _TK_OPTIONS = [
 async function _stRenderTermKeysPane(pane) {
   let tk = { right_action: 'ctrl_menu', auto_copy: false, term_font_size: 13, ui_zoom: 100 };
   let closeToTray = true;
+  let aiBrowserOn = true;   // 2026-11-24 AI 浏览器总开关（缺省=开）
   let claudeUiMode = 'harness';
   let snipHk = 'ctrl+alt+a';
   // v3.5.310 可配置搜索快捷键（页面内 keydown，非系统热键）
@@ -501,6 +502,7 @@ async function _stRenderTermKeysPane(pane) {
     if (pane._stSec !== _mySec) return;   // 已被别的分区渲染接管
     if (j.ok && j.term_keys) tk = j.term_keys;
     if (j.ok) closeToTray = j.close_to_tray !== false;   // 缺省=开（config 旧版无此键）
+    if (j.ok) aiBrowserOn = j.ai_browser_enabled !== false;   // 缺省=开（同上）
     if (j.ok && j.claude_ui_mode) claudeUiMode = j.claude_ui_mode;   // Claude 入口分派：harness=界面化 / cli=终端
     if (j.ok && typeof j.snip_hotkey === 'string') snipHk = j.snip_hotkey || '';
     if (j.ok && typeof j.doc_search_hotkey === 'string') docHk = j.doc_search_hotkey || 'ctrl+f';
@@ -608,6 +610,14 @@ async function _stRenderTermKeysPane(pane) {
         <div class="dd-sub" style="margin-top:4px;">两种方式可随时切换；Claude 面板「恢复会话」始终走内嵌终端。</div>
       </div>
       <div class="dd-cur" style="margin-top:8px;">
+        <div class="dd-label">AI 浏览器</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;">
+          <input type="checkbox" id="tkAiBrowser" ${aiBrowserOn ? 'checked' : ''}>
+          <span>AI 操作网页时，在 Claude 对话右侧分屏里显示网页（光标、点击涟漪、操作状态条）</span>
+        </label>
+        <div class="dd-sub" style="margin-top:4px;">AI 经 MCP 的 browser_* / devtools_* 操作的网页显示在这里，你能看着它操作、随时接管。取消勾选后这些工具不可用（devtools_* 传 target=app 仍可操作工具自身界面）。</div>
+      </div>
+      <div class="dd-cur" style="margin-top:8px;">
         <div class="dd-label">关闭行为</div>
         <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;">
           <input type="checkbox" id="tkCloseToTray" ${closeToTray ? 'checked' : ''}>
@@ -635,11 +645,13 @@ async function _stRenderTermKeysPane(pane) {
     const ra = pane.querySelector('input[name="tkRight"]:checked');
     const ac = pane.querySelector('#tkAutoCopy').checked;
     const ct = pane.querySelector('#tkCloseToTray').checked;
+    const ab = pane.querySelector('#tkAiBrowser').checked;
     const cu = pane.querySelector('input[name="cuMode"]:checked');
     try {
       const body = {term_keys: {right_action: ra ? ra.value : 'ctrl_menu', auto_copy: ac,
                                 term_font_size: termFontSize, ui_zoom: uiZoom},
-                    close_to_tray: ct};
+                    close_to_tray: ct,
+                    ai_browser_enabled: ab};   // AI 浏览器总开关（后端每次操作现读，保存即生效）
       if (cu) body.claude_ui_mode = cu.value;   // Claude 入口分派（harness/cli）
       await fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(body)});

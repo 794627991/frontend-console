@@ -205,6 +205,12 @@ app.register_blueprint(tree_search_bp)
 from src.vcs import vcs_bp
 app.register_blueprint(vcs_bp)
 
+# 注册 AI 浏览器 Blueprint（路由 /api/ai_browser/*，2026-11-24 用户需求：AI 用
+# CDP 操作网页时页面显示在会话右侧分屏，用户看着 AI 操作）。mcp_server 的
+# browser_* 与 devtools_*（默认目标）都打到这里
+from src.ai_browser import ai_browser_bp
+app.register_blueprint(ai_browser_bp)
+
 # 注册 Claude 安装引导 Blueprint：a32x 起该蓝图已无任何端点（旧 zip 安装
 # 通道彻底退役，用户令「这个通道彻底退役，不要了」）——保留注册仅为兼容，
 # 实际依赖安装走下方 res_bp（.fcpk 资源包）。
@@ -1944,6 +1950,9 @@ def api_theme():
                         # ——localStorage 跨启动（端口必变）必丢，恢复从未生效
                         "web_session": _web_session_clean(cfg.get("web_session")),
                         "close_to_tray": bool(cfg.get("close_to_tray", True)),
+                        # 2026-11-24 AI 浏览器总开关（缺省开）：AI 操作网页时显示在
+                        # Claude 对话右侧分屏；关闭后 browser_* 与 devtools_* 默认目标不可用
+                        "ai_browser_enabled": bool(cfg.get("ai_browser_enabled", True)),
                         "tray_prompt_shown": bool(cfg.get("tray_prompt_shown", False)),
                         "claude_ui_mode": cfg.get("claude_ui_mode", "harness"),
                         "custom_theme": cfg.get("custom_theme", {}),
@@ -2053,6 +2062,9 @@ def api_theme():
     _tk = {}
     if "close_to_tray" in data:
         _tk["close_to_tray"] = bool(data["close_to_tray"])
+    # 2026-11-24 AI 浏览器总开关（src/ai_browser.py 每次操作现读，保存即生效）
+    if "ai_browser_enabled" in data:
+        _tk["ai_browser_enabled"] = bool(data["ai_browser_enabled"])
     if "tray_prompt_shown" in data:
         _tk["tray_prompt_shown"] = bool(data["tray_prompt_shown"])
     if "claude_ui_mode" in data:
