@@ -697,6 +697,28 @@ def tool_browser_network(url, args):
 
 
 @_dt_wrap
+def tool_browser_downloads(url, args):
+    # 2026-11-24 用户令：下载不弹保存窗口，文件自动存进下载目录（默认 数据目录\
+    # download，用户可在设置里改）。打的是下载中心 src/downloads.py（普通网页
+    # 标签页的下载也登记在那里）。wait 可以是 0：不走 _aibr 的 timeout 通道
+    #（那条夹限下限是 1 秒，还会把它塞进请求体），直接放进请求体
+    try:
+        wait_s = float(args.get("wait") or 0)
+    except (TypeError, ValueError):
+        wait_s = 0.0
+    if wait_s != wait_s:                  # nan
+        wait_s = 0.0
+    wait_s = min(_AIBR_WAIT_MAX, max(0.0, wait_s))
+    j = _post(url, "/api/downloads/list", {"wait": wait_s},
+              timeout=max(100.0, wait_s + _AIBR_HTTP_SLACK))
+    if not isinstance(j, dict):
+        raise _AibrFail("后端返回了无法识别的内容（不是 JSON 对象）")
+    if not j.get("ok"):
+        raise _AibrFail(j.get("err") or "后端没有说明原因")
+    return j.get("text") or "OK"
+
+
+@_dt_wrap
 def tool_browser_back(url, args):
     return _aibr(url, "back")
 
@@ -1287,6 +1309,14 @@ _TOOLS = [
         }},
     },
     {
+        "name": "browser_downloads",
+        "description": "AI 浏览器：查看下载记录（状态 / 大小 / 真实保存路径）。在 AI 浏览器里点下载不会弹保存窗口：文件自动存进下载目录（默认 数据目录\\download，用户可在设置里改）。触发下载后用它拿结果——不要凭页面文案推断文件存到了哪。",
+        "inputSchema": {"type": "object", "properties": {
+            "wait": {"type": "number", "default": 0, "minimum": 0, "maximum": 60,
+                     "description": "有下载正在进行时最多等它多少秒（上限 60）"},
+        }},
+    },
+    {
         "name": "browser_back",
         "description": "AI 浏览器：后退一页。",
         "inputSchema": {"type": "object", "properties": {}},
@@ -1315,7 +1345,7 @@ _RETRY_SAFE_TOOLS = {
     "devtools_network", "devtools_screenshot",
     # 2026-11-24 AI 浏览器只读族（eval/click/type/导航类有副作用，不进）
     "browser_screenshot", "browser_dom",
-    "browser_console", "browser_network",
+    "browser_console", "browser_network", "browser_downloads",
 }
 
 
@@ -1395,6 +1425,8 @@ def _dispatch(url, name, args):
         return tool_browser_console(url, args)
     if name == "browser_network":
         return tool_browser_network(url, args)
+    if name == "browser_downloads":
+        return tool_browser_downloads(url, args)
     if name == "browser_back":
         return tool_browser_back(url, args)
     if name == "browser_forward":

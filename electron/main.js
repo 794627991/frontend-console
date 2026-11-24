@@ -697,6 +697,8 @@ function pinMaximizeToWorkArea() {
 function openWindow(url) {
   booted = true;
   endpointUrl = url;
+  // 后端地址有了：先取一次下载目录（见下方「下载接管」）——不等第一笔下载
+  dlFetchDir();
   const saved = loadShellState();
   const opts = {
     width: 1280,
@@ -946,6 +948,134 @@ function aibrPost(path, body) {
     body: JSON.stringify(body || {}), signal: ctl.signal,
   }).then((r) => r.json()).catch(() => null).finally(() => clearTimeout(t));
 }
+
+// ---- 下载接管（2026-11-24 用户令）----
+// 此前壳完全不管下载：Electron 对没接管的下载弹系统保存框，存哪、存没存成只有
+// 用户自己知道——工具内的 AI 点完下载只能照页面文案说「浏览器下载列表可见」，
+// 用户自己在网页标签页里下载，更是点了保存就没下文。
+// 用户令：普通网页标签页的下载也对接到同一套——不弹保存框，直接存进下载目录，
+// 有进度显示和完成提示；下载目录默认 数据目录\download，可在设置里手动指定。
+//   · 目录只认下载中心给的（GET /api/downloads/config，src/downloads.py）：数据
+//     目录在哪、用户把它改成了哪里、隔离态落在沙箱哪里只有后端知道，壳不自算。
+//     后端给不出可用目录时这里是 null：不接管，退回 Electron 默认行为（弹保存
+//     框）——宁可多问一次，也不偷偷落到别处。
+//   · 挂在两个分区的 session 上：AI 浏览器与网页标签页（persist:webtabs）。工具
+//     自己的主界面用默认 session，不在此列——它的导出 / 另存为照旧。
+const DL_SOURCES = {};               // 分区名 → 来源标记（后端记录、界面提示用）
+DL_SOURCES[AIBR_PARTITION] = 'ai_browser';
+DL_SOURCES['persist:webtabs'] = 'webtab';
+const DL_UPDATE_MS = 450;            // 进度上报的最小间隔。Electron 的更新事件约 500ms 一次，
+                                     // 取 450 = 每个事件都报（面板上的进度条半秒走一格）
+let dlDir = null;                    // 当前下载目录（下载中心给的）；null = 不接管
+let dlSeq = 0;
+const dlItems = new Map();           // 进行中的下载 id → DownloadItem（取消用）
+const aibrDlReserved = new Set();    // 进行中的下载占用的目标路径（并发同名时不撞车）
+const AIBR_WIN_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
+
+function aibrSafeName(name) {
+  // 文件名来自服务器 / 页面，不可信：去掉路径分隔符与 Windows 非法字符（防
+  // `..\x` 写出下载目录）、去尾随的点/空格（Windows 不许）、避开保留设备名
+  // （`CON.fcpk`、`NUL` 这类在 Windows 上建不出来）、限长
+  let s = String(name || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim();
+  s = s.slice(0, 180).replace(/[. ]+$/, '');
+  if (!s) s = 'download';
+  if (AIBR_WIN_RESERVED.test(s)) s = '_' + s;
+  return s;
+}
+
+function aibrDlPath(dir, name) {
+  // 同名不覆盖：目录里已有（或另一个进行中的下载已占用）同名文件就加 (1)、(2)…
+  const ext = path.extname(name), base = path.basename(name, ext);
+  let p = path.join(dir, name);
+  for (let n = 1; n < 10000; n++) {
+    let taken;
+    try { taken = fs.existsSync(p); } catch (_) { taken = true; }
+    if (!taken && !aibrDlReserved.has(p)) break;
+    p = path.join(dir, base + ' (' + n + ')' + ext);
+  }
+  return p;
+}
+
+function dlTakeOver(item, source) {
+  if (!dlDir) return;   // 下载中心没给出可用目录：Electron 默认行为（弹保存框）
+  try {
+    const name = aibrSafeName(item.getFilename());
+    const target = aibrDlPath(dlDir, name);
+    aibrDlReserved.add(target);
+    // 设了保存路径 Electron 就不弹保存框，直接写到这里（先写 .crdownload 再改名）
+    item.setSavePath(target);
+    const id = 'dl_' + Date.now().toString(36) + '_' + (++dlSeq);
+    // blob: 下载（页面 fetch→Blob→a.download）的来源地址又长又没用，不报。
+    // 记录用**实际落盘**的文件名（可能已加序号），看到的名字要和磁盘上的一致
+    const url = String(item.getURL() || '');
+    const base = { id, source, filename: path.basename(target),
+                   url: /^blob:/.test(url) ? '' : url.slice(0, 300) };
+    const report = (o) => aibrPost('/api/downloads/report', Object.assign({}, base, o));
+    let last = 0;
+    dlItems.set(id, item);
+    report({ event: 'started', total: item.getTotalBytes() });
+    item.on('updated', () => {
+      // 别按事件带的 state 字符串过滤：实测（Electron 45，端到端里旁听）这个值是
+      // 'progressing'，不是文档写的 'in_progress'——按后者写会把所有进度帧都吃掉，
+      // 面板上的进度条从头到尾是 0，直到结束才跳满（2026-11-24 实跑踩到）。
+      // 「还没结束」以 dlItems 为准：done 里会删掉它
+      if (!dlItems.has(id)) return;
+      const now = Date.now();
+      if (now - last < DL_UPDATE_MS) return;
+      last = now;
+      report({ event: 'updated', received: item.getReceivedBytes(), total: item.getTotalBytes() });
+    });
+    item.on('done', (_ev, state) => {
+      aibrDlReserved.delete(target);
+      dlItems.delete(id);
+      report({ event: 'done', state, path: target,
+               received: item.getReceivedBytes(), total: item.getTotalBytes() });
+      dlFetchDir();      // 用户可能改了下载目录：顺手刷新，下一条下载就用新的
+    });
+  } catch (e) {
+    log('[downloads] 接管下载失败：' + (e && e.message));
+  }
+}
+
+function dlSetup() {
+  for (const part of Object.keys(DL_SOURCES)) {
+    eSession.fromPartition(part).on('will-download',
+      (_e, item) => dlTakeOver(item, DL_SOURCES[part]));
+  }
+}
+
+function dlFetchDir() {
+  // 向下载中心要当前下载目录。只有后端明确说「可用」才接管
+  if (!endpointUrl) return Promise.resolve(null);
+  return fetch(endpointUrl + '/api/downloads/config')
+    .then((r) => r.json())
+    .then((j) => {
+      dlDir = (j && j.ok === true && j.usable === true
+               && typeof j.dir === 'string' && j.dir) ? j.dir : null;
+      return dlDir;
+    })
+    .catch(() => null);
+}
+
+app.whenReady().then(() => {
+  try { dlSetup(); }
+  catch (e) { log('[downloads] 下载监听挂载失败：' + (e && e.message)); }
+  // 用户在设置里改了下载目录：界面会经 IPC 让这里立刻重取；另加低频轮询兜底
+  setInterval(() => { dlFetchDir(); }, 30000);
+});
+
+ipcMain.on('fc:dl-refresh', (e) => {
+  // 只认主界面发来的（guest 没有 preload，拿不到 ipcRenderer——双保险）
+  if (win && !win.isDestroyed() && e.sender === win.webContents) dlFetchDir();
+});
+
+ipcMain.handle('fc:dl-cancel', (e, id) => {
+  // 取消一个进行中的下载。同样只认主界面
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return false;
+  const it = dlItems.get(String(id));
+  if (!it) return false;
+  try { it.cancel(); return true; } catch (_) { return false; }
+});
 
 async function aibrAttach(wcId) {
   const n = Number(wcId);

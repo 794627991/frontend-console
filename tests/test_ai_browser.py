@@ -18,6 +18,7 @@
 对抗审计（2026-11-24）后补强：原先有恒真断言和「名字说测了其实没测」的用例，
 逐条改成能真正失败的；三个判官指出的问题各配一条回归。
 """
+import ast
 import base64
 import json
 import os
@@ -34,6 +35,7 @@ import pytest
 
 import src.ai_browser as ab
 import src.devtools_cdp as cdp
+import src.downloads as dl
 import src.mcp_server as mcp
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -120,7 +122,17 @@ def env(monkeypatch):
         ab._state.update(target_id=None, wc_id=None, ts=0.0, gen=0)
     ab._hist_clear()
     ab._listen_gen[1] = -1
+    with dl._lock:
+        dl._records.clear()
+    # 下载类用例读写的数据目录：沙箱里专属的子目录。不直接用全局 DATA_DIR 的当前值
+    # ——同批别的测试会在导入期把它改走且不恢复（test_vcs_git_ops 就是这样，实测
+    # 跑在它后面时下载目录落到了沙箱外，被下面 _dl_wipe 的自证拦下）。
+    # 没有隔离开关就直接失败：宁可整份全红，也不让任何一个用例碰真实的数据目录
+    iso = os.environ.get("FC_STATE_DIR")
+    assert iso, "测试自隔离未生效（FC_STATE_DIR 为空）——拒绝运行"
+    monkeypatch.setattr(ab._st, "DATA_DIR", os.path.join(iso, "dl_test"))
     monkeypatch.setattr(ab, "_broadcast_to_ai", lambda item: None)   # 防漏：用例自己装收集器
+    monkeypatch.setattr(dl, "_broadcast_to_ai", lambda item: None)   # 下载中心的 SSE 帧同理
     e = _NS()
     e.sent = []            # (时刻, _broadcast_to_ai 收到的帧)
     e.calls = []           # CdpSession.send 的 (method, params, 时刻)
@@ -131,10 +143,18 @@ def env(monkeypatch):
     e.clock = FakeTime()
     monkeypatch.setattr(ab, "time", e.clock)
     monkeypatch.setattr(ab, "_broadcast_to_ai", lambda item: e.sent.append((e.clock.time(), item)))
+    # 下载中心（src/downloads.py）与 AI 浏览器共用同一套桩：假时钟（否则「等下载结束」
+    # 的用例会真等满 60 秒）与同一个帧收集器
+    monkeypatch.setattr(dl, "time", e.clock)
+    monkeypatch.setattr(dl, "_broadcast_to_ai", lambda item: e.sent.append((e.clock.time(), item)))
     monkeypatch.setattr(ab, "_listener_start", lambda: None)       # 不起真线程
     monkeypatch.setattr(ab, "_wait_listen", lambda timeout=3.0: True)   # 同上：不等监听就绪
     e.config = {"ai_browser_enabled": True}
     monkeypatch.setattr(ab._st, "_load_config", lambda: dict(e.config))
+    # 配置的保存也走内存：下载目录配置（config 的 download_dir）的用例读写闭环，
+    # 不碰磁盘上的 config.json
+    monkeypatch.setattr(ab._st, "_save_config",
+                        lambda cfg: (e.config.clear(), e.config.update(cfg)))
 
     class FakeSession:
         def __init__(self, port, tid):
@@ -167,9 +187,11 @@ def env(monkeypatch):
     monkeypatch.setattr(ab._cdp, "list_targets", lambda port, timeout=3.0: list(e.targets))
     app = flask.Flask("aibr_test")
     app.register_blueprint(ab.ai_browser_bp)
+    app.register_blueprint(dl.downloads_bp)       # 下载中心（2026-11-24 用户令起独立成模块）
     app.config["TESTING"] = True
     c = app.test_client()
     e.post = lambda p, body=None: c.post(p, json=body or {}).get_json()
+    e.status = lambda p, body=None: c.post(p, json=body or {}).status_code
     e.get = lambda p: c.get(p).get_json()
     # 壳登记时带的三个字段（partition 是后端核对「确实是 AI 浏览器分区」的依据）
     e.attach = lambda: e.post("/api/ai_browser/attach",
@@ -1091,8 +1113,12 @@ def test_mcp_browser_tools_delegate_to_backend(monkeypatch):
     assert posted[-1][1] == {"key": "Control+a"} and posted[-1][2] == 100
     mcp.tool_browser_dom(u, {"selector": "a", "limit": 3})
     assert posted[-1][1] == {"selector": "a", "limit": 3}
-    # 13 个工具各打各的路由（click 上面故意调了两次，所以按集合比）
-    assert set(p for p, _b, _t in posted) == set(
+    # 下载记录打的是下载中心（src/downloads.py），不在 /api/ai_browser/* 之下
+    assert mcp.tool_browser_downloads(u, {"wait": 30}) == "T:list"
+    assert posted[-1][0] == "/api/downloads/list"
+    assert posted[-1][1] == {"wait": 30.0} and posted[-1][2] == 100
+    # 13 个工具各打各的 AI 浏览器路由（click 上面故意调了两次，所以按集合比）
+    assert set(p for p, _b, _t in posted if p.startswith("/api/ai_browser/")) == set(
         "/api/ai_browser/" + r for r in ("navigate", "click", "type", "press", "wait",
                                          "screenshot", "eval", "dom", "console", "network",
                                          "back", "forward", "reload"))
@@ -1171,7 +1197,7 @@ def test_mcp_devtools_bad_target_is_plain_text():
 def test_mcp_tool_table():
     names = [t["name"] for t in mcp._TOOLS]
     assert len(names) == len(set(names))
-    assert sum(n.startswith("browser_") for n in names) == 13
+    assert sum(n.startswith("browser_") for n in names) == 14
     for t in mcp._TOOLS:
         if t["name"].startswith("devtools_"):
             assert t["inputSchema"]["properties"]["target"]["default"] == "browser"
@@ -1189,8 +1215,13 @@ def test_mcp_tool_table():
         if t["name"].startswith("devtools_"):
             assert "默认" in t["description"] and 'target="app"' in t["description"], t["name"]
     # 只读的才允许断连重试；有副作用的（点击/输入/导航/eval）不在列
-    assert {"browser_screenshot", "browser_dom", "browser_console", "browser_network"} \
-        <= mcp._RETRY_SAFE_TOOLS
+    assert {"browser_screenshot", "browser_dom", "browser_console", "browser_network",
+            "browser_downloads"} <= mcp._RETRY_SAFE_TOOLS
+    # browser_downloads 的 wait 可为 0（不等于「用缺省」）；上限与后端夹限一致
+    dl = next(t for t in mcp._TOOLS if t["name"] == "browser_downloads")
+    wprop = dl["inputSchema"]["properties"]["wait"]
+    assert (wprop["minimum"], wprop["maximum"], wprop["default"]) == (0, 60, 0)
+    assert "download" in dl["description"] and "不要凭页面文案" in dl["description"]
     assert not {"browser_click", "browser_type", "browser_press", "browser_navigate",
                 "browser_eval", "browser_wait", "browser_reload", "browser_back",
                 "browser_forward"} & mcp._RETRY_SAFE_TOOLS
@@ -1389,13 +1420,123 @@ def test_cross_component_contract_literals():
     for w in ("重新加载", "后退", "前进"):
         assert '_ui("ai_browser_op", op="navigate", text="%s")' % w in py, w
         assert w in fe, w
-    # 壳 POST 的路由，后端都得有
+    # 壳 POST 的 AI 浏览器路由，后端都得有
     for route in ("/api/ai_browser/attach", "/api/ai_browser/detach"):
         assert route in sh and '@ai_browser_bp.route("%s"' % route in py, route
-    # MCP 调的 13 条路由，后端都得有
+    # MCP 调的 13 条 AI 浏览器路由，后端都得有
     routes_py = set(re.findall(r'@ai_browser_bp.route\("/api/ai_browser/([a-z]+)"', py))
     routes_mcp = set(re.findall(r'_aibr\(url, "([a-z]+)"', mcp_py))
     assert routes_mcp <= routes_py and len(routes_mcp) == 13
+    # ---- 下载中心（2026-11-24 用户令）：独立成 src/downloads.py，AI 浏览器与普通
+    # 网页标签页的下载共用。下面这些字面量把各端钉在一起 ----
+    dls = _read("src", "downloads.py")
+    assert set(re.findall(r'@downloads_bp.route\("/api/downloads/([a-z]+)"', dls)) == {
+        "report", "list", "config", "forget", "open"}
+    assert "app.register_blueprint(downloads_bp)" in _read("src", "server.py")
+    # AI 浏览器模块不再有下载路由，只订阅下载中心（状态条显示）；状态条只认 AI 浏览器
+    # 来源的下载——普通网页的下载若推 ai_browser_op，会把分屏给展开
+    assert "/api/ai_browser/download" not in py and "_downloads.subscribe(_dl_status)" in py
+    status = py[py.index("def _dl_status(rec, event):"):]
+    assert 'rec.get("source") != "ai_browser" or event == "updated"' in status
+    assert "else if (d.op === 'download') msg = text;" in fe
+    # 壳：两个分区的 session 都挂 will-download——AI 浏览器与网页标签页（分区名与
+    # web-panel.js 建标签页用的一致）。只挂前者 = 普通网页下载照旧弹保存框、没提示
+    setup = _function_body(sh, "function dlSetup() {")
+    assert "Object.keys(DL_SOURCES)" in setup
+    assert "eSession.fromPartition(part).on('will-download'" in setup
+    assert "DL_SOURCES[AIBR_PARTITION] = 'ai_browser';" in sh
+    assert "DL_SOURCES['persist:webtabs'] = 'webtab';" in sh
+    assert _read("web", "js", "web-panel.js").count("setAttribute('partition', 'persist:webtabs')") == 1
+    take = _function_body(sh, "function dlTakeOver(item, source) {")
+    assert re.search(r"if \(!dlDir\) return;", take), "下载中心没给出可用目录必须不接管"
+    assert "item.setSavePath(target)" in take                  # 设了保存路径 = 不弹保存框
+    assert "const target = aibrDlPath(dlDir, name);" in take    # 只存进下载中心给的目录
+    assert "aibrPost('/api/downloads/report'," in take and "id, source, filename:" in take
+    assert "dlItems.set(id, item);" in take and "dlItems.delete(id);" in take
+    # 进度帧不许按事件带的 state 字符串过滤：实测是 'progressing' 而非文档的 'in_progress'
+    #（按后者写会把进度全吃掉，2026-11-24 实跑踩到）；「还没结束」以 dlItems 为准
+    assert "state !== 'in_progress'" not in take and "if (!dlItems.has(id)) return;" in take
+    # 目录只认下载中心 GET /api/downloads/config，且只有后端明确说「可用」才接管；
+    # 登记响应不再带目录；后端地址一有就取一次；用户改了配置，界面让壳立刻重取
+    fetch_body = _function_body(sh, "function dlFetchDir() {")
+    assert "fetch(endpointUrl + '/api/downloads/config')" in fetch_body
+    assert "j.usable === true" in fetch_body
+    assert "download_dir" not in _function_body(sh, "async function aibrAttach(wcId) {")
+    assert re.search(r"endpointUrl = url;\n\s*//[^\n]*\n\s*dlFetchDir\(\);", sh), "后端地址有了要先取下载目录"
+    refresh_h = re.search(r"ipcMain\.on\('fc:dl-refresh', \(e\) => \{(.*?)\n\}\);", sh, re.S).group(1)
+    assert "e.sender === win.webContents) dlFetchDir();" in refresh_h     # 只认主界面
+    # 取消：只认主界面发来的，只对进行中的下载
+    cancel_h = re.search(r"ipcMain\.handle\('fc:dl-cancel', \(e, id\) => \{(.*?)\n\}\);", sh, re.S).group(1)
+    assert "e.sender !== win.webContents" in cancel_h and "dlItems.get(String(id))" in cancel_h
+    assert "it.cancel()" in cancel_h
+    assert "invoke('fc:dl-cancel'" in pre and "send('fc:dl-refresh'" in pre   # preload 与壳同名
+    # 同名不覆盖：目录里已有的、另一个进行中的下载占着的路径都要跳过
+    dl_path = _function_body(sh, "function aibrDlPath(dir, name) {")
+    assert "fs.existsSync(p)" in dl_path and "aibrDlReserved.has(p)" in dl_path
+    assert "base + ' (' + n + ')' + ext" in dl_path
+    # 后端：「完成」要自己核实文件在下载目录里才给路径
+    assert 'size, why = _verified(d.get("path"))' in dls
+    # 两头的等待夹限数字必须一致；这条下限是 0（与 navigate/wait 的 1 不同）
+    assert "min(_AIBR_WAIT_MAX, max(0.0, wait_s))" in mcp_py
+    assert "min(WAIT_MAX, max(0.0, wait_s))" in dls
+    assert "_AIBR_WAIT_MAX = 60.0" in mcp_py and "WAIT_MAX = 60.0" in dls
+    # MCP 的下载记录打的是下载中心
+    assert '_post(url, "/api/downloads/list", {"wait": wait_s}' in mcp_py
+    # SSE：下载中心每个阶段都推 kind="download"；sense.js 转给下载面板且不进感知流
+    assert '_broadcast_to_ai(dict(rec, kind="download", event=event))' in dls
+    assert re.search(r"if \(item\.kind === 'download' && window\.DL\) \{\s*window\.DL\.onEvent\(item\);", sense)
+    # 下载面板（web/js/downloads.js）：顶栏「下载」钮 + 浮层。它只「看」和打开 / 取消 /
+    # 移除记录——删文件只能在设置的「可清理项」里
+    dljs = _read("web", "js", "downloads.js")
+    html = _read("web", "index.html")
+    assert 'window.DL = { onEvent, refresh };' in dljs
+    assert "document.getElementById('btnDownloads')" in dljs
+    assert html.count('id="btnDownloads"') == 1
+    assert '<script type="module" src="web/js/downloads.js' in html
+    for call in ("post('/api/downloads/list'", "post('/api/downloads/open'",
+                 "post('/api/downloads/forget'", "window.fcShell.dlCancel(id)"):
+        assert call in dljs, call
+    assert "/api/data_dir/clean" not in dljs and "mode: 'all'" not in dljs, "面板不许删文件"
+    assert "item.event === 'done' && !shown" in dljs      # 面板开着就不弹横幅
+    # 仅图标（a59x 定调）、title 2 字、按钮里没有文字（标签后直接是 svg）
+    assert re.search(r'<button[^>]*id="btnDownloads" title="下载" aria-label="下载"><svg', html)
+    css = _read("web", "style", "base.css")
+    assert "#btnDownloads { position: relative; }" in css and ".dl-panel {" in css and ".dl-badge {" in css
+    # 下载目录的配置（用户令：默认跟随数据目录，可手动指定）：设置页有入口，
+    # 保存后让壳立刻重取
+    settings = _read("web", "js", "settings.js")
+    assert "fetch('/api/downloads/config'" in settings and "window.fcShell.dlRefresh()" in settings
+    assert "if (window.DL) window.DL.refresh();" in settings      # 开着的面板头部目录跟着换
+    assert 'id="ddDlPath"' in settings and 'id="ddDlApply"' in settings
+    # 下载的删除入口（2026-11-24 用户令）：统一在 设置→数据目录→「可清理项」里，
+    # 且只在那里。后端把下载列进可清理目标；前端确认条对它不显示「按策略清理」
+    # （工具不替用户判断），按天数按钮的文案跟着目标走；不再有单独的「只显示」行
+    settings = _read("web", "js", "settings.js")
+
+    def _object(src, head):
+        a = src.index(head)
+        return src[a:src.index("};", a)]
+    assert "row('AI 浏览器下载'" not in settings
+    assert "Object.entries(j.targets || {}).map(([k, u]) =>" in settings
+    assert "downloads: '工具不会自动删除下载的文件" in _object(settings, "const POLICY = {")
+    assert "const NO_POLICY = { logs: true, downloads: true };" in settings
+    assert "pending === 'logs' ? '删除旧日志' : '删除旧文件'" in settings
+    # 下载走回收站；警告与成功提示按实际位置如实切换（本地硬盘能找回 / 网络位置、U 盘不能）
+    assert "const _danger = (k) => k === 'downloads'" in settings
+    assert "删除的文件会移入回收站，可以找回" in settings
+    assert "不进回收站，删除后无法恢复" in settings
+    assert "项移入回收站（" in settings and "downloads: '全部清空" not in settings
+    hygiene = _read("src", "data_hygiene.py")
+    assert '_CLEANABLE = ("uploads", "logs", "idx", "ask", "nav", "downloads")' in hygiene
+    assert "if dl_default:" in hygiene and '"trash": _dl_recyclable(dl_dir),' in hygiene
+    # 用户手动指定的目录：不进可清理项，清理入口也不认（那里面可能有用户自己的文件）
+    clean_fn = hygiene[hygiene.index("def manual_clean("):hygiene.index("def cleanup_throttled(")]
+    assert "if not st.download_dir_is_default():\n            return 0, 0" in clean_fn
+    assert '"download_dir": {"path": dl_dir, "custom": not dl_default,' in hygiene
+    assert "手动指定（工具不提供清理，要删请自己去文件夹）" in settings
+    assert "from src.file_tree import _recycle_to_trash" in hygiene
+    assert "DOWNLOAD_AGE_OPTIONS = LOG_AGE_OPTIONS" in hygiene
+    assert '"downloads": DOWNLOAD_AGE_OPTIONS}.get(target)' in _read("src", "server.py")
     # 前端伪 tab 名 == 分屏模块的常量
     assert "const AIBR_TID = '__aibr__';" in fe and "type: '__aibr__'" in fe
     sub = _read("web", "js", "harness", "subpane.js")
@@ -1461,3 +1602,820 @@ def test_frontend_module_guards_from_audit():
     assert "_S.crashed = false;" in dom_ready, "dom-ready 必须复位崩溃标志"
     open_body = _function_body(fe, "function open() {")
     assert "if (_S.stage && _S.crashed) _teardownStage();" in open_body
+
+
+# ---------- 12. 下载（2026-11-24 用户令：不弹保存框，自动存到 数据目录\download）----------
+
+def _real(p):
+    return os.path.normcase(os.path.realpath(p))
+
+
+def _dl_wipe():
+    """清空下载目录里的文件。动手前先自证它在沙箱里——FC_STATE_DIR 没设（不是
+    pytest 身份）时这里直接失败，绝不拿真实的数据目录练手。"""
+    d = ab._st.download_dir(create=True)
+    assert _real(d).startswith(_real(os.environ["FC_STATE_DIR"]) + os.sep), \
+        "下载目录不在沙箱里，拒绝清理"
+    for fn in os.listdir(d):
+        p = os.path.join(d, fn)
+        if os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(p)               # 用例自己造的子文件夹
+        else:
+            os.remove(p)
+    return d
+
+
+def _dl_write(name, data=b"0123456789"):
+    """模拟「壳把文件写进了下载目录」。"""
+    p = os.path.join(ab._st.download_dir(create=True), name)
+    with open(p, "wb") as f:
+        f.write(data)
+    return p
+
+
+def _dl_report(env, did, **kw):
+    # 默认按「AI 浏览器里的下载」上报（状态条的断言依赖来源）；普通网页标签页的用例自己传
+    kw.setdefault("source", "ai_browser")
+    kw.setdefault("filename", did + ".bin")
+    return env.post("/api/downloads/report", dict(kw, id=did))
+
+
+def _dl_rows(env, **kw):
+    return env.post("/api/downloads/list", kw)["downloads"]
+
+
+def _dl_row(env, did, **kw):
+    return {r["id"]: r for r in _dl_rows(env, **kw)}[did]
+
+
+def test_download_dir_follows_data_dir(env, monkeypatch):
+    # 隔离自证（AGENTS.md 铁律）：目录由**被测进程自己**报出来看——必须在
+    # FC_STATE_DIR 里、不在仓库里。下载目录默认跟数据目录走（用户令），而数据目录
+    # 在隔离态落沙箱——放数据目录下天然隔离（放工具目录下则不然：APP_DIR 不认隔离开关）
+    iso = os.environ.get("FC_STATE_DIR")
+    assert iso, "pytest 身份下测试自隔离必须生效，否则这个用例会碰真实数据目录"
+    orig = ab._st.DATA_DIR
+    probe = os.path.join(iso, "dlprobe")
+    monkeypatch.setattr(ab._st, "DATA_DIR", probe)              # 仍在沙箱里
+    want = os.path.join(probe, "download")
+    assert ab._st.download_dir() == want and ab._st.download_dir_is_default()
+    assert not os.path.isdir(probe), "不带 create：只算路径，不建目录"
+    assert ab._st.download_dir(create=True) == want and os.path.isdir(want)
+    # 目录建不了 → None：调用方据此不接管下载，而不是落到别处
+    blocker = os.path.join(iso, "dlblocker")
+    with open(blocker, "w") as f:          # 同名位置是个文件，makedirs 必失败
+        f.write("x")
+    monkeypatch.setattr(ab._st, "DATA_DIR", blocker)
+    assert ab._st.download_dir(create=True) is None
+    assert ab._st.download_dir() == os.path.join(blocker, "download")   # 只算路径时不报错
+    monkeypatch.setattr(ab._st, "DATA_DIR", "")
+    assert ab._st.download_dir(create=True) is None and ab._st.download_dir() is None
+    # 回到沙箱里的真实数据目录。逐项改回而不用 monkeypatch.undo()：测试函数与夹具
+    # 拿的是同一个 monkeypatch，undo 会把夹具装的全部桩一起撤掉——登记请求就会
+    # 去连真实的 CDP 调试口
+    monkeypatch.setattr(ab._st, "DATA_DIR", orig)
+    d = ab._st.download_dir()
+    assert _real(d).startswith(_real(iso) + os.sep), "下载目录不在沙箱里"
+    assert not _real(d).startswith(_real(ab._st.BASE_DIR) + os.sep), "下载目录不许落在仓库里"
+    assert _real(os.path.dirname(d)) == _real(ab._st.DATA_DIR) and os.path.basename(d) == "download"
+
+
+def test_attach_does_not_hand_out_download_dir(env):
+    # 下载目录不再随登记结果交给壳（2026-11-24 用户令：普通网页标签页的下载也走同一
+    # 套，与登记无关）——壳统一向下载中心 GET /api/downloads/config 取
+    assert env.attach() == {"ok": True}
+
+
+def test_dir_config_reports_default_and_unusable_dir(env, monkeypatch, tmp_path):
+    # 壳据这个接口决定接不接管下载：usable=false（目录建不出来）就不接管、退回弹保存框
+    r = env.get("/api/downloads/config")
+    assert r == {"ok": True, "dir": ab._st.download_dir(), "custom": False,
+                 "default_dir": ab._st.download_dir(), "usable": True, "reason": None}
+    bad = str(tmp_path / "nope")            # 同名位置是个文件：目录建不出来
+    with open(bad, "w") as f:
+        f.write("x")
+    assert env.post("/api/downloads/config", {"dir": bad})["ok"] is False   # 配置阶段就拒绝
+    # 目录「后来」失效（配置时是好的，之后那个位置被换成了文件）：如实报不可用
+    env.config["download_dir"] = os.path.join(bad, "sub")
+    r = env.get("/api/downloads/config")
+    assert (r["ok"], r["usable"], r["custom"]) == (True, False, True)
+    assert "保存框" in r["reason"]
+    env.config.pop("download_dir")
+
+
+def test_download_lifecycle_is_recorded_and_shown_on_the_status_bar(env):
+    env.attach()
+    _dl_wipe()
+    assert _dl_report(env, "dl_a", event="started", filename="资源包.fcpk",
+                      total=1827874558, url="https://x.example/y")["ok"]
+    rec = _dl_rows(env)
+    assert len(rec) == 1
+    assert (rec[0]["id"], rec[0]["filename"], rec[0]["state"]) == ("dl_a", "资源包.fcpk", "in_progress")
+    assert (rec[0]["total"], rec[0]["received"], rec[0]["path"], rec[0]["error"]) == (1827874558, 0, None, None)
+    assert "url" not in rec[0]                                   # 来源地址不外露
+    frames = env.ops()
+    assert [(f["op"], f["text"]) for f in frames] == [("download", "开始下载：资源包.fcpk")]
+    # 进度：只更新记录，不推状态条（否则大文件把状态条刷成流水）
+    env.sent.clear()
+    _dl_report(env, "dl_a", event="updated", received=900, total=1800)
+    assert env.ops() == [] and _dl_row(env, "dl_a")["received"] == 900
+    assert _dl_row(env, "dl_a")["total"] == 1800
+    # 完成：文件确实在下载目录里 → 记完成，大小以磁盘为准
+    p = _dl_write("资源包.fcpk")
+    _dl_report(env, "dl_a", event="done", state="completed", received=999, path=p)
+    rec = _dl_row(env, "dl_a")
+    assert (rec["state"], rec["path"], rec["received"]) == ("completed", p, 10)
+    assert env.ops()[-1]["text"] == "下载完成：资源包.fcpk（10 B）→ 已存到下载目录"
+    # 取消 / 失败
+    env.sent.clear()
+    _dl_report(env, "dl_b", event="started", filename="b.zip")
+    _dl_report(env, "dl_b", event="done", state="cancelled")
+    assert env.ops()[-1]["text"] == "下载已取消：b.zip"
+    _dl_report(env, "dl_c", event="started", filename="c.bin")
+    _dl_report(env, "dl_c", event="done", state="interrupted", received=5)
+    rec = _dl_row(env, "dl_c")
+    assert (rec["state"], rec["error"], rec["path"]) == ("interrupted", "下载被中断", None)
+    assert env.ops()[-1]["text"] == "下载失败：c.bin（下载被中断）"
+    assert _dl_row(env, "dl_b")["path"] is None
+    # 重复的 started（同一 id）：更新而不是再登记一条
+    _dl_report(env, "dl_a", event="started", total=7)
+    assert len(_dl_rows(env)) == 3 and _dl_row(env, "dl_a")["total"] == 7
+
+
+def test_download_completed_is_verified_on_disk(env, tmp_path):
+    # 对抗点：「完成」不能只信上报——AI 会照着路径去读文件。路径必须是下载目录里
+    # 真实存在的文件，否则按失败处理，且不给路径
+    env.attach()
+    _dl_wipe()
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"abc")
+    bad = [(str(outside), "文件不在下载目录里"),
+           (os.path.join(ab._st.download_dir(), "nope.bin"), "文件不在磁盘上"),
+           (ab._st.download_dir(), "文件不在下载目录里"),          # 目录本身
+           ("", "文件不在下载目录里"), (None, "文件不在下载目录里"),
+           (str(tmp_path), "文件不在下载目录里")]
+    for i, (path, why) in enumerate(bad):
+        did = "dl_v%d" % i
+        _dl_report(env, did, event="started")
+        _dl_report(env, did, event="done", state="completed", received=3, path=path)
+        rec = _dl_row(env, did)
+        assert (rec["state"], rec["error"], rec["path"]) == ("interrupted", why, None), (path, rec)
+        assert env.ops()[-1]["text"].startswith("下载失败：")
+    # 真在目录里：大小写 / 斜杠写法不同也算数（Windows 路径不区分这些）
+    p = _dl_write("ok.bin", b"abcd")
+    for i, variant in enumerate((p.upper(), p.replace("\\", "/"))):
+        did = "dl_ok%d" % i
+        _dl_report(env, did, event="started")
+        _dl_report(env, did, event="done", state="completed", received=1, path=variant)
+        rec = _dl_row(env, did)
+        assert (rec["state"], rec["received"]) == ("completed", 4), (variant, rec)
+        assert _real(rec["path"]) == _real(p)                   # 给 AI 的是壳报的原样路径
+    # 声称的路径里夹带 ..：按规范化后的真实位置判——在目录里才算
+    sneaky = os.path.join(ab._st.download_dir(), "..", "download", "ok.bin")
+    _dl_report(env, "dl_dotdot", event="started")
+    _dl_report(env, "dl_dotdot", event="done", state="completed", path=sneaky)
+    assert _dl_row(env, "dl_dotdot")["state"] == "completed"
+
+
+def test_download_report_validation(env):
+    env.attach()
+    assert env.post("/api/downloads/report", {"event": "started"})["ok"] is False   # 缺 id
+    assert _dl_report(env, "!!!", event="started")["ok"] is False                      # 清洗后为空
+    assert "event" in _dl_report(env, "dl_x", event="boom")["err"]
+    assert env.post("/api/downloads/report", [1, 2])["ok"] is False                 # 不是对象
+    # 后端重启过、壳还在报旧下载：没有起点记录——如实回 unknown，不凭空登记
+    unknown = {"ok": True, "unknown": True}
+    assert _dl_report(env, "dl_ghost", event="updated", received=1) == unknown
+    assert _dl_report(env, "dl_ghost", event="done", state="completed") == unknown
+    assert _dl_rows(env) == [] and env.ops() == []
+    # 结束状态不认识：按失败处理并说明
+    _dl_report(env, "dl_s", event="started", filename="s.bin")
+    _dl_report(env, "dl_s", event="done", state="finished")
+    rec = _dl_row(env, "dl_s")
+    assert rec["state"] == "interrupted" and "未知的结束状态：finished" in rec["error"]
+    # 字节数 / 文件名 / id 里的垃圾入参
+    _dl_report(env, "dl../..\\z", event="started", filename="a\u0000b\n.bin" + "长" * 400,
+               total="abc", received=-5)
+    rec = _dl_row(env, "dlz")
+    assert rec["total"] == 0 and rec["received"] == 0
+    assert len(rec["filename"]) == 255
+    for ch in ("\u0000", "\n", "\r"):
+        assert ch not in rec["filename"]
+    _dl_report(env, "dlz", event="updated", received=float("nan"), total=float("inf"))
+    _dl_report(env, "dlz", event="done", state="cancelled", received="12")
+    rec = _dl_row(env, "dlz")
+    assert rec["received"] == 12 and rec["total"] == 0
+    assert _dl_report(env, "dl_empty", event="started", filename="  \x07 ")["ok"]
+    assert _dl_row(env, "dl_empty")["filename"] == "download"
+
+
+def test_download_records_are_capped(env):
+    env.attach()
+    done = {"state": "completed", "received": 1, "total": 1, "path": "p", "error": None,
+            "ts": 0, "source": "webtab"}
+    with dl._lock:
+        dl._records.clear()
+        for i in range(60):
+            dl._records["dl_%03d" % i] = dict(done, id="dl_%03d" % i, filename="f%d" % i)
+    _dl_report(env, "dl_new", event="started", filename="new.bin")
+    ids = [r["id"] for r in _dl_rows(env)]
+    assert len(ids) == dl._RECORD_MAX == 50
+    # 61 → 50 要淘汰 11 条：dl_000 … dl_010
+    assert ids[-1] == "dl_new" and "dl_010" not in ids and "dl_011" in ids   # 淘汰最早已结束的
+    with dl._lock:
+        dl._records.clear()
+        for i in range(50):
+            dl._records["p_%03d" % i] = dict(done, id="p_%03d" % i, filename="p%d" % i,
+                                               state="in_progress", path=None)
+    _dl_report(env, "p_new", event="started")
+    ids = [r["id"] for r in _dl_rows(env)]
+    assert len(ids) == 50 and ids[-1] == "p_new"
+    assert "p_000" not in ids and "p_001" in ids           # 全在进行中：只能挤掉最旧的
+
+
+def test_download_done_invalidates_usage_cache(env, monkeypatch):
+    from src import data_hygiene as dh
+    calls = []
+    monkeypatch.setattr(dh, "invalidate_usage_cache", lambda: calls.append(1))
+    env.attach()
+    _dl_report(env, "dl_c", event="started", filename="c.bin")
+    _dl_report(env, "dl_c", event="updated", received=1)
+    assert calls == []                               # 开始 / 进度不重扫：设置页下次打开自然重扫
+    _dl_report(env, "dl_c", event="done", state="cancelled")
+    assert calls == [1]                              # 结束后：设置页的存储占用要跟上
+
+
+def test_fmt_bytes():
+    f = dl._fmt_bytes
+    got = [f(v) for v in (0, 1, 1023, 1024, 1536, 1048576, 1827874558, None, "abc", -5,
+                          float("nan"), float("inf"))]
+    assert got == ["0 B", "1 B", "1023 B", "1.00 KB", "1.50 KB", "1.00 MB", "1.70 GB",
+                   "0 B", "0 B", "0 B", "0 B", "0 B"]
+
+
+def test_downloads_query_text_is_latest_first(env):
+    env.attach()
+    _dl_wipe()
+    ddir = ab._st.download_dir()
+    r = env.post("/api/downloads/list", {})
+    assert (r["ok"], r["dir"], r["downloads"]) == (True, ddir, [])
+    assert r["text"] == "还没有下载记录。下载不弹保存窗口，文件自动存到：" + ddir
+    p1 = _dl_write("one.bin")
+    _dl_report(env, "dl_1", event="started", filename="one.bin")
+    _dl_report(env, "dl_1", event="done", state="completed", path=p1)
+    _dl_report(env, "dl_2", event="started", filename="two.bin", total=2000)
+    _dl_report(env, "dl_2", event="updated", received=1000, total=2000)
+    _dl_report(env, "dl_3", event="started", filename="three.bin")
+    _dl_report(env, "dl_3", event="done", state="cancelled")
+    _dl_report(env, "dl_4", event="started", filename="four.bin", total=4000)
+    _dl_report(env, "dl_4", event="done", state="interrupted")
+    assert env.post("/api/downloads/list", {})["text"].split("\n") == [
+        "下载目录：" + ddir,
+        "[失败] four.bin（下载被中断）",
+        "[已取消] three.bin",
+        "[进行中] two.bin  已收 1000 B（50%）",
+        "[完成] one.bin  10 B  → " + p1,
+    ]
+
+
+def test_downloads_wait_blocks_until_finished_or_times_out(env, monkeypatch):
+    env.attach()
+    assert env.post("/api/downloads/list", {"wait": 30})["ok"]   # 没有进行中的：不等
+    assert env.clock.slept == 0
+    _dl_wipe()
+    _dl_report(env, "dl_w", event="started", filename="w.bin")
+    for wait in ({}, {"wait": "abc"}, {"wait": float("nan")}, {"wait": -3}):
+        env.post("/api/downloads/list", wait)                    # 缺省 / 垃圾值 = 0：不等
+    assert env.clock.slept == 0
+    # 等到了：轮询期间下载结束（sleep 的副作用模拟壳报完成）
+    plain_sleep = env.clock.sleep
+
+    def _sleep_then_finish(s):
+        plain_sleep(s)
+        _dl_report(env, "dl_w", event="done", state="completed", path=_dl_write("w.bin"))
+    monkeypatch.setattr(env.clock, "sleep", _sleep_then_finish)
+    r = env.post("/api/downloads/list", {"wait": 10})
+    assert 0 < env.clock.slept <= 10 and r["downloads"][-1]["state"] == "completed"
+    # 等不到：夹到上限 60 秒后如实返回「还在进行中」
+    monkeypatch.setattr(env.clock, "sleep", plain_sleep)
+    _dl_report(env, "dl_w2", event="started", filename="w2.bin")
+    env.clock.slept = 0
+    r = env.post("/api/downloads/list", {"wait": 999})
+    assert abs(env.clock.slept - 60.0) < 1e-6
+    assert r["downloads"][-1]["state"] == "in_progress"
+    env.clock.slept = 0
+    env.post("/api/downloads/list", {"wait": 0.5})
+    assert abs(env.clock.slept - 0.6) < 1e-6      # 0.2 秒一步：第三步越过 0.5
+
+
+def _fake_trash(monkeypatch, where):
+    """回收站替身：真调系统回收站会往用户的回收站里塞测试文件。替身把文件挪进一个
+    临时目录并记下调用——要验证的是「走的是回收站这条路、失败就不删」。
+    返回 (记录到的调用, 切换失败的开关)。"""
+    from src import data_hygiene as dh
+    where.mkdir(parents=True, exist_ok=True)
+    calls, switch = [], [False]
+
+    def recycle(p):
+        calls.append(os.path.basename(p))
+        if switch[0]:
+            return False                          # 模拟回收站不可用 / 操作失败
+        shutil.move(p, str(where / os.path.basename(p)))
+        return True
+    monkeypatch.setattr(dh, "_dl_recycle", recycle)
+    return calls, switch
+
+
+def test_downloads_are_deleted_only_from_the_settings_cleanup(env, tmp_path, monkeypatch):
+    # 2026-11-24 用户令：下载的删除入口统一在 设置→数据目录→「可清理项」，且**只在
+    # 这里**删。与串口日志同款：按策略不删、后台不删、AI 不删；只认用户的手动点击。
+    # 删法是移入回收站（下载的是用户的文件，删错能找回）
+    from src import data_hygiene as dh
+    trash = tmp_path / "trash"
+    calls, fail = _fake_trash(monkeypatch, trash)
+    ddir = _dl_wipe()
+    old = _dl_write("old.bin", b"o" * 1000)
+    new = _dl_write("new.bin", b"n" * 300)
+    going = os.path.join(ddir, "going.bin.crdownload")       # 进行中的下载
+    with open(going, "wb") as f:
+        f.write(b"g" * 5000)
+    sub = os.path.join(ddir, "我的资料")                       # 用户自己建的子文件夹
+    os.mkdir(sub)
+    keep = os.path.join(sub, "keep.txt")
+    with open(keep, "wb") as f:
+        f.write(b"k" * 200)
+    forty_days_ago = time.time() - 40 * 86400
+    os.utime(old, (forty_days_ago, forty_days_ago))
+
+    # 占用：口径 = 能删的（与清理共用 _download_files）——不含进行中的下载与子文件夹
+    data = dh.usage_stats(force=True)
+    t = data["targets"]["downloads"]
+    assert "downloads" not in data                              # 旧的「只显示」独立行已撤
+    assert (t["path"], t["bytes"], t["name"]) == (ddir, 1300, "下载文件")
+    assert t["age_options"] == [7, 30, 90] and t["by_age"] == {"7": 1000, "30": 1000, "90": 0}
+    assert t["trash"] is True and dh._dl_recyclable(ddir)      # 测试目录在本地硬盘上：删除可进回收站
+    assert list(data["targets"])[0] == "downloads"              # 排在可清理项第一位
+    assert "downloads" in dh._CLEANABLE
+
+    # 按策略：不删任何东西（工具不替用户判断）
+    assert dh.manual_clean("downloads", "policy") == (0, 0)
+    assert os.path.isfile(old) and os.path.isfile(new) and calls == []
+    # 按天数：只删超过 N 天的；天数只认白名单，否则抛错——不「假成功 0 项」
+    assert dh.manual_clean("downloads", "older", days=30) == (1, 1000)
+    assert calls == ["old.bin"]                                 # 走的是回收站这条路
+    assert not os.path.exists(old) and (trash / "old.bin").read_bytes() == b"o" * 1000
+    assert os.path.isfile(new)
+    for bad in (0, 1, 31, "30", None):
+        with pytest.raises(ValueError):
+            dh.manual_clean("downloads", "older", days=bad)
+    assert os.path.isfile(new) and len(calls) == 1              # 被拒的请求没删东西
+    # 回收站不可用 / 操作失败：不删，也不计入成绩——绝不退回永久删除
+    fail[0] = True
+    assert dh.manual_clean("downloads", "all") == (0, 0)
+    assert os.path.isfile(new) and os.path.isfile(keep) and os.path.isfile(going)
+    fail[0] = False
+    # 全部清空：只删下载目录第一层的普通文件；进行中的下载、子文件夹、目录本身都留着
+    assert dh.manual_clean("downloads", "all") == (1, 300)
+    assert sorted(os.listdir(ddir)) == ["going.bin.crdownload", "我的资料"]
+    assert os.path.getsize(going) == 5000 and os.path.isfile(keep)
+    assert sorted(p.name for p in trash.iterdir()) == ["new.bin", "old.bin"]
+    # 目标名字写错一律拒绝：不删东西，也不报成功
+    assert dh.manual_clean("download", "all") == (0, 0)
+    assert dh.manual_clean("download_dir", "all") == (0, 0)
+    assert os.path.isfile(keep) and os.path.isfile(going)
+    # 清理之后占用缓存已失效：下一次统计是重扫的
+    assert dh._usage_cache["ts"] == 0.0 and dh._dir_total_cache["ts"] == 0.0
+
+
+def test_dl_recyclable_tells_the_truth_about_the_location(monkeypatch):
+    # 只有本地固定硬盘才有回收站；网络位置 / U 盘上删了就是删了——界面据此如实警告
+    import ctypes
+    if not hasattr(ctypes, "windll"):
+        pytest.skip("非 Windows：盘类型判断只在 Windows 上有意义")
+    k32 = ctypes.windll.kernel32
+    from src import data_hygiene as dh
+    rec = dh._dl_recyclable
+    assert rec(None) is False and rec("") is False
+    assert rec(r"\\nas\share\download") is False               # UNC 路径
+    monkeypatch.setattr(k32, "GetDriveTypeW", lambda root: 3)
+    assert rec(r"D:\x\download") is True                       # DRIVE_FIXED
+    for kind in (0, 1, 2, 4, 5, 6):                            # 未知 / 无根目录 / 可移动 / 网络 / 光盘 / RAM 盘
+        monkeypatch.setattr(k32, "GetDriveTypeW", lambda root, k=kind: k)
+        assert rec(r"D:\x\download") is False, kind
+
+    def boom(root):
+        raise OSError("判不出来")
+    monkeypatch.setattr(k32, "GetDriveTypeW", boom)
+    assert rec(r"D:\x\download") is False                      # 判不出来按「不能」说，不夸大
+
+
+def test_dl_recycle_never_falls_back_to_permanent_delete(monkeypatch):
+    # 真实的回收站调用沿用文件树删除的实现；这里只钉「失败就不删、不退回 os.remove」
+    import types
+    from src import data_hygiene as dh
+    for answer, want in (((False, "系统回收站操作失败"), False), ((True, ""), True),
+                         (OSError("boom"), False)):
+        def _trash(p, a=answer):
+            if isinstance(a, Exception):
+                raise a
+            return a
+        monkeypatch.setitem(sys.modules, "src.file_tree",
+                            types.SimpleNamespace(_recycle_to_trash=_trash))
+        assert dh._dl_recycle(r"D:\ nowhere\a.bin") is want
+
+
+def test_clean_route_accepts_downloads_only_with_whitelisted_days(env, tmp_path, monkeypatch):
+    # 接口层同样只认 downloads + 7/30/90；别的目标仍不支持按天数
+    import src.server as S
+    _fake_trash(monkeypatch, tmp_path / "trash")              # 不往用户的回收站里放测试文件
+    _dl_wipe()                                               # 别的用例留下的文件不算在这条里
+    a = _dl_write("a.bin", b"a" * 10)
+    c = S.app.test_client()
+
+    def post(body):
+        rv = c.post("/api/data_dir/clean", json=body)
+        return rv.status_code, rv.get_json()
+
+    assert post({"target": "downloads", "mode": "older", "days": 0})[0] == 400     # 0 天=绕过确认的全清
+    assert post({"target": "downloads", "mode": "older", "days": "abc"})[0] == 400
+    assert post({"target": "downloads", "mode": "older"})[0] == 400
+    assert post({"target": "idx", "mode": "older", "days": 7})[0] == 400
+    assert post({"target": "download", "mode": "all"})[0] == 400                    # 名字写错
+    assert post({"target": "downloads", "mode": "wipe"})[0] == 400
+    assert os.path.isfile(a)                                                         # 被拒的请求都没删东西
+    assert post({"target": "downloads", "mode": "policy"}) == (200, {"ok": True, "removed": 0, "freed": 0})
+    assert os.path.isfile(a)
+    code, body = post({"target": "downloads", "mode": "older", "days": 7})
+    assert code == 200 and body["ok"] is True and body["removed"] == 0               # 刚下载的，不够 7 天
+    assert os.path.isfile(a)
+    assert post({"target": "downloads", "mode": "all"}) == (200, {"ok": True, "removed": 1, "freed": 10})
+    assert not os.path.exists(a)
+
+
+_DL_DELETERS = {"os.remove", "os.unlink", "_try_rm", "shutil.rmtree",
+                "remove", "unlink", "rmtree",
+                # 「移入回收站」也是删除——守卫必须认得它
+                "_dl_recycle", "_recycle_to_trash", "SHFileOperationW"}
+
+
+def _calls_in(node):
+    """函数体内所有被调用的函数名（点路径名 + 裸名）。"""
+    names = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            f, parts = n.func, []
+            while isinstance(f, ast.Attribute):
+                parts.append(f.attr)
+                f = f.value
+            if isinstance(f, ast.Name):
+                parts.append(f.id)
+            if parts:
+                names.add(".".join(reversed(parts)))
+                names.add(parts[0])
+    return names
+
+
+def _branch_calls(fn_node, target_name):
+    """manual_clean 里 `if/elif target == "<target_name>":` 那个分支（含嵌套）调用的函数名。"""
+    for n in ast.walk(fn_node):
+        if not isinstance(n, ast.If) or not isinstance(n.test, ast.Compare):
+            continue
+        left, ops, right = n.test.left, n.test.ops, n.test.comparators
+        if (isinstance(left, ast.Name) and left.id == "target" and len(ops) == 1
+                and isinstance(ops[0], ast.Eq) and len(right) == 1
+                and isinstance(right[0], ast.Constant) and right[0].value == target_name):
+            return _calls_in(n)
+    return None
+
+
+def test_no_code_deletes_downloads_outside_manual_clean():
+    """静态守卫（2026-11-24 用户令：下载**只在**设置→数据目录→可清理项里删）：
+    除 data_hygiene.manual_clean 外，src 下任何函数都不得「涉及下载目录且调用删除」。
+    「涉及」取宽——调了 download_dir / _download_files，或函数里的字符串提到
+    download：宁可多拦，新增一条删除路径时必须先过这一关。
+    （照搬串口日志「后台永不删除」的守卫写法。）"""
+    offenders = []
+    for r, _ds, fs in os.walk(os.path.join(ROOT, "src")):
+        for f in fs:
+            if not f.endswith(".py"):
+                continue
+            p = os.path.join(r, f)
+            with open(p, encoding="utf-8-sig", errors="replace") as fh:
+                try:
+                    tree = ast.parse(fh.read(), p)
+                except SyntaxError:
+                    continue
+            mod = os.path.splitext(os.path.basename(p))[0]
+            for n in ast.walk(tree):
+                if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                strings = [s.value for s in ast.walk(n)
+                           if isinstance(s, ast.Constant) and isinstance(s.value, str)]
+                touches = bool(_calls_in(n) & {"download_dir", "_download_files"}) \
+                    or any("download" in s for s in strings)
+                if not touches or not (_calls_in(n) & _DL_DELETERS):
+                    continue
+                if (mod, n.name) == ("data_hygiene", "manual_clean"):
+                    continue
+                offenders.append("%s:%d %s()" % (os.path.relpath(p, ROOT), n.lineno, n.name))
+    assert not offenders, "这些函数会删下载的文件，却不在唯一的手动清理入口里：\n" + "\n".join(offenders)
+    # 守卫自检：白名单里那个函数确实是「涉及下载且会删」的——否则上面的扫描是空转
+    hygiene = ast.parse(_read("src", "data_hygiene.py"))
+    mc = next(n for n in hygiene.body if isinstance(n, ast.FunctionDef) and n.name == "manual_clean")
+    assert _calls_in(mc) & {"_download_files", "_try_rm"} == {"_download_files", "_try_rm"}
+    # 下载那个分支只能走回收站（_dl_recycle），不许用直接删除（_try_rm）：下载的是
+    # 用户的文件，删错要能找回；回收站失败就不删，不退回永久删除
+    dl_branch = _branch_calls(mc, "downloads")
+    assert dl_branch is not None and "_dl_recycle" in dl_branch and not (dl_branch & {"_try_rm", "os.remove"}), \
+        sorted(dl_branch or [])
+    assert _branch_calls(mc, "logs") & {"_try_rm"}            # 自检：取分支的函数确实取到了东西
+
+
+def test_mcp_downloads_wait_is_clamped_and_zero_is_sent(monkeypatch):
+    posted = []
+    monkeypatch.setattr(mcp, "_post", lambda url, path, body, timeout=30: posted.append(
+        (body, timeout)) or {"ok": True, "text": "T"})
+    u = "http://backend"
+    for arg, want, http in ((None, 0.0, 100), (0, 0.0, 100), ("12", 12.0, 100), (5, 5.0, 100),
+                            (60, 60.0, 120), (999, 60.0, 120), (30000, 60.0, 120),
+                            ("abc", 0.0, 100), (float("nan"), 0.0, 100), (-3, 0.0, 100)):
+        mcp.tool_browser_downloads(u, {} if arg is None else {"wait": arg})
+        assert posted[-1] == ({"wait": want}, http), (arg, posted[-1])
+
+
+def test_shell_download_helpers_run_in_node():
+    """壳的两个纯函数用 Node 真执行（字面量只能证明「写成了这样」）：文件名清洗与
+    同名不覆盖。函数体从磁盘上的 electron/main.js 原样取出，不手抄。"""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node：壳的下载辅助函数的执行验证跳过（字面量断言已覆盖）")
+    sh = _read("electron", "main.js")
+    cases = ["资源包.fcpk", "..\\..\\evil.exe", 'a/b:c*d?e"f<g>h|i', "...", "  ", "", None,
+             "file.  ", ".gitignore", "CON.txt", "nul", "com1.bin", "console.txt",
+             "x" * 300 + ".bin", "a\u0000b\u001f.bin"]
+    js = "\n".join([
+        "const path = require('path');",
+        "var existing = " + json.dumps([r"D:\dl\a.bin", r"D:\dl\a (1).bin"]) + ";",
+        "var reserved = " + json.dumps([r"D:\dl\a (2).bin"]) + ";",
+        "const fs = { existsSync: function (p) { return existing.indexOf(p) >= 0; } };",
+        "const aibrDlReserved = new Set(reserved);",
+        "const AIBR_WIN_RESERVED = "
+        + re.search(r"const AIBR_WIN_RESERVED = (.*?);\n", sh).group(1) + ";",
+        _function_body(sh, "function aibrSafeName(name) {"),
+        _function_body(sh, "function aibrDlPath(dir, name) {"),
+        "var names = " + json.dumps(cases) + ".map(function (c) { return aibrSafeName(c); });",
+        "var dir = " + json.dumps(r"D:\dl") + ";",
+        "var paths = ['a.bin', 'README', 'b.bin'].map(function (n) {",
+        "  return path.basename(aibrDlPath(dir, n)); });",
+        "process.stdout.write(JSON.stringify({ names: names, paths: paths }));",
+    ])
+    r = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8",
+                       input="", timeout=20)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    # 清洗：去路径分隔符与非法字符、去尾随的点/空格、空名兜底、避开保留设备名；
+    # 以点开头的正常文件名（.gitignore）保留——只挡 "." / ".."
+    assert out["names"] == ["资源包.fcpk", ".._.._evil.exe", "a_b_c_d_e_f_g_h_i", "download",
+                            "download", "download", "download", "file", ".gitignore", "_CON.txt",
+                            "_nul", "_com1.bin", "console.txt", "x" * 180, "a_b_.bin"], out["names"]
+    for name in out["names"]:
+        assert name not in (".", "..") and "/" not in name and "\\" not in name
+    # 同名不覆盖：已有的 a.bin、a (1).bin 与另一个进行中下载占着的 a (2).bin 都跳过
+    assert out["paths"] == ["a (3).bin", "README", "b.bin"], out["paths"]
+
+
+# ---------- 13. 下载中心：目录配置 / 打开 / 来源（2026-11-24 用户令）----------
+
+def test_custom_download_dir_redirects_downloads_and_is_never_cleaned(env, monkeypatch, tmp_path):
+    # 用户令：下载目录默认跟随数据目录，可手动另行指定。手动指定的目录工具只往里
+    # 存、不提供清理——那里面可能有用户自己的文件
+    from src import data_hygiene as dh
+    _dl_wipe()
+    custom = os.path.join(os.environ["FC_STATE_DIR"], "my-downloads")     # 仍在沙箱里
+    r = env.post("/api/downloads/config", {"dir": custom})
+    assert (r["ok"], r["custom"], r["usable"]) == (True, True, True) and _real(r["dir"]) == _real(custom)
+    assert os.path.isdir(custom) and env.config["download_dir"] == custom
+    assert _real(env.get("/api/downloads/config")["dir"]) == _real(custom)    # 壳看到的就是它
+    # 新下载落到这里
+    _dl_report(env, "dl_c1", event="started")
+    p = os.path.join(custom, "c1.bin")
+    with open(p, "wb") as f:
+        f.write(b"c" * 77)
+    _dl_report(env, "dl_c1", event="done", state="completed", path=p)
+    assert _dl_row(env, "dl_c1")["state"] == "completed"
+    assert _real(_dl_row(env, "dl_c1")["path"]) == _real(p)
+    assert _real(env.post("/api/downloads/list", {})["dir"]) == _real(custom)
+    # 落在旧默认目录里的文件不再算「下载」：声称完成也不给路径
+    old_default = ab._st.download_default_dir()
+    os.makedirs(old_default, exist_ok=True)
+    old_file = os.path.join(old_default, "old.bin")
+    with open(old_file, "wb") as f:
+        f.write(b"o")
+    _dl_report(env, "dl_o", event="started")
+    _dl_report(env, "dl_o", event="done", state="completed", path=old_file)
+    assert _dl_row(env, "dl_o")["state"] == "interrupted"
+    # 可清理项里没有它；清理入口的三个挡位也都不认
+    calls, _fail = _fake_trash(monkeypatch, tmp_path / "trash")
+    data = dh.usage_stats(force=True)
+    assert "downloads" not in data["targets"]
+    assert data["download_dir"]["custom"] is True and _real(data["download_dir"]["path"]) == _real(custom)
+    assert data["download_dir"]["bytes"] == 77
+    for mode, days in (("all", None), ("policy", None), ("older", 7)):
+        assert dh.manual_clean("downloads", mode, days=days) == (0, 0)
+    assert calls == [] and os.path.isfile(p) and os.path.isfile(old_file)
+    # 恢复默认：空串 = 跟随数据目录；清理入口随之回来
+    r = env.post("/api/downloads/config", {"dir": ""})
+    assert (r["ok"], r["custom"]) == (True, False) and env.config["download_dir"] == ""
+    assert _real(r["dir"]) == _real(old_default) and ab._st.download_dir_is_default()
+    assert "downloads" in dh.usage_stats(force=True)["targets"]
+
+
+def test_custom_download_dir_is_validated(env, tmp_path):
+    # 校验不过就回绝，且不动现有配置——危险的位置一个都不许当场建目录
+    assert "download_dir" not in env.config
+    for bad, why in (("downloads", "完整路径"), ("~\\downloads", "完整路径"),
+                     ("relative\\path", "完整路径"),
+                     (ab._st.DATA_DIR, "数据目录本身"), (ab._st.APP_DIR, "工具目录本身"),
+                     (ab._st.HOME_DIR, "锚点目录本身"),
+                     (os.path.expanduser("~"), "用户主目录本身"),
+                     (os.environ.get("SystemRoot") or r"C:\Windows", "系统目录")):
+        r = env.post("/api/downloads/config", {"dir": bad})
+        assert r["ok"] is False and why in r["err"], (bad, r)
+        assert "download_dir" not in env.config, bad
+    assert "磁盘根" in env.post("/api/downloads/config", {"dir": os.path.abspath(os.sep)})["err"]
+    a_file = tmp_path / "afile"
+    a_file.write_text("x")
+    r = env.post("/api/downloads/config", {"dir": str(a_file)})
+    assert r["ok"] is False and "用不了" in r["err"] and a_file.read_text() == "x"
+    assert env.status("/api/downloads/config", [1]) == 400             # 不是对象
+    assert env.post("/api/downloads/config", {})["custom"] is False    # 没给 dir = 恢复默认
+    # 通过的：绝对路径、建得出来、写得进——探针文件用完即删
+    want = tmp_path / "新目录" / "下载"
+    r = env.post("/api/downloads/config", {"dir": str(want)})
+    assert r["ok"] is True and want.is_dir() and os.listdir(want) == []
+
+
+def test_open_only_touches_the_download_dir(env, monkeypatch):
+    ddir = _dl_wipe()
+    a = _dl_write("a.bin")
+    sub = os.path.join(ddir, "sub")
+    os.mkdir(sub)
+    deep = os.path.join(sub, "deep.bin")
+    with open(deep, "wb") as f:
+        f.write(b"d")
+    calls = []
+    monkeypatch.setattr(dl.os, "startfile", lambda p: calls.append(("startfile", p)))
+    monkeypatch.setattr(dl.subprocess, "Popen", lambda cmd, **kw: calls.append(("popen", cmd)))
+    # 目录本身 / 文件 / 在资源管理器里定位文件
+    assert env.post("/api/downloads/open", {"path": ddir})["ok"] is True
+    assert env.post("/api/downloads/open", {"path": a})["ok"] is True
+    assert env.post("/api/downloads/open", {"path": a, "reveal": True})["ok"] is True
+    assert [c[0] for c in calls] == ["popen", "startfile", "popen"]
+    assert calls[1][1] == _real(a)
+    assert "/select," in calls[2][1] and calls[2][1].endswith('"')   # /select, 与路径之间没有空格
+    # 越界 / 下一层 / 不存在的：一律拒绝，什么也不打开
+    n = len(calls)
+    for path, code, why in ((os.path.join(ddir, "..", "x.bin"), 403, "下载目录里"),
+                            (deep, 403, "下载目录里"), (ab._st.DATA_DIR, 403, "下载目录里"),
+                            (os.path.join(ddir, "nope.bin"), 404, "不在磁盘上"),
+                            ("", 400, "缺少路径"), (None, 400, "缺少路径")):
+        rv = env.post("/api/downloads/open", {"path": path})
+        assert rv["ok"] is False and why in rv["err"], (path, rv)
+        assert env.status("/api/downloads/open", {"path": path}) == code
+    assert len(calls) == n
+
+
+def test_forget_only_removes_finished_records_and_never_files(env):
+    keep = _dl_write("keep.bin")
+    _dl_report(env, "dl_f1", event="started")
+    _dl_report(env, "dl_f2", event="started")
+    _dl_report(env, "dl_f2", event="done", state="cancelled")
+    assert env.post("/api/downloads/forget", {"id": "dl_f2"})["ok"] is True
+    assert [r["id"] for r in _dl_rows(env)] == ["dl_f1"]
+    assert env.post("/api/downloads/forget", {"id": "dl_f1"})["ok"] is True
+    assert [r["id"] for r in _dl_rows(env)] == ["dl_f1"]            # 进行中的不许移除
+    assert env.post("/api/downloads/forget", {"all": True})["ok"] is True
+    assert [r["id"] for r in _dl_rows(env)] == ["dl_f1"]
+    assert os.path.isfile(keep)                                      # 只动记录，不动文件
+
+
+def test_webtab_downloads_show_in_the_panel_but_never_on_the_ai_status_bar(env):
+    # 普通网页标签页的下载（source=webtab）：进下载面板（SSE kind=download，每个阶段
+    # 都推），不进 AI 浏览器的状态条——那条帧的开头会 open()，等于把分屏给展开
+    _dl_wipe()
+    _dl_report(env, "dl_w", event="started", source="webtab", filename="w.bin")
+    _dl_report(env, "dl_w", event="updated", source="webtab", received=5, total=10)
+    _dl_report(env, "dl_w", event="done", source="webtab", state="completed", path=_dl_write("w.bin"))
+    frames = [i for _t, i in env.sent if i.get("kind") == "download"]
+    assert [(f["event"], f["state"], f["source"]) for f in frames] == [
+        ("started", "in_progress", "webtab"), ("updated", "in_progress", "webtab"),
+        ("done", "completed", "webtab")]
+    assert all(f["id"] == "dl_w" and f["filename"] == "w.bin" for f in frames)
+    assert env.ops() == []                               # 一帧 ai_browser_op 都没有
+    assert _dl_row(env, "dl_w")["source"] == "webtab"
+    # AI 浏览器里的下载：开始与结束进状态条，进度帧不进（只给面板）
+    env.sent.clear()
+    _dl_report(env, "dl_a", event="started")
+    _dl_report(env, "dl_a", event="updated", received=1)
+    _dl_report(env, "dl_a", event="done", state="cancelled")
+    assert [i["text"] for i in env.ops()] == ["开始下载：dl_a.bin", "下载已取消：dl_a.bin"]
+    assert [i["event"] for _t, i in env.sent if i.get("kind") == "download"] == ["started", "updated", "done"]
+    # 订阅者抛异常不连累登记
+    def boom(rec, ev):
+        raise RuntimeError("boom")
+    dl.subscribe(boom)
+    try:
+        assert _dl_report(env, "dl_b", event="started")["ok"] is True
+        assert _dl_row(env, "dl_b")["state"] == "in_progress"
+    finally:
+        dl._hooks.remove(boom)
+    # 不认识的来源按普通网页处理（绝不算成 AI 浏览器）
+    env.sent.clear()
+    _dl_report(env, "dl_x", event="started", source="whatever")
+    assert _dl_row(env, "dl_x")["source"] == "webtab" and env.ops() == []
+
+
+def test_shell_takeover_reports_progress_whatever_the_event_state_word_is():
+    """壳的下载接管（dlTakeOver）用 Node 真执行——函数体从磁盘上的 electron/main.js 原样取出。
+    2026-11-24 实跑踩到的 bug：Electron 的 updated 事件带的 state 是 'progressing'，不是
+    文档写的 'in_progress'；按后者过滤会把所有进度帧吃掉，面板上的进度条从头到尾是 0，
+    直到结束才跳满（此前的单测是直接往接口灌进度，绕过了壳这段，所以一直没发现）。
+    只有真执行、并且用 Electron 实测的那个词去触发，才钉得住这类 bug。"""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node：壳的下载接管的执行验证跳过（字面量断言已覆盖）")
+    sh = _read("electron", "main.js")
+    js = "\n".join([
+        "const path = require('path');",
+        "let dlDir = 'D:\\\\dl', dlSeq = 0, now = 100000;",
+        "const dlItems = new Map(), aibrDlReserved = new Set(), posted = [], fetches = [0];",
+        "const fs = { existsSync: function () { return false; } };",
+        "const log = function (m) {};",
+        "const DL_UPDATE_MS = " + re.search(r"const DL_UPDATE_MS = (\d+);", sh).group(1) + ";",
+        "const AIBR_WIN_RESERVED = "
+        + re.search(r"const AIBR_WIN_RESERVED = (.*?);\n", sh).group(1) + ";",
+        "const aibrPost = function (p, body) { posted.push(JSON.parse(JSON.stringify(body)));",
+        "  return Promise.resolve({ ok: true }); };",
+        "const dlFetchDir = function () { fetches[0]++; return Promise.resolve(dlDir); };",
+        "Date.now = function () { return now; };",
+        _function_body(sh, "function aibrSafeName(name) {"),
+        _function_body(sh, "function aibrDlPath(dir, name) {"),
+        _function_body(sh, "function dlTakeOver(item, source) {"),
+        # 假的 DownloadItem：事件按 Electron 45 实测的参数触发（updated 的 state 是 'progressing'）
+        "function mkItem(name, total) {",
+        "  var h = {}, received = 0;",
+        "  return {",
+        "    savePath: null,",
+        "    setSavePath: function (p) { this.savePath = p; },",
+        "    getFilename: function () { return name; },",
+        "    getTotalBytes: function () { return total; },",
+        "    getReceivedBytes: function () { return received; },",
+        "    getURL: function () { return 'https://example.com/' + name; },",
+        "    on: function (ev, fn) { (h[ev] = h[ev] || []).push(fn); },",
+        "    receive: function (n) { received += n; h.updated.forEach(function (f) { f({}, 'progressing'); }); },",
+        "    finish: function (st) { h.done.forEach(function (f) { f({}, st); }); }",
+        "  };",
+        "}",
+        "var out = {};",
+        # ① 下载中心没给出可用目录：不接管、不上报（退回 Electron 默认的弹保存框）
+        "dlDir = null; var it0 = mkItem('a.bin', 10); dlTakeOver(it0, 'webtab');",
+        "out.noDir = { savePath: it0.savePath, posted: posted.length };",
+        # ② 正常接管：开始 → 进度 → 完成
+        "dlDir = 'D:\\\\dl'; var it = mkItem('video.mp4', 1000); dlTakeOver(it, 'webtab');",
+        "it.receive(300);                       // 第 1 块：立刻上报",
+        "var afterFirst = posted.length;",
+        "it.receive(100);                       // 距上次上报不足节流窗口：不上报",
+        "out.throttled = posted.length - afterFirst;",
+        "now += DL_UPDATE_MS; it.receive(100);  // 过了窗口：上报",
+        "out.progress = posted.filter(function (p) { return p.event === 'updated'; })",
+        "  .map(function (p) { return p.received; });",
+        "var beforeDone = posted.length;",
+        "it.finish('completed');",
+        "it.receive(50);                        // 结束之后又来的进度：不认",
+        "out.afterDone = posted.slice(beforeDone).map(function (p) { return p.event + ':' + p.state; });",
+        "out.savePath = path.basename(it.savePath);",
+        "out.stillRunning = dlItems.has(it0.savePath === null ? '' : posted[posted.length - 1].id);",
+        "out.fetches = fetches[0];",
+        "var starts = posted.filter(function (p) { return p.event === 'started'; });",
+        "var dones = posted.filter(function (p) { return p.event === 'done'; });",
+        "out.started = starts[0];",
+        "out.done = dones[0];",
+        # ③ 取消：done 的 state 原样上报；来源标记跟着分区走
+        "var it2 = mkItem('b.bin', 50); dlTakeOver(it2, 'ai_browser'); it2.receive(20); it2.finish('cancelled');",
+        "out.cancelled = posted.filter(function (p) { return p.event === 'done'; })[1].state;",
+        "out.sources = posted.filter(function (p) { return p.event === 'started'; })",
+        "  .map(function (p) { return p.source; });",
+        "process.stdout.write(JSON.stringify(out));",
+    ])
+    r = subprocess.run([node, "-e", js], capture_output=True, text=True, encoding="utf-8",
+                       input="", timeout=20)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["noDir"] == {"savePath": None, "posted": 0}
+    assert out["progress"] == [300, 500] and out["throttled"] == 0, out   # 进度帧按 'progressing' 也上报；节流生效
+    assert out["afterDone"] == ["done:completed"] and out["stillRunning"] is False
+    assert out["savePath"] == "video.mp4" and out["fetches"] >= 1         # 结束后顺手重取目录
+    assert out["started"]["total"] == 1000 and out["started"]["filename"] == "video.mp4"
+    assert out["done"]["path"].endswith("video.mp4")
+    assert (out["done"]["received"], out["done"]["total"], out["done"]["state"]) == (500, 1000, "completed")
+    assert out["cancelled"] == "cancelled" and out["sources"] == ["webtab", "ai_browser"]

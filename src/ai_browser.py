@@ -49,6 +49,7 @@ from flask import Blueprint, jsonify, request
 
 from src import app_state as _st
 from src import devtools_cdp as _cdp
+from src import downloads as _downloads      # 下载中心（AI 浏览器与网页标签页共用）
 from src.app_state import _broadcast_to_ai
 from src.devtools_cdp import CdpError, DevtoolsError
 
@@ -901,6 +902,8 @@ def _attach():
     if changed:
         _hist_clear()       # 换了视图：旧视图的 console/网络历史不再对应
     _listener_start()
+    # 下载目录不在这里交给壳：普通网页标签页的下载也走同一套（2026-11-24 用户令），
+    # 壳统一向下载中心（src/downloads.py）取，与登记无关
     return jsonify({"ok": True})
 
 
@@ -926,3 +929,25 @@ def _state_api():
     with _lock:
         on = bool(_state["target_id"])
     return jsonify({"ok": True, "enabled": _enabled(), "attached": on})
+
+
+# ---- 下载的状态条显示 ----
+# 下载登记已独立成模块 src/downloads.py（2026-11-24 用户令：AI 浏览器与普通网页
+# 标签页共用的下载中心）。这里只保留一件事：AI 浏览器里的下载要在它的状态条上
+# 显示出来（用户看着 AI 操作时能看见「在下载 / 存好了」）。
+def _dl_status(rec, event):
+    if rec.get("source") != "ai_browser" or event == "updated":
+        return      # 普通网页标签页的下载不进 AI 浏览器的状态条；进度帧只给下载面板
+    name = rec["filename"]
+    if rec["state"] == "completed":
+        text = "下载完成：%s（%s）→ 已存到下载目录" % (name, _downloads._fmt_bytes(rec["received"]))
+    elif rec["state"] == "cancelled":
+        text = "下载已取消：" + name
+    elif rec["state"] == "interrupted":
+        text = "下载失败：%s（%s）" % (name, rec["error"] or "原因未知")
+    else:
+        text = "开始下载：" + name
+    _ui("ai_browser_op", op="download", text=text)
+
+
+_downloads.subscribe(_dl_status)

@@ -13,6 +13,7 @@
   （data_dir_total）。
 """
 import os
+import stat
 import threading
 import time
 
@@ -22,6 +23,10 @@ UPLOADS_TARGET_PCT = 0.8                 # 超限删到剩余 80% 为止
 # 2026-11-23 用户令：串口日志后台永不删除，只允许用户在设置里手动删。
 # 手动删除的「按天数」挡位（白名单：接口只认这几个值，不接受任意天数）
 LOG_AGE_OPTIONS = (7, 30, 90)
+# 2026-11-24 用户令：AI 浏览器下载的删除入口统一放在 设置→数据目录→「可清理项」
+# 里，且**只在那里**删——工具不自动删、AI 不删；想删别的只能用户自己去文件夹。
+# 手动「按天数」挡位与串口日志同一组（同一个界面，体验统一）
+DOWNLOAD_AGE_OPTIONS = LOG_AGE_OPTIONS
 
 
 def uploads_dir():
@@ -108,9 +113,72 @@ def _serial_log_files():
             if os.path.basename(p).startswith("serial_")]
 
 
+def _download_files():
+    """AI 浏览器下载目录**第一层**的可清理文件 [(mtime, size, path)]。占用统计与
+    手动清理共用这一份口径（统计多少 = 能删多少）。
+
+    只看第一层：Chromium 下载的文件永远落在第一层（文件名已由壳清洗），用户自己
+    在里面建的子文件夹不统计、不删除。跳过进行中的下载（*.crdownload）和
+    reparse point（符号链接 / OneDrive 占位文件等——不跟随、不触发、不删）。"""
+    from src import app_state as st
+    root = st.download_dir()
+    out = []
+    try:
+        names = os.listdir(root or "")
+    except OSError:
+        return out                       # 目录还没有（从没下载过）
+    for fn in names:
+        if fn.lower().endswith(".crdownload"):
+            continue
+        p = os.path.join(root, fn)
+        try:
+            s = os.stat(p, follow_symlinks=False)
+        except OSError:
+            continue
+        if not stat.S_ISREG(s.st_mode) or (getattr(s, "st_file_attributes", 0) & 0x400):
+            continue                     # 子文件夹 / 符号链接等：不碰
+        out.append((s.st_mtime, s.st_size, p))
+    return out
+
+
 def _serial_log_bytes_older(files, days):
     """「删除超过 days 天」这个挡位能释放的字节数。"""
     cutoff = time.time() - int(days) * 86400
+    return sum(sz for mt, sz, _p in files if mt < cutoff)
+
+
+def _dl_recyclable(root):
+    """删这里的文件能不能进系统回收站。只有本地固定硬盘才有回收站；网络位置、
+    U 盘这类可移动盘上的删除是永久的（与文件树删除的限制相同）。判不出来按
+    「不能」说——界面据此如实警告，不夸大成可恢复。"""
+    root = root or ""
+    try:
+        # 先判空再取绝对路径：abspath("") 会变成当前工作目录，等于拿 cwd 所在的盘
+        # 冒充答案（测试实锤：None / "" 曾被判成「能进回收站」）
+        if not root or root.startswith("\\\\"):
+            return False                     # 没有目录 / UNC 路径
+        p = os.path.abspath(root)
+        import ctypes
+        return ctypes.windll.kernel32.GetDriveTypeW(p[:3]) == 3      # DRIVE_FIXED
+    except Exception:
+        return False
+
+
+def _dl_recycle(p):
+    """把一个下载文件移入系统回收站（可恢复）——沿用文件树删除的同一实现。
+    回收站不可用或操作失败时**不删**：下载的是用户的文件，宁可这一项清不掉，
+    也不退回永久删除。返回是否成功。"""
+    try:
+        from src.file_tree import _recycle_to_trash
+        ok, _err = _recycle_to_trash(p)
+        return bool(ok)
+    except Exception:
+        return False
+
+
+def _dl_bytes_older(files, days, now):
+    """「删除超过 days 天」这个挡位对下载文件能释放的字节数。"""
+    cutoff = now - int(days) * 86400
     return sum(sz for mt, sz, _p in files if mt < cutoff)
 
 
@@ -165,7 +233,25 @@ def usage_stats(force=False):
     # 旧 WebView2 窗口体的缓存）已整体移除——Electron 壳不读不写它，旧目录已清除。
     # 2026-11-23 用户令「太长了，简化」：目标名只留短名，细节挪到各自的说明文字里
     _serial_logs = _serial_log_files()
-    targets = {
+    # 下载目录（用户令 2026-11-24：默认 数据目录\download，可在设置里手动指定）。
+    # 只有**默认目录**才算「工具自己的下载文件夹」，才进「可清理项」；用户手动指定
+    # 的目录工具只往里存、不删——那里面可能有用户自己的文件。占用照常统计，
+    # 设置页的「下载目录」一行据此显示
+    dl_dir = st.download_dir()
+    dl_default = st.download_dir_is_default()
+    _dl_files = _download_files()
+    dl_bytes = sum(sz for _mt, sz, _p in _dl_files)
+    targets = {}
+    if dl_default:
+        # 口径与清理完全一致：第一层的普通文件，不含进行中的下载与子文件夹。
+        # trash：删这里的文件能不能进回收站——界面据此如实警告
+        targets["downloads"] = {
+            "path": dl_dir, "bytes": dl_bytes, "name": "下载文件",
+            "trash": _dl_recyclable(dl_dir),
+            "age_options": list(DOWNLOAD_AGE_OPTIONS),
+            "by_age": {str(d): _dl_bytes_older(_dl_files, d, now)
+                       for d in DOWNLOAD_AGE_OPTIONS}}
+    targets.update({
         "uploads": {"path": up, "bytes": _dir_size(up), "name": "会话附件"},
         # 占用只算**可被清理的那些**（serial_*.log）：此前数的是整个日志目录，
         # 而「全部清空」只删 serial_ 前缀——目录里有外来 .log 时清空后数字
@@ -184,9 +270,12 @@ def usage_stats(force=False):
         "nav": {"path": os.path.join(st.DATA_DIR, "nav"),
                 "bytes": _dir_size(os.path.join(st.DATA_DIR, "nav")),
                 "name": "代码索引"},
-    }
+    })
     data = {
         "user": {"path": st.DATA_DIR, "bytes": _dir_size(st.DATA_DIR)},
+        # 下载目录现状（给设置页）：custom=true 表示用户手动指定——不进可清理项
+        "download_dir": {"path": dl_dir, "custom": not dl_default,
+                         "default_dir": st.download_default_dir(), "bytes": dl_bytes},
         "uploads": {"path": up, "bytes": targets["uploads"]["bytes"],
                     "max_bytes": UPLOADS_MAX_BYTES,
                     "max_age_days": UPLOADS_MAX_AGE_S // (24 * 3600)},
@@ -197,11 +286,20 @@ def usage_stats(force=False):
     return data
 
 
+def invalidate_usage_cache():
+    """占用缓存失效（下次 usage / data_dir 强制重扫）。手动清理后、下载落盘后
+    调用——否则设置页最长 60s 内还显示旧占用。"""
+    _usage_cache["ts"] = 0.0
+    _dir_total_cache["ts"] = 0.0
+
+
 # ---- 手动清理（v3.5.93：用户拍板「手动清理+可选范围」）--------------------
 # 目标只含**衍生数据**（附件/日志/索引/缓存/提问状态）——笔记、命令库、
-# 配置等用户数据永远不出现在这里
+# 配置等用户数据永远不出现在这里。
+# 例外（2026-11-24 用户令）：AI 浏览器下载（downloads）——它是用户令指定的
+# **唯一**删除入口；工具不自动删、policy 不删，只认用户在这里的手动点击
 
-_CLEANABLE = ("uploads", "logs", "idx", "ask", "nav")
+_CLEANABLE = ("uploads", "logs", "idx", "ask", "nav", "downloads")
 
 
 def _files_in(root, suffix=None):
@@ -236,25 +334,27 @@ def _try_rm(p):
 
 
 def manual_clean(target, mode, days=None):
-    """手动清理入口。target ∈ uploads|logs|idx|ask|nav；mode ∈ policy|all|older。
+    """手动清理入口。target ∈ uploads|logs|idx|ask|nav|downloads；mode ∈ policy|all|older。
     返回 (removed, freed)。policy=按各自保留策略；all=清空该类；
-    older=**仅串口日志**：删除修改时间早于 days 天前的 serial_*.log
-    （2026-11-23 用户令新增的手动挡位；days 必须是 LOG_AGE_OPTIONS 之一，
-    否则抛 ValueError——不接受任意天数，也不「假成功 0 项」）。
+    older=仅串口日志与 AI 浏览器下载：删除修改时间早于 days 天前的
+    （2026-11-23 / 2026-11-24 用户令新增的手动挡位；days 必须是对应的白名单
+    LOG_AGE_OPTIONS / DOWNLOAD_AGE_OPTIONS 之一，否则抛 ValueError——不接受
+    任意天数，也不「假成功 0 项」）。
     （2026-11-23 用户令：原 cache 目标——旧 WebView 缓存——已随旧窗口体退役，
     连同 _CACHE_SUBS 清单一并移除；Electron 壳的缓存在它自己的 userData 里。）"""
     from src import app_state as st
     if mode == "older":
-        if target != "logs":
-            return 0, 0                # 按天数挡位只对串口日志有意义
-        if days not in LOG_AGE_OPTIONS:
-            raise ValueError("days 必须是 %s 之一" % (LOG_AGE_OPTIONS,))
+        age_ok = {"logs": LOG_AGE_OPTIONS,
+                  "downloads": DOWNLOAD_AGE_OPTIONS}.get(target)
+        if age_ok is None:
+            return 0, 0                # 按天数挡位只对串口日志 / AI 浏览器下载有意义
+        if days not in age_ok:
+            raise ValueError("days 必须是 %s 之一" % (age_ok,))
     elif target not in _CLEANABLE or mode not in ("policy", "all"):
         return 0, 0
     removed = 0
     freed = 0
-    _usage_cache["ts"] = 0.0   # 清理后占用缓存失效（下次 usage 强制重扫）
-    _dir_total_cache["ts"] = 0.0   # 数据目录总大小同理
+    invalidate_usage_cache()       # 清理后占用缓存失效（下次 usage 强制重扫）
 
     if target == "uploads":
         if mode == "policy":
@@ -316,6 +416,29 @@ def manual_clean(target, mode, days=None):
             if _try_rm(p):
                 removed += 1
                 freed += sz
+
+    elif target == "downloads":
+        # 2026-11-24 用户令：这是 AI 浏览器下载**唯一**的删除入口，且与串口日志
+        # 同款——工具不自动删、AI 不删：
+        #   · older：删除修改时间超过 N 天的下载文件
+        #   · all  ：清空
+        #   · policy：不删任何东西（工具不替用户判断）
+        # 只碰下载目录第一层的普通文件（_download_files）：进行中的下载
+        # （*.crdownload）、子文件夹、符号链接都不动。
+        # 删法是**移入系统回收站**（_dl_recycle，与文件树删除同一实现）——下载的是
+        # 用户的文件，删错能找回；所以这里不用 _try_rm，回收站失败就不删
+        if not st.download_dir_is_default():
+            return 0, 0                # 用户手动指定的目录：工具只往里存，不删
+        if mode == "policy":
+            pass
+        else:
+            cutoff = time.time() - int(days) * 86400 if mode == "older" else None
+            for mt, sz, p in _download_files():
+                if cutoff is not None and mt >= cutoff:
+                    continue
+                if _dl_recycle(p):
+                    removed += 1
+                    freed += sz
 
     elif target == "nav":
         # a333：代码跳转索引——全部可重建（重跑右键建索引即恢复）。

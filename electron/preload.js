@@ -46,6 +46,10 @@ contextBridge.exposeInMainWorld('fcShell', {
   aiBrowserAttach: (wcId) => ipcRenderer.invoke('fc:aibr-attach', wcId),
   // 它的弹窗（window.open / target=_blank）改道回它自己
   onAiBrowserOpenUrl: (cb) => ipcRenderer.on('fc:aibr-open-url', (_e, url) => cb(url)),
+  // 下载中心（2026-11-24 用户令）：取消一个进行中的下载（返回是否已发出取消）；
+  // 设置里改了下载目录后让壳立刻重新取（否则最长要等 30 秒的兜底轮询）
+  dlCancel: (id) => ipcRenderer.invoke('fc:dl-cancel', id),
+  dlRefresh: () => ipcRenderer.send('fc:dl-refresh'),
   // 密码保存/填充：存储由主进程 safeStorage 完成；保存提示只含 origin/user，
   // 候选弹层只含用户名，选中后才下发密码。
   onPwSavePrompt: (cb) => ipcRenderer.on('fc:pw-save-prompt', (_e, info) => cb(info)),

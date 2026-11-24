@@ -210,6 +210,11 @@ app.register_blueprint(vcs_bp)
 # browser_* 与 devtools_*（默认目标）都打到这里
 from src.ai_browser import ai_browser_bp
 app.register_blueprint(ai_browser_bp)
+# 注册下载中心 Blueprint（路由 /api/downloads/*，2026-11-24 用户令）：AI 浏览器与
+# 普通网页标签页的下载统一走它——壳上报、界面拉列表 / 改下载目录 / 打开文件；
+# mcp_server 的 browser_downloads 也打到这里
+from src.downloads import downloads_bp
+app.register_blueprint(downloads_bp)
 
 # 注册 Claude 安装引导 Blueprint：a32x 起该蓝图已无任何端点（旧 zip 安装
 # 通道彻底退役，用户令「这个通道彻底退役，不要了」）——保留注册仅为兼容，
@@ -2916,30 +2921,34 @@ def api_data_dir_get():
 @app.route("/api/data_dir/clean", methods=["POST"])
 def api_data_dir_clean():
     """手动清理（v3.5.93 设置→数据目录→存储占用）。body: {target, mode, days?}。
-    target ∈ uploads|logs|idx|ask|nav；mode ∈ policy|all|older。目标只含衍生
-    数据（附件/日志/索引/提问状态），笔记/命令库/配置不可触达。
+    target ∈ uploads|logs|idx|ask|nav|downloads；mode ∈ policy|all|older。目标只含
+    衍生数据（附件/日志/索引/提问状态），笔记/命令库/配置不可触达；downloads
+    （AI 浏览器下载）是 2026-11-24 用户令指定的唯一删除入口——工具不自动删。
     v3.5.95（轻审R2-5）：非对象 body 显式 400；非法 target/mode 返回
     ok:false——不再「假成功 0 项」。
-    older（2026-11-23 用户令新增，仅串口日志）：删除超过 days 天的旧日志。
-    days 只接受 7 / 30 / 90（data_hygiene.LOG_AGE_OPTIONS 白名单）——不接受
+    older（2026-11-23 / 2026-11-24 用户令，仅串口日志与 AI 浏览器下载）：删除超过
+    days 天的旧文件。days 只接受 7 / 30 / 90（data_hygiene 的两个白名单）——不接受
     任意天数（0 天等同绕过确认的全部清空）。"""
     data = request.get_json(force=True, silent=True)
     if not isinstance(data, dict):
         return jsonify({"ok": False, "err": "参数必须是 JSON 对象"}), 400
     target = str(data.get("target") or "").strip()
     mode = str(data.get("mode") or "").strip()
-    from src.data_hygiene import _CLEANABLE, LOG_AGE_OPTIONS, manual_clean
+    from src.data_hygiene import (DOWNLOAD_AGE_OPTIONS, LOG_AGE_OPTIONS, _CLEANABLE,
+                                  manual_clean)
     days = None
     if mode == "older":
-        if target != "logs":
-            return jsonify({"ok": False, "err": "按天数删除只支持串口日志"}), 400
+        # 按天数挡位：串口日志（2026-11-23）与 AI 浏览器下载（2026-11-24 用户令）
+        age_ok = {"logs": LOG_AGE_OPTIONS, "downloads": DOWNLOAD_AGE_OPTIONS}.get(target)
+        if age_ok is None:
+            return jsonify({"ok": False, "err": "按天数删除只支持串口日志与 AI 浏览器下载"}), 400
         try:
             days = int(data.get("days"))
         except (TypeError, ValueError):
             days = -1
-        if days not in LOG_AGE_OPTIONS:
+        if days not in age_ok:
             return jsonify({"ok": False, "err": "天数必须是 %s 之一" % "/".join(
-                str(d) for d in LOG_AGE_OPTIONS)}), 400
+                str(d) for d in age_ok)}), 400
     elif target not in _CLEANABLE or mode not in ("policy", "all"):
         return jsonify({"ok": False, "err": "非法 target/mode"}), 400
     try:

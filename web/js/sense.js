@@ -39,6 +39,11 @@ function connectAiSSE() {
             && window.AI_BR) {
           window.AI_BR.op(item);
         }
+        // 下载中心（2026-11-24 用户令）：后端 src/downloads.py 推来的进度 / 完成，
+        // 转给顶栏的下载面板。面板模块没加载出来时跳过（它自己会全量拉一次）
+        if (item.kind === 'download' && window.DL) {
+          window.DL.onEvent(item);
+        }
         return; // 跳过 screen/screenctl/ui_action 帧（不进感知流）
       }
       senseState.lines.push(item);

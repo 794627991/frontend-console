@@ -6,6 +6,7 @@ js/claude.js
 js/cmd-lib.js
 js/ctx-menu.js
 js/diff-viewer.js
+js/downloads.js
 js/editor.js
 js/file-icons.js
 js/file-tree.js

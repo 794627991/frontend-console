@@ -1844,6 +1844,19 @@ function _stRenderDataPane(pane) {
         <div class="dd-label">存储占用</div>
         <div class="dd-sub" id="ddUsageBody">统计中…</div>
       </div>
+      <!-- 下载目录（2026-11-24 用户令）：默认跟随数据目录，用户可手动另行指定 -->
+      <div class="dd-cur" id="ddDl">
+        <div class="dd-label">下载目录（AI 浏览器与网页标签页的下载都存这里，不弹保存窗口）</div>
+        <div class="dd-path" id="ddDlPath">—</div>
+        <div class="dd-sub" id="ddDlStat"></div>
+        <div class="dd-row" style="margin-top:8px;">
+          <input autocomplete="off" type="text" id="ddDlNew" class="dd-input" spellcheck="false" placeholder="留空 = 跟随数据目录">
+          <button class="btn ghost icon-btn" id="ddDlPick" title="浏览选择目录">${ICO16.folderOpen}</button>
+          <button class="btn ghost" id="ddDlApply">应用</button>
+        </div>
+        <div class="dd-sub">默认跟随数据目录（<span id="ddDlDefault" style="font-family:var(--font-mono);"></span>），随数据目录迁移。手动指定的目录工具只往里存、不提供清理。</div>
+        <div id="ddDlMsg" class="dd-msg"></div>
+      </div>
       <div class="dd-form">
         <div class="dd-label">修改到</div>
         <div class="dd-row">
@@ -1872,6 +1885,32 @@ function _stRenderDataPane(pane) {
       const dir = await pywebview.api.pick_dir();
       if (dir) { pane.querySelector('#ddNewPath').value = dir; pane.querySelector('#ddNewPath').dispatchEvent(new Event('input')); }
     } catch(_) { showBanner('目录选择器暂不可用，可直接输入路径', 3000, true); }
+  };
+  // 下载目录（2026-11-24 用户令）：留空 / 恢复默认 = 跟随数据目录；否则由后端校验
+  //（绝对路径、不是系统目录、建得出来写得进）后保存
+  pane.querySelector('#ddDlPick').onclick = async () => {
+    try {
+      const dir = await pywebview.api.pick_dir();
+      if (dir) pane.querySelector('#ddDlNew').value = dir;
+    } catch(_) { showBanner('目录选择器暂不可用，可直接输入路径', 3000, true); }
+  };
+  pane.querySelector('#ddDlApply').onclick = async () => {
+    const msgEl = pane.querySelector('#ddDlMsg');
+    const btn = pane.querySelector('#ddDlApply');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/downloads/config', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({dir: pane.querySelector('#ddDlNew').value.trim()})});
+      const j = await r.json();
+      if (!j.ok) { msgEl.innerHTML = `<span class="dd-err">✕ ${esc(j.err || '')}</span>`; return; }
+      msgEl.innerHTML = `<span class="dd-ok">✓ ${j.custom ? '已改为手动指定' : '已恢复为跟随数据目录'}</span>`;
+      pane.querySelector('#ddDlNew').value = '';
+      // 让壳立刻重新取下载目录（否则最长要等 30 秒的兜底轮询才生效）
+      if (window.fcShell && typeof window.fcShell.dlRefresh === 'function') window.fcShell.dlRefresh();
+      if (window.DL) window.DL.refresh();          // 顶栏的下载面板若开着，头部的目录文字跟着换
+      _ddRefreshUsage(pane);
+    } catch(e) { msgEl.innerHTML = `<span class="dd-err">✕ ${esc(String(e))}</span>`; }
+    finally { btn.disabled = false; }
   };
   // 输入即校验（check API：有效性+预览+告警）
   const inp = pane.querySelector('#ddNewPath');
@@ -1975,6 +2014,17 @@ async function _ddRefreshUsage(pane) {
     // 轻审R1-3：接口 ok=false 不能装「统计中…」——显式失败态
     if (!j.ok) { el.textContent = '统计不可用'; return; }
     if (!pane.querySelector('#ddUsageBody')) return;
+    // 下载目录（2026-11-24 用户令）：当前目录、是否手动指定、占用。手动指定的目录
+    // 不在下方「可清理项」里——工具不替用户删他自己文件夹里的东西
+    const _dlEl = pane.querySelector('#ddDlPath');
+    if (_dlEl && j.download_dir) {
+      const d = j.download_dir;
+      _dlEl.textContent = d.path || '—';
+      pane.querySelector('#ddDlDefault').textContent = d.default_dir || '';
+      pane.querySelector('#ddDlStat').textContent = `占用 ${_ddFmtSize(d.bytes || 0)} · `
+        + (d.custom ? '手动指定（工具不提供清理，要删请自己去文件夹）'
+                    : '跟随数据目录（可在下方「可清理项」里按天数删或清空）');
+    }
     // v3.5.112（用户实锤「排布太丑」）：两行式行卡取代单行 flex-wrap——
     // 旧行长路径换行后大小/按钮掉行错位、条目间无分隔。新结构：第一行
     // 名称+说明(ellipsis)+大小右对齐(+清理钮)，第二行完整路径可断行，
@@ -2000,12 +2050,23 @@ async function _ddRefreshUsage(pane) {
       idx: '按策略：删 3 天未用的索引',
       ask: '按策略：保留最近 500 个',
       nav: '删除全部代码索引（文件树右键可重建）',
+      // 2026-11-24 用户令：下载的删除入口统一在这个界面，且**只在这里**删（工具
+      // 不自动删、AI 不删；想删别的只能自己去文件夹）。与串口日志同款：按天数
+      // 删旧文件 / 全部清空，没有「按策略清理」
+      downloads: '工具不会自动删除下载的文件；可按天数删除旧文件，或全部清空',
     };
     const DANGER = {
       uploads: '全部清空后，历史会话里引用的图片将失效',
       logs: '全部清空：该目录下所有串口日志都会被删除，无法恢复',
       idx: '', ask: '',
     };
+    // AI 浏览器下载的警告按实际位置如实说（后端 targets.downloads.trash）：本地硬盘上
+    // 删的文件进回收站、能找回；网络位置 / U 盘上没有回收站，删了就是删了
+    const _danger = (k) => k === 'downloads'
+      ? (((j.targets.downloads || {}).trash)
+        ? '删除的文件会移入回收站，可以找回；清空回收站后才真正腾出空间'
+        : '这个位置不在本地硬盘上，删除的文件不进回收站，删除后无法恢复')
+      : DANGER[k];
     const trows = Object.entries(j.targets || {}).map(([k, u]) =>
       `<div style="padding:8px 0;border-bottom:1px solid var(--border);">` +
       `<div style="display:flex;gap:8px;align-items:center;">` +
@@ -2021,7 +2082,8 @@ async function _ddRefreshUsage(pane) {
       // 2026-11-23 用户令：原「锚点（服务发现/指针）」一行不再显示——指针文件
       // 已废弃、config 已搬去工具目录 data，锚点里只剩 endpoint.json 与崩溃日志
       // （几百字节），列出来既没用、描述也不对。
-      `<div class="dd-label" style="margin-top:14px;">可清理项（衍生数据 · 笔记/命令库/配置不可触达）</div>` +
+      // 2026-11-24：下载文件并进这一栏后措辞跟上——下载的是用户的文件，不是衍生数据
+      `<div class="dd-label" style="margin-top:14px;">可清理项（衍生数据与下载文件 · 笔记/命令库/配置不可触达）</div>` +
       trows +
       `<div id="ddCleanBar" style="display:none;gap:8px;align-items:center;flex-wrap:wrap;` +
         `margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;">` +
@@ -2029,17 +2091,19 @@ async function _ddRefreshUsage(pane) {
         `<span id="ddCleanOlder" style="display:none;gap:6px;align-items:center;flex-shrink:0;">` +
           `<span style="font-size:11px;color:var(--muted);">删除超过</span>` +
           `<select id="ddCleanDays" class="dd-input" autocomplete="off" style="width:auto;flex:none;padding:2px 6px;font-size:12px;"></select>` +
-          `<button class="btn ghost" id="ddCleanOlderGo">删除旧日志</button></span>` +
+          `<button class="btn ghost" id="ddCleanOlderGo">删除旧文件</button></span>` +
         `<button class="btn ghost" id="ddCleanPolicy">按策略清理</button>` +
         `<button class="btn ghost" id="ddCleanAll" style="color:#e5484d;">全部清空</button>` +
         `<button class="btn ghost" id="ddCleanCancel">取消</button></div>`;
     const bar = el.querySelector('#ddCleanBar');
-    // 没有「按策略」动作的目标（如串口日志——工具不替用户判断，只在用户主动
-    // 全部清空时才删）：确认条上不显示「按策略清理」按钮，免得点了没反应
-    const NO_POLICY = { logs: true };
-    // 按天数挡位（2026-11-23 用户令：串口日志只能手动删，给 7/30/90 天可选）。
-    // 挡位与「可释放多少」都来自后端 targets[k].age_options / by_age——用户点
-    // 之前就看到会删多少；天数是后端白名单，前端不自己造
+    // 没有「按策略」动作的目标（串口日志、AI 浏览器下载——工具不替用户判断，
+    // 只在用户主动按天数删 / 全部清空时才删）：确认条上不显示「按策略清理」
+    // 按钮，免得点了没反应
+    const NO_POLICY = { logs: true, downloads: true };
+    // 按天数挡位（2026-11-23 用户令：串口日志只能手动删，给 7/30/90 天可选；
+    // 2026-11-24 用户令：AI 浏览器下载同一套）。挡位与「可释放多少」都来自后端
+    // targets[k].age_options / by_age——用户点之前就看到会删多少；天数是后端
+    // 白名单，前端不自己造
     let pending = '';
     let pendingDays = 0;
     const olderWrap = bar.querySelector('#ddCleanOlder');
@@ -2048,6 +2112,7 @@ async function _ddRefreshUsage(pane) {
     const _fillDays = (u) => {
       const opts = Array.isArray(u && u.age_options) ? u.age_options : [];
       olderWrap.style.display = opts.length ? 'inline-flex' : 'none';
+      olderWrap.querySelector('#ddCleanOlderGo').textContent = pending === 'logs' ? '删除旧日志' : '删除旧文件';
       if (!opts.length) return;
       daysSel.innerHTML = opts.map(d =>
         `<option value="${esc(String(d))}">${esc(String(d))} 天前（可释放 ${_ddFmtSize((u.by_age || {})[String(d)] || 0)}）</option>`
@@ -2062,7 +2127,7 @@ async function _ddRefreshUsage(pane) {
         _fillDays(j.targets[pending]);
         bar.querySelector('#ddCleanTip').innerHTML =
           `清理「${esc((j.targets[pending] || {}).name || pending)}」：${POLICY[pending] || ''}` +
-          (DANGER[pending] ? `<br>${DANGER[pending]}` : '');
+          (_danger(pending) ? `<br>${_danger(pending)}` : '');
       };
     });
     bar.querySelector('#ddCleanCancel').onclick = () => { pending = ''; bar.style.display = 'none'; };
@@ -2080,7 +2145,10 @@ async function _ddRefreshUsage(pane) {
           body: JSON.stringify(body)});
         const j2 = await r.json();
         if (!j2.ok) { showBanner('清理失败: ' + (j2.err || ''), 3000, true); }
-        else showBanner(`已清理 ${j2.removed} 项，释放 ${_ddFmtSize(j2.freed || 0)}`, 3200);
+        // 下载进的是回收站：没腾出空间，但能找回——不说成「释放」
+        else if (pending === 'downloads' && (j.targets.downloads || {}).trash) {
+          showBanner(`已把 ${j2.removed} 项移入回收站（${_ddFmtSize(j2.freed || 0)}），可以找回`, 3600);
+        } else showBanner(`已清理 ${j2.removed} 项，释放 ${_ddFmtSize(j2.freed || 0)}`, 3200);
       } catch(e) { showBanner('清理失败: ' + e, 3000, true); }
       pending = '';
       bar.style.display = 'none';

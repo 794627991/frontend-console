@@ -402,6 +402,53 @@ DEFAULT_LOG_DIR = os.path.join(DATA_DIR, "logs")
 # 命令库持久化（跨端口/重启保留）——数据目录内（备份数据目录即备份全部用户数据）。
 CMD_LIB_FILE = os.path.join(DATA_DIR, "cmdlib.json")
 
+DOWNLOAD_DIRNAME = "download"     # 默认下载目录的名字（数据目录下的子目录）
+
+
+def download_default_dir():
+    """默认下载目录 = 数据目录\\download（用户令 2026-11-24：跟着数据目录走，迁移
+    数据时一并带走；放工具目录下的话卸载器会连它一起删、隔离态也落不进沙箱）。"""
+    root = DATA_DIR or ""
+    return os.path.join(root, DOWNLOAD_DIRNAME) if root else None
+
+
+def download_custom_dir():
+    """用户在设置里手动指定的下载目录（config 的 download_dir）。
+    没指定 / 空白返回 None = 用默认。"""
+    try:
+        v = str(_load_config().get("download_dir") or "").strip()
+    except Exception:
+        return None
+    return v or None
+
+
+def download_dir(create=False):
+    """当前生效的下载目录：用户指定了就用它，否则 数据目录\\download
+    （用户令 2026-11-24：默认跟随数据目录，用户也可以手动另行指定）。
+
+    每次调用都现读：数据目录迁移 / 用户改配置之后不残留旧路径。隔离态
+    （FC_STATE_DIR）下 config 与数据目录都在沙箱里，这里不用再认隔离开关。
+    create=True 时建目录；建不了返回 None——调用方据此降级，绝不偷偷落到别处。"""
+    d = download_custom_dir() or download_default_dir()
+    if not d:
+        return None
+    if create:
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception as e:
+            import logging
+            logging.getLogger("app_state").error(
+                "下载目录创建失败：%s（%s）", d, e)
+            return None
+    return d
+
+
+def download_dir_is_default():
+    """当前下载目录是不是默认那个（数据目录\\download）。只有它才算「工具自己的
+    下载文件夹」，才允许在设置里清理；用户手动指定的目录工具只往里存、不删——
+    那里面可能有用户自己的文件。"""
+    return download_custom_dir() is None
+
 # ---- 用户数据写盘通知（a602）----
 # 凭据镜像（cred_mirror）要「写盘就备份」，而不是定时轮询整个数据目录。
 # app_state 不能反向 import cred_mirror（循环依赖），故留一个钩子表：

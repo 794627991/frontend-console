@@ -1072,7 +1072,12 @@ el_body.addEventListener('click', async (e)=>{
     a.href=u; a.download=name;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(u), 60000);
-    if(st) st.textContent='已开始下载 '+name+'（浏览器下载列表可见）';
+    // 2026-11-24 工具内 AI 实测：壳里没有下载列表，不能说「浏览器下载列表可见」
+    // （AI 照着这句汇报，用户却哪儿都找不到）。且 Blob 路线下走到这里数据已在
+    // 内存，是「已下载完」。页面分不清自己开在哪，所以不对保存位置做任何断言：
+    // AI 浏览器里文件自动存进数据目录的 download 文件夹（AI 用 browser_downloads
+    // 查真实路径）；系统浏览器里看它自己的下载记录
+    if(st) st.textContent='已下载完成 '+name;
   }catch(err){
     if(st) st.textContent='浏览器下载失败，尝试直接打开…';
     location.href=url;

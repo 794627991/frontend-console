@@ -394,6 +394,7 @@ function op(d) {
   else if (d.op === 'wait') msg = '等待 ' + text;
   else if (d.op === 'console') msg = '读取控制台';
   else if (d.op === 'network') msg = '查看网络请求' + (text ? '：' + text : '');
+  else if (d.op === 'download') msg = text;   // 下载：后端给的是整句（开始 / 完成 / 取消 / 失败）
   _status(msg || '操作中…', true);
   _queueSync();          // 面板可能是刚重建的：立刻对齐一次，不等观察器报
   _touchReap();
