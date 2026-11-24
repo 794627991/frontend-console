@@ -869,17 +869,8 @@
   overflow: hidden; margin-bottom: 12px; }
 .hg-ctx-bar i { display: block; height: 100%; border-radius: 999px;
   transition: width .3s; }
-.hg-ctx-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
-.hg-ctx-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
-  flex-shrink: 0; }
-.hg-ctx-dot.est { background: var(--muted); }
-.hg-ctx-name { flex: 1; }
-.hg-ctx-val { color: var(--muted); font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums; }
 .hg-ctx-line { padding-top: 6px; }
 .hg-ctx-dim { color: var(--muted); font-size: var(--fs-sm, 11px); }
-.hg-ctx-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
-  color: var(--muted); font-size: var(--fs-sm, 11px); line-height: 1.5; }
 /* v2.19：图标换成 SVG（旧的字符 ➤/■ 基线不齐、■ 还是窄长条，用户嫌丑）。
    两个 svg 常驻 DOM，靠 .stop 切换显隐，避免改 DOM 引起重排。 */
 .hg-send { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%;

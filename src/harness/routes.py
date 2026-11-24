@@ -745,9 +745,6 @@ def harness_ctx():
         window = _session_ctx_window(s) or window
     except Exception:
         pass
-    # a154：容量卡分类估算——系统提示词（session.start 落账的注入长度，
-    # 中文重 3 字符/token 保守取 3）+ MCP 工具 schema（我们注册的，可量）
-    sys_chars = getattr(s, "sys_prompt_chars", 0) or 0
     # badMax：坏数据判据阈值（模型真实能力，与 settings 解耦）。前端用它
     # 判「这帧用量是否离谱」，用 window 画分母——两者混用会把
     # (settings, 实报] 的合法用量误丢，环冻结在旧读数
@@ -767,28 +764,13 @@ def harness_ctx():
                     "usedSource": _src,
                     "overWindow": _over,
                     "compacted": compacted,
-                    "model": s.model or available_models().get("default") or "",
-                    "sysTok": max(1, round(sys_chars / 3)) if sys_chars else 0,
-                    "mcpTok": _mcp_tok_est()})
+                    "model": s.model or available_models().get("default") or ""})
+    # 2026-11-24（用户令）：原「sysTok / mcpTok」两项**去掉**。它们不是量出来
+    # 的：sysTok = 我们自己注入的系统提示词字符数 ÷ 3（Claude Code 真正的
+    # 系统提示词上万 token，CLI 不暴露）；mcpTok = 只数了我们自己注册的 2 个
+    # MCP 的 schema ÷ 3（用户机器上挂的其它 MCP 全没算）。数据源里没有这个
+    # 拆分，无法精确——不再返回假数，面板只显示 API 实报的真数。
 
-
-# a154：MCP 工具 schema token 估算（容量卡分类行）。_TOOLS 是进程内静态
-# 结构，量一次记忆；3 字符/token 同 sysTok 口径
-_MCP_TOK_EST = None
-
-
-def _mcp_tok_est():
-    global _MCP_TOK_EST
-    if _MCP_TOK_EST is None:
-        from . import ask_mcp, vision_mcp
-        n = 0
-        for _m in (ask_mcp, vision_mcp):
-            try:
-                n += len(json.dumps(_m._TOOLS, ensure_ascii=False))
-            except Exception:
-                pass        # schema 量不到就不冒充精确，分类余量自然吸收
-        _MCP_TOK_EST = max(1, n // 3)
-    return _MCP_TOK_EST
 
 # ---- from claude_harness.py:2934 (harness_set_model) ----
 

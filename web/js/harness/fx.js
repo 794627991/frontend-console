@@ -105,7 +105,6 @@
     return !!(_hgCtxOwnTrusted(v, s) && v.badMax > 0 && v.max > 0);
   }
   function _hgCtxRestore(sid) {
-    _HG.ctxParts = null;   // a154：分类估算随会话走，旧会话的 sys/mcp 估值不残留
     let v = null;
     if (sid) { try { v = JSON.parse(localStorage.getItem(_hgCtxKey(sid)) || 'null'); } catch(_) {} }
     const mname = _hgCtxMname(sid);
@@ -329,10 +328,6 @@
       .then(r => r.json())
       .then(j => {
         if (!j || !j.ok || j.sid !== _HG.sid) return;
-        // a154：容量卡分类估算（系统提示词/MCP 工具，后端 /ctx 附带）——
-        // 搭既有 5s 轮询车，零新增请求
-        if (j.sysTok !== undefined || j.mcpTok !== undefined)
-          _HG.ctxParts = { sys: j.sysTok || 0, mcp: j.mcpTok || 0 };
         // v2.20：中断轮次没有 result → 接口 window=0 → 前端曾退 256K 假分母
         // （1M 模型显示成 /256K，84% 虚高）。模型名带窗口线索（glm-5.3[1M]）
         // 时按名推断，兜住没有任何 result 校准过的会话。
@@ -421,10 +416,10 @@
   }
   // ---- a154：上下文容量卡（仿 ZCode，用户需求）----------------------------
   // 数据零新增：用量=ctxRing+liveToks（a153 实时链）、缓存命中率=v4feed
-  // tps.hit（result 帧三输入分量累计）、分类=系统提示词/MCP 工具后端估算
-  // （/ctx sysTok/mcpTok）+ 消息=余量。我们是 CLI 的壳——CLI 内部的基础
-  // 系统提示与内置工具 schema 拿不到，故分类标「估」不装精确（ZCode 自组
-  // prompt 所以精确；额度区是其订阅限制，自托管网关无此概念，不仿）
+  // tps.hit（result 帧三输入分量累计）。我们是 CLI 的壳——CLI 内部的基础
+  // 系统提示与内置工具 schema 拿不到，所以卡片只显示 API 实报的真数，不做
+  // 分类拆分（ZCode 自组 prompt 所以精确；额度区是其订阅限制，自托管网关
+  // 无此概念，不仿）
   let _hgCtxCardEl = null, _hgCtxCardTimer = null, _hgCtxHoverT = 0;
   function _hgCtxCardFmt(n) {
     return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M'
@@ -434,7 +429,7 @@
     const r = _HG.ctxRing || {}, t = _HG.tps || {};
     const est = (_HG.busy && t.liveToks) || 0;
     const used = Math.max(0, r.used || 0);
-    // 用户定调（v4.1）：百分比/红条/分类占比只按 used（已进入上下文的
+    // 用户定调（v4.1）：百分比/红条只按 used（已进入上下文的
     // 真实 input）算，与圆环、侧栏胶囊同口径。est（生成中估值）要等下一
     // 轮请求才会变成 input，CLI 的压缩判定也只看真实 input——混进分母会
     // 让忙碌期恒虚高（427.3K 显示成 481.9K=96%，跨过 90% 线而 CLI 不动）。
@@ -447,19 +442,12 @@
     const pctBand = Math.round(pct);
     const barCol = pctBand >= 95 ? 'var(--neon-red, #e06c75)'
                  : pctBand >= 80 ? 'var(--neon-orange, #d29922)' : 'var(--accent)';
-    const parts = _HG.ctxParts || { sys: 0, mcp: 0 };
-    const msg = Math.max(0, used - parts.sys - parts.mcp);
-    // a452（审计 P2）：分母是 used，而 sys/mcp 是进程内固定估值，两者之和
-    // 可能超过 used——原来只对 msg 单项 clamp，三行占比合计会到 116%。
-    // 归一化：估算部分超过 used 时按比例压缩，保证三行合计 ≈100%。
-    const _est = Math.max(0, (parts.sys || 0)) + Math.max(0, (parts.mcp || 0));
-    const _estScale = (_est > used && _est > 0) ? used / _est : 1;
-    const row = (name, tok, est_) => {
-      const p = used > 0 ? (tok / used * 100).toFixed(1) : '0.0';
-      return `<div class="hg-ctx-row"><i class="hg-ctx-dot${est_ ? ' est' : ''}"></i>` +
-        `<span class="hg-ctx-name">${name}</span>` +
-        `<span class="hg-ctx-val">${_hgCtxCardFmt(tok)} · ${p}%${est_ ? '*' : ''}</span></div>`;
-    };
+    // 2026-11-24（用户令）：原「消息 / 系统提示词 / MCP 工具」三行拆分**去掉**。
+    // 它们从来不是量出来的：系统提示词 = 我们自己注入的那段字符数 ÷ 3（Claude
+    // Code 真正的系统提示词上万 token，CLI 不暴露，我们看不到）；MCP 工具 =
+    // 只数了我们自己注册的 2 个 MCP 的 schema ÷ 3（用户机器上挂的其它 MCP
+    // 全没算）。「消息 = 总量 − 前两项」因此也是错的。数据源里没有这个拆分，
+    // 无法精确——按用户令去掉，只留 API 实报的真数（总量/窗口/缓存命中/速度）。
     const tpsBits = [];
     if (t.last) tpsBits.push(`最近 ${t.last} tok/s`);
     if (t.all) tpsBits.push(`累计输出 ${_hgCtxCardFmt(t.all)}`);
@@ -473,18 +461,10 @@
         `${_hgCtxCardFmt(used)}/${_hgCtxCardFmt(max)}（${Math.floor(pct)}%）` :
         (max > 0 ? '首轮回复后统计' : '等待窗口 · 分母将由后端补')}</span></div>` +
       `<div class="hg-ctx-bar"><i style="width:${pct}%;background:${barCol}"></i></div>` +
-      `<div class="hg-ctx-rows">` +
-        row('消息', msg, false) +
-        // a452：估算项按 _estScale 缩放后再显示，保证三行合计 ≈100%
-        row('系统提示词', parts.sys * _estScale, true) +
-        row('MCP 工具', parts.mcp * _estScale, true) +
-      `</div>` +
       `<div class="hg-ctx-line">缓存命中率 ${t.hit > 0 ? t.hit + '%' : '—'}` +
         `<span class="hg-ctx-dim">（本会话累计）</span></div>` +
       (tpsBits.length ? `<div class="hg-ctx-line">${tpsBits.join(' · ')}</div>` : '') +
-      (est > 0 ? `<div class="hg-ctx-dim">生成中 +${_hgCtxCardFmt(est)}（估值，不计入上方）</div>` : '') +
-      `<div class="hg-ctx-foot">* 分类为估算：系统提示词/MCP 工具按注入内容量得，` +
-      `消息 = 总量 − 前两项（CLI 内部构成不暴露）</div>`;
+      (est > 0 ? `<div class="hg-ctx-dim">生成中 +${_hgCtxCardFmt(est)}（估值，不计入上方）</div>` : '');
   }
   function _hgCtxCardPlace() {
     if (!_hgCtxCardEl) return;
