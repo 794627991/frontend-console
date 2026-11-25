@@ -223,7 +223,12 @@ def status(root):
                             "off": sum(1 for v in _dirs.values()
                                        if v == "off"),
                         },
-                        "artifact_roots": (_sc.get("artifact_roots") or [])[:8]}
+                        "artifact_roots": (_sc.get("artifact_roots") or [])[:8],
+                        # a576（第 2 轮审计·低-2）：必须下发 confirmed——
+                        # build 见 confirmed 为假会丢弃重推并弹确认窗，
+                        # 而 status 原样报「有效配置」，面板与建库口径不一致，
+                        # 用户以为配置已生效、点建库却弹窗重配。
+                        "confirmed": bool(_sc.get("confirmed"))}
     elif _sc_src == "v1-deprecated":
         out["scope"] = {"source": "v1-deprecated", "name": "", "mode": ""}
     elif _sc_src.startswith("bad:"):
@@ -357,9 +362,26 @@ def _is_remote_fs(path):
         return False
 
 
+_SYSFS_MARKS = ("block", "bus", "class", "devices")
+
+
+def _sysfs_marked(ds):
+    """返回 ds 中属于 sysfs 快照的那批目录名（小写集合）；未命中返回空集。
+
+    a576（第 2 轮审计）：只剪**这四个**，不整层清空。原实现在命中后
+    `ds[:] = []`，会连带剪掉同级的正常目录——工程根或某一层恰好同时有
+    `block/bus/class/devices` 与 `app` 时，`app` 也被误剪。
+    """
+    _d = {d.lower() for d in ds}
+    if all(m in _d for m in _SYSFS_MARKS):
+        return set(_SYSFS_MARKS)
+    return set()
+
+
 def _walk_files(root, subs=None, should_cancel=None, say=None,
                 excl_names=(), excl_paths=(), stats=None,
-                state_of=None, artifact_roots=(), dot_keep=False):
+                state_of=None, artifact_roots=(), dot_keep=False,
+                max_depth=0):
     """生成 (abs_path, rel_posix)（rel 一律相对 root）。
     a394→a396（用户实锤：W: 网盘大库阶段 1 扫描磨到像卡死）：网盘瓶颈是
     RTT——每目录一次 SMB 往返、单线程串行干等；并发分片 + 8 worker 近线性
@@ -492,10 +514,17 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
             # 「白 N」而实际零文件）。
             return _live_below(rel_l)
         st = _state(rel_l)
-        if st == "off" and not _in_artifacts(rel_l):
+        if st == "off":
             # a570 对抗审计：off 但子树里有用户显式设成 white/full 的节点
             # → 必须继续下钻，否则那条配置是死配置（面板显示「白 1」
             # 而实际零文件被收录）。
+            # a571（用户实锤：G10 主 walk 在 sbuilder 上白等 180 秒）：
+            # 原判据是 `st == "off" and not _in_artifacts(rel_l)`——
+            # `_in_artifacts` 对产物根的**祖先**也返回 True，
+            # `sbuilder`（`sbuilder/output/build` 的祖先）因此被放行，
+            # 主 walk 一路下钻进 12.4 万文件的产物区直到超时。
+            # 产物的采集由独立的 artifact walk（subs=artifact_roots）
+            # 负责，主 walk 没有理由进 off 的产物区祖先。
             if _live_below(rel_l):
                 return True
             with _alock:
@@ -545,6 +574,18 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                 with _alock:
                     stats["soft_skipped"] = stats.get("soft_skipped", 0) + 1
                 continue
+            # a576（第 2 轮审计·中-2）：分片预扫描**也**要识别 sysfs 形态。
+            # worker 内的检查够不到这里：若 sysfs 快照正好是 base 的一级
+            # 子目录，`block/bus/class/devices` 会各自成为独立种子，
+            # `_sysfs_marked` 在各自的子树上永远拼不齐四件套 —— 形态识别
+            # 整条失效，只能等 180s item 超时（G10 实测正是如此）。
+            _l1_sys = _sysfs_marked(l1_ds)
+            if _l1_sys:
+                with _alock:
+                    stats["sysfs_pruned"] = stats.get("sysfs_pruned", 0) + 1
+                    stats.setdefault("sysfs_dirs", []).append(
+                        os.path.relpath(base, root).replace(os.sep, "/"))
+                l1_ds = [d for d in l1_ds if d.lower() not in _l1_sys]
             # a400：种子层同探测产物目录（L1 在 worker 之前被过滤）
             stats["artifact_dirs"] = stats.get("artifact_dirs", 0) + sum(
                 1 for d in l1_ds if d.lower() in _ARTIFACT_DIRS)
@@ -566,6 +607,15 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                     except OSError:
                         seeds.append(p)   # 展不开（权限/断连）：整子树任务
                         continue
+                    # a576（中-2）：二级同样要识别（一级子目录少、拆到二级时，
+                    # sysfs 快照可能正好是一个一级子目录）。
+                    _l2_sys = _sysfs_marked(l2_ds)
+                    if _l2_sys:
+                        with _alock:
+                            stats["sysfs_pruned"] = stats.get("sysfs_pruned", 0) + 1
+                            stats.setdefault("sysfs_dirs", []).append(
+                                os.path.relpath(p, root).replace(os.sep, "/"))
+                        l2_ds = [d for d in l2_ds if d.lower() not in _l2_sys]
                     pre_batches.append((p, l2_fs))
                     l2_rel = (os.path.relpath(p, root).replace(os.sep, "/"))
                     seeds.extend(os.path.join(p, s2)
@@ -594,6 +644,17 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
         tail = r[len(sub) + 1:] if r.lower().startswith(sub.lower() + os.sep) \
             else r
         segs = tail.split(os.sep)
+        # a571（G10 实测）：绝对深度兜底。sysfs 快照这类宽度爆炸树的
+        # 路径段各不相同（同名段 >3 判据失效），只能靠深度硬剪。
+        # a576（第 1 轮审计）：阈值取 24 而非 16——16 层会剪到真实的深层
+        # 源码（Java 包路径、node_modules 嵌套、构建系统生成的
+        # `a/b/c/d/.../src`）。宽度爆炸树的特征是「层数远超 24」，而
+        # sysfs 快照的主因已由 `_sysfs_marked` 形态识别精准剪掉，
+        # 这里是纯兜底，宁可放宽也不误剪。
+        if max_depth and len(segs) > max_depth:
+            with _alock:
+                stats["depth_pruned"] = stats.get("depth_pruned", 0) + 1
+            return True
         if len(segs) <= 3:
             return False
         _c = {}
@@ -932,6 +993,15 @@ def _walk_files(root, subs=None, should_cancel=None, say=None,
                             d, (os.path.relpath(r, root).replace(os.sep, "/")
                                 + "/" + d))]
                         # P0-1 环防护（SMB 自链，报告 §2.1）
+                        # a571：sysfs 导出树（宽度爆炸，环防护判不出）——
+                        # 必须在「以下钻」之前清空 ds，否则等于没剪。
+                        _sys_hit = _sysfs_marked(ds)
+                        if _sys_hit:
+                            with _alock:
+                                stats["sysfs_pruned"] = stats.get("sysfs_pruned", 0) + 1
+                                stats.setdefault("sysfs_dirs", []).append(
+                                    os.path.relpath(r, root).replace(os.sep, "/"))
+                            ds[:] = [d for d in ds if d.lower() not in _sys_hit]
                         if _loop_prune(r, sub):
                             ds[:] = []
                             with _alock:
@@ -1546,11 +1616,16 @@ def _norm_dirs(dirs, dropped=None):
     return out
 
 
-def _norm_scope_v2(cfg, root):
-    """v2 配置校验。返回 (ok, scope|err)。"""
+def _norm_scope_v2(cfg, root, dropped_out=None):
+    """v2 配置校验。返回 (ok, scope|err)。
+
+    a572（第 1 轮审计 B5）：`dropped_out` 收集被 _norm_dirs 丢弃的 tmp 键。
+    原实现让 _norm_dirs 自己收集、调用方从不读取——用户配置里的 tmp 节点
+    被静默丢弃，面板和磁盘都对不上，用户毫无感知。"""
     if not isinstance(cfg, dict):
         return False, "配置必须是 JSON 对象"
-    dirs = _norm_dirs(cfg.get("dirs"))
+    _dropped = dropped_out if dropped_out is not None else []
+    dirs = _norm_dirs(cfg.get("dirs"), dropped=_dropped)
     if dirs is None:
         return False, ("dirs 必须是 {相对路径: whitelist|full|off}，"
                        "且不得含绝对路径/../tmp 类目录")
@@ -1596,7 +1671,12 @@ def _norm_scope_v2(cfg, root):
         if v is None:
             return False, "%s 含非法路径（绝对路径/../）或类型错误" % k
         fields[k] = v
-    _known = {"version", "name", "mode", "arch", "dirs"} | set(fields)
+    # a571（用户实锤）：`confirmed` 标记「这份范围经过用户确认」。
+    # 没有它，`load_scope` 无法区分「用户确认过的配置」与「旧 detect_scope
+    # 自动写下的残缺骨架」（G10 日志「白 0 · 全 0 · 不勾 2」就是后者），
+    # 于是首次建库的确认弹窗被永久跳过。
+    _known = {"version", "name", "mode", "arch", "dirs",
+              "confirmed"} | set(fields)
     _unknown = [k for k in cfg if k not in _known]
     if _unknown:
         return False, "未知字段：%s" % "、".join(_unknown[:5])
@@ -1616,6 +1696,10 @@ def _norm_scope_v2(cfg, root):
         "name": str(cfg.get("name") or "")[:60] or "未命名范围",
         "mode": mode, "arch": arch,
         "dirs": dirs,
+        # a576（第 2 轮审计·低-4）：只认真正的布尔 True——手改
+        # `"confirmed": "false"` 时 `bool("false")` 为 True，会误判已确认
+        # 从而跳过一次应有的推荐与确认。
+        "confirmed": cfg.get("confirmed") is True,
         **fields,
     }
 
@@ -1721,7 +1805,7 @@ def _has_live_desc(rel_l, dirs):
     return False
 
 
-def _norm_scope(cfg, root):
+def _norm_scope(cfg, root, dropped_out=None):
     """校验+归一 scope 配置。返回 (ok, scope|err_msg)。
 
     a570：v2 优先。缺 `version: 2` 的一律按 v1 处理 → **(False, "v1-deprecated")**，
@@ -1731,10 +1815,10 @@ def _norm_scope(cfg, root):
         return False, "配置必须是 JSON 对象"
     if cfg.get("version") != 2:
         return False, "v1-deprecated"
-    return _norm_scope_v2(cfg, root)
+    return _norm_scope_v2(cfg, root, dropped_out=dropped_out)
 
 
-def load_scope(root, store=None):
+def load_scope(root, store=None, dropped_out=None):
     """加载收录范围配置。只读**工程根** `.fcpk-scope.json`（方案 A）。
 
     返回 (scope|None, source)：
@@ -1759,7 +1843,7 @@ def load_scope(root, store=None):
         return None, "bad:配置不是 JSON 对象"
     if cfg.get("version") != 2:
         return None, "v1-deprecated"
-    ok, sc = _norm_scope_v2(cfg, root)
+    ok, sc = _norm_scope_v2(cfg, root, dropped_out=dropped_out)
     if ok:
         return sc, "project"
     return None, "bad:%s" % sc
@@ -1871,7 +1955,7 @@ _INC_RE = re.compile(r'^\s*#\s*include\s+[<"]([^>"]+\.h)[>"]', re.M)
 
 
 def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
-                      quiet_rounds=None):
+                      quiet_rounds=None, root=None):
     """从已收集的 .cmd 列表提取 -I 目录（真实编译参数）。返回 (dirs, 扫描数)。
 
     a422：原实现**再走一遍整树**找 .cmd，source_roots 含 "." 时 →
@@ -1887,11 +1971,16 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
     也就几秒，远小于阶段 1 的目录遍历本身——**默认扫完全部**
     （quiet_rounds=None 关闭早停）。保留参数仅为兼容旧的调用方。
 
-    base_dirs：.cmd 里 -I 为相对路径时的解析基准（产物根/源码根）。"""
+    base_dirs：.cmd 里 -I 为相对路径时的解析基准（产物根/源码根）。
+
+    root：工程根（a572 B1）。绝对 `-I` 不在工程根内时丢弃——参见下方注释。"""
     # a452：用有序去重列表保存 -I——gcc 语义是「按 -I 出现顺序取第一个」，
     # set 会丢掉这个顺序，而字典序不是 -I 顺序。_dir_seen 负责去重。
     dirs = []
     _dir_seen = set()
+    # a572（第 1 轮审计 B1）：工程边界。给 `root` 时应拒绝工程外的绝对 -I。
+    _root_n = (os.path.normpath(root).lower().rstrip("\\/") if root else "")
+    _outside_inc = set()
     def _add_dir(p):
         if p not in _dir_seen:
             _dir_seen.add(p)
@@ -1960,9 +2049,20 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
                         if os.path.isabs(d2):
                             # a452：绝对 -I 也走缓存（交叉工具链目录被上万个
                             # .cmd 重复引用，SMB 上每次 isdir 都是一次往返）
-                            _hit = _isdir(d2)
-                            if _hit:
-                                _add_dir(os.path.normpath(d2))
+                            # a572（第 1 轮审计 B1·P0）：工程外的绝对 -I 必
+                            # 须拒绝。原实现照单全收，交叉工具链/sysroot 的
+                            # 头文件因此被 BFS 触达 → relpath 产出 `../..` →
+                            # _keep_in_list 只滤点路径 → 写进 files.txt，
+                            # ctags 无 cwd 限制照常索引到工程外。
+                            _norm = os.path.normpath(d2)
+                            _nl = _norm.lower().rstrip("\\/") or os.sep
+                            if _root_n and not (_nl == _root_n
+                                                or _nl.startswith(
+                                                    _root_n + os.sep)):
+                                _outside_inc.add(_norm)
+                                continue
+                            if _isdir(_norm):
+                                _add_dir(_norm)
                             continue
                         for bd in _bases:
                             norm = os.path.normpath(os.path.join(bd, d2))
@@ -1979,6 +2079,11 @@ def _extract_inc_dirs(cmd_abs_list, base_dirs, should_cancel=None, say=None,
             _quiet = 0
         else:
             _quiet += 1
+    if _outside_inc and say:
+        _n = len(_outside_inc)
+        _show = sorted(_outside_inc)[:3]
+        say("  ⚠ 忽略 %d 个工程外的绝对 -I 目录（避免索引工程外文件）：%s%s"
+            % (_n, "、".join(_show), " 等" if _n > 3 else ""))
     return dirs, n
 
 
@@ -2242,6 +2347,11 @@ def detect_scope(root, say=None):
     # （G10 实测 host 工具链源码整体进收录集）。v2 用 `dirs` 的 off 表达。
     _dirs = {}
     if has_sbuilder:
+        # a571（用户实锤：G10 建库 10 分钟，前 180s 卡在 sbuilder 主 walk）：
+        # 已识别出 sbuilder 方案，就整棵 off——只标 `sbuilder/output` 时
+        # `sbuilder` 自身仍被当作待扫目录，主 walk 在它身上白等到超时。
+        # 产物由 artifact walk（subs=["sbuilder/output/build"]）单独采集。
+        _dirs["sbuilder"] = "off"
         _dirs["sbuilder/output"] = "off"
         if os.path.isdir(os.path.join(root, "sbuilder",
                                       ".buildroot-ccache")):
@@ -2595,12 +2705,17 @@ def _scope_summary(sc):
 
 
 def build(root, log=None, progress=None, should_cancel=None,
-          backend="auto", scope=None, ask_tier=None):
+          backend="auto", scope=None, ask_tier=None, ask_scope=None):
     """收录范围化建库（a398 档B）。scope：None=自动发现（工程
     .fcpk-scope.json > 已存范围 > 全量）；dict=内联配置（API 层建库成功后
     落盘独立存储位）。log=callable(str)；progress=callable(done,total,label)。
     ask_tier=callable(info)->"full"|"whitelist"|"cancel"：白名单覆盖率偏低
     时询问用户建库方式（None=不问，默认 full）。
+    ask_scope=callable(rec)->"accept"|"reconfigure"|"cancel"（a571）：
+    **首次建库**（工程根无可用/未经确认的配置）时先跑推荐器，把推荐的三态
+    树交给用户确认增删。返回 "accept" 按推荐建库；"reconfigure" 抛
+    Cancelled(reason="reconfigure") 让前端打开三态树；"cancel" 放弃。
+    None=不问（直接按推荐建库）。
     返回 meta dict（失败抛异常）。"""
     say = log or (lambda _m: None)
     root = os.path.abspath(root)
@@ -2618,15 +2733,17 @@ def build(root, log=None, progress=None, should_cancel=None,
 
     # ---- 阶段 0：收录范围解析（a570 三档重构 v2）----
     sc, sc_src = None, ""
+    # a572（B5）：收集 _norm_dirs 丢弃的 tmp 键（两处归一都收）
+    _dropped_keys = []
     if scope is not None:
         if not isinstance(scope, dict):
             raise RuntimeError("收录范围配置必须是 JSON 对象")
-        _ok, _sc2 = _norm_scope(scope, root)
+        _ok, _sc2 = _norm_scope(scope, root, dropped_out=_dropped_keys)
         if not _ok:
             raise RuntimeError("收录范围配置不合法：%s" % _sc2)
         sc, sc_src = _sc2, "inline"
     else:
-        sc, sc_src = load_scope(root)
+        sc, sc_src = load_scope(root, dropped_out=_dropped_keys)
         if sc_src == "v1-deprecated":
             say("  ⚠ 旧版（v1）收录范围配置已废弃——本次按推荐器重新生成，"
                 "建库成功后写回 v2 到工程根")
@@ -2634,12 +2751,130 @@ def build(root, log=None, progress=None, should_cancel=None,
         elif sc_src.startswith("bad:"):
             say("  ⚠ 收录范围配置解析失败（%s）——按推荐器重新生成" % sc_src[4:])
             sc, sc_src = None, ""
+        elif sc is not None and not sc.get("confirmed"):
+            # a571（用户实锤：G10 日志「白 0 · 全 0 · 不勾 2 · 来源：自动
+            # 检测」——一个节点都没推荐过）：工程根那份配置是旧 detect_scope
+            # 自动写下的，从未经用户确认，也没走过 L0~L3 规则。原判定链只判
+            # 「有没有配置」，于是这类残缺配置被直接采用，推荐器与确认弹窗
+            # 被整条跳过。未确认 = 视为无配置：走推荐器 + 用户确认。
+            say("  · 工程根的收录范围从未经确认（工具自动生成）——"
+                "按规则重新推荐")
+            sc, sc_src = None, ""
     if sc is None:
-        # 零配置：推荐器（P2 实现）未就绪前先退回形态检测 + 隐式范围。
-        # 推荐器上线后这里换成 recommend_scope(root) 并自动预填三态树。
-        _dsc, _dkind = detect_scope(root, say=say)
-        if _dsc:
-            sc, sc_src = _dsc, "detect"
+        # a571（用户定调：首次建库必须让用户确认范围，不允许静默开跑）：
+        # 零配置时先跑**推荐器**（完整递归扫描），把三态树交给用户确认，
+        # 再由用户决定增删。
+        #
+        # 原来这里直接走 detect_scope——它只填「档位 + 产物源」，dirs 里
+        # 只有 `sbuilder/output` 这种骨架节点（G10 实测「白 0 · 全 0 ·
+        # 不勾 2」），用户没有任何可确认的东西。
+        say("  未找到收录范围配置——开始推荐分析（完整扫描，约 20~60 秒）…")
+        _rec = None
+        try:
+            _rec = recommend_scope(root, progress=progress,
+                                   should_cancel=should_cancel, say=say)
+        except Cancelled:
+            raise
+        except Exception as _e:
+            say("  ⚠ 推荐分析失败（%s）——回退到形态检测" % str(_e)[:120])
+        if _rec and _rec.get("ok"):
+            _rsc = {k: _rec[k] for k in
+                    ("version", "name", "mode", "arch", "dirs",
+                     "artifact_roots", "exclude_names") if k in _rec}
+            _rsc.setdefault("version", 2)
+            _rsc.setdefault("mode", "manual")
+            _rsc["arch"] = "auto"
+            _rsc.setdefault("name", "推荐配置")
+            _rsc.setdefault("exclude_names", [])
+            _ok_r, _rsc2 = _norm_scope(_rsc, root)
+            if _ok_r:
+                _choice_r = "accept"
+                if ask_scope is not None:
+                    say("  等待用户确认收录范围…")
+                    try:
+                        _choice_r = ask_scope(_rec) or "accept"
+                    except Cancelled:
+                        # a576（第 1 轮审计）：取消必须原样上抛——被下面的
+                        # `except Exception` 吞掉会变成本次建库「按推荐继续」，
+                        # 用户点了取消却照样开跑。
+                        raise
+                    except Exception as _e:
+                        say("  ⚠ 范围确认失败（%s）——按推荐继续"
+                            % str(_e)[:80])
+                        _choice_r = "accept"
+                if _choice_r == "cancel":
+                    raise Cancelled("cancel")
+                if _choice_r == "reconfigure":
+                    raise Cancelled("reconfigure")
+                sc, sc_src = _rsc2, "recommend"
+            else:
+                say("  ⚠ 推荐结果不合法（%s）——回退到形态检测" % _rsc2)
+        if sc is None:
+            # 推荐器不可用/失败：退回形态检测（最低保障，仍能建库）
+            # a576（第 2 轮审计·中-3）：兜底分支**同样要走过确认入口**。
+            # 原实现只在推荐成功的分支里调 ask_scope —— 推荐器抛异常或
+            # 返回 ok:False 时，用户既看不到确认弹窗，落盘的 confirmed 又
+            # 恒 False，于是下次建库又被当「无配置」重跑一次完整推荐扫描，
+            # 永远收敛不了。这里把 detect 结果也包装成确认载荷交用户过目，
+            # 用户确认后同样按 recommend 口径标 confirmed。
+            _dsc, _dkind = detect_scope(root, say=say)
+            if _dsc:
+                _d_nodes = [{"rel": _k, "name": _k, "state": _v,
+                             "src": 0, "code": 0, "o": 0, "cmd": 0,
+                             "reason": "形态检测（推荐器不可用）"}
+                            for _k, _v in (_dsc.get("dirs") or {}).items()]
+                # a577（第 3 轮审计·低）：in-tree 形态的 detect 返回
+                # mode=whitelist + dirs={}，没有任何可展示的节点——此时
+                # 弹「请确认收录范围」是空清单，用户点「调整范围…」又会
+                # 因 preset.nodes 为空退回重扫（而推荐器此刻正失败）。
+                # a578（第 4 轮审计·低-1）：dirs 为空的 in-tree 形态**也要**
+                # 有一条可确认的节点——否则永远不产生 confirmed 配置，每次
+                # 建库都重跑一遍 20~60 秒推荐扫描（实测连跑 3 次全都如此）。
+                # 用工程根合成一条，前端清单至少有一行可看。
+                if not _d_nodes:
+                    # a578（第 4 轮审计·低-1/B）：state 取**根默认**而非 mode
+                    # ——manual 模式的根默认就是 whitelist（SCOPE_MODE_ROOT_
+                    # DEFAULT），原写法把 manual 显示成「全量」，与建库实际
+                    # 行为相反，会把用户引到错误预期。
+                    _dm = _dsc.get("mode") or "whitelist"
+                    _dstate = _dm if _dm in ("whitelist", "full")                         else "whitelist"
+                    _d_nodes = [{"rel": "", "name": "（工程根）",
+                                 "state": _dstate, "src": 0, "code": 0,
+                                 "o": 0, "cmd": 0,
+                                 "reason": "形态检测：无显式目录，按%s档"
+                                           % ("白名单" if _dstate == "whitelist"
+                                              else "全量")}]
+                if _d_nodes:
+                    _drec = dict(_dsc)
+                    _drec["nodes"] = _d_nodes
+                    _drec["ok"] = True
+                    # a577（第 3 轮审计·中-2）：只有**真的问过且用户答了
+                    # accept** 才算「已确认」。原实现无条件按 detect-confirmed
+                    # 落盘 —— 直调 build（ask_scope=None）或回调抛异常时也会
+                    # 标成用户确认，之后永久跳过推荐与确认弹窗。
+                    # a578（第 4 轮审计·低-2）：10 分钟无人应答时 ask_scope
+                    # 返回 "accept"（与 recommend 分支同口径），因此「超时」
+                    # 等同于「按此建库并认定已确认」——这是刻意的：用户放弃
+                    # 作答不该让每次建库都重扫 20~60 秒。
+                    _confirmed_ok = False
+                    if ask_scope is not None:
+                        say("  等待用户确认收录范围…")
+                        try:
+                            _choice_d = ask_scope(_drec) or "accept"
+                            if _choice_d == "cancel":
+                                raise Cancelled("cancel")
+                            if _choice_d == "reconfigure":
+                                raise Cancelled("reconfigure")
+                            _confirmed_ok = True
+                        except Cancelled:
+                            raise
+                        except Exception as _e:
+                            say("  ⚠ 范围确认失败（%s）——按形态检测继续"
+                                % str(_e)[:80])
+                    # a578（第 5 轮审计）：`_d_nodes` 现在恒非空（dirs 为空
+                    # 时合成工程根节点），故再无「无节点可确认」的 else 分支。
+                    sc, sc_src = ((_dsc, "detect-confirmed") if _confirmed_ok
+                                  else (_dsc, "detect"))
     if sc is None:
         # 隐式范围：形态检测也没识别出来。按 mode=manual + 根默认 whitelist
         # 走（等价于旧 a418 的隐式范围——有 .cmd 走白名单，零产物降全量）
@@ -2649,10 +2884,17 @@ def build(root, log=None, progress=None, should_cancel=None,
         sc_src = "implicit"
     _src_label = {"project": "工程配置 " + SCOPE_FILE,
                   "inline": "本次指定",
-                  "implicit": "自动（隐式范围）"}.get(sc_src)
-    if sc_src == "detect":
-        _src_label = "自动检测（%s 方案）" % _dkind
+                  "implicit": "自动（隐式范围）",
+                  "recommend": "推荐器（用户已确认）"}.get(sc_src)
+    if sc_src in ("detect", "detect-confirmed"):
+        _src_label = "自动检测（%s 方案）%s" % (
+            _dkind, "·用户已确认" if sc_src == "detect-confirmed" else "")
     say("收录范围：%s［来源：%s］" % (_scope_summary(sc), _src_label or sc_src))
+    # a572（第 1 轮审计 B5）：tmp 段的键在 `_norm_dirs` 里被有意忽略（walk
+    # 对 tmp 无条件硬剪）——必须告诉用户，否则他以为配置生效了。
+    if _dropped_keys:
+        say("  ⚠ 忽略 %d 个含 tmp 段的目录配置（tmp 类目录一律不扫）：%s"
+            % (len(_dropped_keys), "、".join(_dropped_keys[:5])))
     # a570：三态求值回调 + 产物源
     _state_of = _make_state_of(sc)
     _art_roots = tuple(sc.get("artifact_roots") or ())
@@ -2738,7 +2980,8 @@ def build(root, log=None, progress=None, should_cancel=None,
             should_cancel=should_cancel, say=say,
             excl_names=(sc["exclude_names"] if sc else ()),
             excl_paths=(), stats=wstat,
-            state_of=_state_of, artifact_roots=_art_roots):
+            state_of=_state_of, artifact_roots=_art_roots,
+            max_depth=24):
         all_rels.add(rel)
         low = rel.rsplit("/", 1)[-1].lower()   # a415R2 N2：移出 if sc（原 _fn 仅 scope 分支赋值，全量建库必崩）
         if sc:   # a398（审计#29）：全量建库不建字典白占内存
@@ -2800,7 +3043,7 @@ def build(root, log=None, progress=None, should_cancel=None,
                 root, subs=_art_roots,
                 should_cancel=should_cancel, say=say,
                 excl_names=sc["exclude_names"], excl_paths=(),
-                stats=_w2, dot_keep=True):
+                stats=_w2, dot_keep=True, max_depth=24):
             # a424（用户质疑「为什么扫描 4 万却处理 9.6 万」）：先计数再跳过，
             # 让「已处理」= 遍历到的文件总数，与 include∩artifact 去重无关
             _a_tot += 1
@@ -2822,11 +3065,15 @@ def build(root, log=None, progress=None, should_cancel=None,
         wstat["pruned"] += _w2.get("pruned", 0)
         # a570 对抗审计（P2·第十二轮）：产物源阶段的超时/软错误原被丢弃——
         # 产物源被放弃时白名单源（.cmd）静默缺失，汇总告警与 meta 都看不到。
-        for _k2 in ("timeout_items", "soft_skipped", "tmp_skipped"):
+        # a576（第 2 轮审计·低-1）：sysfs/depth 剪枝也要合并——G10 那棵
+        # sysfs 恰好落在产物源 walk 里被剪，原实现只合并三种键，导致
+        # 「跳过 N 个 sysfs 导出树」在真实路径上永不打印。
+        for _k2 in ("timeout_items", "soft_skipped", "tmp_skipped",
+                    "sysfs_pruned", "sysfs_dirs", "depth_pruned"):
             _v2 = _w2.get(_k2)
             if not _v2:
                 continue
-            if _k2 == "timeout_items":
+            if _k2 in ("timeout_items", "sysfs_dirs"):
                 # a570 对抗审计（P2·第十三轮）：调用方可能传非 list。
                 if not isinstance(wstat.get(_k2), list):
                     wstat[_k2] = []
@@ -2839,6 +3086,16 @@ def build(root, log=None, progress=None, should_cancel=None,
     if wstat.get("pruned"):
         say("  ⚠ 环防护剪枝 %d 个目录（SMB 符号链接自链，报告 §2.1）"
             % wstat["pruned"])
+    # a571（G10 实测）：被剪掉的 sysfs 导出树与超深子树必须可见——否则用户
+    # 只看到「扫得快了」，不知道有东西被排除在外。
+    if wstat.get("sysfs_pruned"):
+        _sd = wstat.get("sysfs_dirs") or []
+        say("  · 跳过 %d 个 sysfs 导出树（/sys 快照，宽度爆炸；%s）"
+            % (wstat["sysfs_pruned"],
+               "、".join(_sd[:3]) + (" 等" if len(_sd) > 3 else "")))
+    if wstat.get("depth_pruned"):
+        say("  · 深度超限剪枝 %d 个目录（>%d 层）"
+            % (wstat["depth_pruned"], 24))
     # a570 对抗审计（P1·第十一轮）：超时被放弃的子树必须**明确告警**。
     # 原实现只记 stats，生产代码零消费——≤cap 个目录卡死时建库「成功完成」
     # 却静默缺整棵子树，用户只看到日志里几行「⚠ 扫描超时」淹没在进度中。
@@ -3078,7 +3335,22 @@ def build(root, log=None, progress=None, should_cancel=None,
         # 必须直接降全量（NAV_LANGS 明示支持这些语言，HEAD 版也能建）。
         # a570 对抗审计（P2·第十五轮）：用户显式配了节点时不该自动降级
         # ——那是他明确的范围，降级会把 mixed 档的 full 区一起改掉。
-        _explicit = bool(sc.get("dirs") or {})
+        # a571（用户实锤）：只有 `project`/`inline` 才算「用户显式配置」。
+        # 原实现 `bool(sc.get("dirs"))` 把 detect/推荐器产出的骨架节点也算
+        # 进去，于是首次建库的四选一询问分支被永久跳过（G10 全程零弹窗）。
+        # a576（第 1 轮审计）：`recommend` 也算「用户显式配置」——推荐结果
+        # 是**用户刚在确认弹窗里点过**的，再弹一次「覆盖率低要不要全量」
+        # 等于刚确认就质疑，实测首次建库会连弹两窗（scope -> tier）。
+        # 推导不足时仍走下面的告警 + 清单为空兜底降级，不会硬失败。
+        # a578（第 4 轮审计·中-1）：**不要**把 `detect-confirmed` 算进来。
+        # 第 3 轮曾把它与 recommend 同口径，结果 tier 安全阀被压制：detect
+        # 的 dirs 只有 `sbuilder*/off` 这类**纯 off 骨架**，用户确认的是空
+        # 信息；_explicit=True 后低覆盖不再弹 tier，实测 120 个源码文件只
+        # 收 1 个，而该配置落盘 confirmed=true 后**永久不再询问**，只能
+        # 手动清配置才能恢复。recommend 不同——它是完整扫描出的三态树，
+        # 用户确实见过每个目录的收录状态。
+        _user_given = sc_src in ("project", "inline", "recommend")
+        _explicit = _user_given and bool(sc.get("dirs") or {})
         _nonc_only = (not _all_code) and bool(all_rels)
         # a570 对抗审计（P0·第十六轮）：_explicit 原先把「降级」和「告警/询问」
         # 一起关掉——推荐器给出的 `{kernel: whitelist}`（正好是显式 dirs）
@@ -3211,13 +3483,53 @@ def build(root, log=None, progress=None, should_cancel=None,
                     _inc_bases.append(_app)
             _inc_bases.append(root)
             _inc_dirs, _n_cmd = _extract_inc_dirs(
-                cmd_abs, _inc_bases, should_cancel=should_cancel, say=say)
+                cmd_abs, _inc_bases, should_cancel=should_cancel, say=say,
+                root=root)
             say("  编译参数：从 %d 个 .cmd 提取 %d 个 -I 目录"
                 % (_n_cmd, len(_inc_dirs)))
             if not _inc_dirs:
                 _inc_dirs = []
                 _pool = []
                 _cand_dirs = set(all_dirs) | set(dirs_files)
+                # a572（第 1 轮审计 B2②）：off 目录不进 all_dirs（walk 剪掉
+                # 了），于是它下面的 inc/include 永远进不了兜底池。G10 这类
+                # 有 .cmd 的工程走不到这里；无构建描述的小工程如果用户把
+                # 某个一级目录设成「不勾」，而代码引用它的 inc/，include
+                # 解析就整段失效。这里对 off 节点做深度 ≤3 的浅探（不全树
+                # 展开，上限 400 个目录），只为把 inc/include 补进池子。
+                _off_nodes = [k for k, v in ((sc or {}).get("dirs") or {}).items()
+                              if v == "off" and k]
+                # a576（第 2 轮审计·低-5）：配额按节点各自独立——原 `_seen_n`
+                # 在循环外，`sbuilder` 这类排在 dict 首位的 off 节点探满 400
+                # 后，其余 off 节点的 inc/include 一个都进不了兜底池。
+                for _on in _off_nodes:
+                    _oabs = os.path.join(root, _on.replace("/", os.sep))
+                    if not os.path.isdir(_oabs):
+                        continue
+                    _seen_n = 0
+                    _stk = [(_oabs, 0)]
+                    while _stk and _seen_n < 400:
+                        _cur, _dep = _stk.pop()
+                        _seen_n += 1
+                        try:
+                            with os.scandir(_cur) as _it:
+                                _cs = [e for e in _it]
+                        except OSError:
+                            continue
+                        for _e in _cs:
+                            try:
+                                if not _e.is_dir(follow_symlinks=False):
+                                    continue
+                            except OSError:
+                                continue
+                            _en = _e.name.lower()
+                            if _en in ("inc", "include", "includes",
+                                       "header", "headers"):
+                                _cand_dirs.add(
+                                    os.path.relpath(_e.path, root)
+                                    .replace(os.sep, "/"))
+                            elif _dep < 3 and not _en.startswith("."):
+                                _stk.append((_e.path, _dep + 1))
                 for _d in sorted(_cand_dirs):
                     if _d.rpartition("/")[2].lower() not in (
                             "inc", "include", "includes", "header", "headers"):
@@ -3245,6 +3557,22 @@ def build(root, log=None, progress=None, should_cancel=None,
             _reached_rel.discard("")
             say("  递归 include：%d 个单元 → 触达 %d 个头文件（%.1fs）"
                 % (len(_units), len(_reached_rel), time.time() - _t0))
+            # a572（第 1 轮审计 B2①）：off 目录的头文件被白名单单元引用时
+            # 会被强制收录（行为本身正确——不然编译不过），但原实现静默
+            # 进行，用户在面板上看「不勾 N」却仍有文件进索引，无法自证。
+            _off_hits = set()
+            if _state_of:
+                for _r in _reached_rel:
+                    if _state_of(_r.lower()) == "off":
+                        _off_hits.add(_r)
+                if _off_hits:
+                    _off_dirs = sorted({r.rpartition("/")[0] or "."
+                                        for r in _off_hits})
+                    say("  ⚠ %d 个头文件位于「不勾」目录，因被白名单单元"
+                        "引用已强制收录（%s%s）——如需彻底排除请连带修改"
+                        "引用方" % (len(_off_hits),
+                                    "、".join(_off_dirs[:3]),
+                                    " 等" if len(_off_dirs) > 3 else ""))
             _same_h = set()
             _bt = _Beat(say)
             _i_u = 0
@@ -3271,7 +3599,17 @@ def build(root, log=None, progress=None, should_cancel=None,
     def _dot_path(rel):
         return any(seg.startswith(".") for seg in rel.split("/"))
 
+    _outside_n = [0]
+
     def _keep_in_list(rel):
+        # a572（第 1 轮审计 B1 第二道闸）：含 `..` 段的路径一律拒。第一道
+        # 闸在 _extract_inc_dirs（工程外绝对 -I），但 -I 相对路径里的
+        # `../../..`、以及 include 里的 `#include "../../x.h"` 仍能穿出来，
+        # 那样 relpath 会产出 `../..` 开头的 rel，写进 files.txt 后 ctags
+        # 无 cwd 限制照常索引到工程外。
+        if ".." in rel.split("/"):
+            _outside_n[0] += 1
+            return False
         # a570 对抗审计（P2·第十二轮）：原实现把所有点路径段一律过滤，
         # 但十一轮起 full 档的 walk 会保留点目录（.libs 里的 .o 对白名单
         # 推导有价值）。于是「全量区 N 个代码文件」与最终清单对不上：
@@ -3287,6 +3625,9 @@ def build(root, log=None, progress=None, should_cancel=None,
     # （同一工程两次建库 diff 满是噪声，也妨碍「结果可复现」的验收）。
     _list_pool = sorted(r for r in (final_files if final_files is not None
                                     else all_rels) if _keep_in_list(r))
+    if _outside_n[0] and say:
+        say("  ⚠ 剔除 %d 个越出工程根的路径（含 `..` 段）——它们会把"
+            "工程外文件带进索引" % _outside_n[0])
     if not _list_pool:
         # a570 对抗审计（P2·第十九轮）：v2 已无 include 字段，文案不能把
         # 用户引向不存在的配置项。这里按真实原因分类说明。
@@ -3699,6 +4040,18 @@ def build(root, log=None, progress=None, should_cancel=None,
                           "dirs": sc["dirs"],
                           "artifact_roots": sc["artifact_roots"],
                           "exclude_names": sc["exclude_names"],
+                          # a572（B3）：`confirmed` 必须随 meta 下发——nav_api
+                          # 用 meta.scope 作为落盘源，缺它每次都要手工补 True，
+                          # 字段契约不完整（任何新消费方都会误判「未确认」而
+                          # 重复弹窗）。a573（第 2 轮审计 #5）：与落盘口径对齐
+                          # ——推荐/inline 两条路径的载荷本身不带 confirmed，
+                          # 但用户在弹窗/树上确实确认过，meta 必须报真实语义。
+                          # a577（第 3 轮审计·低-中）：与落盘口径完全对齐
+                          # ——原少了 `detect-confirmed`，同一份配置 meta 报
+                          # False 而磁盘写 True，任何新消费方都会误判。
+                          "confirmed": bool(sc.get("confirmed"))
+                          or sc_src in ("recommend", "inline",
+                                         "detect-confirmed"),
                           # a570 对抗审计（P1·第十一轮）：把被放弃的超时
                           # 子树随 meta 下发——面板据此显示「本次建库 N 个
                           # 子树超时未收录」，而不是静默成功。
@@ -3715,13 +4068,18 @@ def build(root, log=None, progress=None, should_cancel=None,
     # 但 build 内部从未调用 save_scope（只有 nav_api 在「前端显式传 scope」
     # 时才写）。脚本/后端直调 build 的用户永远停在 v1 上、每次建库都重复告警。
     # 这里补上：本次用的是 detect/implicit/推荐 产物时，建库成功后写回。
-    if sc_src in ("detect", "implicit") or sc_src == "recommended":
+    if sc_src in ("detect", "implicit", "recommend",
+                  "detect-confirmed"):
         try:
             # a570：mode=full 与显式 dirs 不能共存（_norm_scope_v2 拒绝）。
             # 降级时若用户已有显式节点，落盘改用 manual 并**把非显式区补成
             # full**，这样读回时语义与本次建库完全一致（根默认 full 表达
             # 不了，就显式写出来）。
             _sp = dict(sc)
+            # a571：走推荐器并经过用户确认（含「按推荐建库」）的配置才算
+            # 「已确认」，下次建库直接采用、不再重复推荐与弹窗。detect/implicit
+            # 是工具自动生成的骨架，必须保持未确认，否则下次又会被当作用户配置。
+            _sp["confirmed"] = sc_src in ("recommend", "detect-confirmed")
             if _sp.get("mode") == "full" and (_sp.get("dirs") or {}):
                 _d2 = dict(_sp.get("dirs") or {})
                 # a570 对抗审计（P2·第十六轮）：补键必须 lower 归一——dirs
@@ -3733,6 +4091,14 @@ def build(root, log=None, progress=None, should_cancel=None,
                 for _r0 in sorted(_top_dirs_of(all_rels)):
                     if _r0 not in _known_l:
                         _d2[_r0] = "full"
+                # a578（第 5 轮审计·中高）：**必须补根键**。转成 manual 后
+                # 根默认变回 whitelist（SCOPE_MODE_ROOT_DEFAULT），而
+                # `_top_dirs_of` 已排掉「根直下文件」——那批源码的目录就是
+                # `""`。不补根键，下次建库 100 个根级 .c 会被静默丢弃，且
+                # 因 confirmed=True 永久不再询问（实测 101 → 1 文件）。
+                # 与 `_collapse_wl` 的口径一致：根显式 off 时保持 off。
+                if _d2.get("") != "off":
+                    _d2[""] = "full"
                 _sp["mode"] = "manual"
                 _sp["dirs"] = _d2
             _sv_ok, _sv_err = save_scope(root, _sp)

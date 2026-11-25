@@ -19,7 +19,8 @@ _lock = threading.Lock()
 _state = {"running": False, "phase": "", "log": [], "done": False,
           "ok": False, "err": "", "ts": 0.0, "result": None, "cancel": False,
           "percent": 0, "cur": "", "cancelled": False, "log_seq": 0,
-          "root": "", "importing": False, "reason": "", "scope_saved": None}
+          "root": "", "importing": False, "reason": "", "scope_saved": None,
+          "ask_scope": None}
 
 # ---- a570：推荐器任务槽（独立于建库，可同时进行）------------------------
 _rec_lock = threading.Lock()
@@ -465,7 +466,8 @@ def nav_build():
                           result=None, reason="", cancelled=False,
                           scope_saved=None)
         else:
-            _state.update(running=True, phase="准备", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
+            _state.update(running=True, phase="准备", log=[], _prog_row={}, ask_tier=None,
+                          ask_scope=None, log_dropped=0, done=False, ok=False,
                           err="", ts=time.time(), result=None, cancel=False,
                           percent=0, cur="", cancelled=False, log_seq=0, root=root,
                           reason="", scope_saved=None)
@@ -522,7 +524,9 @@ def nav_build():
         a432：不能用裸 evt.wait()——用户点「取消」或关掉面板时没有任何
         路径能唤醒它，建库线程会永久挂起（running 状态卡死，下次建库被拒）。
         改分片轮询：0.2s 一轮，同时检查 should_cancel；超时兜底 10 分钟。"""
-        _ask = {"evt": threading.Event(), "choice": None, "info": info}
+        _ask = {"evt": threading.Event(), "choice": None, "info": info,
+                # a572（F3）：标识「哪个任务在问」——前端回传，端点校验
+                "run_id": _state.get("ts") or 0}
         with _lock:
             _state["ask_tier"] = _ask
         _state.update(phase="等待选择建库方式")
@@ -547,6 +551,38 @@ def nav_build():
             _c = "full"
         return _c
 
+    def ask_scope(rec):
+        """a571（用户定调）：首次建库时把推荐器的三态树交给用户确认。
+
+        返回 "accept" | "reconfigure" | "cancel"。reconfigure 走
+        Cancelled(reason="reconfigure")——前端据 reason 直接打开三态树，
+        让用户增删后再带配置重新建库。
+
+        与 ask_tier 同一套暂停机制（分片轮询 + 取消感知 + 10 分钟兜底），
+        但用独立槽位 `ask_scope`，两者先后触发、不叠窗。"""
+        _ask = {"evt": threading.Event(), "choice": None, "rec": rec,
+                "run_id": _state.get("ts") or 0}
+        with _lock:
+            _state["ask_scope"] = _ask
+        _state.update(phase="等待确认收录范围")
+        _t0 = time.time()
+        try:
+            while not _ask["evt"].wait(0.2):
+                if should_cancel():
+                    break
+                if time.time() - _t0 > 600:   # 10 分钟无人应答 → 按推荐继续
+                    _log("等待收录范围确认超时（10 分钟），按推荐结果继续")
+                    break
+        finally:
+            with _lock:
+                _state["ask_scope"] = None
+        if should_cancel():
+            return "cancel"
+        _c = _ask["choice"] or "accept"
+        if _c not in ("accept", "reconfigure", "cancel"):
+            _c = "accept"
+        return _c
+
     def work():
         try:
             nav_index._close_tagdb()   # S37-2（P2）：与 reindex 对齐——查询过的库
@@ -565,12 +601,20 @@ def nav_build():
             # 时绝不能再弹四选一——用户刚确认过范围，再问一次「要不要全量」
             # 并可能推翻他的配置。也避免 bad:* 时静默按 full 收（用户刚手改
             # 坏配置，正是最该给选择权的时候）。
+            # a571（用户实锤）：还必须看 `confirmed`——旧 detect_scope 自动
+            # 写下的残缺配置（G10 的「白 0 · 全 0 · 不勾 2」）从未经用户确认，
+            # build 会当无配置重新推荐，这里若判「非首次」就会把弹窗吞掉。
+            # 判据必须与 build 的判定链严格一致。
             _is_first = (scope is None) and (
-                _sc_src in ("", "v1-deprecated") or _sc_src.startswith("bad:"))
+                _sc_src in ("", "v1-deprecated") or _sc_src.startswith("bad:")
+                or not (_sc_cur or {}).get("confirmed"))
             res = nav_index.build(root, log=_log, progress=on_prog,
                                   should_cancel=should_cancel,
                                   backend=backend, scope=scope,
-                                  ask_tier=(ask_tier if _is_first else None))
+                                  ask_tier=(ask_tier if _is_first else None),
+                                  # a571（用户定调）：首次建库必须把推荐结果
+                                  # 交给用户确认增删，不允许静默开跑。
+                                  ask_scope=(ask_scope if _is_first else None))
             # 建库**成功后**才落盘范围，且只写工程根（方案 A）。写失败不抛
             # ——工程根只读时不能因此让建库算失败。
             # a570 对抗审计：写失败要明确告诉用户「配置没保存」，否则下次
@@ -582,10 +626,14 @@ def nav_build():
                 # 却拿调用方原始的 boost scope 落盘 → 磁盘仍是 whitelist，
                 # 下次建库静默把范围收窄（实测 50 文件缩到 2 个）。
                 _eff = res.get("scope") if isinstance(res, dict) else None
+                # a571：`confirmed` 必须一起带上——否则用户在树上确认的范围
+                # 落盘后仍被判「未确认」，下次建库又弹一次。
                 _eff = ({k: _eff.get(k) for k in
                          ("version", "name", "mode", "arch", "dirs",
-                          "artifact_roots", "exclude_names")}
+                          "artifact_roots", "exclude_names", "confirmed")}
                         if isinstance(_eff, dict) else scope)
+                if isinstance(_eff, dict):
+                    _eff["confirmed"] = True   # 用户走完三态树/弹窗确认流程
                 _ok_sc, _sc_n = nav_index._norm_scope(_eff, root)
                 _sc_saved = False
                 if _ok_sc:
@@ -655,6 +703,12 @@ def nav_poll():
                         "started": _state.get("ts") or 0,
                         # a431：等待用户选择建库方式时的数据（无则 null）
                         "ask_tier": (_state.get("ask_tier") or {}).get("info"),
+                        # a572（第 1 轮审计 F3）：槽位 run_id 随载荷下发，前端
+                        # 原样回传。没有它，残留弹窗能替下一个任务作答。
+                        "ask_tier_rid": (_state.get("ask_tier") or {}).get("run_id"),
+                        # a571：首次建库的范围确认（推荐结果，无则 null）
+                        "ask_scope": (_state.get("ask_scope") or {}).get("rec"),
+                        "ask_scope_rid": (_state.get("ask_scope") or {}).get("run_id"),
                         # a434：已被裁剪的日志最大 seq——前端据此提示省略
                         "log_dropped": _state.get("log_dropped") or 0,
                         # a570：范围是否已落盘（None=本次没指定；False=写失败）
@@ -675,6 +729,41 @@ def nav_tier():
         _ask = _state.get("ask_tier")
         if not _ask:
             return jsonify({"ok": False, "err": "当前没有待选择的建库任务"}), 409
+        # a572（F3）：残留弹窗（上一个任务留下的）不许回答当前任务
+        # a576（第 1 轮审计·低-1）：run_id 设为**必填**——原判据
+        # `_rid is not None and ...` 让不带 run_id 的请求直接放行，任意
+        # POST {"choice":"accept"} 仍可替当前任务作答，防护不完整。
+        _rid = d.get("run_id")
+        if _rid is None or _rid != _ask.get("run_id"):
+            return jsonify({"ok": False, "err": "该弹窗对应的任务已结束"}), 409
+        _ask["choice"] = choice
+        if choice == "cancel":
+            _state["cancel"] = True
+    _ask["evt"].set()
+    return jsonify({"ok": True})
+
+
+@nav_bp.route("/api/nav/scope_confirm", methods=["POST"])
+def nav_scope_confirm():
+    """a571：首次建库时用户对推荐范围的确认。body {choice}：
+    accept=按推荐建库 / reconfigure=打开三态树增删（复用取消路径）/
+    cancel=放弃建库。"""
+    d = request.get_json(force=True, silent=True) or {}
+    choice = str(d.get("choice") or "").strip().lower()
+    if choice not in ("accept", "reconfigure", "cancel"):
+        return jsonify({"ok": False, "err": "choice 必须是 "
+                        "accept / reconfigure / cancel"}), 400
+    with _lock:
+        _ask = _state.get("ask_scope")
+        if not _ask:
+            return jsonify({"ok": False, "err": "当前没有待确认的建库任务"}), 409
+        # a572（F3）：残留弹窗（上一个任务留下的）不许回答当前任务
+        # a576（第 1 轮审计·低-1）：run_id 设为**必填**——原判据
+        # `_rid is not None and ...` 让不带 run_id 的请求直接放行，任意
+        # POST {"choice":"accept"} 仍可替当前任务作答，防护不完整。
+        _rid = d.get("run_id")
+        if _rid is None or _rid != _ask.get("run_id"):
+            return jsonify({"ok": False, "err": "该弹窗对应的任务已结束"}), 409
         _ask["choice"] = choice
         if choice == "cancel":
             _state["cancel"] = True
@@ -1016,7 +1105,8 @@ def nav_reindex():
         if _state["running"]:
             return jsonify({"ok": False,
                             "err": "已有索引任务在运行（%s）" % _state["root"]}), 409
-        _state.update(running=True, phase="切档", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
+        _state.update(running=True, phase="切档", log=[], _prog_row={}, ask_tier=None,
+                          ask_scope=None, log_dropped=0, done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       percent=0, cur="", cancelled=False, log_seq=0, root=root,
                       reason="", scope_saved=None)   # a570 对抗审计：漏 reason 会把上一轮的
@@ -1104,7 +1194,8 @@ def nav_cg_build():
     with _lock:
         if _state["running"]:
             return jsonify({"ok": False, "err": "索引任务运行中（%s）" % _state["root"]}), 409
-        _state.update(running=True, phase="codegraph", log=[], _prog_row={}, ask_tier=None, log_dropped=0, done=False, ok=False,
+        _state.update(running=True, phase="codegraph", log=[], _prog_row={}, ask_tier=None,
+                          ask_scope=None, log_dropped=0, done=False, ok=False,
                       err="", ts=time.time(), result=None, cancel=False,
                       percent=0, cur="", cancelled=False, log_seq=0, root=root,
                       reason="", scope_saved=None)   # a570 对抗审计：同 reindex——防残留

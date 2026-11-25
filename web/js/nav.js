@@ -10,7 +10,61 @@
 
   // a570 对抗审计（P2·第十九轮）：本会话已发起取消的推荐 run_id（跨弹层共享）
   const _deadRuns = new Set();
-  // 与后端 nav_index._TMP_NAMES 同口径（walk 无条件硬剪）
+  // a571：首次建库「确认弹窗 → 调整范围…」时带过去的一次性推荐结果，
+  // 由 _scopeRow 消费（免一次 20~60 秒重扫）。
+  // a572（内网评审 F1）：必须绑定工程根——原来是裸对象，任何失败路径
+  // （409 / 探测失败 / 切目录）都会让它常驻，并在**下一个任意工程**被消费，
+  // 把 A 的推荐灌进 B 的树、甚至覆盖 B 已落盘的配置。现在存 {path, rec}。
+  let _pendingRec = null;
+  // a572（内网评审 F6）：`ask_tier` 选「重新配置」后，面板建好要自动开树。
+  // a573（第 2 轮审计 #2）：与 `_pendingRec` 同类，必须绑定工程根——原为裸
+  // 布尔，置位后若 `_renderState` 早退（探测失败/无代码/面板已关）就常驻，
+  // 会在**下一个任意工程**的面板上自动跑一次 20~60 秒推荐并弹树。
+  let _openPickOnNext = null;   // null | {path}
+  // a572（B10）/ a573（第 2 轮审计 #3）：弹窗作答反馈的保留截止时刻（ms）。
+  // 原实现写入端取 `#navIdxPanel`（外层 ov）、读取端用 `card`（内层 .dd-cur），
+  // 两个不同对象 -> 恒为 0，3 秒保留从未生效。改模块级统一读写。
+  let _txtHoldUntil = 0;
+  // a572（内网评审 F4）：弹窗「已弹过」标志——模块级、按后端 started 判轮次。
+  // 原为 `_renderProgress` 的闭包局部，同目录重开面板会重置 -> 叠出多个同 id
+  // 弹窗，清理只删第一个，剩余成为全屏孤儿遮罩。
+  const _navAskSeen = { started: 0, tier: false, scope: false };
+  // a576（第 2 轮审计·低）：同一工程「重配后重开面板」的排期去重。
+  const _reopenOnce = new Set();
+
+  // a573（第 2 轮审计 #6 + 第 3 轮）：工程根归一——统一分隔符 + 去尾分隔符 + 小写。
+  // 第 3 轮审计实测：原来写成 `/[\/]+$/` 时 JS 把 `\/` 当成一个转义斜杠，
+  // 反斜杠根本没被匹配 —— Windows 上「去尾分隔符」等于没做（`Z:\P\` 未剥）。
+  // 这里完全不用正则，改用逐字符循环，杜绝转义歧义。
+  function _normRoot(p) {
+    const s0 = String(p || '');
+    let out = '';
+    for (let i = 0; i < s0.length; i++) {
+      out += s0.charCodeAt(i) === 92 ? '/' : s0[i];
+    }
+    while (out.length > 1 && out[out.length - 1] === '/') {
+      out = out.slice(0, -1);
+    }
+    if (out === '/') out = '';
+    return out.toLowerCase();
+  }
+  function _sameRoot(a, b) { return _normRoot(a) === _normRoot(b); }
+
+  // a572（内网评审 F1）：`_pendingRec` 的所有失败/早退路径统一清理。
+  // 只有工程根匹配的才真正丢弃（别的工程的挂起项不能因本工程失败而被清）。
+  function _dropPendingRec(path) {
+    if (_pendingRec && _sameRoot(_pendingRec.path, path)) {
+      _pendingRec = null;
+    }
+  }
+  // a576（第 1 轮审计·低-3）：`_openPickOnNext` 与 `_pendingRec` 对称的清理
+  // ——早退路径（探测失败/无代码/重开窗口内关面板）必须一起清，否则标志
+  // 滞留到下一个任意工程的 _scopeRow 才被无条件清零，丢掉本工程的重开意图。
+  function _dropOpenPick(path) {
+    if (_openPickOnNext && _sameRoot(_openPickOnNext.path, path)) {
+      _openPickOnNext = null;
+    }
+  }  // 与后端 nav_index._TMP_NAMES 同口径（walk 无条件硬剪）
   const _TMP_L = new Set(['tmp', 'temp', 'tmpdir', 'tempdir']);
 
   function monacoWordAt(model, position) {
@@ -785,17 +839,27 @@
   let _navClockTimer = null;   // a426：独立计时器
 
   function ui(path) {
-    // a452：切换目录查看 ≠ 放弃正在等选择的任务，只收面板不取消建库
-    _closePanel(false);
+    // a452：切换目录查看 ≠ 放弃正在等选择的任务，只收面板不取消建库。
+    // a572（F2）：把「正在关的旧面板」所属工程传下去——弹窗按所属工程各自保留。
+    const _oldP = document.getElementById('navIdxPanel');
+    // a578（第 4 轮审计）：切目录同样是「放弃当前面板」——必须按旧工程根
+    // 清掉挂起标志。原实现只传 closingPath，第 4 轮把清理改成「必须显式
+    // dropPending」后这里被漏掉：点「调整范围…」后立刻切到别的目录，
+    // reconfigure 分支永不执行，`_pendingRec` 滞留，之后在**另一个工程**
+    // 的面板上弹「推荐结果已失效」，或回原工程时用陈旧推荐自动改范围。
+    // 内部自动重开（reconfigure 分支的 _closePanel）此时旧面板已移除，
+    // `_oldP` 为 null → 传 false，不会误清重开意图。
+    _closePanel(false, (_oldP && _oldP.dataset.path) || undefined, !!_oldP);
     const ov = document.createElement('div');
     ov.id = 'navIdxPanel';
+    ov.dataset.path = path || '';   // a572（F2）：面板所属工程根
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:9999;display:flex;align-items:center;justify-content:center;';
     // a392（用户实锤：点一下背景进度就没了，任务还在跑却看不到过程）：
     // 任务运行中禁背景关闭（资源安装弹窗同款①；✕/关闭仍可关——重开有恢复式显示②兜底）
     ov.addEventListener('mousedown', function (e) {
       if (e.target !== ov) return;
       if (ov.dataset.running === '1') return;
-      _closePanel();
+      _closePanel(true, path, true);
     });
     const card = document.createElement('div');
     card.className = 'dd-cur';
@@ -809,11 +873,27 @@
   // 适用于**用户真的关闭**。ui()（右键另一个目录）也走 _closePanel，会把
   // 正在等用户选建库方式的任务静默取消——用户只觉得换了个目录，任务没了。
   // 加 cancelIfAsking 参数：切面板传 false，只收弹窗不动任务。
-  function _closePanel(cancelIfAsking) {
+  function _closePanel(cancelIfAsking, closingPath, dropPending) {
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
     if (_navClockTimer) { clearInterval(_navClockTimer); _navClockTimer = null; }
+    // a572（内网评审 F2）：只有「弹窗的所属工程 === 正在关的工程」时才允许
+    // 摘除并取消任务。原来只判 cancelIfAsking——用户关 B 的面板会把 A 正在
+    // 等作答的 tier 弹窗删掉、并替 A 发 /api/nav/cancel，A 的建库被静默终止。
+    // a576（第 1 轮审计·低-2）：closingPath 缺失时**不再**兜底放行。原来
+    // `return true`，任何今后新增的无参 `_closePanel()` 调用都会立刻回到旧
+    // bug——关 B 面板删掉 A 的弹窗并替 A 发 /api/nav/cancel（后端 nav_cancel
+    // 只判全局 running，A 的建库被静默取消）。无法判定归属就不动别人的弹窗。
+    const _ownsDlg = (el) => {
+      if (!el) return false;
+      if (closingPath === undefined) return false;
+      // a575（第 5 轮审计 #1）：走 `_sameRoot` 归一，与 `_pendingRec` /
+      // reconfigure 重开检查的口径一致。严格相等时，同一工程若曾以
+      // `Z:\P` 与 `Z:/P`（或带尾分隔符）两种写法分别建弹窗/关面板，
+      // 会判否 -> 关本工程面板时不摘自己的弹窗、也不发 cancel。
+      return _sameRoot(el.dataset.root || '', closingPath);
+    };
     const _td = document.getElementById('navTierDialog');
-    if (_td) {
+    if (_td && _ownsDlg(_td)) {
       // a456（第三轮审计 P2）：删弹窗也要受 cancelIfAsking 约束。原来
       // `_td.remove()` 无条件执行、只把 POST /cancel 挡在外面——切换目录
       // 时弹窗被摘掉、任务却还在后端等作答，用户再无任何作答入口，10 分钟
@@ -822,6 +902,15 @@
         _td.remove();
         // 弹窗还在说明建库线程正卡在「等用户选建库方式」。真正的关闭动作下
         // 用户再没有任何途径作答，后端会白等 10 分钟——视为放弃建库。
+        fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
+      }
+    }
+    // a572（B6）：`navScopeConfirm` 同样要在这里收掉——否则用户关掉面板后
+    // 它成为孤儿遮挡层；点「调整范围…」进去的三态树会绑定在已删除的 card 上。
+    const _sd = document.getElementById('navScopeConfirm');
+    if (_sd && _ownsDlg(_sd)) {
+      if (cancelIfAsking !== false) {
+        _sd.remove();
         fetch('/api/nav/cancel', { method: 'POST' }).catch(() => {});
       }
     }
@@ -834,6 +923,15 @@
       try { if (typeof _sp2._cleanup === 'function') _sp2._cleanup(true); }
       catch (_e) { /* 忽略 */ }
       if (_sp2.parentNode) _sp2.parentNode.removeChild(_sp2);
+    }
+    // a576（第 2 轮·低 → 第 3 轮·中）：用户**主动放弃**时要清挂起标志，
+    // 但**内部自动重开**不能清。原实现无条件按 closingPath 清，把
+    // reconfigure 分支「先 _closePanel 再置 _openPickOnNext」的顺序打乱——
+    // `_pendingRec` 在重开前就被清掉，于是「调整范围…」丢掉已算好的推荐
+    // 结果、退回 20~60 秒完整重扫。改由调用方显式声明。
+    if (dropPending && closingPath !== undefined) {
+      _dropPendingRec(closingPath);
+      _dropOpenPick(closingPath);
     }
     const el = document.getElementById('navIdxPanel');
     if (el) el.remove();
@@ -859,7 +957,10 @@
     btns.style.cssText = 'margin-top:14px;display:flex;gap:8px;justify-content:flex-end;';
     const closeB = _h('button', '关闭');
     closeB.className = 'btn ghost';
-    closeB.onclick = _closePanel;
+    // a573（第 2 轮审计 #1）：原来直接绑 `_closePanel`——浏览器以 (event) 调用，
+    // closingPath 恒 undefined，`_ownsDlg` 兜底返回 true，归属判断被绕过。
+    // 关 B 的面板会删掉 A 的弹窗并替 A 发 /api/nav/cancel。显式传参。
+    closeB.onclick = () => _closePanel(true, path, true);
     btns.appendChild(closeB);
     card.appendChild(btns);
     let j = null;
@@ -910,6 +1011,16 @@
   // innerHTML；#9：下拉活性——载荷每次按下拉现值组装，导入/手选挂
   // card._scopeCfg 供 'cfg' 档引用；#10：全量档=显式整根 scope
   function _scopeRow(card, path, j) {
+    // a576（第 2 轮审计·中）：僵尸面板（card 已脱离 DOM）**不得**消费
+    // `_pendingRec` / `_openPickOnNext`。原实现是无条件先置空再看归属：
+    // 打开 A 面板后 probe 未回就切到 B，A 的 probe 回来时
+    // `getElementById('navIdxPanel')` 只认 id 不认归属、命中 B 的面板，
+    // 于是 A 的僵尸 `_scopeRow` 把此刻属于 B 的挂起标志清掉 —— B 的
+    // 「调整范围…」/重配后三态树静默不弹。这里直接不进场。
+    // a577（第 3 轮审计·低）：早退必须返回**可 append 的节点**——调用点写成
+    // `st.appendChild(_scopeRow(...))`，返回 undefined 会抛 TypeError 并写进
+    // 全局错误日志。
+    if (!card || !card.isConnected) return _h('div');
     const box = _h('div');
     box.style.cssText = 'margin-top:8px;padding:8px 10px;border:1px dashed var(--border);border-radius:8px;font-size:12px;';
     const sc = j.scope || null;
@@ -1075,8 +1186,11 @@
         // a570 对抗审计（P2·第三轮）：未知字段会被后端 `_norm_scope_v2`
         // 整体拒绝（「未知字段：…」）——在建库前就拦下并指名字段，比让
         // 用户在点「建立索引」后看到一条含糊的错误更清楚。
+        // a576（第 2 轮审计·低-3）：`confirmed` 是 v2 合法字段（后端 _known
+        // 已接受）——白名单漏了它，把 meta.scope 另存后「导入 JSON」会被
+        // 前端以「未知字段：confirmed」整单拒绝。
         const _okKeys = ['version', 'name', 'mode', 'arch', 'dirs',
-          'artifact_roots', 'exclude_names'];
+          'artifact_roots', 'exclude_names', 'confirmed'];
         const _badKeys = Object.keys(cfg).filter(k => _okKeys.indexOf(k) < 0);
         if (_badKeys.length) {
           showBanner('配置含未知字段：' + _badKeys.slice(0, 5).join('、') +
@@ -1290,6 +1404,57 @@
       showBanner('已确认收录范围，点「建立索引」生效', 3500);
     });
     row.appendChild(bPick);
+    // a571/a572：面板建好后自动开三态树。两种来源——
+    //   ① 推荐确认弹窗的「调整范围…」-> `_pendingRec`（带推荐结果，免重扫）
+    //   ② `ask_tier` 选「返回重新配置」-> `_openPickOnNext`（无结果，走一次扫描）
+    // F1 / a573 #2：两者都必须**工程根匹配**才消费；且必须**各自独立**处理
+    // ——原 `else if` 会让 `_pendingRec`（哪怕是别的工程的）把
+    // `_openPickOnNext` 整个跳过，标志从此常驻并在下个工程误触发。
+    const _autoOpen = () => {
+      setTimeout(() => {
+        if (card.isConnected && !document.getElementById('navScopePick')) {
+          bPick.click();
+        }
+      }, 160);
+    };
+    let _consumed = false;   // 本次是否已自动开树（两者只取其一）
+    if (_pendingRec) {
+      const _pr = _pendingRec;
+      _pendingRec = null;
+      if (!_sameRoot(_pr.path, path)) {
+        // 属于别的工程——丢弃，绝不套用
+        showBanner('推荐结果已失效（工程已切换），请点「选择目录…」重新推荐',
+                   4500, true);
+      } else {
+        _consumed = true;
+        const _r = _pr.rec;
+        setTimeout(() => {
+          if (!card.isConnected) return;
+          _scopePick(path, (res) => {
+            if (!res) return;
+            const _n = Object.keys(res.dirs || {}).length;
+            card._scopeCfg = {
+              version: 2, name: '手选 ' + _n + ' 个目录', mode: 'manual',
+              arch: 'auto', dirs: res.dirs || {},
+              artifact_roots: res.artifact_roots || [], exclude_names: [],
+            };
+            renderSel();
+            sel.value = 'cfg';
+            _syncSelHead();
+            showBanner('已确认收录范围，点「建立索引」生效', 3500);
+          }, (_r && _r.nodes && _r.nodes.length) ? _r : null);
+        }, 160);
+      }
+    }
+    // `if`（不是 else if）：与 `_pendingRec` 互不影响
+    if (_openPickOnNext) {
+      const _op = _openPickOnNext;
+      _openPickOnNext = null;
+      if (_sameRoot(_op.path, path) && !_consumed) {
+        _consumed = true;
+        _autoOpen();
+      }
+    }
     // 清除已存范围。a570 对抗审计：判据原为 source==='saved'（v1 时代），
     // v2 下 load_scope 只回 project / v1-deprecated / bad:*，该入口永不可见。
     if (sc && (sc.source === 'project' || sc.source === 'v1-deprecated'
@@ -1355,7 +1520,7 @@
   // 收录（继承态锁定）、最小顶集语义零歧义。
   // a398（审计#28）四修：顶层去重复渲染/折叠根隐藏子项/勾整根后子项
   // 继承锁定（inh!==null 判空串）/条目超限提示
-  function _scopePick(root, cb) {
+  function _scopePick(root, cb, preset) {
     // a570 对抗审计（P2·第四轮）：单实例。原实现连点两次「选择目录…」会
     // 叠出两个弹层共享同一后端任务，关闭任一个都会取消该 root 的推荐；
     // 且切工程时旧弹层不会被 _closePanel 摘除，配置会静默落到旧 card。
@@ -1471,6 +1636,9 @@
     // 原实现合并时拿整份 dirs 当手改，第二次推荐对已有目录全部失效且
     // banner 谎称「已保留 N 个手动目录」。_userSet 只记用户亲手写的键。
     const _userSet = new Set();
+    // a572（F5）：用户**显式撤销**状态的节点（点当前生效值 = 回到继承）。
+    // 与 `artsOff` 对称——没有它，下一次推荐会把用户刚撤销的状态静默写回。
+    const dirsCleared = new Set();
     // a570 对抗审计（P2·第四轮）：记录用户**显式取消**的产物源。原只做
     // 「保留新增的」单向合并，用户取消勾选后被下一次推荐结果静默覆盖。
     const artsOff = new Set();
@@ -1638,6 +1806,8 @@
               // 成一条永不生效的死配置。
               delete dirs[rk];
               _userSet.delete(rk);
+              // a572（F5）：记下「用户要这个节点回到继承」，下次推荐不许写回
+              if (rk) dirsCleared.add(rk);
               if (arts.delete(rk)) { /* 已从产物源移除 */ }
               _userArts.delete(rk);
               artsOff.delete(rk);
@@ -1673,6 +1843,7 @@
             }
             dirs[rk] = v;
             _userSet.add(rk);
+            dirsCleared.delete(rk);   // a572（F5）：用户重新显式设置，撤销「已清除」
             // 仅产物源只在 off 下有意义；切走时移除。a570 对抗审计：
             // 还要清掉**后代**的标记——原只删本节点，父级改白/全后
             // 子目录留着「灰掉但仍勾选」的矛盾态，且载荷仍把它写进
@@ -1882,53 +2053,7 @@
             return;
           }
           const res = r.result || {};
-          recNodes = res.nodes || [];
-          // 应用推荐（原地替换，dirs 是 const——a570 对抗审计 P0：
-          // 原写 `dirs = res.dirs || {}` 必抛 TypeError，且被 catch 吞掉，
-          // 推荐结果永远应用不到树、busy 状态永不恢复）
-          // a570 对抗审计（P1·第十六轮）：只认 _userSet 里用户亲手写的键。
-          // 原实现整份 dirs 当手改，第二次推荐对已有目录全部失效。
-          const _manual = {};
-          for (const k of _userSet) {
-            if (Object.prototype.hasOwnProperty.call(dirs, k)) _manual[k] = dirs[k];
-          }
-          // a570 对抗审计（P2·第十七轮）：产物源也要区分「用户手勾」与
-          // 「上一次推荐的产物」——原 `_manualArts = new Set(arts)` 会把上次
-          // 推荐的 artifact_roots 当手改永久保留（工程形态变了也清不掉）。
-          const _manualArts = new Set();
-          for (const a of arts) {
-            if (_userArts.has(a)) _manualArts.add(a);
-          }
-          for (const k in dirs) delete dirs[k];
-          Object.assign(dirs, res.dirs || {}, _manual);
-          rootDefault = res.mode === 'full' ? 'full' : 'whitelist';
-          // 用户显式取消的产物源必须跨推荐保留（下一次推荐结果里还会带上）
-          for (const k of Object.keys(_manual)) _userSet.add(k);
-          arts.clear();
-          for (const a of res.artifact_roots || []) {
-            if (a) arts.add(a);
-          }
-          for (const a of _manualArts) arts.add(a);
-          // 用户的显式取消优先于推荐结果
-          for (const a of artsOff) arts.delete(a);
-          if (Object.keys(_manual).length) {
-            showBanner('推荐完成；你手动设置过的 ' + Object.keys(_manual).length +
-              ' 个目录已保留', 4500);
-          }
-          // 计数
-          for (const key in counts) delete counts[key];
-          for (const n of recNodes) {
-            counts[(n.rel || '').toLowerCase()] = {
-              src: n.src, code: n.code, o: n.o, cmd: n.cmd,
-              warn: !!n.warn, reason: n.reason || '',
-            };
-          }
-          // a570 对抗审计（P2·第四轮）：已展开的层要重新铺 subs，否则
-          // counts 被清空后那些行的三元组列永久消失。
-          for (const _r of Object.keys(kids)) _fillSubs(_r);
-          _setBusy(false, '推荐完成（' + (res.scan_seconds ? res.scan_seconds + 's' : '') + '）：' +
-            (res.detected && res.detected.length ? '检测到 ' + res.detected.join('、') : '未识别出特定构建系统'));
-          render();
+          _applyRec(res);
         } catch (_) {
           // a570 对抗审计（P2·第三轮）：持续失败会永久 busy——加计数上限，
           // 超限后恢复按钮并提示用户重试。
@@ -1942,6 +2067,55 @@
         }
       }, 600);
     };
+    // a571：把推荐结果应用到树（从 _poll 里提出，供「确认弹窗 -> 调整范围」
+    // 直通复用——那条路径已拿到推荐结果，不该再花 20~60 秒重扫一遍）。
+    const _applyRec = (res) => {
+      recNodes = res.nodes || [];
+      // 应用推荐（原地替换，dirs 是 const——a570 对抗审计 P0：
+      // 原写 `dirs = res.dirs || {}` 必抛 TypeError，且被 catch 吞掉，
+      // 推荐结果永远应用不到树、busy 状态永不恢复）
+      // a570 对抗审计（P1·第十六轮）：只认 _userSet 里用户亲手写的键。
+      const _manual = {};
+      for (const k of _userSet) {
+        if (Object.prototype.hasOwnProperty.call(dirs, k)) _manual[k] = dirs[k];
+      }
+      // a570 对抗审计（P2·第十七轮）：产物源也要区分「用户手勾」与推荐产物。
+      const _manualArts = new Set();
+      for (const a of arts) {
+        if (_userArts.has(a)) _manualArts.add(a);
+      }
+      for (const k in dirs) delete dirs[k];
+      Object.assign(dirs, res.dirs || {}, _manual);
+      // a572（F5）：用户显式撤销过的节点，推荐结果不许再填回来。
+      for (const k of dirsCleared) delete dirs[k];
+      rootDefault = res.mode === 'full' ? 'full' : 'whitelist';
+      for (const k of Object.keys(_manual)) _userSet.add(k);
+      arts.clear();
+      for (const a of res.artifact_roots || []) {
+        if (a) arts.add(a);
+      }
+      for (const a of _manualArts) arts.add(a);
+      for (const a of artsOff) arts.delete(a);
+      if (Object.keys(_manual).length) {
+        showBanner('推荐完成；你手动设置过的 ' + Object.keys(_manual).length +
+          ' 个目录已保留', 4500);
+      }
+      // 计数
+      for (const key in counts) delete counts[key];
+      for (const n of recNodes) {
+        counts[(n.rel || '').toLowerCase()] = {
+          src: n.src, code: n.code, o: n.o, cmd: n.cmd,
+          warn: !!n.warn, reason: n.reason || '',
+        };
+      }
+      // a570 对抗审计（P2·第四轮）：已展开的层要重新铺 subs，否则
+      // counts 被清空后那些行的三元组列永久消失。
+      for (const _r of Object.keys(kids)) _fillSubs(_r);
+      _setBusy(false, '推荐完成（' + (res.scan_seconds ? res.scan_seconds + 's' : '') + '）：' +
+        (res.detected && res.detected.length ? '检测到 ' + res.detected.join('、') : '未识别出特定构建系统'));
+      render();
+    };
+
     bRec.onclick = () => _runRecommend(true);
     bExpand.onclick = async () => {
       // 只展开已加载的一层；不递归（大工程防爆）
@@ -1970,6 +2144,7 @@
       arts.clear();
       _userArts.clear();
       artsOff.clear();
+      dirsCleared.clear();   // a572（F5）：与 artsOff 同理，全部清除即从头再来
       // 在途推荐结果作废（否则几秒后树被重新填满，用户以为清空失败），
       // 同时把后端任务取消掉，别白占全局推荐槽。
       _recEpoch++;
@@ -2002,13 +2177,24 @@
     expanded.delete('');
     render();
     _toggleExpand('').catch(() => {});
-    _runRecommend(false);
+    // a571：带预置推荐结果进来（「确认弹窗 -> 调整范围」路径）就直接应用，
+    // 省掉 20~60 秒重扫。无预置则照旧跑推荐。
+    if (preset && preset.nodes && preset.nodes.length) {
+      _applyRec(preset);
+    } else {
+      _runRecommend(false);
+    }
   }
 
   async function _renderState(card, path, j, st) {
     const btns = card.querySelector('div:last-child');
     if (!j || !j.ok) {
       st.textContent = '探测失败：' + ((j && j.err) || '网络错误');
+      // a572（F1）：早退也必须清，否则跨工程泄漏
+      // a576（第 1 轮审计·低-3）：两个挂起标志必须**对称**清理——原只清
+      // `_pendingRec`，`_openPickOnNext` 会滞留到下一个任意工程的 _scopeRow。
+      _dropPendingRec(path);
+      _dropOpenPick(path);
       return;
     }
     const bAdd = _h('button', ICO16.search + ' 建立索引', true);
@@ -2023,6 +2209,9 @@
         // R27-3（实锤：未建 ctags 时 codegraph 整体不可见）：两套索引独立
         // ——ctags 不需要 ≠ codegraph 不需要（claude 代码图有自己的价值）
         _renderCodegraph(st, path, btns, card);
+        // a572（F1）/ a576 低-3：同上，两个标志对称清
+        _dropPendingRec(path);
+        _dropOpenPick(path);
         return;   // ctags 无按钮：不盲目；codegraph 区块自行决定
       }
       st.textContent = '✓ 发现代码文件（浅层抽样 ' + (j.probe_files || 0) + ' 个）。'
@@ -2120,7 +2309,7 @@
         const d = await r.json();
         showBanner(d.ok ? '索引已删除' : ('删除失败：' + (d.err || '')), 3000, !d.ok);
       } catch (e) { showBanner('删除失败: ' + e, 3000, true); }
-      _closePanel();
+      _closePanel(true, path, true);
     };
     btns.insertBefore(bDel, btns.lastChild);
     // nm 清单导入按钮已删（用户实锤「说好全自动怎么还要导入」）：符号级
@@ -2197,7 +2386,7 @@
           body: JSON.stringify({ root: path }) })).json();
         showBanner(d.ok ? '已删除' : ('失败：' + (d.err || d.msg)), 3000, !d.ok);
       } catch (e) { showBanner('失败: ' + e, 3000, true); }
-      _closePanel();
+      _closePanel(true, path, true);
     };
     line.appendChild(bBuild); line.appendChild(bSync); line.appendChild(bDel);
     st.appendChild(line);
@@ -2252,9 +2441,17 @@
 
   // a431：白名单覆盖率偏低时的建库方式选择弹窗——把实际数据显示给用户，
   // 由用户决定「只收白名单」还是「全量收源码」，不再由代码写死阈值行为。
-  function _askTierDialog(info, txt) {
+  function _askTierDialog(info, txt, path, rid) {
+    // a572（内网评审 F4）：单实例守卫——重开面板会新建一份 _renderProgress
+    // （原 `_tierAsked` 是它的闭包局部），同一个 id 会叠出多个元素，而清理用
+    // getElementById 只删文档序第一个，其余成为 z=10050 的全屏孤儿遮罩。
+    const _prev = document.getElementById('navTierDialog');
+    if (_prev && _prev.parentNode) _prev.parentNode.removeChild(_prev);
     const ov = document.createElement('div');
     ov.id = 'navTierDialog';   // a432：可被 _closePanel 统一清理
+    // a572（F2）：记录所属工程根——关「别的」工程的面板时不许动这个弹窗，
+    // 更不许替它发 /api/nav/cancel（那会取消别人的建库任务）。
+    ov.dataset.root = path || '';
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);' +
       'z-index:10050;display:flex;align-items:center;justify-content:center;';
     const card = document.createElement('div');
@@ -2329,18 +2526,195 @@
       fetch('/api/nav/tier', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ choice }),
+        // a572（F3）：回传任务凭证，后端校验不匹配则 409（残留弹窗作答）
+        body: JSON.stringify({ choice, run_id: rid }),
       }).then(r => r.json().then(j => ({ ok: r.ok, j })))
         .then(({ ok, j }) => {
           if (ok && j && j.ok) {
             if (txt) txt.textContent = '已选择：' +
               ({ full: '全量收源码', whitelist: '只收白名单',
                  reconfigure: '重新配置收录范围', cancel: '放弃建库' }[choice] || choice);
+            // a572（B10）：保留 3 秒，别让下一轮 poll 立刻覆写掉
+            _txtHoldUntil = Date.now() + 3000;
           } else if (txt) {
             txt.textContent = '选择未生效（' + ((j && (j.err || j.msg)) || '任务已结束') + '）';
           }
         })
         .catch(() => { if (txt) txt.textContent = '提交失败（网络异常）'; });
+    }
+  }
+
+  // a571（用户定调：首次建库必须弹窗二次确认，用户能决定增删哪些目录）：
+  // 推荐器结果确认弹窗。列出三态分布 + 每个顶层目录的状态/三元组/理由，
+  // 用户可直接「按推荐建库」，或「调整范围…」——后者走 reconfigure 取消路径，
+  // 直接打开已有的三态树（_scopePick），用户在树上改完再点「建立索引」。
+  function _askScopeDialog(rec, txt, path, rid) {
+    // a572（内网评审 F4）：单实例守卫，同上。
+    const _prev = document.getElementById('navScopeConfirm');
+    if (_prev && _prev.parentNode) _prev.parentNode.removeChild(_prev);
+    const ov = document.createElement('div');
+    ov.id = 'navScopeConfirm';
+    // a572（F2）：记录所属工程根，供 _closePanel 判定归属。
+    ov.dataset.root = path || '';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);' +
+      'z-index:10050;display:flex;align-items:center;justify-content:center;';
+    const card = document.createElement('div');
+    card.className = 'dd-cur';
+    card.style.cssText = 'width:680px;max-width:94vw;max-height:86vh;display:flex;' +
+      'flex-direction:column;padding:18px 20px;border-radius:12px;' +
+      'background:var(--bg-panel);border:1px solid var(--border);' +
+      'box-shadow:0 12px 40px rgba(0,0,0,.5);';
+    const title = _h('div', '请确认收录范围');
+    title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:8px;';
+    card.appendChild(title);
+    const nodes = (rec && rec.nodes) || [];
+    const _cnt = { whitelist: 0, full: 0, off: 0 };
+    for (const n of nodes) if (_cnt[n.state] !== undefined) _cnt[n.state]++;
+    const sub = _h('div');
+    sub.style.cssText = 'font-size:11.5px;color:var(--muted);' +
+      'margin-bottom:12px;line-height:1.65;';
+    sub.append('该工程尚无收录范围配置，已按编译产物分析出下面这份推荐——');
+    // 统计行（色彩与下方徽标一致，用户一眼对上）
+    const _stat = _h('div');
+    _stat.style.cssText = 'margin-top:7px;display:flex;gap:14px;' +
+      'font-size:12px;font-family:var(--font-mono);';
+    [['whitelist', '白名单'], ['full', '全量'], ['off', '不勾']].forEach(
+      ([k, lab]) => {
+        const s0 = _h('span');
+        const _c = { whitelist: 'var(--accent)', full: '#3fb950',
+                     off: 'var(--muted)' }[k];
+        s0.append(_h('span', lab));
+        const v = _h('b', String(_cnt[k]));
+        v.style.cssText = 'color:' + _c + ';margin-left:5px;font-size:13px;';
+        s0.appendChild(v);
+        _stat.appendChild(s0);
+      });
+    if (rec && rec.scan_seconds) {
+      const t = _h('span', '分析耗时 ' + rec.scan_seconds + ' 秒');
+      t.style.cssText = 'margin-left:auto;color:var(--muted);opacity:.75;';
+      _stat.appendChild(t);
+    }
+    sub.appendChild(_stat);
+    card.appendChild(sub);
+    // 目录清单（可滚动）
+    const list = document.createElement('div');
+    list.style.cssText = 'flex:1;overflow:auto;border:1px solid var(--border);' +
+      'border-radius:8px;font-size:12px;min-height:140px;' +
+      'background:rgba(0,0,0,.18);';
+    // 表头（与下面的列对齐）
+    const _hdr = document.createElement('div');
+    _hdr.style.cssText = 'display:grid;' +
+      'grid-template-columns:minmax(110px,1.1fr) 76px minmax(190px,1.6fr);' +
+      'gap:10px;padding:5px 10px;font-size:10.5px;letter-spacing:.4px;' +
+      'color:var(--muted);text-transform:uppercase;' +
+      'border-bottom:1px solid var(--border);' +
+      'position:sticky;top:0;background:var(--bg-panel);z-index:1;';
+    _hdr.appendChild(_h('span', '目录'));
+    _hdr.appendChild(_h('span', '收录'));
+    _hdr.appendChild(_h('span', '统计 / 依据'));
+    list.appendChild(_hdr);
+    const _lbl = { whitelist: '白名单', full: '全量', off: '不勾' };
+    // 徽标底色：低透明度填充 + 同色文字，比纯色字更易扫读
+    const _badge = {
+      whitelist: 'color:var(--accent);background:rgba(88,166,255,.13);' +
+        'border:1px solid rgba(88,166,255,.35);',
+      full: 'color:#3fb950;background:rgba(63,185,80,.13);' +
+        'border:1px solid rgba(63,185,80,.35);',
+      off: 'color:var(--muted);background:rgba(128,128,128,.12);' +
+        'border:1px solid rgba(128,128,128,.28);',
+    };
+    const _fmt = (n) => {
+      n = Number(n) || 0;
+      if (n >= 1e4) return (n / 1e4).toFixed(1) + '万';
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+      return String(n);
+    };
+    nodes.forEach((n, i) => {
+      const row = _h('div');
+      row.style.cssText = 'display:grid;' +
+        'grid-template-columns:minmax(110px,1.1fr) 76px minmax(190px,1.6fr);' +
+        'gap:10px;align-items:baseline;padding:6px 10px;' +
+        (i % 2 ? 'background:rgba(255,255,255,.022);' : '');
+      const nm = _h('span', (n.name || n.rel || ''));
+      nm.style.cssText = 'font-family:var(--font-mono);overflow:hidden;' +
+        'text-overflow:ellipsis;white-space:nowrap;';
+      nm.title = (n.name || n.rel || '');
+      const stt = _h('span', _lbl[n.state] || n.state);
+      stt.style.cssText = 'justify-self:start;font-size:10.5px;font-weight:600;' +
+        'padding:1px 7px;border-radius:9px;' + (_badge[n.state] || '');
+      // 右侧：主行统计 + 次行依据
+      const right = _h('span');
+      right.style.cssText = 'min-width:0;';
+      const _num = _h('span',
+        _fmt(n.src) + ' 源 · ' + _fmt(n.o) + ' 单元 · ' + _fmt(n.cmd) + ' cmd');
+      _num.style.cssText = 'font-family:var(--font-mono);font-size:11.5px;';
+      if (n.warn) _num.style.color = 'var(--neon-orange,#d29922)';
+      right.appendChild(_num);
+      if (n.reason) {
+        const rs = _h('span', n.reason);
+        rs.style.cssText = 'display:block;color:var(--muted);opacity:.8;' +
+          'font-size:10.5px;margin-top:1px;overflow:hidden;' +
+          'text-overflow:ellipsis;white-space:nowrap;';
+        rs.title = n.reason;
+        right.appendChild(rs);
+      }
+      row.appendChild(nm); row.appendChild(stt); row.appendChild(right);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    // 按钮
+    const btns = _h('div');
+    btns.style.cssText = 'margin-top:12px;display:flex;gap:8px;justify-content:flex-end;';
+    const bCancel = _h('button', '放弃建库');
+    bCancel.className = 'btn ghost';
+    bCancel.onclick = () => { ov.remove(); _post('cancel'); };
+    const bEdit = _h('button', '调整范围…');
+    bEdit.className = 'btn ghost';
+    bEdit.onclick = () => {
+      _pendingRec = { path: path, rec: rec };
+      ov.remove();
+      _post('reconfigure');
+    };
+    const bOk = _h('button', '按推荐建库');
+    bOk.className = 'btn primary';
+    bOk.onclick = () => { ov.remove(); _post('accept'); };
+    btns.appendChild(bCancel); btns.appendChild(bEdit); btns.appendChild(bOk);
+    card.appendChild(btns);
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    if (txt) txt.textContent = '等待确认收录范围…';
+
+    function _post(choice) {
+      if (txt) txt.textContent = '提交中…';
+      fetch('/api/nav/scope_confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice, run_id: rid }),
+      }).then(r => r.json().then(j => ({ ok: r.ok, j })))
+        .then(({ ok, j }) => {
+          if (ok && j && j.ok) {
+            if (txt) {
+              txt.textContent = choice === 'accept' ? '已确认，开始建库'
+                : choice === 'reconfigure' ? '正在打开三态树…' : '已放弃建库';
+              // a572（B10）：保留 3 秒，别让下一轮 poll 立刻覆写掉
+              _txtHoldUntil = Date.now() + 3000;
+            }
+          } else {
+            // a572（F1）：提交失败（最常见：任务已超时结束，409）-> 必须丢掉
+            // 刚挂上的 `_pendingRec`，否则它会常驻并在**下一个任意工程**的
+            // 三态树里被消费（跨工程污染）。
+            if (choice === 'reconfigure') _pendingRec = null;
+            if (txt) {
+              txt.textContent = '未生效（' +
+                ((j && (j.err || j.msg)) || '任务已结束') + '）';
+            }
+            showBanner('该确认已失效（任务可能已结束），请重新建立索引', 5000, true);
+          }
+        })
+        .catch(() => {
+          if (choice === 'reconfigure') _pendingRec = null;
+          if (txt) txt.textContent = '提交失败（网络异常）';
+        });
     }
   }
 
@@ -2404,7 +2778,10 @@
     card.appendChild(btns);
     let _rowByKey = {};   // a424：进度行 key -> DOM 节点（同类日志原地刷新）
     let _lastSeq = 0;     // a424：按 seq 增量拉取（后端裁剪后下标不再错位）
-    let _tierAsked = false;   // a431：建库方式弹窗只弹一次
+    // a572（内网评审 F4）：`_tierAsked` 原为**闭包局部**——同一目录重开面板
+    // 会新建一份 `_renderProgress`，标志重置为 false，于是同一个 id 又弹一个。
+    // 改用模块级 `_navAskSeen`，按后端下发的 `started`（任务启动时刻）判定
+    // 是否换了一轮任务：换了才重置，同一任务内重开面板不再重复弹。
     if (_pollTimer) clearInterval(_pollTimer);
     // a452（审计 P1：误清后来任务的定时器）：句柄已在本函数顶部声明为
     // _myPoll/_myClock，回调结束时只清自己的。原来清的是模块级当前值——
@@ -2419,7 +2796,12 @@
           clock.textContent = _fmt(Date.now() - _t0);
         }
         bar.style.width = (s.percent || 0) + '%';
-        txt.textContent = (s.phase || '') + ' · ' + (s.percent || 0) + '%' + (s.cancelling ? ' · 正在取消…' : '');
+        // a572（B10）：弹窗作答的即时反馈（「已确认，开始建库」/「未生效…」）
+        // 原被这里每 800ms 无条件覆写，用户根本看不到。给一个 3 秒的优先窗口。
+        if (Date.now() > _txtHoldUntil) {
+          txt.textContent = (s.phase || '') + ' · ' + (s.percent || 0) + '%' +
+            (s.cancelling ? ' · 正在取消…' : '');
+        }
         const lg = s.log || [];
         // a434：后端日志上限 400 条，轮询间隔内产出过多时中间条目会被裁掉。
         // 后端上报已被裁掉的最大 seq，前端发现自己的进度落后于它才提示
@@ -2449,15 +2831,31 @@
         }
         log.scrollTop = log.scrollHeight;
         // a431：白名单覆盖率偏低——弹窗让用户选建库方式（给实际数据）
-        if (s.ask_tier && !_tierAsked) {
-          _tierAsked = true;
-          _askTierDialog(s.ask_tier, txt);
-        } else if (!s.ask_tier && _tierAsked) {
+        // a572（F4）：按「任务启动时刻」判一轮，同任务内重开面板不再重复弹。
+        const _stared = s.started || 0;
+        if (_navAskSeen.started !== _stared) {
+          _navAskSeen.started = _stared;
+          _navAskSeen.tier = false;
+          _navAskSeen.scope = false;
+        }
+        if (s.ask_tier && !_navAskSeen.tier) {
+          _navAskSeen.tier = true;
+          _askTierDialog(s.ask_tier, txt, path, s.ask_tier_rid);
+        } else if (!s.ask_tier && _navAskSeen.tier) {
           // a434：后端已撤销提问（10 分钟超时按全量继续 / 任务取消），
           // 弹窗若还开着必须收掉——否则用户点了只会拿到 409
           const _td3 = document.getElementById('navTierDialog');
           if (_td3) _td3.remove();
-          _tierAsked = false;
+          _navAskSeen.tier = false;
+        }
+        // a571：首次建库——推荐结果交给用户确认增删再开跑
+        if (s.ask_scope && !_navAskSeen.scope) {
+          _navAskSeen.scope = true;
+          _askScopeDialog(s.ask_scope, txt, path, s.ask_scope_rid);
+        } else if (!s.ask_scope && _navAskSeen.scope) {
+          const _sd3 = document.getElementById('navScopeConfirm');
+          if (_sd3) _sd3.remove();
+          _navAskSeen.scope = false;
         }
         if (!s.done) return;
         // a456（第三轮审计 P2：上一版的 early return 跳过了自己的清理）：
@@ -2478,6 +2876,9 @@
         // a434：任务已终态，遗留的建库方式弹窗必须收掉（否则挡住结果）
         const _td2 = document.getElementById('navTierDialog');
         if (_td2) _td2.remove();
+        // a572（B7）：范围确认弹窗同理——终态（成功/失败/取消）都必须收掉。
+        const _sd2 = document.getElementById('navScopeConfirm');
+        if (_sd2) _sd2.remove();
         const _ov2 = document.getElementById('navIdxPanel');
         if (_ov2) delete _ov2.dataset.running;   // a392：任务终态解除背景关闭禁令
         if (s.ok_done) {
@@ -2513,21 +2914,44 @@
           }
           showBanner('代码索引建立完成', 3000);
           bCancel.textContent = '关闭';
-          bCancel.onclick = _closePanel;
+          bCancel.onclick = () => _closePanel(true, path, true);
         } else if (s.reason === 'reconfigure') {
-          // a570：不是真取消——用户选了「重新配置收录范围」。
-          // 不显示「已取消」，直接重开三态树。
+          // a570·a571：不是真取消——用户选了「重新配置收录范围」。
+          // 不显示「已取消」，直接重开面板并**打开三态树**。
+          // a572（F6）：`ask_tier` 这条路径从不设 `_pendingRec`，原实现只
+          // `ui(path)`，三态树根本不会打开——文案承诺落空。这里显式标记，
+          // 让 `_scopeRow` 建好后直接开树（无推荐结果可复用，走一次扫描）。
           txt.textContent = '按你的选择返回配置…';
           bCancel.textContent = '关闭';
-          bCancel.onclick = _closePanel;
+          bCancel.onclick = () => _closePanel(true, path, true);
+          // a576（第 2 轮审计·低）：同一任务的重开最多排一次。原实现若
+          // 被后端 `done` 与 `running=false` 的瞬间差异抢先，poll 会再次
+          // 看到 done+reconfigure 并重排一次 200ms 重开，出现重复 ui()。
+          const _rk = 'reopen:' + _normRoot(path);
           setTimeout(() => {
-            _closePanel();
+            if (_reopenOnce.has(_rk)) return;
+            _reopenOnce.add(_rk);
+            setTimeout(() => _reopenOnce.delete(_rk), 2000);
+            // a572（F6 附带）：200ms 内用户可能已关闭面板或切了目录——
+            // 无条件 ui(path) 会把面板抢回来。只在仍是本轮面板时才重开。
+            const _still = document.getElementById('navIdxPanel');
+            if (!_still || !_sameRoot(_still.dataset.path, path)) {
+              // a576（第 1 轮审计·低-1）：用户在这个 200ms 窗口内关了面板
+              // ——刚置的 `_openPickOnNext` 必须按根清掉，否则它会滞留下来，
+              // 在**下一个任意工程**的 _scopeRow 上被无条件清零（丢掉本工程
+              // 的重开意图）；同时清掉可能挂着的 `_pendingRec`。
+              _dropOpenPick(path);
+              _dropPendingRec(path);
+              return;
+            }
+            _closePanel(true, path);
+            _openPickOnNext = { path: path };   // _scopeRow 建好后自动开三态树
             ui(path);
           }, 200);
         } else {
           txt.textContent = (s.cancelled ? '已取消' : '失败：' + (s.err || ''));
           bCancel.textContent = '关闭';
-          bCancel.onclick = _closePanel;
+          bCancel.onclick = () => _closePanel(true, path, true);
         }
       } catch (e) { /* 轮询失败继续 */ }
     }, 800);
