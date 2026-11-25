@@ -100,49 +100,62 @@ def test_walk_prunes_off_state(tmp_path):
     assert stats.get("pruned_off", 0) >= 1
 
 
-def test_walk_artifact_root_scanned_despite_off(tmp_path):
-    """off + artifact_roots = 「仅产物源」：仍扫 .cmd/.o，不收源码由上层管。"""
-    root = str(tmp_path)
+def _artifact_tree(root):
+    """build/pkg 是产物源：里面一个源文件和它的 .cmd。"""
     _make_tree(root, ["build/pkg"], filename="x.c")
-    # 放一个 .cmd 产物
     with open(os.path.join(root, "build", "pkg", "x.o.cmd"), "w") as f:
         f.write("savedcmd_x.o := gcc -c -o x.o x.c\n")
 
-    def state_of(rel):
-        return "off"
 
-    got = [rel for _, rel in ni._walk_files(
-        root, state_of=state_of, artifact_roots=["build/pkg"])]
-    assert any(r.endswith(".cmd") for r in got), "产物源目录必须被扫到"
+def test_artifact_walk_scans_artifact_root_regardless_of_off(tmp_path):
+    """产物源由**独立的产物扫描**（subs=产物根、不带 state_of）采 .cmd/.o。
 
-
-def test_walk_artifact_root_only_products_not_source(tmp_path):
-    """a570 对抗审计 P0：产物源目录的**源码不能**进 index walk。
-
-    设计 §4.1：`off + artifact_roots` = 扫 .cmd/.o，**不收源码**。G10 的
-    sbuilder 有 3.9 万源文件，全收等于索引爆炸。
+    契约更新（2026-11-25 审查 a697 / 内网 a571）：产物源不再靠主扫描下钻到。
+    build() 里是分开的两遍——主扫描管索引清单，产物扫描（subs=artifact_roots）
+    管编译描述；产物扫描不看三态，整棵 off 也照扫。
+    （本测试原名 test_walk_artifact_root_scanned_despite_off，钉的是「主扫描
+    也要扫到」的旧契约。）
     """
     root = str(tmp_path)
-    _make_tree(root, ["build/pkg"], filename="x.c")
-    with open(os.path.join(root, "build", "pkg", "x.o.cmd"), "w") as f:
-        f.write("savedcmd_x.o := gcc -c -o x.o x.c\n")
+    _artifact_tree(root)
     got = [rel for _, rel in ni._walk_files(
-        root, state_of=lambda _r: "off", artifact_roots=["build/pkg"])]
-    assert "build/pkg/x.o.cmd" in got, "产物源里的 .cmd 必须被扫到"
-    assert not any(r.endswith(".c") for r in got), \
-        "产物源里的源码不能进 index walk"
+        root, subs=["build/pkg"], dot_keep=True, max_depth=24)]
+    assert "build/pkg/x.o.cmd" in got, "产物源里的 .cmd 必须被采到"
 
 
-def test_walk_artifact_root_ancestor_not_pruned(tmp_path):
-    """产物源是 build/pkg 时，build 这一级是它的祖先——必须放行才能下去。"""
+def test_main_walk_prunes_off_ancestor_of_artifact_root(tmp_path):
+    """主扫描遇到 off 的目录就剪——哪怕它是产物源的祖先。
+
+    a697 之前主扫描放行产物源的祖先（原判据 `st == "off" and not _in_artifacts`，
+    而 `_in_artifacts` 对祖先也返回 True）：G10 的 `sbuilder/output/build` 是产物源，
+    主扫描因此钻进 12.4 万文件的 sbuilder 白等到超时。产物源改由独立的产物扫描
+    负责后，主扫描没有理由进去。
+    （原 test_walk_artifact_root_ancestor_not_pruned 钉的是相反的旧契约。）
+    """
     root = str(tmp_path)
-    _make_tree(root, ["build/pkg"], filename="x.c")
-    with open(os.path.join(root, "build", "pkg", "x.o.cmd"), "w") as f:
-        f.write("savedcmd\n")
+    _artifact_tree(root)
+    stats = {}
+    got = [rel for _, rel in ni._walk_files(
+        root, state_of=lambda _r: "off", artifact_roots=["build/pkg"],
+        stats=stats)]
+    assert not any(r.startswith("build/") for r in got), \
+        "off 的产物源祖先被放行——主扫描钻进了产物区：%r" % got
+    assert stats.get("pruned_off", 0) >= 1
+
+
+def test_artifact_root_source_not_in_index_walk(tmp_path):
+    """a570 对抗审计 P0：产物源目录的源码不能进索引清单。
+
+    设计 §4.1：产物源只用来推白名单。G10 的 sbuilder 有 3.9 万源文件，进了索引
+    清单就是索引爆炸。主扫描在祖先那一层就剪掉了，源码自然进不来。
+    （原 test_walk_artifact_root_only_products_not_source。）
+    """
+    root = str(tmp_path)
+    _artifact_tree(root)
     got = [rel for _, rel in ni._walk_files(
         root, state_of=lambda _r: "off", artifact_roots=["build/pkg"])]
-    assert any(r.startswith("build/pkg/") for r in got), \
-        "祖先目录被剪 → 产物源下钻不到"
+    assert not any(r.endswith(".c") for r in got), \
+        "产物源里的源码进了索引清单：%r" % got
 
 
 def test_walk_off_dir_with_live_child_keeps_child_source(tmp_path):

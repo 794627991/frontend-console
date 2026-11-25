@@ -2573,7 +2573,11 @@
     const sub = _h('div');
     sub.style.cssText = 'font-size:11.5px;color:var(--muted);' +
       'margin-bottom:12px;line-height:1.65;';
-    sub.append('该工程尚无收录范围配置，已按编译产物分析出下面这份推荐——');
+    // 2026-11-25 审查 a697：工程根已有一份工具自动生成、从未经确认的配置时据实说——
+    // 后端随载荷下发 had_auto_cfg；没有这个字段（尚无配置，或旧后端）才是下面那句
+    sub.append(rec && rec.had_auto_cfg
+      ? '工程根已有一份工具自动生成、从未经确认的收录范围，已按编译产物重新分析出下面这份推荐——'
+      : '该工程尚无收录范围配置，已按编译产物分析出下面这份推荐——');
     // 统计行（色彩与下方徽标一致，用户一眼对上）
     const _stat = _h('div');
     _stat.style.cssText = 'margin-top:7px;display:flex;gap:14px;' +

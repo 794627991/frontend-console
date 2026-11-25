@@ -1616,6 +1616,34 @@ def _norm_dirs(dirs, dropped=None):
     return out
 
 
+# a697 之前工具**自动**写进工程根的收录范围只有这几个名字：detect_scope 的两种形态、
+# 隐式范围（落盘改写时还可能在后面再接一个括号后缀，比如「（自动降级为全量）」）。
+# 用户在三态树上配好、由面板存下的范围叫别的名字（缺省是「未命名范围」）。
+_AUTO_SCOPE_NAMES = ("sbuilder 方案（自动检测）", "源码树内产物（自动检测）",
+                     "自动（隐式范围）")
+
+
+def _cfg_unconfirmed(cfg):
+    """这份收录范围算不算「从未经用户确认」。返回 bool。
+
+    a697（内网 a571）只认 `confirmed is True`：没有这个键的一律当未确认。但 a697 之前
+    存下的配置**都没有这个键**——用户亲手配好、面板存下的也一样。于是升级后每个已有
+    工程的收录范围都被弃用、改走推荐器（2026-11-25 审查 a697 时实测：用户手写的
+    `src:off / libs:full` 被日志说成「工具自动生成」，建库后磁盘上的配置被推荐结果
+    覆盖成全不勾并标上 confirmed:true）。所以没有这个键时按名字分：
+      · 名字是工具自动写的那几种 → 未确认（内网的 G10 正是这种残缺骨架，意图不变）；
+      · 其余 → 当作用户确认过的旧配置，照旧生效（不弃用、不弹窗、不覆盖）。
+    显式写了 `confirmed` 的以它为准：False / 非布尔都算未确认——手改成字符串
+    "false" 不能被 bool() 放过（a576）。
+    """
+    if not isinstance(cfg, dict):
+        return True
+    if "confirmed" in cfg:
+        return cfg.get("confirmed") is not True
+    name = str(cfg.get("name") or "").strip()
+    return any(name == n or name.startswith(n + "（") for n in _AUTO_SCOPE_NAMES)
+
+
 def _norm_scope_v2(cfg, root, dropped_out=None):
     """v2 配置校验。返回 (ok, scope|err)。
 
@@ -1696,10 +1724,12 @@ def _norm_scope_v2(cfg, root, dropped_out=None):
         "name": str(cfg.get("name") or "")[:60] or "未命名范围",
         "mode": mode, "arch": arch,
         "dirs": dirs,
-        # a576（第 2 轮审计·低-4）：只认真正的布尔 True——手改
-        # `"confirmed": "false"` 时 `bool("false")` 为 True，会误判已确认
-        # 从而跳过一次应有的推荐与确认。
-        "confirmed": cfg.get("confirmed") is True,
+    # a576（第 2 轮审计·低-4）：只认真正的布尔 True——手改
+    # `"confirmed": "false"` 时 `bool("false")` 为 True，会误判已确认
+    # 从而跳过一次应有的推荐与确认。
+    # 2026-11-25 审查 a697：没有这个键的旧配置不再一律算未确认——按名字分，
+    # 见 _cfg_unconfirmed（否则升级后用户存下的范围全被弃用并被推荐结果覆盖）。
+    "confirmed": not _cfg_unconfirmed(cfg),
         **fields,
     }
 
@@ -2415,12 +2445,15 @@ def _rule_level1(name):
     return None
 
 
+_TINY_REASON = "代码极少"    # L2：目录里的代码文件不到 5 个（recommend_scope 的全不勾兜底靠它识别）
+
+
 def _rule_level2(code, o, cmd):
     """L2：数量先验（按序）。"""
     if code == 0 and o == 0 and cmd == 0:
         return "off", "空目录"
     if code < 5:
-        return "off", "代码极少"
+        return "off", _TINY_REASON
     if o == 0 and cmd == 0:
         return "full", "有代码但无编译产物，白名单不可推导"
     return None
@@ -2611,10 +2644,31 @@ def recommend_scope(root, progress=None, should_cancel=None, say=None):
                       "o": v[2], "cmd": v[3]}
                      for k, v in sorted(per_sub.items())],
         })
-    # 估算（UI 展示用）
+    # 2026-11-25 审查 a697 时实测：推荐结果**全部不勾**会让首次建库直接报「收录清单为空」
+    # ——小工程（每个顶层目录的代码文件都不到 5 个）没有编译产物，L2 把每个目录都判成
+    # 「代码极少」；a697 之前这条路走形态检测，无产物时按源码全量兜底，3 个文件照收。
+    # 这里补同样的兜底：一个可收录的目录都没有时，把「仅仅因为代码少」被判不勾、但确实
+    # 有代码的目录改成全量（L0 / L1 按形态与名字判的不勾不动，比如 docs、third_party）。
+    # 推荐仍然要过用户的确认弹窗——不是静默开跑。
     _cnt = {"whitelist": 0, "full": 0, "off": 0}
     for v in dirs.values():
         _cnt[v] = _cnt.get(v, 0) + 1
+    if not _cnt["whitelist"] and not _cnt["full"]:
+        _tiny = [n for n in nodes
+                 if n["state"] == "off" and n["reason"] == _TINY_REASON
+                 and n["code"] > 0]
+        if _tiny:
+            for n in _tiny:
+                n["state"] = "full"
+                n["warn"] = True
+                n["reason"] = ("工程里没有可推导白名单的编译产物，各目录代码量都很少"
+                               "——按全量收录，请在树上确认")
+                dirs[n["rel"]] = "full"
+            _cnt = {"whitelist": 0, "full": len(_tiny),
+                    "off": _cnt["off"] - len(_tiny)}
+            say("  · 没有任何目录能按编译产物推导——%d 个有代码的小目录改推荐为全量"
+                "（请在确认时过目）" % len(_tiny))
+    # 估算（UI 展示用）
     elapsed = _t.time() - t_start
     say("  推荐完成：%d 个顶层目录（白 %d · 全 %d · 不勾 %d），耗时 %.1fs"
         % (len(tops), _cnt["whitelist"], _cnt["full"], _cnt["off"], elapsed))
@@ -2735,6 +2789,9 @@ def build(root, log=None, progress=None, should_cancel=None,
     sc, sc_src = None, ""
     # a572（B5）：收集 _norm_dirs 丢弃的 tmp 键（两处归一都收）
     _dropped_keys = []
+    # 2026-11-25 审查 a697：工程根那份配置是因为「从未经确认」才被弃用的——确认弹窗的
+    # 文案要如实说「有一份工具自动生成的、未经确认的配置」，不能说「尚无配置」
+    _had_auto_cfg = False
     if scope is not None:
         if not isinstance(scope, dict):
             raise RuntimeError("收录范围配置必须是 JSON 对象")
@@ -2757,8 +2814,12 @@ def build(root, log=None, progress=None, should_cancel=None,
             # 自动写下的，从未经用户确认，也没走过 L0~L3 规则。原判定链只判
             # 「有没有配置」，于是这类残缺配置被直接采用，推荐器与确认弹窗
             # 被整条跳过。未确认 = 视为无配置：走推荐器 + 用户确认。
-            say("  · 工程根的收录范围从未经确认（工具自动生成）——"
+            # 2026-11-25 审查 a697：哪些算「未确认」由 _cfg_unconfirmed 统一判——
+            # 没有 confirmed 键的旧配置只有名字是工具自动写的那几种才算，用户
+            # 自己存下的旧配置照旧生效（否则升级后全被弃用，见该函数的说明）。
+            say("  · 工程根的收录范围是工具自动生成的、从未经确认——"
                 "按规则重新推荐")
+            _had_auto_cfg = True
             sc, sc_src = None, ""
     if sc is None:
         # a571（用户定调：首次建库必须让用户确认范围，不允许静默开跑）：
@@ -2768,7 +2829,9 @@ def build(root, log=None, progress=None, should_cancel=None,
         # 原来这里直接走 detect_scope——它只填「档位 + 产物源」，dirs 里
         # 只有 `sbuilder/output` 这种骨架节点（G10 实测「白 0 · 全 0 ·
         # 不勾 2」），用户没有任何可确认的东西。
-        say("  未找到收录范围配置——开始推荐分析（完整扫描，约 20~60 秒）…")
+        say("  未找到收录范围配置——开始推荐分析（完整扫描，约 20~60 秒）…"
+            if not _had_auto_cfg else
+            "  开始推荐分析（完整扫描，约 20~60 秒）…")
         _rec = None
         try:
             _rec = recommend_scope(root, progress=progress,
@@ -2788,11 +2851,18 @@ def build(root, log=None, progress=None, should_cancel=None,
             _rsc.setdefault("exclude_names", [])
             _ok_r, _rsc2 = _norm_scope(_rsc, root)
             if _ok_r:
+                # 2026-11-25 审查 a697：工程根有一份工具自动生成、未经确认的配置时，
+                # 确认弹窗的文案要据实说，不能说「尚无配置」——把这个事实随载荷下发
+                if _had_auto_cfg:
+                    _rec = dict(_rec)
+                    _rec["had_auto_cfg"] = True
                 _choice_r = "accept"
+                _asked_r = False      # 真的问过用户并拿到答复，才算「用户已确认」
                 if ask_scope is not None:
                     say("  等待用户确认收录范围…")
                     try:
                         _choice_r = ask_scope(_rec) or "accept"
+                        _asked_r = True
                     except Cancelled:
                         # a576（第 1 轮审计）：取消必须原样上抛——被下面的
                         # `except Exception` 吞掉会变成本次建库「按推荐继续」，
@@ -2806,6 +2876,11 @@ def build(root, log=None, progress=None, should_cancel=None,
                     raise Cancelled("cancel")
                 if _choice_r == "reconfigure":
                     raise Cancelled("reconfigure")
+                # 2026-11-25 审查 a697：直调 build（ask_scope=None）或回调抛异常时没有人
+                # 确认过——不能标成「用户已确认」（实测：日志写「推荐器（用户已确认）」、
+                # 落盘 confirmed:true，之后的建库永久跳过推荐与确认弹窗）。与下面 detect
+                # 分支的口径（a577）一致；界面的建库路径始终传 ask_scope，不受影响。
+                _rsc2["confirmed"] = _asked_r
                 sc, sc_src = _rsc2, "recommend"
             else:
                 say("  ⚠ 推荐结果不合法（%s）——回退到形态检测" % _rsc2)
@@ -2848,6 +2923,8 @@ def build(root, log=None, progress=None, should_cancel=None,
                     _drec = dict(_dsc)
                     _drec["nodes"] = _d_nodes
                     _drec["ok"] = True
+                    if _had_auto_cfg:       # 同上：弹窗文案据实（2026-11-25 审查 a697）
+                        _drec["had_auto_cfg"] = True
                     # a577（第 3 轮审计·中-2）：只有**真的问过且用户答了
                     # accept** 才算「已确认」。原实现无条件按 detect-confirmed
                     # 落盘 —— 直调 build（ask_scope=None）或回调抛异常时也会
@@ -2885,7 +2962,10 @@ def build(root, log=None, progress=None, should_cancel=None,
     _src_label = {"project": "工程配置 " + SCOPE_FILE,
                   "inline": "本次指定",
                   "implicit": "自动（隐式范围）",
-                  "recommend": "推荐器（用户已确认）"}.get(sc_src)
+                  # 2026-11-25 审查 a697：没人确认过就不写「用户已确认」
+                  "recommend": ("推荐器（用户已确认）" if sc.get("confirmed")
+                                else "推荐器（未经确认——直接调用，没有人作答）")
+                  }.get(sc_src)
     if sc_src in ("detect", "detect-confirmed"):
         _src_label = "自动检测（%s 方案）%s" % (
             _dkind, "·用户已确认" if sc_src == "detect-confirmed" else "")
@@ -4049,9 +4129,10 @@ def build(root, log=None, progress=None, should_cancel=None,
                           # a577（第 3 轮审计·低-中）：与落盘口径完全对齐
                           # ——原少了 `detect-confirmed`，同一份配置 meta 报
                           # False 而磁盘写 True，任何新消费方都会误判。
+                          # 2026-11-25 审查 a697：recommend 不再无条件算已确认——
+                          # 直调 build 时没有人作答，sc["confirmed"] 为 False，meta 如实报
                           "confirmed": bool(sc.get("confirmed"))
-                          or sc_src in ("recommend", "inline",
-                                         "detect-confirmed"),
+                          or sc_src in ("inline", "detect-confirmed"),
                           # a570 对抗审计（P1·第十一轮）：把被放弃的超时
                           # 子树随 meta 下发——面板据此显示「本次建库 N 个
                           # 子树超时未收录」，而不是静默成功。
@@ -4079,7 +4160,11 @@ def build(root, log=None, progress=None, should_cancel=None,
             # a571：走推荐器并经过用户确认（含「按推荐建库」）的配置才算
             # 「已确认」，下次建库直接采用、不再重复推荐与弹窗。detect/implicit
             # 是工具自动生成的骨架，必须保持未确认，否则下次又会被当作用户配置。
-            _sp["confirmed"] = sc_src in ("recommend", "detect-confirmed")
+            # 2026-11-25 审查 a697：recommend 以「是否真的问过用户」为准（见上面
+            # _rsc2["confirmed"]）——直调 build 落盘保持未确认，不能谎报已确认
+            _sp["confirmed"] = (sc_src == "detect-confirmed"
+                                or (sc_src == "recommend"
+                                    and bool(sc.get("confirmed"))))
             if _sp.get("mode") == "full" and (_sp.get("dirs") or {}):
                 _d2 = dict(_sp.get("dirs") or {})
                 # a570 对抗审计（P2·第十六轮）：补键必须 lower 归一——dirs
