@@ -48,9 +48,10 @@ _ALLOWED_CALLERS = ("mcp_server", "ai_browser")
 def _caller_allowed():
     """当前调用栈里是否有合法调用方。看 __main__ 的脚本路径与栈帧的模块名。
 
-    豁免条件（按顺序）：
+    放行条件：
       1. 正在跑 pytest / 测试文件（tests/ 下的隔离契约测试）；
-      2. 栈里出现 src.mcp_server 或 src.ai_browser 的函数帧。
+      2. 栈里出现 mcp_server 或 ai_browser 的函数帧——按模块名的末段认，
+         **或者**是这两个文件被当脚本运行时的 __main__ 帧（见 _frame_allowed）。
     都不是 → 拒绝。这条不追求密码学强度（同机同用户，真要绕总能绕），
     目的是让「随手写个脚本裸连」在**第一次尝试就报错**，把默认行为掰到
     合法通道上。
@@ -65,13 +66,33 @@ def _caller_allowed():
     f = sys._getframe(1)
     depth = 0
     while f is not None and depth < 40:
-        mod = str(f.f_globals.get("__name__") or "")
-        if mod in ("src.mcp_server", "src.ai_browser") or \
-                mod.endswith(".mcp_server") or mod.endswith(".ai_browser"):
-            allow.add(mod)
+        if _frame_allowed(f):
+            allow.add(str(f.f_globals.get("__name__") or ""))
         f = f.f_back
         depth += 1
     return bool(allow)
+
+
+# 合法调用方的文件名（__main__ 帧按它认，见 _frame_allowed）
+_ALLOWED_FILES = tuple(n + ".py" for n in _ALLOWED_CALLERS)
+
+
+def _frame_allowed(f):
+    """这一帧是不是合法调用方的代码。
+
+    看模块名的末段：mcp_server / ai_browser（src.mcp_server、裸名都算）。
+    **还有一种必须认**：mcp_server.py 被当**脚本**运行时——Claude Code 登记的
+    启动方式就是 `python …\\src\\mcp_server.py`——这个文件的模块名是 __main__，
+    不是 src.mcp_server。2026-11-25 审查 a698 时实测（沙箱、隔离口）：只按模块名
+    判，脚本方式下 devtools_* 五个工具一调就报「禁止裸连 CDP」，正规通道被自己的
+    封禁误杀；安装版的 `exe --mcp` 是按包导入的，不受影响，所以只有源码形态中招。
+    __main__ 的帧看它 globals 里的 __file__ 是不是这两个文件之一。"""
+    g = f.f_globals
+    mod = str(g.get("__name__") or "")
+    if mod == "__main__":
+        base = os.path.basename(str(g.get("__file__") or "").replace("\\", "/")).lower()
+        return base in _ALLOWED_FILES
+    return mod.split(".")[-1] in _ALLOWED_CALLERS
 
 
 def _guard_caller(what):

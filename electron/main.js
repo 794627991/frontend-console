@@ -964,15 +964,58 @@ function aibrIsAiGuest(gwc) {
   catch (_) { return null; }
 }
 
+const aibrFramed = new Set();         // 已挂过帧订阅的 guest（按 webContents.id 记）
+
 function aibrRegister(gwc) {
   // 挂载即登记：弹窗改道与 attach 校验都从这一刻起生效。guest 销毁时通知
   // 后端清登记（页面刷新 / 舞台被回收都会走到这里）
   aibrIds.add(gwc.id);
+  // 挂载即挂帧订阅（缘由见下）：随 guest 销毁一起结束，不用摘。
+  // **同一个 guest 只挂一次**：did-attach-webview 对同一个 guest 会触发不止一次——
+  // 视图刚建出来时一次（此时还是空白初始文档），首次导航提交、换到网页自己的进程后
+  // 又一次（实测两次相隔约 1.8 秒，id 相同、但两次给的 webContents 是不同的 JS 包装，
+  // 所以只能按 id 记，WeakSet 按对象记拦不住）
+  if (!aibrFramed.has(gwc.id)) {
+    aibrFramed.add(gwc.id);
+    try {
+      gwc.beginFrameSubscription(false, () => {});
+    } catch (e) {
+      log('AI 浏览器：挂帧订阅失败（窗口最小化期间截图会挂起）— ' + (e && e.message));
+    }
+  }
   gwc.once('destroyed', () => {
     aibrIds.delete(gwc.id);
+    aibrFramed.delete(gwc.id);
     aibrPost('/api/ai_browser/detach', { wc_id: gwc.id });
   });
 }
+
+// AI 浏览器 guest 常驻帧订阅（2026-11-25 审查 a699 时实测补的；用户令「后台 / 最小化 /
+// 失焦也能用」在截图上的缺口）。
+// 受控实验（真实最小化 + WebView guest，Electron 45.4.1 / Chromium 156；隔离环境）：
+//   ① 最小化后页面是活着的：Runtime.evaluate 2~4ms、rAF 回调照常、点击送达。但帧呈现不出来
+//     ——窗口最小化后显示合成器不绘制，Page.captureScreenshot 等的那次呈现永远不来；窗口一被
+//     还原，挂着的截图立刻返回（实测一张挂了 28 秒的就是这样「成功」的）。
+//   ② a699 的唤醒链三步（焦点模拟 / 生命周期激活 / setVisibleSize）都不产生帧：最小化 5 秒后
+//     只发其中任意几步再截图，5 种组合全部 6 秒无回应。
+//   ③ 兜底里的 Emulation.setDeviceMetricsOverride 能让「还没点过」的页面出图（但每张先白等
+//     3 秒超时）。一旦点过页面就不行：最小化 30 秒后「点击 → 截图」三条路全挂、共 31 秒，
+//     2 次复现 2 次失败——而「点击 → 看结果」正是 AI 最基本的循环。
+//   ④ 挂上帧订阅之后，最小化时截图 50~146ms；渲染进程崩溃两次、舞台回收后重建、还原后再
+//     最小化（3 秒 / 30 秒）都复测通过。但**订阅必须在那次隐藏之前就已经在**：窗口藏下去之后
+//     才挂（minimize 事件当下 / +500ms；只订 AI 视图、订全部网页视图、连宿主页一起订）约 60 轮
+//     统计只有三成活——所以不能「跟着最小化状态挂 / 摘」，只能常驻。
+//   ⑤ **已知限制（没找到解法，别再重复试）**：窗口不可见期间 guest 一旦发生导航，截图就挂到
+//     窗口可见一次为止——最小化状态下导航后「点击 → 截图」31 秒失败；窗口还原之后再最小化
+//     即恢复（99~161ms），中间做过可见态的导航 / 点击 / 截图都不要紧，用户还原后看到的页面
+//     也是正常的（不是白屏）。救不回来的办法都试过：重挂订阅 8 次 0 帧；壳侧
+//     capturePage 立刻 UnknownVizError（默认参数则不返回）；改订宿主页一样挂。
+//     点击 / 输入 / 读页面 / 导航本身不受影响，只是那一页要等窗口可见一次才截得到。
+//   ⑥ incrementCapturerCount 在这个版本已经不存在（is not a function）；onlyDirty=true 不省
+//     什么（实测整帧 +3.1% / 只取脏区 +4.7% 单核，差在噪声里），照用 false。
+// 代价（实测，被控页 570x342、以约 62 帧/秒动画时各进程的单核占用）：主进程 +2~4%、GPU 与
+// 渲染进程 +1~3%（噪声量级）；静止页面不出帧、不花 CPU。全高清窗格按像素量大约放大十倍。
+// 只给 **AI 浏览器 guest**（aibrIds 里的）挂，普通网页标签页不动。
 
 function aibrPost(path, body) {
   // 与后端 AI 浏览器登记表通信。失败返回 null（下次 attach 会重新登记）

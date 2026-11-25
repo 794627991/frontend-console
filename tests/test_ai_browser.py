@@ -1575,6 +1575,52 @@ def test_shell_keeps_guest_alive_in_background():
         "只给 AI 浏览器视图关节流——普通网页标签页全关等于全都白烧 CPU"
 
 
+def test_shell_keeps_guest_frames_while_minimized():
+    """最小化期间的截图（2026-11-25 审查 a699 时实测补的）。
+
+    a699 的三条配置让 guest 最小化后**定时器**照常、输入送达，但帧呈现不出来：窗口
+    最小化后显示合成器不绘制，Page.captureScreenshot 等的那次呈现永远不来（窗口一被
+    还原，挂着的截图立刻返回）。受控实验（真实最小化 + WebView guest，Electron 45.4.1
+    / Chromium 156；隔离环境）：
+      · a699 的唤醒链三步（焦点模拟 / 生命周期激活 / setVisibleSize）**都不产生帧**——
+        最小化 5 秒后分别只发其中任意几步再截图，5 种组合全部 6 秒无回应；
+      · 兜底的 setDeviceMetricsOverride 能让「还没点过」的页面出图，但每张先白等 3 秒
+        超时；**点过页面之后**三条路全挂（最小化 30 秒后「点击 → 截图」31 秒，2/2 失败）；
+      · 壳侧 beginFrameSubscription 之后截图 50~141ms。但订阅有活 / 死之分，约 60 轮统计
+        只认一条：**订阅必须在那次隐藏之前就已经在**——最小化之前就挂 4/4 活；窗口藏下去
+        之后才挂（minimize 事件当下 / +500ms；只订 AI 视图、订全部网页视图、连宿主页一起
+        订）合计约三成活。所以不能「跟着最小化状态挂 / 摘」，只能常驻。
+      · **已知限制**：窗口不可见期间 guest 一旦导航，截图就挂到窗口可见一次为止（最小化状态下
+        导航后「点击 → 截图」31 秒失败；还原后再最小化即恢复）。重挂订阅、壳侧 capturePage、
+        改订宿主页都救不回来——别再重复试。
+    代价实测：被控页 570x342、约 62 帧/秒动画时主进程 +2~4% 单核，静止页面为 0。
+    """
+    sh = _read("electron", "main.js")
+    reg = _function_body(sh, "function aibrRegister(gwc) {")
+    # 挂载即挂、常驻：回调是空函数；登记 → 挂订阅 → 销毁回调，顺序如此
+    assert "gwc.beginFrameSubscription(false, () => {});" in reg
+    assert (reg.index("aibrIds.add(gwc.id);")
+            < reg.index("gwc.beginFrameSubscription(false, () => {});")
+            < reg.index("gwc.once('destroyed'"))
+    # 只给 AI 浏览器 guest：整个壳里这一句只许出现在 aibrRegister 里（普通网页标签页不动）
+    assert sh.count("beginFrameSubscription(") == 1
+    # 常驻：没有「摘」的逻辑；也不能再有跟着最小化状态挂的那一套（事后挂约三成活，实测）
+    assert "endFrameSubscription(" not in sh
+    for banned in ("aibrSyncFrames", "aibrWatchWin", "aibrFrameSub"):
+        assert banned not in sh, banned
+    # 挂失败要记日志（否则最小化期间截图挂起时无从排查）
+    assert "挂帧订阅失败" in reg
+    # 同一个 guest 只挂一次：did-attach-webview 对同一个 guest 会触发不止一次（视图刚建出来
+    # 时一次、随后又一次，id 相同但给的 webContents 是不同的 JS 包装），按 id 记；guest 销毁时清掉
+    assert "if (!aibrFramed.has(gwc.id)) {" in reg
+    assert "aibrFramed.add(gwc.id);" in reg
+    assert "aibrFramed.has(gwc))" not in reg and "aibrFramed.add(gwc);" not in reg, "按对象记拦不住：两次事件给的是不同的 JS 包装（实测）"
+    assert "const aibrFramed = new Set();" in sh
+    assert "aibrFramed.delete(gwc.id);" in reg
+    # 这个 Electron 里已经没有的接口（实测 is not a function）——代码里不许调
+    assert "incrementCapturerCount(" not in sh and "decrementCapturerCount(" not in sh
+
+
 def test_cross_component_contract_literals():
     """三端必须对齐的字面量：分区名 / IPC 通道 / SSE 帧 / 路由 / 伪 tab 名。
     没有编译器帮忙，只能靠测试钉住（对抗审计：此前「三处对齐」只是口头约定，
@@ -1710,6 +1756,22 @@ def test_cross_component_contract_literals():
     # 2026-11-25 用户实锤「下载时没有弹出下载进度」：started 就自动弹面板
     assert "item.event === 'started'" in dljs, "下载开始必须自动弹面板"
     assert "item.event === 'done'" in dljs and "!_autoOpened" in dljs
+    # 2026-11-25 审查 a698 时实测到的缺陷（端到端 15b + 探针对照），已修：
+    # ① 自动弹出时下载钮不可见（用户停在别的标签页，而 AI 在会话里触发了下载）——
+    #    钮的位置读出来是 0，照着摆会把面板盖在工具左上角（a698 版落在 left 8px /
+    #    top 6px）。必须先判可见：可见才贴着钮摆，不可见就清掉行内定位、退回
+    #    样式表里的右上默认位置
+    assert "if (_isVisible(anchorBtn)) {" in dljs, "面板定位前必须先判下载钮是否可见"
+    assert ("panel.style.left = panel.style.top = panel.style.right "
+            "= panel.style.maxHeight = '';") in dljs, "钮不可见时必须清掉行内定位"
+    # ② 基准钮随它所在的标签页一起被关掉之后要重新挑（isConnected），不能一直
+    #    指着已经脱离文档的钮
+    assert "if (!anchorBtn || !anchorBtn.isConnected) {" in dljs
+    # ③ 「自动弹出过」的标记只在面板真的弹出来时才置位；show() 要把结果报出来
+    #   （a698 版没有钮也照样把标记置上，之后不会自动收起）
+    assert "if (!anchorBtn) return false;" in dljs and "_autoOpened = show();" in dljs
+    # ④ 横幅文案：入口已经不在右上角（在网页标签页工具栏）
+    assert "右上角「下载」" not in dljs and "网页标签页工具栏的「下载」" in dljs
     css = _read("web", "style", "base.css")
     assert '[data-web="dl"] { position: relative; }' in css
     assert ".dl-panel {" in css and ".dl-badge {" in css
@@ -2631,3 +2693,97 @@ def test_shell_takeover_reports_progress_whatever_the_event_state_word_is():
     assert out["done"]["path"].endswith("video.mp4")
     assert (out["done"]["received"], out["done"]["total"], out["done"]["state"]) == (500, 1000, "completed")
     assert out["cancelled"] == "cancelled" and out["sources"] == ["webtab", "ai_browser"]
+
+
+# ---------- 14. 裸连 CDP 封禁（a698；2026-11-25 审查补测）----------
+
+# 子进程里跑：三种身份各调一次被守的入口。自己先报 CONFIG_FILE 证明隔离生效，不在沙箱内
+# 就什么都不做。FC_CDP_PORT 指一个确认空闲的端口——放行后的探活打到那里失败，
+# 报的是「端口连不上」；被封禁报的是「禁止裸连」。两种文案区分「放行」与「拒绝」，
+# 全程不碰真实的 9222。
+_GUARD_CHILD = r'''
+import os, sys
+ROOT, MODE = sys.argv[1], sys.argv[2]
+sys.path.insert(0, ROOT)
+from src import app_state as st
+here = os.path.normcase(os.path.abspath(st.CONFIG_FILE))
+iso = os.path.normcase(os.path.abspath(os.environ["FC_STATE_DIR"]))
+ok = here.startswith(iso + os.sep)
+print("ISO " + ("ok" if ok else "LEAK " + here))
+if not ok:
+    sys.exit(3)
+from src import devtools_cdp as dc
+
+
+def probe(label, fn):
+    try:
+        out = fn()
+    except Exception as e:
+        out = "%s: %s" % (type(e).__name__, e)
+    txt = "" if out is None else str(out)
+    if "禁止裸连" in txt:
+        v = "REJECTED"
+    elif "端口连不上" in txt or "CdpUnavailable" in txt:
+        v = "PASSED"
+    else:
+        v = "OTHER " + txt[:80]
+    print("%s %s" % (label, v))
+
+
+if MODE == "temp":
+    probe("find_cdp", dc.find_cdp)
+    probe("find_page_target", lambda: dc.find_page_target(1, "http://127.0.0.1:1"))
+    probe("CdpSession", lambda: dc.CdpSession(1, "T"))
+elif MODE == "package":
+    from src import mcp_server as m
+    u = "http://127.0.0.1:9"
+    probe("devtools_eval", lambda: m.tool_devtools_eval(u, {"expression": "1", "target": "app"}))
+    probe("devtools_dom", lambda: m.tool_devtools_dom(u, {"selector": "body", "target": "app"}))
+else:
+    # mcp_server.py 当**脚本**跑：函数所在的模块就是 __main__——Claude Code 登记的
+    # 启动方式正是 `python …\src\mcp_server.py`（安装版才是按包导入的 exe --mcp）
+    path = os.path.join(ROOT, "src", "mcp_server.py")
+    src = open(path, encoding="utf-8").read()
+    tail = 'if __name__ == "__main__":\n    main()\n'
+    assert src.endswith(tail), "入口守卫的写法变了"
+    g = {"__name__": "__main__", "__file__": path}
+    exec(compile(src[:-len(tail)], path, "exec"), g)
+    u = "http://127.0.0.1:9"
+    probe("devtools_eval", lambda: g["tool_devtools_eval"](u, {"expression": "1", "target": "app"}))
+    probe("devtools_screenshot", lambda: g["tool_devtools_screenshot"](u, {"target": "app"}))
+'''
+
+
+def test_cdp_guard_lets_the_registered_entry_through_and_rejects_stray_scripts():
+    """封禁靠栈帧的模块名认调用方。2026-11-25 审查 a699 之前的 a698 时实测（沙箱、
+    隔离口）：只按模块名判，脚本方式下模块名是 __main__，devtools_* 一调就报
+    「禁止裸连 CDP」——正规通道被自己的封禁误杀，而且只在源码形态中招。
+    三种身份都要钉住：随手写的脚本裸连 → 拒；mcp_server.py 不论当脚本跑还是按包
+    导入 → 放行。a698 没给封禁配测试（它的反向验证是手工做的）。"""
+    import socket
+    iso = os.environ.get("FC_STATE_DIR")
+    assert iso, "pytest 身份下测试自隔离必须生效，否则子进程会碰真实数据目录"
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    # 子进程不能带着 pytest 的环境标记：封禁对 pytest 无条件放行，带着它负例就成了假阴性
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+    env.update(FC_STATE_DIR=iso, FC_TEST_CHILD="1", FC_CDP_PORT=str(port),
+               PYTHONIOENCODING="utf-8")
+
+    def run(mode):
+        p = subprocess.run([sys.executable, "-X", "utf8", "-c", _GUARD_CHILD, ROOT, mode],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           env=env, cwd=ROOT, timeout=180, input="")
+        assert p.returncode == 0, (mode, (p.stderr or "")[-600:], p.stdout)
+        return dict(ln.split(" ", 1) for ln in p.stdout.split("\n") if " " in ln)
+
+    stray = run("temp")
+    assert stray["ISO"] == "ok", stray                      # 隔离由子进程自己证明
+    for name in ("find_cdp", "find_page_target", "CdpSession"):
+        assert stray[name] == "REJECTED", (name, stray)     # 随手写的脚本裸连：第一次就报错
+    for mode, second in (("script", "devtools_screenshot"), ("package", "devtools_dom")):
+        got = run(mode)
+        assert got["ISO"] == "ok", got
+        assert got["devtools_eval"] == "PASSED" and got[second] == "PASSED", (mode, got)

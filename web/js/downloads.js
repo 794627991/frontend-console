@@ -1,10 +1,13 @@
 // 下载中心面板（2026-11-24 用户令：普通网页标签页的下载也要有进度显示和完成提示）。
 //
-// 位置：挂在 body 上的浮层（与「日志流」同一类），右缘对齐顶栏的「下载」按钮。
+// 位置：挂在 body 上的浮层（与「日志流」同一类），贴着被点的那个「下载」按钮展开
+// （2026-11-25 用户令：入口在网页标签页工具栏，密码钥匙右边）；按钮此刻不可见时
+// （用户停在别的标签页，比如正看着 AI 会话）退回样式表里的默认位置（右上）。
 // 数据来源两条：
 //   · 打开面板、或 SSE 可能漏帧时，全量拉 POST /api/downloads/list；
 //   · 之后靠 SSE 增量更新——sense.js 把 kind="download" 的帧转给 window.DL.onEvent。
-// 面板没开着时，下载完成 / 失败 / 取消用应用内横幅提示；开着时用户直接看得到，不重复弹。
+// 下载一开始就自动把面板弹出来（进度条实时走）；用户手动关掉后这一轮不再抢，
+// 结束时改用应用内横幅报结果。面板开着时用户直接看得到，不重复弹横幅。
 // 这里只做「看」和「打开 / 取消 / 移除记录」：删除下载文件本身只能在
 // 设置→数据目录→可清理项里（且只对默认下载目录开放）。
 (function () {
@@ -95,22 +98,42 @@
     _allBtns().forEach((b) => b.classList.remove('on'));
   }
 
+  function _isVisible(b) {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  // show() 返回「面板真的弹出来了」：一个下载按钮都没有（没开过网页标签页）时
+  // 无处可弹，调用方不要把这一轮记成「已自动弹过」
   function show() {
-    if (!anchorBtn) anchorBtn = _allBtns()[0] || null;
+    // 基准按钮随它所在的标签页一起没了（标签页被关）：重新挑一个，优先此刻看得见的
+    if (!anchorBtn || !anchorBtn.isConnected) {
+      anchorBtn = _allBtns().find(_isVisible) || _allBtns()[0] || null;
+    }
     ensurePanel();
-    if (!anchorBtn) return;
+    if (!anchorBtn) return false;
     shown = true;
     panel.style.display = 'flex';
     // 面板贴着**被点的那个按钮**：左缘对齐按钮左缘、按钮下方 6px 展开
-    // （2026-11-25 用户令：入口在网页工具栏密码钥匙右边，面板就跟它走）
+    // （2026-11-25 用户令：入口在网页工具栏密码钥匙右边，面板就跟它走）。
+    // 按钮此刻不可见（用户停在别的标签页——AI 在会话里触发了下载，而用户正看着
+    // 会话）：它的位置读出来是 0，照着摆会把面板盖在工具左上角。这时清掉行内
+    // 定位，退回样式表里的默认位置（右上）
     const r = anchorBtn.getBoundingClientRect();
-    const w = Math.min(440, window.innerWidth - 40);
-    const left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - w - 8));
-    panel.style.left = left + 'px';
-    panel.style.right = 'auto';
-    panel.style.top = Math.round(r.bottom + 6) + 'px';
+    if (_isVisible(anchorBtn)) {
+      const w = Math.min(440, window.innerWidth - 40);
+      const left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - w - 8));
+      const top = Math.round(r.bottom + 6);
+      panel.style.left = left + 'px';
+      panel.style.right = 'auto';
+      panel.style.top = top + 'px';
+      panel.style.maxHeight = Math.max(160, window.innerHeight - top - 12) + 'px';
+    } else {
+      panel.style.left = panel.style.top = panel.style.right = panel.style.maxHeight = '';
+    }
     anchorBtn.classList.add('on');
     refresh();
+    return true;
   }
 
   // 工具栏点击入口（web-panel.js 的 _webAct 'dl' 分支调这里）
@@ -214,15 +237,17 @@
     // 避免第二个下载又把用户刚关掉的面板顶出来。
     if (item.event === 'started') {
       if (!shown && !_autoOpened) {
-        _autoOpened = true;
-        show();
-        if (panel) render();     // 立刻画出这一条，不等 refresh 的往返
+        // 只有真弹出来了才记「这一轮已自动开过」：一个下载按钮都没有时 show() 弹不出来，
+        // 记了的话这一轮里用户打开网页标签页后它也不会再自动弹
+        _autoOpened = show();
       }
     } else if (item.event === 'done') {
-      _autoOpened = false;                // 本轮结束：下一个下载可以再自动开
+      if (!busyCount()) _autoOpened = false;   // 这一波都结束了：下一个下载可以再自动开
       if (!shown) {
-        // 面板没开着：用横幅告诉用户结果（开着的时候他直接看得到）
-        if (r.state === 'completed') showBanner('下载完成：' + r.filename + '（' + fmt(r.received) + '），右上角「下载」可打开', 4200);
+        // 面板没开着：用横幅告诉用户结果（开着的时候他直接看得到）。
+        // 入口在网页标签页工具栏（密码钥匙右边），2026-11-25 起不在右上角了
+        const where = '，网页标签页工具栏的「下载」可打开';
+        if (r.state === 'completed') showBanner('下载完成：' + r.filename + '（' + fmt(r.received) + '）' + where, 4200);
         else if (r.state === 'interrupted') showBanner('下载失败：' + r.filename + '（' + (r.error || '原因未知') + '）', 6000, true);
         else showBanner('已取消下载：' + r.filename, 3000);
       }
