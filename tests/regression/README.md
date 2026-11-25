@@ -1,6 +1,6 @@
 # tests/regression —— 模块化回归测试（统一路径）
 
-**所有测试脚本、样本数据、运行产物都集中在本目录**（文档见 `docs/modularization-regression/`）。
+**所有测试脚本、样本数据、运行产物都集中在本目录**（文档见本目录 `docs/`（说明书）与 `artifacts/`（运行产物））。
 
 ```
 tests/regression/
@@ -31,7 +31,7 @@ python tools/install_regression_hooks.py     rem 提交即回归（L0 / L0-L2）
 
 ## 产物策略
 
-- **小产物**（结果表、断言详情）：写入 `docs/modularization-regression/测试报告.md`，随仓库留档。
+- **小产物**（结果表、断言详情）：写入 `artifacts/测试报告.md`，随仓库留档。
 - **中间产物**（截图、临时日志）：落 `tests/regression/artifacts/<时间戳>/`，**不入库**（`.gitignore`）。
 - **大产物**（大文件/长日志/Office 样本等 >100KB）：不提交，用例明细里写明**构造方法**（如「用任意 `.docx` 文件放到 fixtures」），运行前手工准备。
 - fixtures 只放可复现的最小样本（当前全部 <5KB）。

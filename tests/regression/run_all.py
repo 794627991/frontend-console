@@ -5,7 +5,7 @@
     python tests/regression/run_all.py --layers L0,L1,L2     # 指定层
     python tests/regression/run_all.py --layers L3 --groups H1,H3,H4   # 真实 CLI（耗额度）
 
-结果自动追加到 docs/modularization-regression/测试报告.md。
+结果自动追加到 tests/regression/artifacts/测试报告.md。
 """
 import argparse
 import datetime
@@ -16,7 +16,7 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(_HERE))
-REPORT = os.path.join(ROOT, "docs", "modularization-regression", "测试报告.md")
+REPORT = os.path.join(ROOT, "tests", "regression", "artifacts", "测试报告.md")
 sys.path.insert(0, _HERE)
 
 

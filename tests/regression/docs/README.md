@@ -23,7 +23,7 @@ python tests\regression\run_all.py --layers L1
 rem L3（真实消耗 Claude CLI 额度）
 python tests\regression\run_all.py --layers L3 --groups H1,H3,H4
 
-rem 结果自动追加到 docs\modularization-regression\测试报告.md
+rem 结果自动追加到 testsegressionrtifacts\测试报告.md
 ```
 
 前置条件：前端控制台应用正在运行（主 UI CDP 端口 9222 常开）。L0 静态层不需要应用；

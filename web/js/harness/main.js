@@ -1294,7 +1294,7 @@ function buildClaudeHarnessTab(opts = {}) {
     }
   });
   // ==================== v2.32 会话动态（六分区监视器；v3.3 分屏化）====================
-  // 设计文档 docs/设计_2026-09-20_右侧会话动态面板.md。监视器=纯派生：
+  // 设计文档 docs/设计历史/设计_2026-09-20_右侧会话动态面板.md。监视器=纯派生：
   // 不持状态机，一切从 _HG + sessions + localStorage 派生；骨架 v3.3 起改为
   // 分屏伪 tab __dyn__ 懒建（14-subpane _subDynOpen，旧 index.html 静态节点/
   // #aiPanel 换装形态整体废止）——dynEl 在 _subDynOpen 里赋值，此处不绑。

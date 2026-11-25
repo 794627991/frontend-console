@@ -1,6 +1,6 @@
 'use strict';
 // 前端控制台 Electron 壳（P0~P4 已完成，P4 起唯一形态）
-// 方案：docs/electron迁移方案_2026-11-20.md
+// 方案：docs/设计历史/electron迁移方案_2026-11-20.md
 // 职责：单实例锁 → spawn Python 后端（--headless）→ 轮询 endpoint.json +
 // /api/status 就绪 → BrowserWindow.loadURL → 双向生命周期（后端退→壳退，
 // 壳退→树杀后端）。P2 无边框/窗控/托盘、P3 网页 tab + 密码、P4 截图覆盖窗。

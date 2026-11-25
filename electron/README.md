@@ -1,6 +1,6 @@
 # Electron 壳（P1 打包 + P2 窗控/托盘 + P3 网页 tab + P4 零依赖收尾）
 
-方案：`docs/electron迁移方案_2026-11-20.md`。本目录是 Electron 壳，
+方案：`docs/设计历史/electron迁移方案_2026-11-20.md`。本目录是 Electron 壳，
 拉起 Python 后端（`src/main.py --headless`）并承载 web UI。
 当前形态：P0 服务链、P1 electron-builder/NSIS 安装包、P2 无边框窗控与托盘、
 P3 网页 tab + 内置密码选择式填充、P4 截图覆盖窗迁移 + 旧 pywebview 窗体链

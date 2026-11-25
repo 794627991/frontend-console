@@ -18,7 +18,7 @@ sys.path.insert(0, _HERE)
 from cdp_lib import Page          # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(_HERE))
-OUT = os.path.join(ROOT, "docs", "modularization-regression", "渲染路径测绘.md")
+OUT = os.path.join(ROOT, "tests", "regression", "artifacts", "渲染路径测绘.md")
 
 INJECT = r"""
 (function () {
