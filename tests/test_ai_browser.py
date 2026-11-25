@@ -654,24 +654,203 @@ def test_history_and_reload_run_inside_the_page(env):
     assert r["ok"] is True and r["loaded"] is False and "没等到加载完成" in r["text"]
 
 
-def test_hidden_window_fails_fast_for_input_and_screenshot(env):
-    # 端到端实锤：工具窗口被完全遮挡 / 最小化时，输入事件与截图会挂到超时——
-    # 先挡住并说清原因，不让 AI 干等 10~20 秒再拿到一句「页面无响应」
+def test_hidden_window_self_wakes_then_still_operates(env):
+    # 2026-11-25 用户令「仿照 zcode：AI 浏览器要能后台 / 最小化 / 失焦下继续控制」。
+    # 旧行为是 hidden 直接拒绝并报错——那等于把「后台可用」判了死刑。现在改为：
+    # 先尝试唤醒（焦点模拟 + 生命周期 active + 强制视口），**仍不拒绝**，
+    # 照常下发输入/截图，只在返回文案里如实提示风险。
     env.attach()
-    _js(env, {"document.visibilityState": "hidden"})
+    png = b"\x89PNG" + b"0" * 30
+    env.replies["Page.captureScreenshot"] = {"data": base64.b64encode(png).decode()}
+    env.replies["Page.getLayoutMetrics"] = {"cssLayoutViewport":
+                                            {"clientWidth": 1024, "clientHeight": 768}}
+    _js(env, {"document.visibilityState": "hidden",
+              _ELEM("#btn"): _elem(10, 20, "按钮")})
     for path, body in (("click", {"selector": "#btn"}), ("click", {"x": 1, "y": 2}),
                        ("type", {"text": "a"}), ("press", {"key": "Enter"}),
                        ("screenshot", {})):
         r = env.post("/api/ai_browser/" + path, body)
-        assert r["ok"] is False and "不可见" in r["err"], (path, r)
-    assert not [m for m in _sent_methods(env)
-                if m.startswith("Input.") or m == "Page.captureScreenshot"]
+        assert r["ok"] is True, (path, r)
+        assert "当前不可见（hidden）" in r["text"], (path, r)
+    # 唤醒手段真的发了：焦点模拟 + 生命周期激活 + 强制视口。
+    # 5 次操作各唤醒一次——**不可见时截图不重复跑**（每跑一遍最坏多 30s，
+    # 会烧穿 MCP 的 100s HTTP 超时），所以正好是 5 次，不是 6 次。
+    sent = _sent_methods(env)
+    assert "Emulation.setFocusEmulationEnabled" in sent
+    assert "Page.setWebLifecycleState" in sent
+    assert [p["width"] for p in _method(env, "Emulation.setVisibleSize")] == [1024] * 5
+    # 输入照常下发（hidden 不再是拦路虎）
+    assert len(_method(env, "Input.dispatchMouseEvent")) >= 3
+    assert [p for p in _method(env, "Input.dispatchKeyEvent") if p["type"] != "keyUp"]
     # 读页面内容的操作不受影响
     _js(env, {"document.visibilityState": "hidden", "document.title": "T"})
     assert env.post("/api/ai_browser/eval", {"expression": "document.title"})["text"] == "T"
-    # 窗口可见时照常；可见性检查不改变别的报错
-    _js(env, {"document.visibilityState": "visible", _ELEM("#nope"): _elem(0, 0, "", ok=False, count=0)})
+    # 窗口可见时：不发任何唤醒命令、文案干净；也不改变别的报错
+    env.calls.clear()
+    _js(env, {"document.visibilityState": "visible",
+              _ELEM("#nope"): _elem(0, 0, "", ok=False, count=0)})
+    r = env.post("/api/ai_browser/press", {"key": "Tab"})
+    assert r["text"] == "已按键 Tab", r
+    sent = _sent_methods(env)
+    for wake in ("Emulation.setFocusEmulationEnabled", "Page.setWebLifecycleState",
+                 "Emulation.setVisibleSize"):
+        assert wake not in sent, wake
     assert "没找到元素" in env.post("/api/ai_browser/click", {"selector": "#nope"})["err"]
+
+
+def test_screenshot_falls_back_when_first_capture_fails(env):
+    # 可见页面第一段截图失败（偶发超时）：退到「强制视口 → 再截」，成功就不碰离屏
+    env.attach()
+    png = b"\x89PNG" + b"0" * 30
+    state = {"n": 0}
+
+    def _shot(p):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise cdp.CdpError("页面无响应（Page.captureScreenshot 超时 20s）")
+        return {"data": base64.b64encode(png).decode()}
+
+    env.replies["Page.captureScreenshot"] = _shot
+    env.replies["Page.getLayoutMetrics"] = {"cssLayoutViewport":
+                                            {"clientWidth": 800, "clientHeight": 600}}
+    _js(env, {"document.visibilityState": "visible"})
+    r = env.post("/api/ai_browser/screenshot", {})
+    assert r["ok"] is True and r["text"].startswith("已保存"), r
+    shots = _method(env, "Page.captureScreenshot")
+    assert len(shots) == 2 and shots[1].get("fromSurface") is None, shots
+    assert [p["width"] for p in _method(env, "Emulation.setDeviceMetricsOverride")] == [800]
+    assert _method(env, "Emulation.clearDeviceMetricsOverride") == [{}]
+
+
+def test_screenshot_when_hidden_always_reissues_the_wake_chain(env):
+    # 受控实验实锤（真实最小化 + WebView guest）：
+    #   · 未唤醒的 hidden 页 captureScreenshot 会挂到超时
+    #   · 焦点模拟 + setWebLifecycleState('active') 之后普通截图 66~86ms 出图
+    #   · fromSurface:false 反而挂死（只能最后兜底）
+    #   · **焦点模拟是粘性的**：做过一次页面就永远自报 visible，所以截图不能
+    #     按 visibilityState 早退——必须每次强制重发唤醒链
+    env.attach()
+    png = b"\x89PNG" + b"0" * 30
+    shots = []
+
+    def _shot(p):
+        shots.append(dict(p))
+        if len(shots) == 1:
+            raise cdp.CdpError("页面无响应（Page.captureScreenshot 超时 3s）")
+        return {"data": base64.b64encode(png).decode()}
+
+    env.replies["Page.captureScreenshot"] = _shot
+    env.replies["Page.getLayoutMetrics"] = {"cssLayoutViewport":
+                                            {"clientWidth": 760, "clientHeight": 520}}
+    _js(env, {"document.visibilityState": "hidden"})
+    r = env.post("/api/ai_browser/screenshot", {})
+    assert r["ok"] is True and r["text"].startswith("已保存"), r
+    sent = _sent_methods(env)
+    assert "Emulation.setFocusEmulationEnabled" in sent
+    assert "Page.setWebLifecycleState" in sent
+    assert [p["width"] for p in _method(env, "Emulation.setDeviceMetricsOverride")] == [760]
+    assert _method(env, "Emulation.clearDeviceMetricsOverride") == [{}]
+    # 第二段是普通真帧（不是离屏）；离屏只在它也不成时才用
+    assert len(shots) == 2 and shots[1].get("fromSurface") is None, shots
+    # 全失败要报清每一步
+    env.calls.clear()
+    env.replies["Page.captureScreenshot"] = cdp.CdpError("就是不给帧")
+    r = env.post("/api/ai_browser/screenshot", {})
+    assert r["ok"] is False and "截图失败" in r["err"] and "就是不给帧" in r["err"], r
+    assert len(_method(env, "Page.captureScreenshot")) == 3      # 原始 / 强制视口 / 离屏
+
+
+def test_screenshot_visible_page_uses_the_real_frame_without_metrics(env):
+    # 窗口可见时：真帧 66~86ms，不该强加 DeviceMetricsOverride（会改变页面视口，
+    # 让后续布局/坐标与用户所见不一致）
+    env.attach()
+    png = b"\x89PNG" + b"0" * 30
+    env.replies["Page.captureScreenshot"] = {"data": base64.b64encode(png).decode()}
+    _js(env, {"document.visibilityState": "visible"})
+    r = env.post("/api/ai_browser/screenshot", {})
+    assert r["ok"] is True, r
+    assert len(_method(env, "Page.captureScreenshot")) == 1
+    assert _method(env, "Emulation.setDeviceMetricsOverride") == []
+
+
+def test_wake_turns_page_visible_but_screenshot_still_reissues_wake_chain(env):
+    # 端到端实锤的坑：焦点模拟是**粘性**的——做过一次页面就永远自报 visible，
+    # 合成器却可能仍是 hidden。若按「现在 visible 了」早退，就会漏掉生命周期
+    # 激活这一步，截图随即挂满超时。所以截图每次都强制重发唤醒链。
+    env.attach()
+    png = b"\x89PNG" + b"0" * 30
+    vis = {"v": "hidden"}
+
+    def _eval(p):
+        expr = p.get("expression") or ""
+        if expr == "document.visibilityState":
+            return {"result": {"value": vis["v"]}}
+        if expr == "document.readyState":
+            return {"result": {"value": "complete"}}
+        return {"result": {"value": ""}}
+
+    env.replies["Runtime.evaluate"] = _eval
+    env.replies["Emulation.setFocusEmulationEnabled"] = lambda p: (
+        vis.update(v="visible"), {})[1]        # 焦点模拟让页面改口说 visible
+    env.replies["Page.captureScreenshot"] = {"data": base64.b64encode(png).decode()}
+    env.replies["Page.getLayoutMetrics"] = {"cssLayoutViewport":
+                                            {"clientWidth": 900, "clientHeight": 700}}
+    r = env.post("/api/ai_browser/screenshot", {})
+    assert r["ok"] is True, r
+    sent = _sent_methods(env)
+    assert "Page.setWebLifecycleState" in sent, sent
+    assert "Emulation.setFocusEmulationEnabled" in sent
+    # 关键：第一次之后页面已经自报 visible。第二次截图**仍须**强制重发唤醒链
+    # ——否则粘性焦点模拟会让它跳过生命周期激活，截图又挂满超时。
+    env.calls.clear()
+    assert vis["v"] == "visible"
+    r2 = env.post("/api/ai_browser/screenshot", {})
+    assert r2["ok"] is True, r2
+    sent2 = _sent_methods(env)
+    assert "Page.setWebLifecycleState" in sent2, sent2
+    assert "Emulation.setFocusEmulationEnabled" in sent2, sent2
+
+
+def test_unreadable_visibility_still_wakes_and_says_so(env):
+    # 缺陷回归（对抗审计指出）：eval 抛异常（页面导航中/忙/超时）→ 原实现静默
+    # 早退：一条唤醒命令都不发、提示为空，给 AI「一切正常」的假象。页面正忙恰是
+    # 最需要唤醒的时刻。现在必须：照跑唤醒链，并如实说「这次没读到状态」。
+    env.attach()
+    env.replies["Runtime.evaluate"] = cdp.CdpError("页面无响应（Runtime.evaluate 超时 10s）")
+    env.replies["Page.getLayoutMetrics"] = {"cssLayoutViewport":
+                                            {"clientWidth": 800, "clientHeight": 600}}
+    r = env.post("/api/ai_browser/press", {"key": "Tab"})
+    assert r["ok"] is True, r
+    sent = _sent_methods(env)
+    assert "Emulation.setFocusEmulationEnabled" in sent, "读不到状态也要唤醒"
+    assert "Page.setWebLifecycleState" in sent
+    assert "没读到页面可见性" in r["text"], r
+    # 但不能谎称「窗口不可见」——那是没测准的事
+    assert "当前不可见" not in r["text"], r
+
+
+def test_click_when_clearly_visible_does_not_wake(env):
+    # 可见时一条唤醒命令都不该发（省 CDP 往返，也不碰页面）
+    env.attach()
+    _js(env, {"document.visibilityState": "visible",
+              _ELEM("#btn"): _elem(10, 20, "按钮")})
+    r = env.post("/api/ai_browser/click", {"selector": "#btn"})
+    assert r["ok"] is True and r["text"] == "已点击 按钮", r
+    sent = _sent_methods(env)
+    for m in ("Emulation.setFocusEmulationEnabled", "Page.setWebLifecycleState",
+              "Emulation.setVisibleSize"):
+        assert m not in sent, (m, sent)
+
+
+def test_wake_failures_are_reported_not_swallowed(env):
+    # 唤醒命令失守时要能在返回文案里看见（原先全被 except: pass 吞掉，
+    # 端到端排查时完全分不清「唤醒了但没用」和「唤醒命令根本没发出去」）
+    env.attach()
+    env.replies["Emulation.setFocusEmulationEnabled"] = cdp.CdpError("不支持该方法")
+    _js(env, {"document.visibilityState": "hidden"})
+    r = env.post("/api/ai_browser/press", {"key": "Tab"})
+    assert r["ok"] is True, r
+    assert "唤醒命令失败" in r["text"] and "focusEmu" in r["text"], r
 
 
 # ---------- 5. wait / eval / dom / screenshot ----------
@@ -1369,6 +1548,31 @@ def _function_body(src, header):
     b = src.find("\n}\n", a)
     assert b > a, header
     return src[a:b + 2]
+
+
+def test_shell_keeps_guest_alive_in_background():
+    """后台可用（2026-11-25 用户令：仿照 zcode，AI 浏览器要能后台 / 最小化 / 失焦
+    下继续操作）。三条壳侧配置：
+      1. Chromium 的两个 backgrounding 开关
+      2. CalculateNativeWinOcclusion 关掉——Windows 上「被别的窗口盖住」= 判隐藏
+      3. **只给 AI 浏览器视图**设 webPreferences.backgroundThrottling = false
+    受控实验的取舍（见 AGENTS.md）：全局 disable-background-timer-throttling
+    **故意不开**——它会把主界面 2s/5s/10s/30s 的轮询在最小化时全速跑起来；
+    而只关 guest 这一条就足以让定时器正常运行，还能保持 visibilityState=visible。
+    """
+    sh = _read("electron", "main.js")
+    body = sh[sh.index("app.commandLine.appendSwitch('remote-debugging-port'"):
+              sh.index("// Chromium 日志只留 FATAL")]
+    for sw in ("'disable-backgrounding-occluded-windows'",
+               "'disable-renderer-backgrounding'"):
+        assert "appendSwitch(%s)" % sw in body, sw
+    assert "appendSwitch('disable-features', 'CalculateNativeWinOcclusion')" in body
+    # 全局定时器节流开关**不该**出现（会连带节流主界面，白烧 CPU）
+    assert "'disable-background-timer-throttling'" not in body, \
+        "全局节流开关会连带主界面轮询全速跑；只给 guest 关节流即可（受控实验）"
+    attach = _function_body(sh, "win.webContents.on('will-attach-webview', ")
+    assert "if (aibrPending) webPreferences.backgroundThrottling = false;" in attach, \
+        "只给 AI 浏览器视图关节流——普通网页标签页全关等于全都白烧 CPU"
 
 
 def test_cross_component_contract_literals():

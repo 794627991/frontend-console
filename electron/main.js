@@ -32,6 +32,32 @@ const POLL_MS = 250;
 // CDP（调试能力常开，用户令 a624 同款）：沿用历史端口 9222，MCP 的
 // devtools_* 工具链零改动继续可用（本机单用户工具，信任模型不变）
 app.commandLine.appendSwitch('remote-debugging-port', '9222');
+// 后台可用（2026-11-25 用户令：AI 浏览器必须能后台/最小化/失焦下继续操作）。
+// Chromium 默认会「节流/冻结」不可见渲染进程：被遮挡就暂停 rAF 与出帧，
+// 最小化更彻底——AI 的点击/输入被丢弃、截图挂死。两个开关：
+//   disable-backgrounding-occluded-windows  被其他窗口完全遮挡时不降优先级
+//   disable-renderer-backgrounding           渲染进程转后台时不被降级
+// **故意不开 disable-background-timer-throttling**（受控实验，见 AGENTS.md）：
+// 它是全局的，会把工具自己主界面的 2s/5s/10s/30s 轮询在窗口最小化时也全速
+// 跑起来（白烧 CPU）。而 AI 浏览器视图在 will-attach-webview 里单独设了
+// backgroundThrottling=false——只这一条就够：实测「只关 guest 节流」时最小化
+// 后定时器 30 次/3s（正常），页面还保持 visibilityState=visible，比全局开关
+// 效果更好。两者都不关的对照组是 3 次/3s（被节流），证明这条测量有效。
+// 注意：这两个开关解决「被遮挡 / 失焦 / 后台标签页」，**最小化仍会被 Chromium
+// 判为隐藏**（那是 Windows 层语义，guest 的 backgroundThrottling=false 能把它
+// 拉回 visible，但不保证所有环境）。最小化的兜底见 ai_browser.py 的
+// _check_visible——那里对 hidden 页面改走 Emulation + Input 派发。
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+// Chromium 在 Windows 上有一套「原生窗口遮挡计算」（CalculateNativeWinOcclusion）：
+// 窗口被别的窗口盖住就判定为 occluded → webContents 转 hidden → 停帧停输入。
+// 这正是「用户看着别的软件、AI 在后台点不动」的直接原因（ZCode 无头模式天然
+// 没有这个问题）。关掉它，《被遮挡》就不再等于《隐藏》。最小化时 guest 靠
+// will-attach-webview 里的 backgroundThrottling=false 保持 visible（实测），
+// ai_browser.py 的 Emulation 唤醒链只是读不到状态/页面被冻结时的兜底。
+// 注意：Electron 启动早期只能 appendSwitch 一次同名开关，否则后者覆盖前者——
+// 将来若别处也要 disable-features，必须合并成一个逗号分隔的列表。
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 // Chromium 日志只留 FATAL（log-level 3）：网页内容自身的网络噪音
 // （如 B站 P2P tracker DNS 失败 errorcode -105）不该刷壳 stdout，
 // 用户令壳启动后即安静，内容侧问题走统一日志，DevTools
@@ -746,6 +772,16 @@ function openWindow(url) {
     webPreferences.sandbox = true;
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
+    // 后台可用（2026-11-25 用户令：AI 浏览器后台/最小化/失焦下继续操作）。
+    // **只给 AI 浏览器视图设**，普通网页标签页（persist:webtabs）保持默认。
+    // 官方类型声明（electron.d.ts 的 backgroundThrottling）说的是「同窗口里只要有
+    // 一个 webContents 关了这个，**整窗的帧合成**都不再节流」——但受控实验实测
+    // （见 AGENTS.md）：定时器**不**跟着传播，主界面 setInterval 仍只有 3 次/3s、
+    // rAF 0 次，只有 AI 浏览器 guest 自己是 30 次/3s。所以这个设置不会让主界面和
+    // 普通网页标签在后台全速烧 CPU；反过来，它换来的是 guest 最小化后
+    // visibilityState 仍为 visible（输入与截图都不需要额外唤醒，实测 25 秒深
+    // 冻结后点击仍 1ms 送达）。别因为那句官方描述就撤掉它——先复测。
+    if (aibrPending) webPreferences.backgroundThrottling = false;
   });
   // 认领进集合：首选不依赖事件顺序的分区判据，aibrPending（will-attach 认出来
   // 的标记）只在分区判不出来时兜底。挂载即登记——它的第一批弹窗（页面初始

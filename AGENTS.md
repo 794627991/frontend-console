@@ -158,10 +158,58 @@ TOPMOST + 最大化，事后有的撤销了、有的没撤——用户被置顶�
   - **别用 CDP Page 域的导航类命令**（`Page.reload` / `Page.navigateToHistoryEntry`）：
     guest 的框架挂在宿主页面的框架树上，实测会把整个前端控制台界面一起重载。
     后退 / 前进 / 重载一律在网页内 `history.*` / `location.reload()`。
-  - 工具窗口不可见（最小化 / 被完全遮挡）时 Chromium 不派发输入、不出帧：
-    输入与截图会挂到超时——后端已前置检查，直接报「窗口不可见」。最小化再
-    还原后浏览器**不一定**把页面重新判为可见（干净窗口的对照实验里时好时坏，
-    环境现象）——用户点一下工具窗口即可，不是缺陷。
+  - **后台 / 最小化 / 失焦可用（2026-11-25 用户令，仿照 zcode）**：AI 浏览器
+    不再因为「窗口看不见」就拒绝操作。三层配合：
+      1. 壳启动期 `appendSwitch` 关掉 `disable-backgrounding-occluded-windows`
+         + `disable-renderer-backgrounding`，**外加
+        `--disable-features=CalculateNativeWinOcclusion`**——Windows 的原生
+        遮挡计算会在窗口被别的软件盖住时判定 occluded → webContents 转
+        hidden → 停帧停输入，这正是「用户看别的软件、AI 点不动」的真凶。
+        `disable-features` 同名开关只能 append 一次（后写覆盖先写），将来别处
+        要用必须合并成逗号列表。
+      2. 壳 `will-attach-webview` 里**只对 AI 浏览器视图**
+        （`if (aibrPending)`）设 `backgroundThrottling = false`。
+        **故意不开全局 `disable-background-timer-throttling`**：受控实验实测
+        （guest 里跑 100ms 定时器，最小化后数 3 秒的 tick 数）——
+        · 两开关全关：30 次（正常）、visibilityState=visible
+        · **只关 guest 节流：30 次（正常）、visibilityState=visible** ←采用
+        · 只开全局开关：30 次（正常）、visibilityState=**hidden**
+        · 两者都不关：**3 次（被节流）**、hidden   ←对照组，证明测量有效
+        全局开关会把工具自己主界面 2s/5s/10s/30s 的轮询在最小化时也全速跑；
+        只关 guest 这一条效果更好（连 visibilityState 都保持 visible）。
+        **注意 electron.d.ts 对 backgroundThrottling 的描述**（「同窗口里只要有
+        一个 webContents 关了，整窗的帧合成都不再节流」）容易误读成「主界面也会
+        全速」——实测**不会**：同一窗口里主界面的 setInterval 仍只有 3 次/3s、
+        rAF 0 次，只有 guest 是 30 次/3s。别因为那句描述就把这个设置撤掉，先复测。
+      3. 后端 `ai_browser.py` 的 `_wake_visible` / `_check_visible`：hidden 时
+        先 `Emulation.setFocusEmulationEnabled` + `Page.setWebLifecycleState
+        ('active')` + `Emulation.setVisibleSize` 唤醒，**仍 hidden 也不拒绝**，
+        照常下发输入/截图，只在返回文案里如实提示风险。
+    **最小化**：Windows 层语义会让 Chromium 判 hidden，但第 2 层（guest 关节流）
+    实测能把 `visibilityState` 保持为 **visible**——真实最小化 + 连续 5 次点击全部
+    送达（15~17ms），25 秒深冻结后点击仍是 1ms。所以第 3 层是**兜底**（页面被
+    遮挡、被冻结、或读不到状态时才真正用上），不是常态路径。只保证「能操作」，
+    用户此时看不到画面——与 zcode 无头模式同款行为，用户已接受。
+    **受控实验的实测数字（真实最小化 + WebView guest，别再凭猜测写兜底）**：
+    - 未唤醒的 hidden 页 `Page.captureScreenshot` 会**挂到超时**（8 秒都不回）
+    - 先 `Emulation.setFocusEmulationEnabled` + `Page.setWebLifecycleState
+      ('active')`，再普通 `captureScreenshot` → **66~86 ms 出图，尺寸正常**
+    - 同一状态下 `fromSurface:false` **反而挂死**（别把它当成银弹；只能最后兜底）
+    - `Input.dispatchKeyEvent` / 页面内 `canvas.toDataURL` 在 hidden 下本来就通
+    - `Page.printToPDF` 在 Electron 的 guest 上**不存在**（`wasn't found`）
+    - 慢页（40 万次 canvas 填充）首次截图 654 ms；导航中截图 51~67 ms
+    因此后端截图逻辑：`_check_visible` 在读不到状态时会先唤醒一次（见下），
+    截图自身在**未唤醒过**时补一次唤醒链，然后试真帧（整页 8s / 普通视口 3s）；
+    失败才强制视口重截，最后退离屏（**不带 clip**，否则得到底部大片空白的废图）。
+    三条都失败才报错，报错里列出每一步的原因。
+    **每张截图最多跑一遍唤醒链**：跑两遍最坏多 80s（8 条 CDP 命令 × 10s 默认
+    超时），叠加截图兜底与排队会烧穿 MCP 侧 100s 的 HTTP 超时
+    （`_AIBR_HTTP_SLACK`），AI 那边先超时、后端还在傻跑。
+    `_check_visible` 的三种情况：读到 visible → 不动手、不提示；读到 hidden →
+    唤醒，唤醒后重读仍是 hidden 才提示；**读失败**（页面导航中/忙/超时）→ 照跑
+    唤醒链并如实说「没读到可见性」（**不**谎称窗口不可见）。旧实现读失败就静默
+    早退、一条唤醒命令都不发，页面正忙时反而毫无提示——已修，有回归测试。
+    旧描述（「不可见就直接报错挡住」）已废弃。
   - 面板收起用近乎透明的后台态（`opacity: .001`），**不能 `display:none`**
     （实测此时截图挂死不返回）。面板被整个移除（关 tab / 切会话清场 / 被逐出）
     时 ResizeObserver **不报告**——必须另盯分屏 body 的子节点增删，否则网页层

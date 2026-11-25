@@ -165,17 +165,128 @@ def _op(fn):
 
 # ---- CDP 输入（真实鼠标键盘事件）----
 
-_VIS_ERR = ("前端控制台窗口当前不可见（最小化，或被其他窗口完全遮挡）——网页此时"
-            "不响应鼠标 / 键盘，也截不了图。请让工具窗口保持可见后再试"
-            "（读页面内容的 eval / dom / console / network 不受影响）")
+# 2026-11-25 用户令「仿照 zcode：AI 浏览器要能后台 / 最小化 / 失焦下继续控制」。
+# 背景：Chromium 对不可见页面暂停出帧、丢弃输入事件，这是「可见 patch 窗口」
+# 架构的硬约束（与 ZCode 用无头浏览器完全不同——它压根没有可见窗口可失去）。
+# 三条自救手段，按代价从小到大：
+#   1. Emulation.setFocusEmulationEnabled(true) —— 让页面认为窗口有焦点
+#      （恢复键盘事件与部分 rAF）
+#   2. Page.setWebLifecycleState('active') —— 把被冻结的页面叫回 active
+#      （最小化久了 Chromium 会 freeze 标签页）
+#   3. Emulation.setVisibleSize + setDeviceMetricsOverride —— 强制给一个视口
+#      尺寸，让 Page.captureScreenshot 有帧可出
+# （实测被遮挡/失焦场景唤醒后输入是通的）。**注意**：这只保证「能操作」，用户
+# 此时看不到画面（窗口本来就不可见）——这正是 ZCode 无头模式的行为，用户令接受。
+
+
+def _wake_visible(cs, force=False):
+    """尝试把不可见页面唤醒到「能收输入、能出帧」的状态。
+
+    返回 (ok, state, errs)。ok=True 表示后续输入/截图大概率可用；
+    errs 是失败的唤醒命令短名（诊断用，失败时随提示一起给调用方）。
+
+    force=True：跳过「已经 visible 就不用唤醒」的早退，强制重发唤醒链。
+    **截图必须用 force**——端到端实锤：焦点模拟是粘性的，一旦做过，页面就
+    永远自报 visible（合成器却可能仍是 hidden）。此时按 visibilityState 早退
+    会漏掉「生命周期激活」这一步，截图随即挂满超时。
+    """
+    errs = []
+
+    def _try(tag, fn):
+        try:
+            return fn()
+        except Exception as e:
+            errs.append("%s:%s" % (tag, str(e)[:60]))
+            return None
+
+    state = ""
+    try:
+        state = str(_cdp.eval_on(cs, "document.visibilityState",
+                                max_len=20)).strip().lower()
+    except Exception:
+        state = ""
+    if not force and state and state != "hidden":
+        return True, state, []
+    # 1. 焦点模拟：恢复键盘事件分发与部分定时器
+    _try("focusEmu", lambda: cs.send("Emulation.setFocusEmulationEnabled",
+                                     {"enabled": True}))
+    # 2. 生命周期叫醒：被冻结的标签页回到 active（**这两步是把截图从「挂死 20s」
+    #    变成「86ms 出图」的关键**——WebView guest 实测，见 AGENTS.md）
+    _try("lifecycle", lambda: cs.send("Page.setWebLifecycleState",
+                                      {"state": "active"}))
+    # 3. 强制视口：给出尺寸，截图/布局有依据
+    def _vis():
+        vs = cs.send("Page.getLayoutMetrics") or {}
+        if not isinstance(vs, dict):
+            vs = {}
+        css = vs.get("cssLayoutViewport")
+        if not isinstance(css, dict):
+            css = vs.get("layoutViewport")
+        if not isinstance(css, dict):
+            css = {}
+        w = int(css.get("clientWidth") or 0)
+        h = int(css.get("clientHeight") or 0)
+        if w > 0 and h > 0:
+            cs.send("Emulation.setVisibleSize", {"width": w, "height": h})
+    _try("visibleSize", _vis)
+    # 复查：唤醒后页面可能已经改口（焦点模拟会让 visibilityState 变成
+    # visible；端到端实锤），必须**重读**——开头那个值只用来决定要不要唤醒。
+    try:
+        after = str(_cdp.eval_on(cs, "document.visibilityState",
+                                max_len=20)).strip().lower()
+    except Exception:
+        after = ""
+    if after:
+        state = after
+    try:
+        ok = str(_cdp.eval_on(cs, "document.readyState", max_len=20)).strip()
+        return bool(ok), state, errs
+    except Exception as e:
+        return False, state, errs + ["dom:%s" % str(e)[:60]]
 
 
 def _check_visible(cs):
-    """窗口不可见时 Chromium 不派发输入事件、不出帧：鼠标 / 键盘 / 截图都会
-    挂到超时（端到端实锤：窗口被遮挡时点击等满 10 秒才报「页面无响应」）。
-    先问一句，hidden 就立刻把原因说清楚。"""
-    if str(_cdp.eval_on(cs, "document.visibilityState", max_len=20)).strip().lower() == "hidden":
-        raise AiBrowserError(_VIS_ERR)
+    """窗口不可见时先尝试唤醒（2026-11-25 用户令：后台 / 最小化 / 失焦也能用）。
+
+    返回 (提示尾巴, 是否真的唤醒过)。可见时返回 ("", False)。
+
+    三种情况：
+      · 读到 visible：不唤醒，无提示（正常路径）
+      · 读到 hidden：跑唤醒链；唤醒后仍 hidden 才给提示（硬隐藏）
+      · **读失败**（页面导航中/忙/超时）：不知道是否 hidden，按「可能不可见」
+        处理——照样跑唤醒链（幂等、对可见页面无副作用，实测），但不给
+        「窗口不可见」的提示（不知道的事不能瞎说），只把失败原样带上。
+        原实现读失败就静默早退：一条唤醒命令都不发、什么提示都没有，
+        页面正忙恰是最需要唤醒、也最该告诉 AI「这次可能没生效」的时刻。
+
+    第二项「是否真的唤醒过」供截图判断要不要再补一次（见 _screenshot）。
+    """
+    before, read_err = "", ""
+    try:
+        before = str(_cdp.eval_on(cs, "document.visibilityState",
+                                 max_len=20)).strip().lower()
+    except Exception as e:
+        read_err = str(e)[:80]
+    if before and before != "hidden":
+        return "", False                  # 明确可见：不动手、不提示
+    woke, state, errs = _wake_visible(cs)
+    # 判据是**唤醒后重读的 state**，不是 _wake_visible 的 woke：后者只说明
+    # 「还能取到 DOM」，页面仍是 hidden 时它也返回真。唤醒后仍 hidden（或读不
+    # 到）= 确实是硬隐藏，如实提示。
+    if before == "hidden" and state != "visible":
+        tail = ("\n（注意：工具窗口当前不可见（%s）——已尝试焦点模拟与生命周期激活，"
+                "若这次操作或截图失败，请让窗口可见后重试" % (state or "unknown"))
+        if errs:
+            tail += "；唤醒命令失败：" + " | ".join(errs)
+        return tail + "）", True
+    if read_err:
+        # 没读到状态但唤醒链跑过：不声称「不可见」，只如实说这次没测准
+        tail = "\n（注意：没读到页面可见性（%s）——已按可能不可见做了唤醒" % read_err
+        if errs:
+            tail += "；唤醒失败：" + " | ".join(errs)
+        return tail + "）", True
+    return "", True
+
 
 _KEYS = {
     "enter": ("Enter", 13), "tab": ("Tab", 9), "escape": ("Escape", 27),
@@ -389,7 +500,7 @@ def _navigate(cs, d):
 @ai_browser_bp.route("/api/ai_browser/click", methods=["POST"])
 @_op
 def _click(cs, d):
-    _check_visible(cs)
+    _warn, _ = _check_visible(cs)
     x, y, label, in_view = _locate(cs, d)
     button = "right" if str(d.get("button") or "left").lower() == "right" else "left"
     _ui("ai_browser_op", op="click", x=x, y=y, label=label)
@@ -399,7 +510,7 @@ def _click(cs, d):
             "\n（注意：该元素的中心不在网页可视区内，这一下可能没点中——可先用 "
             "browser_eval 把它滚进可视区，或改用坐标点击）")
     return {"x": x, "y": y, "label": label, "in_view": in_view,
-            "text": "已点击 %s%s" % (label, note)}
+            "text": "已点击 %s%s%s" % (label, note, _warn)}
 
 
 @ai_browser_bp.route("/api/ai_browser/type", methods=["POST"])
@@ -408,7 +519,7 @@ def _type(cs, d):
     text = str(d.get("text") or "")
     if not text:
         raise AiBrowserError("text 不能为空")
-    _check_visible(cs)
+    _warn, _ = _check_visible(cs)
     label = "当前焦点元素"
     # 显式给了 selector：没找到就报错（与 click 一致），不悄悄改成输给当前焦点元素
     loc = _locate(cs, d, need=bool(d.get("selector")))
@@ -426,8 +537,8 @@ def _type(cs, d):
     if enter:
         _key(cs, "Enter")
     return {"label": label,
-            "text": "已向 %s 输入%s：%s" % (label, "（回车确认）" if enter else "",
-                                          text[:80])}
+            "text": "已向 %s 输入%s：%s%s" % (label, "（回车确认）" if enter else "",
+                                            text[:80], _warn)}
 
 
 @ai_browser_bp.route("/api/ai_browser/press", methods=["POST"])
@@ -435,10 +546,10 @@ def _type(cs, d):
 def _press(cs, d):
     # 不能先 strip：单个空格就是空格键（纯空白的报错交给 _key 判）
     combo = str(d.get("key") or "")
-    _check_visible(cs)
+    _warn, _ = _check_visible(cs)
     _ui("ai_browser_op", op="press", text=combo)
     _key(cs, combo)
-    return {"text": "已按键 %s" % combo}
+    return {"text": "已按键 %s%s" % (combo, _warn)}
 
 
 @ai_browser_bp.route("/api/ai_browser/eval", methods=["POST"])
@@ -494,19 +605,86 @@ def _dom(cs, d):
 @ai_browser_bp.route("/api/ai_browser/screenshot", methods=["POST"])
 @_op
 def _screenshot(cs, d):
-    _check_visible(cs)       # hidden 时 Page.captureScreenshot 挂死不返回——先挡
+    _warn, _was_hidden = _check_visible(cs)
     _ui("ai_browser_op", op="screenshot", text="（整页）" if d.get("full") else "")
     cs.send("Page.enable")
+    # 整页截图按内容尺寸裁剪（视口之外也截进来）
+    clip = None
+    if d.get("full"):
+        try:
+            m = cs.send("Page.getLayoutMetrics") or {}
+            c = m.get("cssContentSize") or m.get("contentSize") or {}
+            w, h = float(c.get("width") or 0), float(c.get("height") or 0)
+            if w > 0 and h > 0:
+                clip = {"x": 0, "y": 0, "width": min(w, 16384),
+                        "height": min(h, 16384), "scale": 1}
+        except Exception:
+            clip = None
     params = {"format": "png"}
-    if d.get("full"):       # 整页：按内容尺寸裁剪（视口之外也截进来）
-        m = cs.send("Page.getLayoutMetrics")
-        c = m.get("cssContentSize") or m.get("contentSize") or {}
-        w, h = float(c.get("width") or 0), float(c.get("height") or 0)
-        if w > 0 and h > 0:
-            params["clip"] = {"x": 0, "y": 0, "width": min(w, 16384),
-                              "height": min(h, 16384), "scale": 1}
-            params["captureBeyondViewport"] = True
-    res = cs.send("Page.captureScreenshot", params, timeout=20)
+    if clip:
+        params["clip"] = clip
+        params["captureBeyondViewport"] = True
+    # 2026-11-25 用户令（后台 / 最小化 / 失焦也能用）。受控实验（真实最小化 +
+    # WebView guest）实测的固定事实，别再猜：
+    #   · 未唤醒的 hidden 页 captureScreenshot 会挂到超时（8s 都不回）
+    #   · 焦点模拟 + Page.setWebLifecycleState('active') 之后，**普通**
+    #     captureScreenshot 66~86ms 就出图，尺寸正常
+    #   · 同一状态下 fromSurface:false 反而挂死（比真帧更差），只能最后兜底
+    #   · **焦点模拟是粘性的**：做过一次，页面就永远自报 visible（合成器却可能
+    #     仍是 hidden）——所以**不能**按 visibilityState 决定跳过唤醒。
+    # 因此这里**无条件**跑一次唤醒链（上面的 _check_visible 在可见时不动手，
+    # 唤醒链由这一句负责；不可见时它已经跑过一遍，这里绝不再跑第二遍——每跑
+    # 一遍最坏多花 30s，能把 MCP 侧的 100s HTTP 超时烧穿）。
+    if not _was_hidden:
+        _wake_visible(cs, force=True)
+    res, errs = None, []
+
+    def _attempt(tag, p, timeout=20):
+        nonlocal res
+        try:
+            res = cs.send("Page.captureScreenshot", p, timeout=timeout)
+            return True
+        except Exception as e:
+            errs.append("%s:%s" % (tag, str(e)[:80]))
+            return False
+
+    # 第一段超时：可见窗口真帧 66~86ms 就回，但整页截图（clip 到 16384 +
+    # captureBeyondViewport）要渲染整页——实测 40 万次 canvas 填充的慢页
+    # 首次也要 654ms，重页面可能更多。所以整页给 8s、普通视口给 3s；
+    # 不可见时这一必然挂死，短超时是为了不让它白等满 20 秒。
+    _attempt("原始", params, timeout=8 if clip else 3)
+    if res is None:
+        w = h = 0
+        try:
+            m = cs.send("Page.getLayoutMetrics") or {}
+            c = m.get("cssLayoutViewport") or m.get("layoutViewport") or {}
+            w = int(c.get("clientWidth") or 0)
+            h = int(c.get("clientHeight") or 0)
+        except Exception:
+            pass
+        if w <= 0 or h <= 0:
+            w, h = 1280, 800       # 视口也量不出来：给一个安全尺寸
+        try:
+            cs.send("Emulation.setDeviceMetricsOverride",
+                    {"width": w, "height": h, "deviceScaleFactor": 1,
+                     "mobile": False})
+        except Exception as e:
+            errs.append("metrics:%s" % str(e)[:60])
+        _attempt("强制视口", params)
+        if res is None:
+            # 离屏兜底必须把 clip 一起丢掉：captureBeyondViewport=False 时
+            # clip 超出视口的部分是**空白**，会得到一张 1280x16384 大部空白的
+            # 废图还当成功返回（AI 会照着它误判页面长什么样）。离屏只截视口。
+            alt = {"format": "png", "fromSurface": False}
+            _attempt("离屏", alt, timeout=8)     # 它挂死的概率很高：给短超时
+        try:
+            cs.send("Emulation.clearDeviceMetricsOverride")
+        except Exception:
+            pass
+        if res is None:
+            raise AiBrowserError(
+                "截图失败（窗口不可见时 Chromium 可能不出帧）：%s"
+                "。可让工具窗口可见后重试" % "；".join(errs))
     data = base64.b64decode(res.get("data", ""))
     if not data:
         raise AiBrowserError("截图没有拿到数据")
@@ -516,7 +694,8 @@ def _screenshot(cs, d):
                       + "_%03d.png" % (int(time.time() * 1000) % 1000))
     with open(fp, "wb") as f:
         f.write(data)
-    return {"path": fp, "text": "已保存: %s (%.1f KB)" % (fp, len(data) / 1024)}
+    return {"path": fp,
+            "text": "已保存: %s (%.1f KB)%s" % (fp, len(data) / 1024, _warn)}
 
 
 _HIST_JS = r"""(function(){
