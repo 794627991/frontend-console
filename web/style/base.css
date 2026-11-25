@@ -2675,11 +2675,16 @@ html[data-perf] *, html[data-perf] *::before, html[data-perf] *::after {
 
 /* ---- 下载中心（2026-11-24 用户令，web/js/downloads.js）----
    顶栏「下载」钮上的进行中角标 + 与「日志流」同一类的浮层面板 */
-#btnDownloads { position: relative; }
-#btnDownloads.on { color: var(--fg); background: var(--border); }
+/* 2026-11-25 用户令：下载入口移到网页标签页工具栏（[data-web="dl"]），
+   顶栏的 #btnDownloads 已删除。角标样式对两个入口通用。 */
+[data-web="dl"] { position: relative; }
+[data-web="dl"].on { color: var(--fg); background: var(--border); }
 .dl-badge { position: absolute; top: 0; right: -1px; min-width: 13px; height: 13px; padding: 0 3px;
   border-radius: 7px; background: var(--accent); color: #fff; font-size: 9.5px; line-height: 13px;
   text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; }
+/* 2026-11-25 用户实锤（截图批注「应该放在这里」）：位置由 JS 按下载按钮算
+   （左缘对齐 + 正下方），CSS 只留兜底——top/right 的写死值会被 JS 的 inline
+   style 覆盖，这里给的是「JS 没跑起来时」的合理默认。 */
 .dl-panel { position: fixed; top: 46px; right: 120px; z-index: 9500;
   width: min(440px, calc(100vw - 40px)); max-height: min(460px, calc(100vh - 90px));
   display: none; flex-direction: column;

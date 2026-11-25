@@ -277,6 +277,7 @@ function buildWebPanelTab(url, opts) {
                placeholder="输入网址，回车打开">
         <button class="btn ghost icon-btn" data-web="star" title="收藏 / 取消收藏当前页">${ICO16.star}</button>
         <button class="btn ghost icon-btn" data-web="pw" title="密码管理：查看 / 显示 / 删除已保存的站点密码">${ICO16.key}</button>
+        <button class="btn ghost icon-btn" data-web="dl" title="下载（进度 / 打开 / 取消）" aria-label="下载" style="position:relative;"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v7.5"/><path d="M4.8 7l3.2 3.2L11.2 7"/><path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/></svg><span class="dl-badge" style="display:none;"></span></button>
         <button class="btn ghost" data-web="read" title="阅读模式：文本视图（零脚本执行、可选可搜；拒嵌站点也能读）">${ICO16.book} 阅读</button>
         <button class="btn ghost" data-web="claude" title="取本页正文填入 Claude 输入框">发给 Claude</button>
       </div>
@@ -1087,6 +1088,15 @@ function _webAct(act, wrap) {
     return;
   }
   if (act === 'read') { _webReaderToggle(!c._ui.reader, false, c); return; }
+  // 2026-11-25 用户令：下载入口挂在网页标签页工具栏（密码钥匙右边），
+  // 每 tab 各一个；面板按这个按钮定位（见 downloads.js 的 show()）
+  if (act === 'dl') {
+    if (window.DL && typeof window.DL.toggleFrom === 'function') {
+      const b = wrap && wrap.querySelector('[data-web="dl"]');
+      if (b) window.DL.toggleFrom(b);
+    }
+    return;
+  }
   if (act === 'star' && url) {
     let favs = _webFavs();
     if (favs.some(f => f.url === url)) {

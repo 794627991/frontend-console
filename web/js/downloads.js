@@ -8,12 +8,16 @@
 // 这里只做「看」和「打开 / 取消 / 移除记录」：删除下载文件本身只能在
 // 设置→数据目录→可清理项里（且只对默认下载目录开放）。
 (function () {
-  const btn = document.getElementById('btnDownloads');
-  if (!btn) return;                         // 页面结构不对就不挂
+  // 2026-11-25 用户令：入口从工具顶栏移进**网页标签页工具栏**（密码钥匙
+  // 右边）。那个按钮是每个网页 tab 各自渲染的（web-panel.js），所以这里
+  // 不再找全局 #btnDownloads，而是由点击方（_webAct 的 'dl' 分支）把
+  // 自己那个按钮传进来——面板就贴着被点的那个按钮展开。
+  let anchorBtn = null;                     // 面板当前的定位基准按钮
 
-  let panel = null, bodyEl = null, dirEl = null, badge = null;
+  let panel = null, bodyEl = null, dirEl = null;
   let rows = new Map();                     // id → 记录
   let dir = '', shown = false, timer = 0;
+  let _autoOpened = false;                  // 本轮下载是否已自动弹过面板（用户关掉后不抢）
 
   const post = async (p, b) => (await fetch(p, { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) })).json();
@@ -43,10 +47,6 @@
     document.body.appendChild(panel);
     bodyEl = panel.querySelector('.dl-body');
     dirEl = panel.querySelector('[data-dl="dir"]');
-    badge = document.createElement('span');
-    badge.className = 'dl-badge';
-    badge.style.display = 'none';
-    btn.appendChild(badge);                 // 按钮需 position:relative（见样式）
 
     panel.querySelector('[data-dl="close"]').onclick = hide;
     panel.querySelector('[data-dl="clear"]').onclick = async () => {
@@ -57,7 +57,8 @@
     // 点面板和按钮以外的地方就收起
     document.addEventListener('mousedown', (e) => {
       if (!shown) return;
-      if (panel.contains(e.target) || btn.contains(e.target)) return;
+      if (panel.contains(e.target)) return;
+      if (anchorBtn && anchorBtn.contains(e.target)) return;
       hide();
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && shown) hide(); });
@@ -66,21 +67,58 @@
     return panel;
   }
 
+  // 每个网页 tab 各有一个下载按钮：角标挂在**所有**按钮上（用户可能正看着
+  // 任意一个 tab，只有当前 tab 的徽标有意义——但都挂了也不碍事，数值一致）
+  function _allBtns() {
+    return Array.from(document.querySelectorAll('[data-web="dl"]'));
+  }
+
+  function _paintBadges(n) {
+    _allBtns().forEach((b) => {
+      let bd = b.querySelector('.dl-badge');
+      if (!bd) {
+        bd = document.createElement('span');
+        bd.className = 'dl-badge';
+        b.appendChild(bd);
+      }
+      bd.textContent = String(n);
+      bd.style.display = n ? '' : 'none';
+    });
+    _allBtns().forEach((b) => {
+      b.title = n ? '下载（' + n + ' 个进行中）' : '下载（进度 / 打开 / 取消）';
+    });
+  }
+
   function hide() {
     shown = false;
     if (panel) panel.style.display = 'none';
-    btn.classList.remove('on');
+    _allBtns().forEach((b) => b.classList.remove('on'));
   }
 
   function show() {
+    if (!anchorBtn) anchorBtn = _allBtns()[0] || null;
     ensurePanel();
+    if (!anchorBtn) return;
     shown = true;
     panel.style.display = 'flex';
-    // 右缘对齐按钮的右缘；按钮被挤到窗口外时退回一个安全位置
-    const r = btn.getBoundingClientRect();
-    panel.style.right = Math.max(8, Math.round(window.innerWidth - r.right)) + 'px';
-    btn.classList.add('on');
+    // 面板贴着**被点的那个按钮**：左缘对齐按钮左缘、按钮下方 6px 展开
+    // （2026-11-25 用户令：入口在网页工具栏密码钥匙右边，面板就跟它走）
+    const r = anchorBtn.getBoundingClientRect();
+    const w = Math.min(440, window.innerWidth - 40);
+    const left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - w - 8));
+    panel.style.left = left + 'px';
+    panel.style.right = 'auto';
+    panel.style.top = Math.round(r.bottom + 6) + 'px';
+    anchorBtn.classList.add('on');
     refresh();
+  }
+
+  // 工具栏点击入口（web-panel.js 的 _webAct 'dl' 分支调这里）
+  function toggleFrom(b) {
+    if (shown && anchorBtn === b) { hide(); return; }
+    anchorBtn = b || anchorBtn;
+    show();
+    if (panel) render();
   }
 
   async function refresh() {
@@ -108,9 +146,7 @@
   function render() {
     if (!bodyEl) return;
     const n = busyCount();
-    badge.textContent = String(n);
-    badge.style.display = n ? '' : 'none';
-    btn.title = n ? '下载（' + n + ' 个进行中）' : '下载';
+    _paintBadges(n);              // 每个网页 tab 的下载按钮都挂角标
     dirEl.textContent = dir;
     dirEl.title = '下载目录：' + dir + '（点击打开）。可在 设置 → 数据目录 里修改';
     const list = Array.from(rows.values()).reverse();     // 最新的在前
@@ -170,17 +206,31 @@
     const r = { id: item.id, filename: item.filename, state: item.state, received: item.received,
                 total: item.total, path: item.path, error: item.error, ts: item.ts, source: item.source };
     rows.set(r.id, r);
-    if (item.event === 'done' && !shown) {
-      // 面板没开着：用横幅告诉用户结果（开着的时候他直接看得到）
-      if (r.state === 'completed') showBanner('下载完成：' + r.filename + '（' + fmt(r.received) + '），右上角「下载」可打开', 4200);
-      else if (r.state === 'interrupted') showBanner('下载失败：' + r.filename + '（' + (r.error || '原因未知') + '）', 6000, true);
-      else showBanner('已取消下载：' + r.filename, 3000);
+    // 2026-11-25 用户实锤「下载时没有弹出下载进度」：原实现只在 done 且面板
+    // 关着时弹横幅，下载**过程中**什么都不弹——用户看不到进度，以为没生效
+    // （对照 WebView2/浏览器：一开始下载就出进度条）。
+    // 改成：每笔下载 first 见到（started）就自动把面板弹出来，进度条实时走；
+    // 用户手动关掉面板后不再抢——用 _autoOpened 记「这一轮已经自动开过」，
+    // 避免第二个下载又把用户刚关掉的面板顶出来。
+    if (item.event === 'started') {
+      if (!shown && !_autoOpened) {
+        _autoOpened = true;
+        show();
+        if (panel) render();     // 立刻画出这一条，不等 refresh 的往返
+      }
+    } else if (item.event === 'done') {
+      _autoOpened = false;                // 本轮结束：下一个下载可以再自动开
+      if (!shown) {
+        // 面板没开着：用横幅告诉用户结果（开着的时候他直接看得到）
+        if (r.state === 'completed') showBanner('下载完成：' + r.filename + '（' + fmt(r.received) + '），右上角「下载」可打开', 4200);
+        else if (r.state === 'interrupted') showBanner('下载失败：' + r.filename + '（' + (r.error || '原因未知') + '）', 6000, true);
+        else showBanner('已取消下载：' + r.filename, 3000);
+      }
     }
     if (panel) render();
   }
 
-  btn.onclick = () => { if (shown) hide(); else show(); };
   document.body.addEventListener('click', act);
-  window.DL = { onEvent, refresh };
+  window.DL = { onEvent, refresh, toggleFrom };
   refresh();                              // 页面重载后把后端已有的记录拉回来
 })();

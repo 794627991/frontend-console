@@ -1485,23 +1485,31 @@ def test_cross_component_contract_literals():
     # SSE：下载中心每个阶段都推 kind="download"；sense.js 转给下载面板且不进感知流
     assert '_broadcast_to_ai(dict(rec, kind="download", event=event))' in dls
     assert re.search(r"if \(item\.kind === 'download' && window\.DL\) \{\s*window\.DL\.onEvent\(item\);", sense)
-    # 下载面板（web/js/downloads.js）：顶栏「下载」钮 + 浮层。它只「看」和打开 / 取消 /
-    # 移除记录——删文件只能在设置的「可清理项」里
+    # 下载面板（web/js/downloads.js）：入口在**网页标签页工具栏** + 浮层。
+    # 它只「看」和打开 / 取消 / 移除记录——删文件只能在设置的「可清理项」里
     dljs = _read("web", "js", "downloads.js")
     html = _read("web", "index.html")
-    assert 'window.DL = { onEvent, refresh };' in dljs
-    assert "document.getElementById('btnDownloads')" in dljs
-    assert html.count('id="btnDownloads"') == 1
+    # 2026-11-25 用户令：入口移进网页工具栏（密码钥匙右边），顶栏钮已删
+    assert 'window.DL = { onEvent, refresh, toggleFrom };' in dljs
+    assert "document.getElementById('btnDownloads')" not in dljs, "顶栏入口已退役"
+    assert html.count('id="btnDownloads"') == 0, "顶栏下载钮必须已删除"
+    webtab = _read("web", "js", "web-panel.js")
+    assert 'data-web="dl"' in webtab, "下载入口必须在网页标签页工具栏"
+    # 位置校验：dl 紧跟在 pw（密码钥匙）之后、read（阅读）之前
+    assert re.search(r'data-web="pw".*?data-web="dl".*?data-web="read"',
+                     webtab, re.S), "下载钮必须在密码钥匙右边、阅读左边"
     assert '<script type="module" src="web/js/downloads.js' in html
     for call in ("post('/api/downloads/list'", "post('/api/downloads/open'",
                  "post('/api/downloads/forget'", "window.fcShell.dlCancel(id)"):
         assert call in dljs, call
     assert "/api/data_dir/clean" not in dljs and "mode: 'all'" not in dljs, "面板不许删文件"
-    assert "item.event === 'done' && !shown" in dljs      # 面板开着就不弹横幅
-    # 仅图标（a59x 定调）、title 2 字、按钮里没有文字（标签后直接是 svg）
-    assert re.search(r'<button[^>]*id="btnDownloads" title="下载" aria-label="下载"><svg', html)
+    # 2026-11-25 用户实锤「下载时没有弹出下载进度」：started 就自动弹面板
+    assert "item.event === 'started'" in dljs, "下载开始必须自动弹面板"
+    assert "item.event === 'done'" in dljs and "!_autoOpened" in dljs
     css = _read("web", "style", "base.css")
-    assert "#btnDownloads { position: relative; }" in css and ".dl-panel {" in css and ".dl-badge {" in css
+    assert '[data-web="dl"] { position: relative; }' in css
+    assert ".dl-panel {" in css and ".dl-badge {" in css
+    assert "#btnDownloads {" not in css, "顶栏钮的样式必须一起删"
     # 下载目录的配置（用户令：默认跟随数据目录，可手动指定）：设置页有入口，
     # 保存后让壳立刻重取
     settings = _read("web", "js", "settings.js")

@@ -170,9 +170,10 @@ html.fc-ui-ready .startup-splash { opacity: 0; pointer-events: none; }
   <button class="btn ghost icon-btn" id="btnClaude" title="Claude"><span class="claude-ico"></span></button>
   <button class="btn ghost icon-btn" id="btnVcs" title="版本"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2.5px;"><circle cx="4.6" cy="3.6" r="1.6"/><circle cx="4.6" cy="12.4" r="1.6"/><circle cx="11.4" cy="6.6" r="1.6"/><path d="M4.6 5.2v5.6"/><path d="M11.4 8.2c0 2.2-1.7 3.2-3.4 3.6"/></svg></button>
   <button class="btn ghost icon-btn" id="btnBitCalc" title="计算器"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;"><rect x="3" y="2" width="10" height="12" rx="1.2"/><path d="M5 4.5h6M5.5 7.5h.01M8 7.5h.01M10.5 7.5h.01M5.5 10h.01M8 10h.01M10.5 10h.01M5.5 12.5h.01M8 12.5h4"/></svg></button>
-  <!-- 下载中心（2026-11-24 用户令）：AI 浏览器与普通网页标签页的下载都在这里看进度 / 结果。
-       仅图标（a59x 定调），title 2~3 字；行为在 downloads.js -->
-  <button class="btn ghost icon-btn" id="btnDownloads" title="下载" aria-label="下载"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2.5px;" aria-hidden="true"><path d="M8 2.5v7.5"/><path d="M4.8 7l3.2 3.2L11.2 7"/><path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/></svg></button>
+  <!-- 下载中心（2026-11-24 用户令，2026-11-25 改）：AI 浏览器与普通网页标签页的下载
+       都在这里看进度 / 结果。**入口已移进网页标签页工具栏**（密码钥匙右边，
+       见 web-panel.js 的 data-web="dl"）——用户实锤「不要放在顶栏图标排里，
+       必须放在网页界面」。这里不再有顶栏按钮。 -->
   <!-- a623R（审计 #2）：后端日志的**唯一 UI 入口**原本挂在标题栏 ver 徽标上
        （a598），而 a59x 定调非最大化隐藏 .logo 里的文字 span——徽标嵌在其中
        整链不可见，默认 1280×820 窗口下日志面板无入口。加独立图标钮（图标

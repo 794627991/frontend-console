@@ -20,11 +20,69 @@ target 列表里（9223 是旧 WebView2 控件形态的遗留端口，仅作回�
 """
 import json
 import os
+import sys
 import time
 import urllib.request
 
 from src import app_state as _st
 ENDPOINT_FILE = os.path.join(_st.HOME_DIR, "endpoint.json")
+
+
+# ---- 调用方白名单（2026-11-25 用户令，两次实锤后定）-------------------------
+# 用户令原话：「裸连 CDP 必须禁用，只保留 devtools_*(target="app")，所有工具
+# 验证也必须走 AI 浏览器！不允许直接操作工具本体！」
+#
+# 事故经过：AI 两次写临时脚本 `find_page_target(...)` + `CdpSession` 直连 9222
+# 去操作工具自身的界面——一次绕过了 AI 浏览器（用户看不见 AI 在干什么），
+# 一次连的还是旧端口上早已废弃的实例（白折腾半天）。根因不是「没有规矩」，
+# 是**这条路在代码上敞着**：任何 Python 进程 import 本模块就能自己挑 target。
+#
+# 修法：本模块的「发现/执行」类入口只对**工具进程内的两个合法调用方**开放——
+#   · src.mcp_server   —— devtools_* 工具的实现（target="app" 的正规路径）
+#   · src.ai_browser   —— AI 浏览器（自带 partition + targetId 登记校验）
+# 其余调用方（临时脚本、tests 之外的任何 import）一律 DevtoolsError。
+# tests/ 下跑在隔离 CDP 口（FC_CDP_PORT）的契约测试是唯一豁免。
+_ALLOWED_CALLERS = ("mcp_server", "ai_browser")
+
+
+def _caller_allowed():
+    """当前调用栈里是否有合法调用方。看 __main__ 的脚本路径与栈帧的模块名。
+
+    豁免条件（按顺序）：
+      1. 正在跑 pytest / 测试文件（tests/ 下的隔离契约测试）；
+      2. 栈里出现 src.mcp_server 或 src.ai_browser 的函数帧。
+    都不是 → 拒绝。这条不追求密码学强度（同机同用户，真要绕总能绕），
+    目的是让「随手写个脚本裸连」在**第一次尝试就报错**，把默认行为掰到
+    合法通道上。
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+        return True
+    mainf = str(getattr(sys.modules.get("__main__"), "__file__", "") or "")
+    mf = mainf.replace("\\", "/").lower()
+    if "/tests/" in mf or mf.endswith("/tests/cdp_lib.py"):
+        return True
+    allow = set()
+    f = sys._getframe(1)
+    depth = 0
+    while f is not None and depth < 40:
+        mod = str(f.f_globals.get("__name__") or "")
+        if mod in ("src.mcp_server", "src.ai_browser") or \
+                mod.endswith(".mcp_server") or mod.endswith(".ai_browser"):
+            allow.add(mod)
+        f = f.f_back
+        depth += 1
+    return bool(allow)
+
+
+def _guard_caller(what):
+    if not _caller_allowed():
+        raise DevtoolsError(
+            "禁止裸连 CDP（2026-11-25 用户令）：%s 只能由 src.mcp_server 的 "
+            "devtools_* 工具或 src.ai_browser 调用。要操作工具界面请用 "
+            "devtools_*(target=\"app\")；要操作网页请用 AI 浏览器"
+            "（browser_* / devtools_* 缺省目标）。" % what)
+
+
 # 主 UI CDP 端口（a624 起常开，electron/main.js 固定 appendSwitch 9222）。
 # FC_CDP_PORT 仅供隔离验证改指别的端口（AI 浏览器端到端验证用独立实验壳，
 # 绝不能碰真实壳的 9222），生产环境不设。抽成函数是为了能直接测——别在测试里
@@ -94,6 +152,7 @@ class CdpError(DevtoolsError):
 
 def find_cdp(timeout=1.0):
     """探活 CDP 端口：调试模式固定 9222。返回端口或抛 CdpUnavailable。"""
+    _guard_caller("find_cdp")
     try:
         with urllib.request.urlopen(
                 "http://127.0.0.1:%d/json/version" % _DEBUG_PORT,
@@ -150,6 +209,7 @@ def list_targets(cdp_port, timeout=3.0):
 def find_page_target(cdp_port, backend_origin):
     """过滤工具主页面 target（type=page 且 url 以后端 origin 开头）。
     返回 target dict；零命中抛 TargetNotFound（带全部 targets 摘要）。"""
+    _guard_caller("find_page_target")
     targets = [t for t in list_targets(cdp_port)
                if t.get("type") == "page"]
     hits = [t for t in targets
@@ -169,6 +229,7 @@ class CdpSession(object):
     这是「事件与响应交错」的正解；collect = 订阅窗口。"""
 
     def __init__(self, cdp_port, target_id, timeout=3.0):
+        _guard_caller("CdpSession")
         self._ws_mod = _load_ws()
         self._url = "ws://127.0.0.1:%d/devtools/page/%s" % (cdp_port, target_id)
         self._timeout = timeout
