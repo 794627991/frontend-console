@@ -157,16 +157,50 @@ if parts:
 
 
 def _read_settings():
-    """读 ~/.claude/settings.json；不存在/损坏返回空 dict。"""
+    """读 ~/.claude/settings.json（只读用途）；不存在/损坏返回空 dict。
+    utf-8-sig：带 BOM 的也能读（PowerShell 5.1 存 UTF8 就带 BOM）。"""
     p = _settings_path()
     if not os.path.isfile(p):
         return {}
     try:
-        with open(p, encoding="utf-8") as f:
+        with open(p, encoding="utf-8-sig") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
+
+
+class _CfgUnreadable(Exception):
+    """配置文件在，却读不出来（被占用 / 写到一半 / 结构不对）。
+    这时候**一个字都不能写回去**——见 _load_json_for_update。"""
+
+
+def _load_json_for_update(path, what):
+    """读一份「即将被读-改-写」的 Claude 配置（~/.claude.json、settings.json）。
+
+    - 文件不存在 → {}（首次使用，从空开始是合理的）
+    - 读得出、是对象 → 原样返回
+    - 文件在，却读不出来 / 不是对象 → 抛 _CfgUnreadable：调用方必须放弃写入
+
+    2026-11-25 沙箱复现：这些地方原先一律 `except: d = {}` 再往下补键落盘——
+    于是「读不出来」被当成「空配置」，整份 ~/.claude.json 写回时只剩一条
+    mcpServers（登录凭据、全部项目历史、别的 MCP 全没）；settings.json 同理
+    只剩 permissions（token 助手、模型映射、hooks、状态栏全没）。
+    a696 把自注册改成每次启动自动跑之后，这条路不再需要人手点。
+    读不出来的现实来源：别的进程正写到一半 / 文件被独占 / 带 BOM（PowerShell
+    5.1 的 UTF8 就带）/ 手工编辑留了半截。"""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            d = json.load(f)
+    except Exception as e:
+        raise _CfgUnreadable("%s 读不出来（%s: %s）——没动它，下次再试" % (
+            what, type(e).__name__, e))
+    if not isinstance(d, dict):
+        raise _CfgUnreadable("%s 的内容不是 JSON 对象（是 %s）——没动它" % (
+            what, type(d).__name__))
+    return d
 
 
 def _write_settings(d):
@@ -206,7 +240,13 @@ def provision_defaults(force_statusline=False, reset_statusline=False):
             f.write(STATUSLINE_SRC)
         notes.append("statusline.py 已铺设")
     # 2. settings.json
-    cur = _read_settings()
+    try:
+        cur = _load_json_for_update(_settings_path(), "~/.claude/settings.json")
+    except _CfgUnreadable as e:
+        # 读不出来就一个字不写：后面补缺键再落盘 = 把用户的 settings.json 换成
+        # 只剩缺省项的空壳。整体放弃（statusline 那步幂等，已做也无妨），原因抛给界面
+        raise _CfgUnreadable(
+            "Claude 配置这次没有改动（读不出来就不写，免得把整份配置清空）：%s" % e)
     changed = False
     env = cur.setdefault("env", {})
     if not isinstance(env, dict):
@@ -328,13 +368,8 @@ def _register_self_mcp():
              "env": {"PYTHONIOENCODING": "utf-8"}}
 
     cj = os.path.join(os.path.expanduser("~"), ".claude.json")
-    try:
-        with open(cj, encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
+    # 读不出来（半截 / 被占用 / 结构不对）就抛 _CfgUnreadable——不写
+    d = _load_json_for_update(cj, "~/.claude.json")
     servers = d.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
@@ -370,12 +405,17 @@ def _register_self_mcp():
         return True
 
     if not _same_entry(cur_entry, entry):
+        # 条目要换，但用户给旧条目加的自定义环境变量留着：先铺旧的，再用我们需要
+        # 的键盖上去（上面说「不吃用户的 env」——覆盖这条路上也得说到做到）
+        old_env = cur_entry.get("env") if isinstance(cur_entry, dict) else None
+        entry = dict(entry, env=dict(old_env, **entry["env"]) if isinstance(old_env, dict)
+                     else entry["env"])
         servers[MCP_SERVER_NAME] = entry
         d["mcpServers"] = servers
         _atomic_json(cj, d)
         done.append("mcpServers")
     # ---- 2. 授权（~/.claude/settings.json permissions.allow）----
-    cur = _read_settings()
+    cur = _load_json_for_update(_settings_path(), "~/.claude/settings.json")
     perms = cur.get("permissions")
     if not isinstance(perms, dict):
         perms = cur["permissions"] = {"allow": [], "defaultMode": "auto"}
@@ -406,13 +446,7 @@ def _register_codegraph_mcp():
         return []   # 未装（同事设备装资源包后首次 provision 自动补）
     done = []
     cj = os.path.join(os.path.expanduser("~"), ".claude.json")
-    try:
-        with open(cj, encoding="utf-8") as f:
-            d = json.load(f)
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
+    d = _load_json_for_update(cj, "~/.claude.json")     # 读不出来就抛，不写
     servers = d.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
@@ -431,7 +465,7 @@ def _register_codegraph_mcp():
         d["mcpServers"] = servers
         _atomic_json(cj, d)
         done.append("mcpServers")
-    cur = _read_settings()
+    cur = _load_json_for_update(_settings_path(), "~/.claude/settings.json")
     perms = cur.get("permissions")
     if not isinstance(perms, dict):
         perms = cur["permissions"] = {"allow": [], "defaultMode": "auto"}
@@ -464,11 +498,7 @@ def _preaccept_onboarding():
         _preaccept_onboarding._lock = threading.Lock()
     with _preaccept_onboarding._lock:
         path = os.path.join(os.path.expanduser("~"), ".claude.json")
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                d = json.load(f)
-        except Exception:
-            d = {}
+        d = _load_json_for_update(path, "~/.claude.json")   # 读不出来就抛，不写
         changed = False
         # onboarding/提示类确认位（本机实机 .claude.json 全集——首次启动各弹窗）
         for k in ("hasCompletedOnboarding", "hasSeenTasksHint",
@@ -552,7 +582,12 @@ def claude_api_config_set():
      sync_active?}
     空串 = 该项不改。模型档位写 MODEL 键，成对的同时写 _NAME 键（同值）。"""
     data = request.get_json(force=True, silent=True) or {}
-    cur = _read_settings()
+    try:
+        cur = _load_json_for_update(_settings_path(), "~/.claude/settings.json")
+    except _CfgUnreadable as e:
+        # 读不出来就别写：往「空配置」里写几个键再落盘 = 把 settings.json 换成只剩
+        # 这些键的空壳（授权 / hooks / 状态栏 / 别的模型映射全没）。设置页看 ok 报错
+        return jsonify({"ok": False, "err": str(e)})
     env = cur.setdefault("env", {})
     if not isinstance(env, dict):
         env = cur["env"] = {}
@@ -1039,7 +1074,12 @@ def claude_profiles_apply():
         else:
             # 旧格式：只并入 env 两键。模型映射等不会跟着切（旧方案里没存过），
             # 必须显式警告——静默回退让用户以为切换完整（A↔B 切来切去模型全乱）
-            cur = _read_settings()
+            # 读不出来就别写：往「空配置」里并入两个键再落盘 = 把 settings.json
+            # 换成只剩两个键的空壳（与 _load_json_for_update 是同一条铁律）
+            try:
+                cur = _load_json_for_update(_settings_path(), "~/.claude/settings.json")
+            except _CfgUnreadable as e:
+                return jsonify({"ok": False, "err": str(e)})
             env = cur.setdefault("env", {})
             if not isinstance(env, dict):
                 env = cur["env"] = {}
@@ -1208,7 +1248,11 @@ def claude_provision():
     """手动触发铺设（设置界面「恢复默认配置」用）。
     body: {force_statusline?, reset_statusline?}"""
     data = request.get_json(force=True, silent=True) or {}
-    ok, notes = provision_defaults(
-        force_statusline=bool(data.get("force_statusline")),
-        reset_statusline=bool(data.get("reset_statusline")))
+    try:
+        ok, notes = provision_defaults(
+            force_statusline=bool(data.get("force_statusline")),
+            reset_statusline=bool(data.get("reset_statusline")))
+    except _CfgUnreadable as e:
+        # 配置文件读不出来：什么都没改。如实告诉用户原因，别报成「铺设完成」
+        return jsonify({"ok": False, "err": str(e), "notes": []})
     return jsonify({"ok": ok, "notes": notes})
