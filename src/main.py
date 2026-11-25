@@ -709,6 +709,24 @@ def main():
 
     threading.Thread(target=_preload_server, daemon=True,
                      name="server-preload").start()
+
+    # 2026-11-25 用户令「工具正常应该是启动直接注入 MCP 服务的才对」：
+    # MCP 自注册从「设置页手动点恢复默认」提升到**每次启动都自愈**一次。
+    # 单开线程、失败只留痕不阻拦启动——修配置的活儿绝不该挡住工具启动。
+    # （原实现只在 POST /api/claude/provision 时跑，路径一失效就永久僵住：
+    # 本机旧条目指向早不存在的 D:\AI\串口控制台Pro，MCP 全程 CONNECTION_CLOSED）
+    def _self_register_mcp_boot():
+        try:
+            from src.claude_default import _register_self_mcp
+            wrote = _register_self_mcp()
+            if wrote:
+                print("[MCP] 启动自愈：已更新 %s" % "，".join(wrote),
+                      flush=True)
+        except Exception as _e:
+            print("[MCP] 启动自愈失败（不影响工具使用）：%r" % (_e,), flush=True)
+
+    threading.Thread(target=_self_register_mcp_boot, daemon=True,
+                     name="mcp-self-register").start()
     # ---- --headless：Electron 壳形态（换壳迁移 P0）----
     # 壳负责单实例锁/窗口/树杀；本进程只起服务链（Flask/SSE/串口/SSH/终端/
     # harness worker）。2026-11-22 P4 起旧 pywebview 窗体链已整体删除——

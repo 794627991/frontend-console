@@ -34,10 +34,21 @@ def _ask_mcp_cfg_path(sid, perm="auto", include_vision=True):
     if getattr(sys, "frozen", False):
         ask_cmd, ask_args = sys.executable, ["--mcp-ask"]
         vis_cmd, vis_args = sys.executable, ["--mcp-vision"]
+        _pyroot = ""
     else:
         ask_cmd = vis_cmd = (sys.executable or "python")
         ask_args = [os.path.join(_SRC_DIR, "harness", "ask_mcp.py").replace("\\", "/")]
         vis_args = [os.path.join(_SRC_DIR, "harness", "vision_mcp.py").replace("\\", "/")]
+        # 2026-11-25 用户实锤「ask_user 一直好使，必须严查」：
+        # 这两个 server 脚本开头就 `from src import app_state`，而它们由
+        # claude 以 **会话工程目录** 为 cwd 拉起（session.py 的 cwd=self.cwd），
+        # 脚本模式下 sys.path[0] 又只含脚本自己的目录（src/harness/）——
+        # 工具根不在搜索路径上，import 直接 ModuleNotFoundError，进程秒退。
+        # MCP 起不来时 claude 只表现为「少一个工具」、不报错，于是静默失效
+        # （实测：本会话 --mcp-config 传了、白名单也给了，但 claude 的子进程
+        # 里根本没有 ask_mcp 的 python——它启动即崩）。
+        # 修法：显式把工具根塞进子进程的 PYTHONPATH，不再赌 cwd。
+        _pyroot = os.path.dirname(_SRC_DIR).replace("\\", "/")
     # v2.28.5：注入两个 server——harness（ask_user）+ vision（本地兜底
     # 识图 analyze_image）。网关内置的 mcp__4_5v_mcp__analyze_image 是主通道
     # （服务端执行，无需本地配置）；本地版用独立名字 mcp__vision__analyze_image
@@ -47,13 +58,15 @@ def _ask_mcp_cfg_path(sid, perm="auto", include_vision=True):
     servers = {"harness": {
         "command": ask_cmd,
         "args": ask_args,
-        "env": {"HARNESS_SID": sid, "HARNESS_PERM": perm},
+        "env": dict({"HARNESS_SID": sid, "HARNESS_PERM": perm},
+                    **({"PYTHONPATH": _pyroot} if _pyroot else {})),
     }}
     if include_vision and _vision_load()["enabled"]:
         servers["vision"] = {
             "command": vis_cmd,
             "args": vis_args,
-            "env": {"PYTHONIOENCODING": "utf-8"},
+            "env": dict({"PYTHONIOENCODING": "utf-8"},
+                        **({"PYTHONPATH": _pyroot} if _pyroot else {})),
         }
     cfg = {"mcpServers": servers}
     p = os.path.join(d, "%s.json" % sid[:16])

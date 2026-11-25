@@ -300,8 +300,18 @@ def _register_self_mcp():
          （只写 server 不写 allow，用户每次调工具都要点确认，等于没用）
 
     exe 形态下 command 用 sys.executable + --mcp（main.py 有此模式）；
-    源码形态用 python + src/mcp_server.py。只补缺不覆盖——用户可能自己改过
-    路径（例如本机指向 D:\\AI\\前端控制台Pro），不覆盖才安全。
+    源码形态用 python + src/mcp_server.py。
+
+    **2026-11-25 用户令「启动后必须每次注入，或者至少要校正」**：原实现
+    「只补缺不覆盖」有两个致命缺口——
+      ① 条目存在但路径已死（本机旧条目指向早不存在的 D:\\AI\\串口控制台Pro，
+         MCP 每次启动都 CONNECTION_CLOSED，整套能力全废）；
+      ② 条目指向**另一个副本**的 mcp_server.py（旧项目残留、另一份解压包），
+         文件确实存在所以「活着」，但连的根本不是当前这份工具。
+    新判据：**每次启动按当前形态算出应有的条目，与磁盘上的逐字段比对，
+    不一致就覆盖**。这才是「工具自己注入自己的 MCP」。用户手改只在
+    command/args 指向的文件真的存在时才保留——但那仍然会连错实例，
+    所以不再保留：以当前进程所属的工具为准。
 
     返回实际写入的项（空列表=已就绪，无需改动）。
     """
@@ -328,7 +338,38 @@ def _register_self_mcp():
     servers = d.get("mcpServers")
     if not isinstance(servers, dict):
         servers = {}
-    if not servers.get(MCP_SERVER_NAME):
+    cur_entry = servers.get(MCP_SERVER_NAME)
+
+    def _norm(p):
+        """路径比较归一：大小写、分隔符、尾随分隔符、相对/绝对。"""
+        try:
+            return os.path.normcase(os.path.normpath(os.path.abspath(str(p))))
+        except Exception:
+            return str(p)
+
+    def _same_entry(a, b):
+        """两条目是否等价（只比影响「连到哪个服务」的字段）。
+
+        env 不比：用户可能加了自定义环境变量，加不加都不影响连的是谁，
+        为它反复覆写反而会吃掉用户的东西。"""
+        if not isinstance(a, dict):
+            return False
+        if _norm(a.get("command") or "") != _norm(b["command"]):
+            return False
+        aa = a.get("args")
+        if not isinstance(aa, list) or len(aa) != len(b["args"]):
+            return False
+        for x, y in zip(aa, b["args"]):
+            sx, sy = str(x or "").strip(), str(y or "").strip()
+            # 开关参数（--mcp）原样比；路径参数归一后比
+            if sx.startswith("-") or sy.startswith("-"):
+                if sx != sy:
+                    return False
+            elif _norm(sx) != _norm(sy):
+                return False
+        return True
+
+    if not _same_entry(cur_entry, entry):
         servers[MCP_SERVER_NAME] = entry
         d["mcpServers"] = servers
         _atomic_json(cj, d)
