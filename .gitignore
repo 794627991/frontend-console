@@ -100,3 +100,8 @@ src/_fcpk_key.py
 tests/regression/artifacts/*
 !tests/regression/artifacts/.gitkeep
 tests/regression/__pycache__/
+
+# 测试落盘根（2026-11-26 用户令：测试不得在 C 盘留任何文件）。沙箱、临时
+# 文件、pytest 的 tmp_path、门禁日志都落这里，见 app_state._fc_test_isolation。
+# 可随时整个删除。
+/.temp/

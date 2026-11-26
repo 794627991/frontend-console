@@ -12,8 +12,9 @@ import os, sys, json, threading, itertools, time
 # 配置。tests/conftest.py 只在 pytest 下加载；本项目多数测试是
 # `python tests/xxx.py` 直接跑的（21 个带 __main__），那条路径上没有任何
 # 隔离。所以由 app_state 自己认「我是不是在被测试」，是就把 FC_STATE_DIR
-# 指到临时目录——自举链各处已认这个开关（锚点、默认数据目录、不读历史
-# 位置、不写指针）。
+# 指到工程内的 .temp\——自举链各处已认这个开关（锚点、默认数据目录、不读
+# 历史位置、不写指针）。临时文件（tempfile 与 TMPDIR/TEMP/TMP）也一并钉
+# 进去，见 _fc_test_isolation 末段。
 # 判定依据（任一成立即是测试）：
 #   ① 启动脚本在项目的 tests\\ 目录下，或 pytest 设了 PYTEST_CURRENT_TEST；
 #   ② 环境里有 FC_TEST_CHILD——测试进程传下来的血缘标记。
@@ -29,6 +30,151 @@ import os, sys, json, threading, itertools, time
 #       （tests/test_harness_version.py 实锤过，已在文件顶部显式设
 #       FC_TEST_CHILD 修掉）。这类测试必须自己声明一次血缘标记。
 # 所以：**隔离是否成立不能靠机制推定，要由子进程自报路径来验证**。
+
+
+def _fc_under(p, root):
+    """p 是否就是 root、或在 root 之下（两边都归一化真实路径与大小写）。"""
+    _p = os.path.normcase(os.path.realpath(p))
+    _r = os.path.normcase(os.path.realpath(root))
+    return _p == _r or _p.startswith(_r + os.sep)
+
+
+def _fc_test_scratch_root():
+    """测试落盘的根目录（只在测试进程里调用）。
+
+    2026-11-26 用户令：「以后不允许放C盘跑任何测试」——测试的沙箱、临时
+    文件、缓存、日志一律不得落在 C 盘。原先沙箱建在 tempfile.gettempdir()
+    下，那正是 C 盘的系统临时目录：直接跑 `python tests\\xxx.py`、pytest、
+    pre-push 门禁都会在那儿建目录，进程被杀或异常退出就留下 fc_test_state_*。
+
+    位置：环境变量 FC_TEST_TMP 指哪就落哪（要放 D:\\AI_PROJECT\\test 之类
+    的外部位置时用）；没设就是工程内的 .temp\\。建不出来就报错停下，
+    **不回退系统临时目录**——宁可测试起不来，也不往 C 盘写。
+    为什么是点开头的 .temp 而不是 temp：pytest 默认不进点开头的目录。测试
+    残骸里难免有 test_*.py，目录叫 temp 的话，下一轮裸跑 pytest 会把上一轮
+    的残骸当测试收集进来。.temp\\ 已被 .gitignore 忽略，可随时整个删掉。
+    """
+    _v = (os.environ.get("FC_TEST_TMP") or "").strip()
+    if _v:
+        _root = os.path.abspath(os.path.expanduser(_v))
+    else:
+        _root = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".temp")
+    # 指到系统临时目录里也不行——那正是这次要避开的地方（火绒就是在那儿隔离了
+    # 测试副本里的 server.py）。先判再建：判下来就一个字节都不往那儿写。
+    try:
+        import tempfile as _tf0
+        _sys_tmp = _tf0.gettempdir()       # 此刻还没被改，取到的就是系统临时目录
+    except Exception:
+        _sys_tmp = None
+    if _sys_tmp and _fc_under(_root, _sys_tmp):
+        raise RuntimeError(
+            "测试落盘目录在系统临时目录里：%s。按 2026-11-26 用户令，测试不得在 C 盘"
+            "（系统临时目录）留任何文件；请把环境变量 FC_TEST_TMP 指向别处，或不设它"
+            "（默认落工程内的 .temp\\）。" % _root)
+    try:
+        os.makedirs(_root, exist_ok=True)
+        # 真写一次再删，不问 os.access：Windows 上它对目录的 W_OK 并不可靠
+        # （目录的只读属性本来就挡不住写入，ACL 拒绝又查不出来）
+        _probe = os.path.join(_root, ".w-%d" % os.getpid())
+        os.mkdir(_probe)
+        os.rmdir(_probe)
+    except OSError as _e:
+        raise RuntimeError(
+            "测试落盘目录不可用：%s（%s）。按 2026-11-26 用户令，测试不得使用"
+            "系统临时目录（C 盘）；请修好该目录，或设环境变量 FC_TEST_TMP 指向"
+            "一个可写的非 C 盘目录。" % (_root, _e))
+    return _root
+
+
+def _fc_close_files_under(path):
+    """关掉本进程里握着 path 下文件的句柄——测试沙箱退出即清的前置步骤。
+    Windows 上打开着的文件删不掉，而进程退出时清理回调跑在别的收尾动作
+    前面，句柄还开着。只关路径确实落在 path 下的，别处的一个不碰。"""
+    import logging
+    # ① 日志：FileHandler 都登记在 logging 的全局表里（server_errors.log 那类）
+    _lst = getattr(logging, "_handlerList", ())
+    _items = list(_lst.keys()) if hasattr(_lst, "keys") else list(_lst)
+    for _it in _items:
+        _h = _it() if callable(_it) else _it
+        _bf = getattr(_h, "baseFilename", None)
+        if _bf and _fc_under(_bf, path):
+            try:
+                _h.close()
+            except Exception:
+                pass
+    # ② 裸文件描述符：os.open 的常开 fd（eventlog.store 的 .wseq 就是）没有
+    #    登记表，只能把描述符逐个问一遍「你指向哪」。0/1/2 是标准流，从 3 起；
+    #    CRT 的描述符上限 8192。取不到路径的（管道、设备）跳过。
+    try:
+        import msvcrt
+    except ImportError:
+        return                          # 非 Windows：没有这一步
+    import ctypes
+    from ctypes import wintypes
+    _g = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
+    _g.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    _g.restype = wintypes.DWORD
+    _buf = ctypes.create_unicode_buffer(32768)
+    for _fd in range(3, 8192):
+        try:
+            _hnd = msvcrt.get_osfhandle(_fd)
+        except OSError:
+            continue                    # 没这个描述符
+        if not _g(_hnd, _buf, len(_buf), 0):
+            continue
+        _t = _buf.value
+        if _t.startswith("\\\\?\\UNC\\"):
+            _t = "\\\\" + _t[8:]
+        elif _t.startswith("\\\\?\\"):
+            _t = _t[4:]
+        if _fc_under(_t, path):
+            try:
+                os.close(_fd)
+            except OSError:
+                pass
+
+
+def _fc_test_rmtree(path):
+    """测试沙箱退出即清（atexit）。删不掉的原因有三类，少一手就堆残骸——
+    系统临时目录里那 31 个旧沙箱清一色只剩 server_errors.log / hiklink_bot.log，
+    就是 ① 没处理留下的（2026-11-26 实锤）：
+      ① 日志句柄还开着（logging 的 FileHandler）；② 常开的文件描述符
+         （os.open 的 .wseq）；③ 只读文件（git 的松散对象落盘即只读，Windows
+         上 unlink 必失败）。另外杀软/索引器刚扫到新文件时会短暂占用，短重试。
+    全程吞异常：清理失败不许影响进程退出。"""
+    import gc
+    import shutil
+    import stat
+    import time
+    try:
+        gc.collect()                    # 循环引用里的文件对象也放掉
+        _fc_close_files_under(path)
+        if _fc_under(os.getcwd(), path):
+            os.chdir(os.path.dirname(path))    # Windows 上删不掉进程的当前目录
+    except Exception:
+        pass
+
+    def _writable_retry(f, p, exc):
+        if isinstance(exc, PermissionError):
+            try:
+                os.chmod(p, stat.S_IWRITE)     # 去掉只读再来一次
+                f(p)
+                return
+            except OSError:
+                pass
+        raise exc                        # 其余交给下面的短重试
+
+    for _ in range(6):
+        try:
+            shutil.rmtree(path, onexc=_writable_retry)
+            return
+        except OSError:
+            if not os.path.exists(path):
+                return
+            time.sleep(0.2)
+
+
 def _fc_test_isolation():
     if os.environ.get("FC_TEST_CHILD"):
         _is_test = True
@@ -52,19 +198,52 @@ def _fc_test_isolation():
                     or _pytest)
     if _is_test:
         os.environ["FC_TEST_CHILD"] = "1"      # 血缘标记：传给所有后代进程
-    if os.environ.get("FC_STATE_DIR"):
-        return _is_test
     if not _is_test:
         return False
+    _scratch = _fc_test_scratch_root()
+    # 显式已设 FC_STATE_DIR 的，尊重不改（只钉临时文件，见下）
+    if not os.environ.get("FC_STATE_DIR"):
+        _root = os.path.join(_scratch, "fc_test_state_%d" % os.getpid())
+        os.makedirs(os.path.join(_root, "data"), exist_ok=True)
+        os.environ["FC_STATE_DIR"] = _root
+        # R7-10：测试沙箱退出即清，不堆残骸。删法见 _fc_test_rmtree——原先
+        # 直接挂 shutil.rmtree(ignore_errors=True)，日志句柄没关、只读文件没去
+        # 只读，删不掉也不吭声，实际每跑一次留一个
+        try:
+            import atexit as _ae
+            _ae.register(_fc_test_rmtree, _root)
+        except Exception:
+            pass
+    # 临时文件一并钉进工程内（2026-11-26 用户令）。只改 FC_STATE_DIR 不够：
+    # 测试里的 tempfile、pytest 的 tmp_path、测试起的子进程，认的都是
+    # tempfile.gettempdir() / TMPDIR / TEMP / TMP——不改就还去 C 盘。
+    #   · 本进程：直接改 tempfile.tempdir。哪怕 gettempdir() 已被别的模块
+    #     调用过、缓存了系统临时目录，也会被这里覆盖。
+    #   · TMPDIR 给认它的程序（Python 自己、Git Bash），TEMP/TMP 给 Windows
+    #     原生程序；只继承 TEMP/TMP 的子进程（tests/test_harness_ask_mcp.py
+    #     的 _probe_env 就只留这两个）也落进来。
+    #   · TEMP/TMP 指向**常驻**的 tmp\，TMPDIR 指向本进程**专用**的
+    #     tmp_<进程号>。前者不随本进程退出而删——否则父进程先走一步后，还
+    #     活着的子进程发现候选目录没了，会退回系统临时目录（C 盘）。专用
+    #     目录退出即清，不堆残骸。
     import tempfile as _tf
-    _root = os.path.join(_tf.gettempdir(), "fc_test_state_%d" % os.getpid())
-    os.makedirs(os.path.join(_root, "data"), exist_ok=True)
-    os.environ["FC_STATE_DIR"] = _root
-    # R7-10：测试沙箱退出即清，不在 %TEMP% 里堆残骸（此前每跑一次留一个）
+    _tmp_shared = os.path.join(_scratch, "tmp")
+    _tmp_own = os.path.join(_scratch, "tmp_%d" % os.getpid())
+    try:
+        os.makedirs(_tmp_shared, exist_ok=True)
+        os.makedirs(_tmp_own, exist_ok=True)
+    except OSError as _e:
+        raise RuntimeError(
+            "测试临时目录不可用：%s（%s）。按 2026-11-26 用户令，测试不得使用"
+            "系统临时目录（C 盘）；请修好该目录，或设环境变量 FC_TEST_TMP 指向"
+            "一个可写的非 C 盘目录。" % (_tmp_own, _e))
+    os.environ["TMPDIR"] = _tmp_own
+    os.environ["TEMP"] = _tmp_shared
+    os.environ["TMP"] = _tmp_shared
+    _tf.tempdir = _tmp_own
     try:
         import atexit as _ae
-        import shutil as _sh
-        _ae.register(_sh.rmtree, _root, True)
+        _ae.register(_fc_test_rmtree, _tmp_own)
     except Exception:
         pass
     return True

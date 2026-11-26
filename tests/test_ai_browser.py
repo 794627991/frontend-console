@@ -2024,8 +2024,8 @@ def _dl_row(env, did, **kw):
 
 def test_download_dir_follows_data_dir(env, monkeypatch):
     # 隔离自证（AGENTS.md 铁律）：目录由**被测进程自己**报出来看——必须在
-    # FC_STATE_DIR 里、不在仓库里。下载目录默认跟数据目录走（用户令），而数据目录
-    # 在隔离态落沙箱——放数据目录下天然隔离（放工具目录下则不然：APP_DIR 不认隔离开关）
+    # FC_STATE_DIR 里。下载目录默认跟数据目录走（用户令），而数据目录在隔离态落沙箱
+    # ——放数据目录下天然隔离（放工具目录下则不然：APP_DIR 不认隔离开关）
     iso = os.environ.get("FC_STATE_DIR")
     assert iso, "pytest 身份下测试自隔离必须生效，否则这个用例会碰真实数据目录"
     orig = ab._st.DATA_DIR
@@ -2050,7 +2050,9 @@ def test_download_dir_follows_data_dir(env, monkeypatch):
     monkeypatch.setattr(ab._st, "DATA_DIR", orig)
     d = ab._st.download_dir()
     assert _real(d).startswith(_real(iso) + os.sep), "下载目录不在沙箱里"
-    assert not _real(d).startswith(_real(ab._st.BASE_DIR) + os.sep), "下载目录不许落在仓库里"
+    # 不要求「下载目录不在仓库里」（2026-11-26 用户定调）：源码运行时数据目录本来就是
+    # 工具目录\data，下载目录落在工程里是正常形态；测试沙箱自 2026-11-26 起也默认落
+    # 工程内的 .temp\。要守的只是上面那句「在沙箱里」——落到沙箱外才是碰了真实数据
     assert _real(os.path.dirname(d)) == _real(ab._st.DATA_DIR) and os.path.basename(d) == "download"
 
 
