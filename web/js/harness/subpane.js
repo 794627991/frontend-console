@@ -46,6 +46,17 @@
   // 2026-11-24 AI 浏览器伪 tab（内容与生命周期在 ai-browser.js；这里只管
   // 档位键 / tab 条画法 / 残留豁免——与其余伪 tab 同款接入点）
   const _SUB_AIBR = '__aibr__';
+  // 2026-11-26（Step 2，文档 6.2.1）文档标签：
+  //   __doca__   AI 文档标签，一个会话一个，单例（open_document / show_in_viewer 只作用于它）
+  //   __docu<N>__ 用户文档标签，每个路径一个（用户点聊天里的路径打开）
+  // tid 都以 __ 开头——subpane.js:338 的「__ 开头不记入 _subActiveBySid」正好通用。
+  // 实际内容与实例生命周期在 docview/harness-pane.js；这里只登记常量与档位。
+  const _SUB_DOCA = '__doca__';
+  const _SUB_DOCU_PREFIX = '__docu';
+  // 2026-11-26（用户令）：胶囊展开后的「打开文件」伪 tab——与动态/目录同级。
+  // 面板是文件选择器 + 最近打开列表；选中后用 openInHarness 开成用户文档标签。
+  // 实现在 docview/harness-pane.js 的 _subDocOpenEnsure / _subDocOpenPaint。
+  const _SUB_DOCOPEN = '__docopen__';
   const _HG_DYN_SKELETON =
     `<div class="hg-sub-dir-head">会话动态</div>` +
     `<section class="hg-dyn-sec" data-hg-sec="stat">` +
@@ -109,6 +120,8 @@
     // 均不夺焦点），此前只出目录/版本漏状态
     try { if (typeof _subDirEnsure === 'function') _subDirEnsure(); } catch (_) {}
     _subDynEnsure();
+    // 2026-11-26 用户令：胶囊展开后还要有「打开文件」——与动态/目录同级
+    try { if (typeof window._subDocOpenEnsure === 'function') window._subDocOpenEnsure(); } catch (_) {}
     _subShow(_SUB_DYN, true); _subTabsPaint(); _subActivate(_SUB_DYN);
     renderSideStatus();
     _hgRolesFetch(); _hgAgentModelsFetch();   // 原 _hgPanelEnterHook 职责随开随拉（点击天然节流）
@@ -332,6 +345,12 @@
     _subReplay(tid, a.type, a.desc, a.taskId || a.agentId || '', true);
   }
   function _subReset() {
+    // a704（6.2.5）：文档标签要自己记一份「本会话有哪些文档、哪个是激活的」。
+    // 必须在清空之前调——_sub.tabs 一清就什么都读不到了。
+    try {
+      if (_HG.sid && window.DocView && window.DocView.beforeReset)
+        window.DocView.beforeReset(_HG.sid);
+    } catch (_) {}
     // a605（用户要求「切会话保持上次打开的子代理界面」）：先把本会话的
     // active tab 记下来，重建后自愈补建时优先认领它，不要从头轮换。
     try {
@@ -360,6 +379,17 @@
   // .hg-main + .hg-subpane）——「左右各约 50%」对用户视角的聊天区成立。
   // 拖拽（20-main _subRes mousedown）同口径计算。旧 hg-subpane-w（px）首次
   // 按 currentRegion 折算迁移一次，之后只读写 pct 键。
+  // 伪标签统一判据（a704，文档 6.2.3 的 P6「按属性判断，以后不再补」）。
+  //
+  // 起因：每加一类伪标签（__dir__ → __dyn__ → __aibr__，现在 __doca__/__docu*）
+  // 就要在六七个地方各补一个 !==，漏一处就是「文档标签排在队首时被当最旧的
+  // 真实代理逐出」这种隐蔽 bug。改成看属性：内置三类硬编码，其余看 tab 档案
+  // 上的 pseudo 字段（文档标签会置 true）。
+  function _subIsPseudo(t) {
+    if (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_AIBR || t === _SUB_DOCOPEN) return true;
+    const tb = _sub.tabs[t];
+    return !!(tb && tb.pseudo);
+  }
   function _hgSubRegion() {   // 聊天区总宽（px）；wrap 隐藏/未布局时 ≤0
     const hg = _hgWrap && _hgWrap.querySelector('.hg');
     if (!hg) return 0;
@@ -372,8 +402,11 @@
   function _subPanePctKey(tid) {
     const a = tid || _sub.active;
     if (a === _SUB_AIBR) return 'hg-subpane-aibr-pct';   // AI 浏览器：网页要宽，独立记忆
-    return (a === _SUB_DYN || a === _SUB_DIR)
-      ? 'hg-subpane-narrow-pct' : 'hg-subpane-pct';
+    // 文档标签：文档要宽（6.2.3 的宽度档位表）
+    if (a === _SUB_DOCA || (a && String(a).indexOf(_SUB_DOCU_PREFIX) === 0)) return 'hg-subpane-doc-pct';
+    // 「打开文件」面板是表单类工具面板，比动态/目录略宽一点（38% vs 30%）
+    if (a === _SUB_DOCOPEN) return 'hg-subpane-docopen-pct';
+    return (a === _SUB_DYN || a === _SUB_DIR) ? 'hg-subpane-narrow-pct' : 'hg-subpane-pct';
   }
   function _hgSubPctGet(kOpt) {
     const k = kOpt || _subPanePctKey();
@@ -392,9 +425,9 @@
         }
       }
     } catch(_) {}
-    return k === 'hg-subpane-narrow-pct' ? 30 : 50;
+    return k === 'hg-subpane-narrow-pct' ? 30 : (k === 'hg-subpane-docopen-pct' ? 38 : 50);
   }
-  function _hgSubPctApply(pct) {
+  function _hgSubPctApply(pct, keyOpt) {
     if (!_subPaneEl) return;
     const region = _hgSubRegion();
     // wrap 隐藏（后台 tab 收到 Task 派发自动开窗格）时不写死 px——clientWidth
@@ -406,9 +439,10 @@
     // 回放）按百分比在宽屏上同样过宽——cap 620px（resizer 拖拽仍受 25~75%
     // 记忆，仅默认/超宽收敛）
     // 2026-11-24：AI 浏览器档不设上限（网页视图越宽越好用；25~75% 仍受拖拽约束）
-    const _k = _subPanePctKey();
+    const _k = keyOpt || _subPanePctKey();
     px = Math.min(px, _k === 'hg-subpane-narrow-pct' ? 360
-      : _k === 'hg-subpane-aibr-pct' ? 100000 : 620);
+      : _k === 'hg-subpane-docopen-pct' ? 460
+      : (_k === 'hg-subpane-aibr-pct' || _k === 'hg-subpane-doc-pct') ? 100000 : 620);
     _subPaneEl.style.width = px + 'px';
   }
   function _subShow(pendingTid, userIntent) {
@@ -811,11 +845,10 @@
                          // 非 silent=用户主动打开（历史代理也要保留）
                          _userOpened: !silent };
       _sub.order.push(tid);
-      // v3.2：上限 6 个 tab，最旧让位（目录/动态伪 tab 常驻不让位，v3.3 加豁免 __dyn__；
-      // 2026-11-24 AI 浏览器伪 tab 同豁免——不豁免的话它排在队首时会被当最旧的
-      // 真实代理逐出，或者白占一个代理名额）
-      if (_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_AIBR).length > 6) {
-        const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_AIBR);
+      // v3.2：上限 6 个 tab，最旧让位（伪 tab 常驻不让位）
+      // a704：判据从三个硬编码名字改成 _subIsPseudo（文档标签也豁免）
+      if (_sub.order.filter(x => !_subIsPseudo(x)).length > 6) {
+        const old = _sub.order.find(x => !_subIsPseudo(x));
         if (old != null) {
           const otb = _sub.tabs[old];
           // a612（审计 D5）：被逐出的正好是当前 active 时清空，否则 active
@@ -890,7 +923,7 @@
     // 残留——留着只是噪音。用户主动点开的历史代理（_userOpened）保留。
     try {
       const _dead = Object.keys(_sub.tabs).filter(t => {
-        if (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_AIBR) return false;
+        if (_subIsPseudo(t)) return false;
         const tb = _sub.tabs[t];
         if (!tb || tb._userOpened) return false;
         const ag = (_HG.agents || {})[t]
@@ -903,8 +936,7 @@
     if (!_sub.active || !_sub.tabs[_sub.active]) {
       let want = null;
       try { want = (_subActiveBySid || {})[_HG.sid] || null; } catch (_) {}
-      const real = _sub.order.find(t => t !== _SUB_DYN && t !== _SUB_DIR
-                                       && t !== _SUB_AIBR && _sub.tabs[t]);
+      const real = _sub.order.find(t => !_subIsPseudo(t) && _sub.tabs[t]);
       const target = (want && _sub.tabs[want]) ? want : (real || _sub.order[0] || null);
       if (!target) return;
       // a638（用户实锤「子代理页我明确都关掉了，切会话切回来 tab 还是弹，
@@ -1071,13 +1103,19 @@
 
   function _subActivate(tid) {
     if (!_sub.tabs[tid]) return;
+    const prevKey = _sub.active ? _subPanePctKey(_sub.active) : '';
     _sub.active = tid;
     _subSyncChrome(tid);
+    // 2026-11-26：「打开文件」等伪 tab 与动态/目录不同档——切过去时要按新
+    // 档位重写宽度。_subSyncChrome 里的 _hgSubPctApply 用的是**旧 active**
+    // 算出的 key（顺序问题），所以要再补一次（幂等，同档时是同值写入）。
+    const nowKey = _subPanePctKey(tid);
+    if (nowKey !== prevKey) _hgSubPctApply(_hgSubPctGet(nowKey), nowKey);
     _subTabsPaint();
     // v3.2R1(P2)：目录不贴底滚动——_subScroll 为聊天流贴底设计，目录的主
     // 内容（正在运行）在顶部，贴底会直接落到已结束长列表尾
     // v3.3：动态页同豁免——状态总览主内容也在顶部（会话状态卡）
-    if (tid !== _SUB_DIR && tid !== _SUB_DYN && tid !== _SUB_AIBR) _subScroll(tid);
+    if (!_subIsPseudo(tid)) _subScroll(tid);
     if (tid === _SUB_DIR) _subDirPaint();   // v3.2：目录激活即重绘（数据最新）
   }
   function _subTabsPaint() {
@@ -1086,12 +1124,13 @@
     // `_sub.active = _sub.order[0]` 兜底行为不被扰动），目录及其余 tab 照旧
     // a93T（用户定调）：伪 tab 固定顺序「状态→版本→目录」恒排最前（与创建
     // 序无关），真实代理 tab 按原 order 跟后
-    const _paint = [_SUB_DYN, _SUB_DIR].filter(t => _sub.tabs[t])
+    // 2026-11-26 用户令：伪 tab 固定序「动态 → 目录 → 打开文件」恒排最前
+    const _paint = [_SUB_DYN, _SUB_DIR, _SUB_DOCOPEN].filter(t => _sub.tabs[t])
       .concat(_sub.order.filter(t => _sub.tabs[t]
-        && t !== _SUB_DYN && t !== _SUB_DIR));
+        && t !== _SUB_DYN && t !== _SUB_DIR && t !== _SUB_DOCOPEN));
     _subTabsEl.innerHTML = _paint.map(t => {
       const tb = _sub.tabs[t];
-      const _pseu = (t === _SUB_DIR || t === _SUB_DYN || t === _SUB_AIBR);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
+      const _pseu = _subIsPseudo(t);   // 伪 tab：无 dot/无 ✕/悬浮只说视图
       // v2.35（P1-4）：模型进 tab（短名+悬浮全名）；tokens 进悬浮（CLI 侧计数）
       // a93S（用户令「模型名不要在 tab 上显示」）：可见角标撤除，模型只留
       // 悬浮 tooltip（头部 idline 已有完整模型名）
@@ -1104,7 +1143,10 @@
           .filter(Boolean).join('\n');
       return `<div class="hg-sub-tab${t === _sub.active ? ' active' : ''}${tb.run ? ' run' : tb.err ? ' err' : ''}${tb.replay ? ' replay' : ''}${t === _SUB_DIR ? ' dir' : t === _SUB_DYN ? ' dyn' : t === _SUB_AIBR ? ' aibr' : ''}"` +
         ` data-hg-subtab="${esc(t)}" title="${esc(ttip)}">` +
-        (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉' : t === _SUB_AIBR ? ((typeof ICO16 !== 'undefined' && ICO16.globe) || '◈') : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
+        (_pseu ? `<span class="hg-sub-dir-tabico">${t === _SUB_DYN ? '◉'
+          : t === _SUB_AIBR ? ((typeof ICO16 !== 'undefined' && ICO16.globe) || '◈')
+          : t === _SUB_DOCOPEN ? ((typeof ICO16 !== 'undefined' && ICO16.folderOpen) || '＋')
+          : '☰'}</span>` : '<span class="hg-sub-dot"></span>') + esc(tb.label) +
         (tb.replay ? `<span class="hg-sub-rp">回放</span>` : '') +
         // 窗格重设计 P1-1：单-tab ✕——hover 才浮现（CSS 控制），运行中的 tab
         // 提示「任务继续后台跑」防误触焦虑；点击走 _subDrop（tab 条委托分支）
@@ -1291,6 +1333,10 @@
 window._SUB_DIR = _SUB_DIR;
 window._SUB_DYN = _SUB_DYN;
 window._SUB_AIBR = _SUB_AIBR;
+window._SUB_DOCA = _SUB_DOCA;
+window._SUB_DOCU_PREFIX = _SUB_DOCU_PREFIX;
+window._SUB_DOCOPEN = _SUB_DOCOPEN;
+window._subIsPseudo = _subIsPseudo;
 window._hgSubPctApply = _hgSubPctApply;
 window._hgSubRegion = _hgSubRegion;
 window._subActivate = _subActivate;
@@ -1324,4 +1370,5 @@ window._subTlTextRow = _subTlTextRow;
 window._subTlThinkRow = _subTlThinkRow;
 window._subTurnNew = _subTurnNew;
 window._subUserOpenMark = _subUserOpenMark;
+window._subUserOpenGet = _subUserOpenGet;
 window._subUserQueue = _subUserQueue;

@@ -210,6 +210,12 @@ app.register_blueprint(vcs_bp)
 # browser_* 与 devtools_*（默认目标）都打到这里
 from src.ai_browser import ai_browser_bp
 app.register_blueprint(ai_browser_bp)
+
+# 注册文档服务 Blueprint（路由 /api/doc/*，2026-11-26 Step 3）：MCP 的六个
+# 文档工具打到这里——open / show / search / read / view 等前端回传；
+# 前端解析完回传 report_open / report_show / report_view。状态在 doc_store.py
+from src.doc_api import bp as doc_bp
+app.register_blueprint(doc_bp)
 # 注册下载中心 Blueprint（路由 /api/downloads/*，2026-11-24 用户令）：AI 浏览器与
 # 普通网页标签页的下载统一走它——壳上报、界面拉列表 / 改下载目录 / 打开文件；
 # mcp_server 的 browser_downloads 也打到这里
@@ -1004,6 +1010,18 @@ def api_office_read():
             return jsonify({"ok": False, "err": f"转换失败（需要安装 Word/PowerPoint 或手动另存为 .{_ext}x）"}), 400
         except Exception as e:
             return jsonify({"ok": False, "err": f"旧格式转换失败: {e}"}), 400
+    # 2026-11-26（文档 Step 1 的 1g）：图片也走文档预览。
+    # 图片不需要任何转换，直通返回字节即可——放在旧格式转换之后、
+    # 常规白名单之前，避免走下面那段 office 专用的分支。
+    if _ext in ("png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"):
+        try:
+            size = os.path.getsize(q)
+            if size > 200 * 1024 * 1024:
+                return jsonify({"ok": False, "err": "图片超过 200MB"}), 400
+            with open(q, "rb") as f:
+                return f.read(), 200, {"Content-Type": "application/octet-stream"}
+        except OSError as e:
+            return jsonify({"ok": False, "err": "读取失败: %s" % e}), 400
     if _ext not in ("docx", "pdf", "xlsx", "xls", "csv", "pptx"):
         return jsonify({"ok": False, "err": f"不支持的文件类型: .{_ext}"}), 400
     try:
@@ -3749,7 +3767,16 @@ def api_file_info():
     # 默认十六进制，但对话框仍给阅读器/编辑器选项（除 _EXT_BIN 结构文件）。
     _kind = _text_kind(p)
     _is_text = _kind == "text" or (_kind == "mixed" and _ext_of(p) in _EXT_TEXT)
-    return jsonify({"ok": True, "size": os.path.getsize(p),
+    # 2026-11-26（Step 2）：补 mtime——文档面板的「文件已在磁盘上更改」横幅
+    # 靠 `大小:修改时间毫秒` 判变化（docview/core.js 的 _revisionOf）。原来只
+    # 返回 size，前端拿不到时间戳，revision 恒为 `size:0`，横幅要么永不出现
+    # 要么因两次取到不同来源而误报。
+    try:
+        _st = os.stat(p)
+        _size, _mt = _st.st_size, _st.st_mtime
+    except OSError as e:
+        return jsonify({"ok": False, "err": "读取失败: %s" % e}), 400
+    return jsonify({"ok": True, "size": _size, "mtime": _mt,
                     "is_text": _is_text, "kind": _kind})
 
 

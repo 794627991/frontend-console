@@ -48,15 +48,12 @@ except Exception:
 import json
 import time
 import urllib.request
-try:                   # v3.5.187 DevTools 五件套（CDP 直连，懒加载 websocket）
-    from src import devtools_cdp
+try:                   # 只借异常类；本进程不碰 CDP（2026-11-26 用户令）
     from src.devtools_cdp import DevtoolsError
 except Exception:      # 独立跑（python src/mcp_server.py）兜底 src 在 path
     try:
-        import devtools_cdp
         from devtools_cdp import DevtoolsError
     except Exception:
-        devtools_cdp = None
         class DevtoolsError(Exception):
             pass
 import urllib.error
@@ -554,22 +551,27 @@ def tool_tftp_set_dir(url, root_dir):
 # ---- MCP stdio 协议 ----
 # 用最小化 JSON-RPC 实现，避免依赖 mcp SDK（纯标准库即可被 Claude Code 调用）。
 # MCP 协议: https://spec.modelcontextprotocol.io/
-# ---- DevTools（CDP 直连 WebView2，v3.5.187 designer 方案）----
-# a624：CDP 端口常开（调试能力常开），devtools_* 工具随时可用。
-# 无状态用完即弃：每次调用现查 target→新建 WS→执行→close，页面刷新自愈。
+# ---- DevTools（2026-11-26 用户令：**全部走 AI 浏览器**）----
+# 用户令：「禁用，永远不允许直接操作工具，必须只能使用 AI 浏览器，任何 CDP
+# 操作都必须用浏览器完成。」
+#
+# 历史：v3.5.187 时 devtools_* 是 CDP 直连工具本体；2026-11-24 改成缺省走 AI
+# 浏览器、`target="app"` 才直连工具本体；2026-11-26 用户实锤 AI 拿
+# `target="app"` 执行 location.reload() 重载了用户的工具窗口——那不是诊断，
+# 是操作本体。**target="app" 至此整个删除**，本进程不再碰 CDP：
+# 工具界面就是一个 http://127.0.0.1:<port>/ 网页，AI 浏览器能打开它。
+# 本文件的 devtools_* 因此只是 browser_* 的同义词（保留名字不破坏既有脚本）。
 
 
 def _dt_wrap(fn):
     """统一错误包装：DevtoolsError 族 → 中文三段式文案（类别/详情/建议）。"""
     def wrap(url, args):
-        if devtools_cdp is None:
-            return "失败：devtools_cdp 模块未加载（导入失败）——检查安装完整性"
         try:
             return fn(url, args)
         except DevtoolsError as e:
             return "失败：%s" % e
         except ValueError as e:
-            return "失败：%s" % e      # 参数不合法（如 target 取值）：文案直接给 AI 看
+            return "失败：%s" % e      # 参数不合法：文案直接给 AI 看
         except Exception as e:
             return "失败：未知错误 %r" % e
     return wrap
@@ -578,16 +580,7 @@ def _dt_wrap(fn):
 # ---- AI 浏览器（2026-11-24 用户需求：AI 用 CDP 操作网页时，页面显示在会话
 # 右侧分屏，用户看着 AI 操作）。实现在后端 src/ai_browser.py（推前端展开视图、
 # 等壳上报 CDP targetId、发真实鼠标键盘事件）；本进程只转 HTTP 并取回文本。
-# 用户拍板：devtools_* 的**默认目标也改为 AI 浏览器**——要操作工具自身界面
-# 必须显式 target="app"（此前默认就是工具界面，AI「直接控制工具」看不见）。
-
-
-def _dt_target(args):
-    """devtools_* 的作用目标：browser（缺省，AI 浏览器视图）/ app（工具自身界面）。"""
-    t = str(args.get("target") or "browser").strip().lower()
-    if t not in ("browser", "app"):
-        raise ValueError("target 只能是 browser（AI 浏览器，缺省）或 app（工具自身界面）")
-    return t
+# 2026-11-26：这是**唯一**的 CDP 通道，没有 app 目标了。
 
 
 class _AibrFail(ValueError):
@@ -728,20 +721,131 @@ def tool_browser_forward(url, args):
     return _aibr(url, "forward")
 
 
+# ---- 文档工具（2026-11-26 Step 3，用户令「点开胶囊能打开任意文件并对接 AI」）----
+#
+# 六个工具打后端 /api/doc/*（src/doc_api.py）。工具进程只转 HTTP、取回已
+# 格式化的文本；等待前端回传与索引缓存都在后端做（src/doc_store.py）。
+#
+# 返回文本的格式由后端拼好（4.2.7：锚点与 label 两个空格、`[more: …]` 续读
+# 提示）——**不要在这里二次加工**，模型对格式敏感。
+
+class _DocFail(ValueError):
+    """后端文档端点回了 ok=false。message 是给 AI 的中文原因。"""
+
+
+_DOC_HTTP_SLACK = 60.0     # HTTP 超时 = 等待上限 + 这么多
+
+
+def _doc(url, path, body, timeout=None):
+    """调后端文档端点，取回已格式化的文本；失败抛 _DocFail。"""
+    j = _post(url, "/api/doc/" + path, body or {},
+              timeout=max(100.0, (timeout or 0) + _DOC_HTTP_SLACK))
+    if not isinstance(j, dict):
+        raise _DocFail("后端返回了无法识别的内容（不是 JSON 对象）")
+    if not j.get("ok"):
+        raise _DocFail(j.get("err") or "后端没有说明原因")
+    return j.get("text") or "OK"
+
+
+@_dt_wrap
+def tool_open_document(url, args):
+    path = str(args.get("path") or "").strip()
+    if not path:
+        raise ValueError("缺少必填参数 'path'")
+    body = {"path": path}
+    at = args.get("at")
+    if at:
+        body["at"] = str(at)[:300]
+    return _doc(url, "open", body, timeout=30.0)
+
+
+@_dt_wrap
+def tool_show_in_viewer(url, args):
+    targets = args.get("targets")
+    if not isinstance(targets, list) or not targets:
+        raise ValueError("缺少必填参数 'targets'（至少一个 {anchor, quote?}）")
+    if len(targets) > 20:
+        raise ValueError("targets 最多 20 个（本次 %d 个）" % len(targets))
+    body = {"targets": targets}
+    note = args.get("note")
+    if note:
+        body["note"] = str(note)[:500]
+    seq = args.get("seq")
+    if seq is not None:
+        body["seq"] = seq
+    path = args.get("path")
+    if path:
+        body["path"] = str(path)
+    return _doc(url, "show", body, timeout=15.0)
+
+
+@_dt_wrap
+def tool_search_document(url, args):
+    path = str(args.get("path") or "").strip()
+    query = str(args.get("query") or "").strip()
+    if not path:
+        raise ValueError("缺少必填参数 'path'")
+    if not query:
+        raise ValueError("缺少必填参数 'query'")
+    body = {"path": path, "query": query[:200]}
+    if args.get("limit") is not None:
+        body["limit"] = args.get("limit")
+    return _doc(url, "search", body, timeout=30.0)
+
+
+@_dt_wrap
+def tool_read_document(url, args):
+    anchor = str(args.get("anchor") or "").strip()
+    if not anchor:
+        raise ValueError("缺少必填参数 'anchor'")
+    body = {"anchor": anchor}
+    if args.get("cursor") is not None:
+        body["cursor"] = args.get("cursor")
+    return _doc(url, "read", body, timeout=30.0)
+
+
+@_dt_wrap
+def tool_get_view(url, args):
+    # viewId 忽略（应用是单窗口、全局只有一份视图状态，4.2.9 / 6.4.5）
+    return _doc(url, "view", {}, timeout=10.0)
+
+
+@_dt_wrap
+def tool_doc_tools_status(url, args):
+    """文档工具链的就绪状态（给技能做环境检查用，一行一项）。"""
+    try:
+        j = _post(url, "/api/resources/status", {}, timeout=20.0)
+    except Exception as e:
+        return "失败：无法读取资源状态（%s）" % e
+    items = []
+    for it in (j.get("items") or []) if isinstance(j, dict) else []:
+        if it.get("group") != "doc":
+            continue
+        stt = it.get("state") or it.get("status") or "unknown"
+        name = it.get("name") or it.get("id") or "?"
+        effect = it.get("effect") or ""
+        line = "%s：%s" % (name, stt)
+        if effect:
+            line += "（缺了影响：%s）" % effect
+        items.append(line)
+    if not items:
+        return "文档工具分组没有登记任何组件。若需要生成文档，请到「设置 → 外部依赖安装」查看。"
+    return "\n".join(items)
+
+
 @_dt_wrap
 def tool_browser_reload(url, args):
     return _aibr(url, "reload")
 
 
 @_dt_wrap
+@_dt_wrap
 def tool_devtools_eval(url, args):
     expr = str(args.get("expression") or "")
     if not expr:
         return "失败：缺少必填参数 'expression'"
     max_len = max(500, min(20000, int(args.get("max_len") or 4000)))
-    if _dt_target(args) == "browser":
-        return "OK " + _aibr(url, "eval", {"expression": expr, "max_len": max_len})
-    return "OK " + devtools_cdp.evaluate(expr, max_len=max_len)
+    return "OK " + _aibr(url, "eval", {"expression": expr, "max_len": max_len})
 
 
 @_dt_wrap
@@ -750,37 +854,7 @@ def tool_devtools_dom(url, args):
     if not sel:
         return "失败：缺少必填参数 'selector'"
     limit = max(1, min(50, int(args.get("limit") or 20)))
-    if _dt_target(args) == "browser":
-        return _aibr(url, "dom", {"selector": sel, "limit": limit})
-    js = (
-        "(function(){var els=document.querySelectorAll(%s);"
-        "var items=[];for(var i=0;i<Math.min(els.length,%d);i++){"
-        "var e=els[i],r=e.getBoundingClientRect();"
-        "items.push({tag:e.tagName,id:e.id||'',cls:String(e.className||'').slice(0,100),"
-        "text:(e.textContent||'').replace(/\\s+/g,' ').trim().slice(0,150),"
-        "w:Math.round(r.width),h:Math.round(r.height),"
-        "vis:r.width>0&&r.height>0});}"
-        "return JSON.stringify({url:location.pathname,title:document.title,"
-        "ready:document.readyState,count:els.length,items:items});})()"
-        % (json.dumps(sel), limit))
-    out = devtools_cdp.evaluate(js, max_len=20000)
-    try:
-        d = json.loads(out)
-    except Exception:
-        return out
-    lines = ["页面: %s %s [%s]" % (d.get("title", ""), d.get("url", ""), d.get("ready", "")),
-             "命中 %s 个" % d.get("count", 0)]
-    for it in d.get("items", []):
-        if it.get("vis"):
-            sz = " [%sx%s]" % (it.get("w"), it.get("h"))
-        else:
-            sz = " [隐藏]"
-        lines.append("<%s id=%s class=%s> %s%s" % (
-            it.get("tag"), it.get("id") or "-", (it.get("cls") or "-")[:40],
-            (it.get("text") or "")[:80], sz))
-    if d.get("count", 0) > len(d.get("items", [])):
-        lines.append("（仅列前 %d 个）" % len(d.get("items", [])))
-    return "\n".join(lines)
+    return _aibr(url, "dom", {"selector": sel, "limit": limit})
 
 
 @_dt_wrap
@@ -788,172 +862,118 @@ def tool_devtools_console(url, args):
     tail = max(1, min(200, int(args.get("tail") or 50)))
     level = args.get("level") or "all"
     live = max(0, min(30, float(args.get("live_seconds") or 0)))
-    if _dt_target(args) == "browser":
-        return _aibr(url, "console", _pick(args, "tail", "level", "live_seconds"),
-                     http_timeout=45 + live)
-    port, tid, _o = devtools_cdp.page_target_origin_probe()
-    lines = []
-    with devtools_cdp.CdpSession(port, tid) as cs:
-        # 缓冲（hook 随页面启动累计；旧前端无缓冲→降级提示）
-        # v3.5.187r1 全审S1：条目按旧→新 append，保留最新端（诊断价值最高），
-        # 超限显式标注省略数；统计行前置永不丢
-        probe = cs.send("Runtime.evaluate", {"expression":
-            "window.__consoleBuf ? JSON.stringify(window.__consoleBuf) : 'undefined'"})
-        raw = (probe.get("result") or {}).get("value")
-        n_err = n_warn = 0
-        if raw == "undefined" or raw is None:
-            lines.append("（前端无 console 缓冲——旧版本页面，仅实时模式可用）")
-            lines.append("统计: error 0, warn 0（无缓冲可统计）")
-        else:
-            try:
-                items = json.loads(raw)
-            except Exception:
-                items = []
-            shown = []
-            for it in items:
-                lv = it.get("lv")
-                if level == "error" and lv != "error":
-                    continue
-                if level == "warn" and lv not in ("warn", "error"):
-                    continue
-                if lv == "error":
-                    n_err += 1
-                elif lv == "warn":
-                    n_warn += 1
-                shown.append(it)
-            drop = len(shown) - tail
-            lines.append("统计: error %d, warn %d（缓冲起点=页面最近一次加载）" % (n_err, n_warn))
-            if drop > 0:
-                lines.append("（已省略最早 %d 条，显示最新 %d 条）" % (drop, tail))
-            for it in shown[-tail:]:
-                t = time.strftime("%H:%M:%S", time.localtime((it.get("t") or 0) / 1000))
-                lines.append("[%s][%s] %s" % (t, it.get("lv"), (it.get("text") or "")[:300]))
-        # 实时窗口（可选）
-        if live > 0:
-            cs.send("Runtime.enable")
-            cs.send("Log.enable")
-            live_events = []
-
-            def _on(msg):
-                m = msg.get("method", "")
-                pm = msg.get("params", {})
-                if m == "_cdp_disconnected":
-                    # r2 全审G2：断连可感知——页面已死不再谎报「无新输出」
-                    live_events.append("〔窗口期内页面断连——以上仅为断连前输出〕")
-                elif m == "Runtime.consoleAPICalled":
-                    txt = " ".join(str(a.get("value", a.get("description", "")))
-                                   for a in pm.get("args", []))
-                    live_events.append("[%s] %s" % (pm.get("type", "log"), txt[:300]))
-                elif m == "Log.entryAdded":
-                    en = pm.get("entry", {})
-                    live_events.append("[%s] %s" % (en.get("level", "info"),
-                                                    (en.get("text") or "")[:300]))
-            cs.collect(live, _on)
-            if live_events:
-                lines.append("—— 实时窗口 %ds 收到 %d 条 ——" % (int(live), len(live_events)))
-                lines.extend(live_events[-30:])
-            else:
-                lines.append("—— 实时窗口 %ds 无新输出 ——" % int(live))
-    return "\n".join(lines[:235])   # v3.5.187r1 S1：硬顶提至 220 只防失控
+    return _aibr(url, "console", _pick(args, "tail", "level", "live_seconds"),
+                 http_timeout=45 + live)
 
 
 @_dt_wrap
 def tool_devtools_screenshot(url, args):
     import base64
-    if _dt_target(args) == "browser":
-        return _aibr(url, "screenshot", {}) + _SHOT_HINT
-    port, tid, _o = devtools_cdp.page_target_origin_probe()
-    with devtools_cdp.CdpSession(port, tid) as cs:
-        cs.send("Page.enable")
-        res = cs.send("Page.captureScreenshot", {"format": "png"}, timeout=15)
-    data = base64.b64decode(res.get("data", ""))
-    d = os.path.join(_st.STATE_DIR, "devtools")
-    os.makedirs(d, exist_ok=True)
-    fp = os.path.join(d, time.strftime("shot_%Y%m%d_%H%M%S")
-                      + "_%03d.png" % (int(time.time() * 1000) % 1000))
-    with open(fp, "wb") as f:
-        f.write(data)
-    return ("已保存: %s (%.1f KB)\n用 Read 工具查看（图像）。"
-            "注意：截图含用户真实数据，转述时注意敏感信息。" % (fp, len(data) / 1024))
+    return _aibr(url, "screenshot", {}) + _SHOT_HINT
 
 
 @_dt_wrap
 def tool_devtools_network(url, args):
     seconds = max(1, min(30, float(args.get("seconds") or 5)))
     flt = str(args.get("filter") or "")
-    if _dt_target(args) == "browser":
-        return _aibr(url, "network", {"seconds": int(seconds), "filter": flt})
-    port, tid, _o = devtools_cdp.page_target_origin_probe()
-    reqs = {}          # requestId → 聚合 dict
-    order = []
-    with devtools_cdp.CdpSession(port, tid) as cs:
-        cs.send("Network.enable")
-
-        def _on(msg):
-            m = msg.get("method", "")
-            pm = msg.get("params", {})
-            rid = pm.get("requestId", "")
-            if m == "Network.requestWillBeSent":
-                r = pm.get("request", {})
-                reqs[rid] = {"url": r.get("url", ""), "method": r.get("method", ""),
-                             "type": pm.get("type", ""), "status": None,
-                             "size": None, "done": False}
-                order.append(rid)
-            elif m == "Network.responseReceived" and rid in reqs:
-                resp = pm.get("response", {})
-                reqs[rid]["status"] = resp.get("status")
-                reqs[rid]["type"] = pm.get("type", "") or reqs[rid]["type"]
-            elif m == "Network.loadingFinished" and rid in reqs:
-                reqs[rid]["size"] = pm.get("encodedDataLength")
-                reqs[rid]["done"] = True
-            elif m == "Network.loadingFailed" and rid in reqs:
-                reqs[rid]["done"] = True
-                reqs[rid]["status"] = "FAIL:" + pm.get("errorText", "err")
-            elif m == "_cdp_disconnected":
-                reqs["__disconnected__"] = True   # r2 G2：断连可感知
-        cs.collect(seconds, _on)
-    rows = []
-    seen = set()
-    for rid in order:
-        if rid in seen:
-            continue
-        seen.add(rid)
-        r = reqs[rid]
-        u = r["url"]
-        if flt and flt not in u:
-            continue
-        rows.append((rid, r, u))
-    def _is_fail(r):
-        return str(r.get("status", "")).startswith("FAIL")
-    def _is_bad(r):
-        return isinstance(r.get("status"), int) and r["status"] >= 400
-    fail = [(k, r, u) for k, r, u in rows if _is_fail(r)]
-    bad = [(k, r, u) for k, r, u in rows if _is_bad(r)]
-    _disc = reqs.pop("__disconnected__", False)
-    lines = ["窗口 %ds，共 %d 请求 | 失败 %d | 4xx/5xx %d%s" % (
-        int(seconds), len(rows), len(fail), len(bad),
-        "（窗口期内页面断连，仅含断连前事件）" if _disc else "")]
-    _fb = fail + bad
-    for _k, r, u in _fb[:15]:
-        lines.append("  !! %s %s" % (r.get("status"), u[:120]))
-    if len(_fb) > 15:
-        lines.append("  （另有 %d 条失败/异常略）" % (len(_fb) - 15))
-    bad_keys = {k for k, _r, _u in fail + bad}
-    body = [(k, r, u) for k, r, u in rows if k not in bad_keys][-40:]
-    for _k, r, u in body:
-        st = r.get("status")
-        if not r.get("done"):
-            st = "[stream]"
-        elif not st:
-            st = "?"
-        sz = ("%dk" % (r["size"] // 1024)) if r.get("size") else ""
-        lines.append("%s %s %s %s %s" % (st, r["method"], u[:120], r.get("type", ""), sz))
-    if len(body) < len([1 for k, r, u in rows if k not in bad_keys]):
-        lines.append("（更早的 %d 条略）" % (len(rows) - len(bad_keys) - len(body)))
-    return "\n".join(lines)
+    return _aibr(url, "network", {"seconds": int(seconds), "filter": flt})
 
 
 _TOOLS = [
+    {
+        "name": "open_document",
+        "description": "在右侧文档面板打开一份文档并把大纲返给你（Word/PDF/Excel/PPT/图片）。"
+                       "支持 .docx .pdf .xlsx .pptx 与常见图片格式。路径可以是绝对路径，"
+                       "也可以是相对当前会话项目目录的路径。给了 at 就同时定位到那个位置。"
+                       "面板没打开时会自动在 AI 会话页右侧分屏里展开——用户能看见。"
+                       "要看文档里某处的内容，先用这个再配 read_document；要让用户看某个位置，"
+                       "用 show_in_viewer。生成文档（写 Word/Excel/PPT/PDF）请用对应的专门技能。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "文档路径（绝对路径，或相对当前会话目录）"},
+                "at": {"type": "string",
+                       "description": "可选，定位锚点。docx：p:14 / p:3-9 / t:2 / t:2/r3c1；"
+                                      "pdf：page:5 / page:2-4；pptx：slide:3 / slide:3/shape:7；"
+                                      "xlsx：Sheet / Sheet!B2 / Sheet!B2:F9"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "show_in_viewer",
+        "description": "把用户的视线带到文档的指定位置：滚到第一个目标、高亮全部目标、"
+                       "可选在面板上显示一句说明。所有目标必须在同一份文档里，最多 20 个。"
+                       "用户手动打开的文档窗口不会被改目标——AI 有自己的文档标签。"
+                       "典型用法：「你看这里」时用 quote 传一段原文让高亮落到具体字句上。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "targets": {
+                    "type": "array", "maxItems": 20,
+                    "description": "定位目标列表，至少一个",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "anchor": {"type": "string",
+                                       "description": "锚点。可以只写位置（p:3），也可以带路径（report.docx#p:3）"},
+                            "quote": {"type": "string",
+                                      "description": "可选，要精确高亮的原文（最多 500 字符）。没命中时整块高亮"},
+                        },
+                        "required": ["anchor"],
+                    },
+                },
+                "note": {"type": "string", "description": "可选，面板说明条上的文字（最多 500 字符）"},
+                "path": {"type": "string", "description": "可选，targets 里的锚点不带路径时用它确定文档"},
+            },
+            "required": ["targets"],
+        },
+    },
+    {
+        "name": "search_document",
+        "description": "在一份文档里搜文本，返回命中处的锚点和上下文片段。大小写不敏感。"
+                       "拿到锚点后可以用 read_document 读更多，或用 show_in_viewer 指给用户看。"
+                       "只支持文本可提取的文档（PDF 扫描件、纯图片不行）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "文档路径"},
+                "query": {"type": "string", "description": "要搜的文本（最多 200 字符）"},
+                "limit": {"type": "integer", "default": 20, "description": "最多返回多少条命中（1-100）"},
+            },
+            "required": ["path", "query"],
+        },
+    },
+    {
+        "name": "read_document",
+        "description": "按锚点读文档正文，每块文本前面带它的锚点。单次最多返回 24KiB，"
+                       "没读完会给 `[more: … cursor N]` 提示，带上那个 cursor 再调一次继续读。"
+                       "anchor 可以只写位置（p:3）或带路径（report.docx#p:3）；只写位置时读"
+                       "当前面板里那份文档。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "anchor": {"type": "string", "description": "锚点，如 p:3、page:2、slide:5、Sheet!A1"},
+                "cursor": {"type": "integer", "description": "续读游标，从上次返回的 `[more: … cursor N]` 取"},
+            },
+            "required": ["anchor"],
+        },
+    },
+    {
+        "name": "get_view",
+        "description": "取用户当前正在看的文档与位置（还有人选中了什么文字）。"
+                       "用户说「这里」「这段」「选中的这个」时先调它，别让用户重复描述。"
+                       "没有打开文档时返回一句说明。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "doc_tools_status",
+        "description": "查文档工具链的就绪状态：本机有哪些文档处理组件可用、"
+                       "缺了什么、缺了会影响什么。要生成或转换文档（Word/Excel/PPT/PDF）"
+                       "之前先调一次，缺工具时告诉用户去「设置 → 外部依赖安装」。"
+                       "不要自己联网安装。",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
     {
         "name": "observe",
         "description": f"概览前端控制台 v{APP_VERSION}：列出所有已连接的串口/SSH，并返回每个连接的最近输出。这是最常用的入口，先调它了解当前状态。重要：本工具与桌面 app 共享同一后端——app 里已连的串口/SSH 会直接出现在这里，port_id 形如 COM1 或 ssh:host:22，可直接用于 send_command/get_buffer，无需也不应再次 connect。",
@@ -1159,64 +1179,54 @@ _TOOLS = [
     },
     {
         "name": "devtools_eval",
-        "description": "DevTools：执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。**默认在 AI 浏览器里执行**（AI 会话右侧分屏里那个可见的网页，用户能看着操作）。要操作前端控制台自己的界面须显式传 target=\"app\"——app 目标可改变工具页面状态与发起真实操作（含发串口命令），慎用；页面刷新即复位。",
+        "description": "DevTools：在 AI 浏览器里执行任意 JS 表达式（支持 await/Promise），返回 JSON 化结果。页面显示在 AI 会话右侧分屏，用户能看着操作。\n\n【唯一通道】所有 CDP 操作都走 AI 浏览器，没有 target 参数了。要操作**工具自己的界面**：先 browser_navigate 到 http://127.0.0.1:<后端端口>/（端口 = endpoint.json 的 port，或 GET /api/ai/mcp_info 的 backend_url），再用 browser_* 操作——工具界面就是那个网页，AI 浏览器能完整打开它。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "expression": {"type": "string", "description": "JS 表达式（支持 await）"},
                 "max_len": {"type": "integer", "default": 4000, "description": "返回截断上限字符"},
-                "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
-                           "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
             "required": ["expression"],
         },
     },
     {
         "name": "devtools_dom",
-        "description": "DevTools：按 CSS 选择器查询页面元素（标签/id/class/文本/尺寸/可见性），附页面标题与 readyState。默认查 AI 浏览器里的网页；target=\"app\" 查前端控制台自身界面。",
+        "description": "DevTools：在 AI 浏览器里按 CSS 选择器查询页面元素（标签/id/class/文本/尺寸/可见性），附页面标题与 readyState。\n\n【唯一通道】所有 CDP 操作都走 AI 浏览器，没有 target 参数了。要操作**工具自己的界面**：先 browser_navigate 到 http://127.0.0.1:<后端端口>/（端口 = endpoint.json 的 port，或 GET /api/ai/mcp_info 的 backend_url），再用 browser_* 操作——工具界面就是那个网页，AI 浏览器能完整打开它。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "selector": {"type": "string", "description": "CSS 选择器"},
                 "limit": {"type": "integer", "default": 20, "description": "最多列出元素数（≤50）"},
-                "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
-                           "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
             "required": ["selector"],
         },
     },
     {
         "name": "devtools_console",
-        "description": "DevTools：读页面 console 历史（含未捕获异常，环形 200 条）。可加 live_seconds 实时订阅窗口。默认读 AI 浏览器里的网页；target=\"app\" 读前端控制台自身界面。报错定位首选。",
+        "description": "DevTools：读 AI 浏览器网页的 console 历史（含未捕获异常，环形 200 条）。可加 live_seconds 实时订阅窗口。报错定位首选。\n\n【唯一通道】所有 CDP 操作都走 AI 浏览器，没有 target 参数了。要操作**工具自己的界面**：先 browser_navigate 到 http://127.0.0.1:<后端端口>/（端口 = endpoint.json 的 port，或 GET /api/ai/mcp_info 的 backend_url），再用 browser_* 操作——工具界面就是那个网页，AI 浏览器能完整打开它。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "tail": {"type": "integer", "default": 50, "description": "取最近 N 条"},
                 "level": {"type": "string", "enum": ["all", "error", "warn"], "default": "all"},
                 "live_seconds": {"type": "number", "default": 0, "description": ">0 时追加实时订阅窗口（秒，≤30）"},
-                "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
-                           "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
         },
     },
     {
         "name": "devtools_screenshot",
-        "description": "DevTools：截取页面当前画面，保存 PNG 到用户数据目录并返回绝对路径（用 Read 查看）。默认截 AI 浏览器里的网页；target=\"app\" 截前端控制台自身界面。截图含真实内容，注意敏感信息。",
+        "description": "DevTools：截取 AI 浏览器当前画面，保存 PNG 到用户数据目录并返回绝对路径（用 Read 查看）。截图含真实内容，注意敏感信息。\n\n【唯一通道】所有 CDP 操作都走 AI 浏览器，没有 target 参数了。要操作**工具自己的界面**：先 browser_navigate 到 http://127.0.0.1:<后端端口>/（端口 = endpoint.json 的 port，或 GET /api/ai/mcp_info 的 backend_url），再用 browser_* 操作——工具界面就是那个网页，AI 浏览器能完整打开它。",
         "inputSchema": {"type": "object", "properties": {
-            "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
-                       "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
         }},
     },
     {
         "name": "devtools_network",
-        "description": "DevTools：汇总页面网络请求（状态/方法/URL/类型/大小；失败与 4xx/5xx 全列，其余按序最多 40 行，不返回 body）。默认返回 AI 浏览器网页**最近 N 秒已捕获**的请求（立即返回：先触发动作再调）；target=\"app\" 订阅前端控制台自身界面 N 秒窗口（阻塞）。",
+        "description": "DevTools：汇总 AI 浏览器网页的网络请求（状态/方法/URL/类型/大小；失败与 4xx/5xx 全列，其余按序最多 40 行，不返回 body）。返回最近 N 秒已捕获的请求（先触发动作再调）。\n\n【唯一通道】所有 CDP 操作都走 AI 浏览器，没有 target 参数了。要操作**工具自己的界面**：先 browser_navigate 到 http://127.0.0.1:<后端端口>/（端口 = endpoint.json 的 port，或 GET /api/ai/mcp_info 的 backend_url），再用 browser_* 操作——工具界面就是那个网页，AI 浏览器能完整打开它。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "seconds": {"type": "number", "default": 5, "description": "监听窗口秒数（1-30）"},
                 "filter": {"type": "string", "description": "URL 子串过滤（可选）"},
-            "target": {"type": "string", "enum": ["browser", "app"], "default": "browser",
-                       "description": "作用目标：browser=AI 浏览器（缺省）；app=前端控制台自身界面"},
             },
         },
     },
@@ -1346,6 +1356,10 @@ _RETRY_SAFE_TOOLS = {
     # 2026-11-24 AI 浏览器只读族（eval/click/type/导航类有副作用，不进）
     "browser_screenshot", "browser_dom",
     "browser_console", "browser_network", "browser_downloads",
+    # 2026-11-26 文档工具（6.5）：只读族进白名单。
+    # **open_document / show_in_viewer 不进**——重复调用结果虽然一样，但每次
+    # 都会让前端动作一次（切标签、滚页面、弹说明条），用户能看见重复动作。
+    "search_document", "read_document", "get_view", "doc_tools_status",
 }
 
 
@@ -1433,6 +1447,19 @@ def _dispatch(url, name, args):
         return tool_browser_forward(url, args)
     if name == "browser_reload":
         return tool_browser_reload(url, args)
+    # 2026-11-26 文档工具（Step 3）
+    if name == "open_document":
+        return tool_open_document(url, args)
+    if name == "show_in_viewer":
+        return tool_show_in_viewer(url, args)
+    if name == "search_document":
+        return tool_search_document(url, args)
+    if name == "read_document":
+        return tool_read_document(url, args)
+    if name == "get_view":
+        return tool_get_view(url, args)
+    if name == "doc_tools_status":
+        return tool_doc_tools_status(url, args)
     return f"未知工具: {name}"
 
 

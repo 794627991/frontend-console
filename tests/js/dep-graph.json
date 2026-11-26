@@ -23,6 +23,9 @@
     ]
    },
    "references": {
+    "js/downloads.js": [
+     "speed"
+    ],
     "js/editor.js": [
      "enc",
      "index"
@@ -33,8 +36,14 @@
     "js/harness/modal.js": [
      "hgModal"
     ],
+    "js/nav.js": [
+     "A",
+     "search"
+    ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "js",
      "page"
     ],
     "js/sidebar.js": [
@@ -79,30 +88,21 @@
      "match"
     ],
     "js/harness/ask-md.js": [
-     "counts",
      "match"
     ],
     "js/harness/chatctl.js": [
      "match"
     ],
-    "js/harness/groups.js": [
-     "counts"
-    ],
     "js/harness/hist.js": [
-     "counts",
      "match"
     ],
     "js/harness/histcache.js": [
      "match"
     ],
-    "js/harness/main.js": [
-     "counts"
-    ],
     "js/harness/reducer.js": [
      "match"
     ],
     "js/harness/relay.js": [
-     "counts",
      "match"
     ],
     "js/harness/subpane.js": [
@@ -112,7 +112,6 @@
      "match"
     ],
     "js/harness/v4bridge.js": [
-     "counts",
      "match"
     ],
     "js/init.js": [
@@ -145,15 +144,16 @@
     "js/editor.js": [
      "json"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor"
+    ],
     "js/harness/chatctl.js": [
-     "kw",
      "value"
     ],
     "js/harness/main.js": [
      "of"
     ],
     "js/office-viewer.js": [
-     "js",
      "page"
     ],
     "js/settings.js": [
@@ -173,6 +173,7 @@
      "connections"
     ],
     "js/web-panel.js": [
+     "no",
      "push"
     ],
     "js/win-controls.js": [
@@ -204,6 +205,7 @@
     "clampPos",
     "cls",
     "cur",
+    "d",
     "doCopy",
     "doExport",
     "done",
@@ -243,6 +245,7 @@
     "old",
     "onEsc",
     "opt",
+    "pad",
     "panel",
     "parts",
     "passes",
@@ -257,6 +260,7 @@
     "rowHtml",
     "rows",
     "s",
+    "savePath",
     "savePos",
     "sel",
     "show",
@@ -286,7 +290,7 @@
     "y"
    ],
    "is_module": true,
-   "load_index": 76,
+   "load_index": 78,
    "referenced_by": {
     "js/bit-calc.js": [
      "toggle"
@@ -305,6 +309,9 @@
      "toggle"
     ],
     "js/file-tree.js": [
+     "toggle"
+    ],
+    "js/harness/ai-browser.js": [
      "toggle"
     ],
     "js/harness/ask-md.js": [
@@ -384,6 +391,7 @@
      "toggle"
     ],
     "js/nav.js": [
+     "toggle",
      "vw"
     ],
     "js/notes-nav.js": [
@@ -455,6 +463,10 @@
      "moved",
      "scroll"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "value"
     ],
@@ -473,9 +485,6 @@
     "js/logs-modal.js": [
      "sort"
     ],
-    "js/office-viewer.js": [
-     "js"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -491,6 +500,7 @@
     ],
     "js/web-panel.js": [
      "api",
+     "headers",
      "sy"
     ],
     "js/win-controls.js": [
@@ -645,6 +655,10 @@
      "json",
      "openDroppedFile"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "pop",
      "value"
@@ -656,11 +670,12 @@
      "center"
     ],
     "js/nav.js": [
+     "A",
      "clock",
      "word"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/office-engine.js": [
+     "viewer"
     ],
     "js/sense.js": [
      "filter"
@@ -695,7 +710,9 @@
     ],
     "js/web-panel.js": [
      "api",
-     "headers"
+     "headers",
+     "no",
+     "origin"
     ],
     "js/workerbase.js": [
      "B",
@@ -780,6 +797,9 @@
      "skills"
     ],
     "js/harness/fx.js": [
+     "sessions"
+    ],
+    "js/harness/hist.js": [
      "sessions"
     ],
     "js/harness/histcache.js": [
@@ -868,7 +888,6 @@
     ],
     "js/office-viewer.js": [
      "container",
-     "js",
      "zip"
     ],
     "js/sense.js": [
@@ -907,7 +926,9 @@
     "js/web-panel.js": [
      "api",
      "headers",
-     "push"
+     "no",
+     "push",
+     "user"
     ],
     "js/win-controls.js": [
      "init"
@@ -976,9 +997,6 @@
      "renderCmdPane",
      "sheet"
     ],
-    "js/office-viewer.js": [
-     "sheet"
-    ],
     "js/replay.js": [
      "renderCmdPane"
     ],
@@ -1002,6 +1020,9 @@
     "js/editor.js": [
      "json",
      "moved"
+    ],
+    "js/harness/ai-browser.js": [
+     "cursor"
     ],
     "js/harness/chatctl.js": [
      "send",
@@ -1033,6 +1054,7 @@
      "api",
      "del",
      "headers",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -1067,8 +1089,8 @@
     ]
    },
    "references": {
-    "js/office-viewer.js": [
-     "js"
+    "js/nav.js": [
+     "search"
     ],
     "js/search.js": [
      "hideCtxMenu",
@@ -1080,6 +1102,9 @@
     "js/util.js": [
      "$",
      "showBanner"
+    ],
+    "js/web-panel.js": [
+     "no"
     ]
    },
    "top_level_exec": [
@@ -1176,6 +1201,9 @@
      "empty"
     ],
     "js/cmd-lib.js": [
+     "empty"
+    ],
+    "js/downloads.js": [
      "empty"
     ],
     "js/editor.js": [
@@ -1319,6 +1347,9 @@
      "modal",
      "openDroppedFile"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "pop",
      "rm",
@@ -1354,13 +1385,15 @@
      "monacoLangFor"
     ],
     "js/nav.js": [
+     "A",
+     "search",
      "word"
     ],
     "js/notes-nav.js": [
      "rect"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/office-engine.js": [
+     "viewer"
     ],
     "js/search.js": [
      "hideCtxMenu"
@@ -1396,7 +1429,8 @@
      "showBanner"
     ],
     "js/web-panel.js": [
-     "api"
+     "api",
+     "no"
     ],
     "js/workerbase.js": [
      "B",
@@ -1407,6 +1441,155 @@
     "document.getElementById('tabs').addEventListener('contextmenu', e => {",
     "document.getElementById('portList').addEventListener('contextmenu', e => {",
     "window._diffCtxNameOf = _diffCtxNameOf;"
+   ]
+  },
+  "js/docview/index.js": {
+   "defines": [
+    "DocView",
+    "_subDocOpenEnsure",
+    "_subDocOpenTids",
+    "pane"
+   ],
+   "is_module": true,
+   "load_index": 44,
+   "referenced_by": {
+    "js/harness/ask-md.js": [
+     "DocView"
+    ],
+    "js/harness/main.js": [
+     "DocView",
+     "_subDocOpenEnsure",
+     "_subDocOpenTids"
+    ],
+    "js/harness/subpane.js": [
+     "DocView",
+     "_subDocOpenEnsure"
+    ],
+    "js/sense.js": [
+     "DocView"
+    ]
+   },
+   "references": {
+    "js/editor.js": [
+     "index"
+    ],
+    "js/notes-nav.js": [
+     "targets"
+    ],
+    "js/office-viewer.js": [
+     "container",
+     "pdf"
+    ],
+    "js/vcs-git-ops.js": [
+     "message"
+    ]
+   },
+   "top_level_exec": [
+    "registerRenderer('docx', createDocxInstance);",
+    "registerRenderer('pdf', createPdfInstance);",
+    "registerRenderer('xlsx', createXlsxInstance);"
+   ]
+  },
+  "js/downloads.js": {
+   "defines": [
+    "DL",
+    "_allBtns",
+    "_autoOpened",
+    "_isVisible",
+    "_paintBadges",
+    "a",
+    "act",
+    "acts",
+    "anchorBtn",
+    "b",
+    "barCls",
+    "bd",
+    "busyCount",
+    "dir",
+    "ensurePanel",
+    "fmt",
+    "got",
+    "hide",
+    "id",
+    "j",
+    "left",
+    "list",
+    "n",
+    "ok",
+    "onEvent",
+    "panel",
+    "pct",
+    "post",
+    "r",
+    "refresh",
+    "render",
+    "row",
+    "rows",
+    "show",
+    "speed",
+    "stateText",
+    "toggleFrom",
+    "top",
+    "u",
+    "units",
+    "used",
+    "w",
+    "where"
+   ],
+   "is_module": true,
+   "load_index": 81,
+   "referenced_by": {
+    "js/a11y.js": [
+     "speed"
+    ],
+    "js/nav.js": [
+     "units"
+    ],
+    "js/sense.js": [
+     "DL"
+    ],
+    "js/settings.js": [
+     "DL"
+    ],
+    "js/web-panel.js": [
+     "DL",
+     "toggleFrom"
+    ]
+   },
+   "references": {
+    "js/diff-viewer.js": [
+     "empty"
+    ],
+    "js/editor.js": [
+     "MB",
+     "json"
+    ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
+    "js/skin.js": [
+     "style"
+    ],
+    "js/util.js": [
+     "showBanner"
+    ],
+    "js/web-panel.js": [
+     "_webAct",
+     "api",
+     "headers",
+     "push"
+    ],
+    "js/win-controls.js": [
+     "fcShell"
+    ],
+    "js/workerbase.js": [
+     "B",
+     "fetch"
+    ]
+   },
+   "top_level_exec": [
+    "(function () {",
+    "})();"
    ]
   },
   "js/editor.js": {
@@ -1760,6 +1943,13 @@
      "modal",
      "openDroppedFile"
     ],
+    "js/docview/index.js": [
+     "index"
+    ],
+    "js/downloads.js": [
+     "MB",
+     "json"
+    ],
     "js/file-icons.js": [
      "inline",
      "json"
@@ -1954,6 +2144,7 @@
      "MB",
      "choice",
      "index",
+     "inline",
      "json",
      "openFileSmart"
     ],
@@ -1974,13 +2165,17 @@
      "pv",
      "scroll"
     ],
+    "js/office-engine.js": [
+     "MB",
+     "index"
+    ],
     "js/office-viewer.js": [
      "MB",
      "actions",
      "dirty",
+     "fit",
      "index",
      "json",
-     "level",
      "openDroppedFile",
      "scroll"
     ],
@@ -2021,6 +2216,7 @@
      "_mdPvSetTheme",
      "_mdPvTheme",
      "actions",
+     "inline",
      "json",
      "level",
      "modal",
@@ -2029,7 +2225,8 @@
     ],
     "js/sidebar-resize.js": [
      "index",
-     "json"
+     "json",
+     "startW"
     ],
     "js/sidebar.js": [
      "MB",
@@ -2155,6 +2352,10 @@
      "treeDecoRefresh",
      "treeReveal"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/ask-md.js": [
      "ignore"
     ],
@@ -2221,11 +2422,13 @@
      "uri"
     ],
     "js/nav.js": [
+     "A",
      "_jumpOpen",
      "_navStep",
      "commit",
      "hh",
      "navJumpTo",
+     "search",
      "word"
     ],
     "js/notes-nav.js": [
@@ -2240,16 +2443,18 @@
      "nnToggleLinks",
      "targets"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
      "_officeKindOf",
      "_ovRevokeBlobs",
-     "js",
+     "levels",
      "openOfficeFile",
      "outline",
      "pdf",
-     "startH",
-     "table",
-     "tc"
+     "tc",
+     "xml"
     ],
     "js/sense.js": [
      "tools"
@@ -2312,6 +2517,7 @@
      "api",
      "below",
      "headers",
+     "no",
      "push"
     ],
     "js/win-controls.js": [
@@ -2402,6 +2608,9 @@
     ],
     "js/vcs-panel.js": [
      "H"
+    ],
+    "js/web-panel.js": [
+     "no"
     ]
    },
    "top_level_exec": [
@@ -2527,6 +2736,9 @@
      "treeDecoRefresh",
      "treeReveal"
     ],
+    "js/nav.js": [
+     "_key"
+    ],
     "js/tree-fileops.js": [
      "_TV",
      "_tvExpand",
@@ -2595,10 +2807,11 @@
      "sort"
     ],
     "js/nav.js": [
-     "modelFilePath"
+     "A",
+     "modelFilePath",
+     "search"
     ],
     "js/office-viewer.js": [
-     "js",
      "outline"
     ],
     "js/sense.js": [
@@ -2640,6 +2853,267 @@
     "window._TV = _TV;   // a213 审计 P0：顶层 const 不进 window——tree-fileops/",
     "window.treeDecoRefresh = treeDecoRefresh;",
     "window.treeInvalidate = treeInvalidate;"
+   ]
+  },
+  "js/harness/ai-browser.js": {
+   "defines": [
+    "AIBR_IDLE",
+    "AIBR_IDLE_MS",
+    "AIBR_PARTITION",
+    "AIBR_REAP_MS",
+    "AIBR_TID",
+    "AI_BR",
+    "_S",
+    "_attach",
+    "_dragShieldOff",
+    "_ensurePane",
+    "_ensureStage",
+    "_ico",
+    "_observeSlot",
+    "_paintBadge",
+    "_queueSync",
+    "_reapStage",
+    "_ripple",
+    "_shortUrl",
+    "_status",
+    "_sync",
+    "_teardownStage",
+    "_touchReap",
+    "_url",
+    "_wire",
+    "_wvUrl",
+    "bare",
+    "body",
+    "cursor",
+    "el",
+    "front",
+    "fx",
+    "hasPane",
+    "label",
+    "ms",
+    "msg",
+    "old",
+    "op",
+    "open",
+    "r",
+    "s",
+    "sc",
+    "slot",
+    "st",
+    "stage",
+    "state",
+    "sub",
+    "w",
+    "wv",
+    "x"
+   ],
+   "is_module": true,
+   "load_index": 80,
+   "referenced_by": {
+    "js/analyze.js": [
+     "cursor"
+    ],
+    "js/backend-log.js": [
+     "cursor",
+     "state"
+    ],
+    "js/bit-calc.js": [
+     "cursor",
+     "state"
+    ],
+    "js/cmd-lib.js": [
+     "cursor"
+    ],
+    "js/diff-viewer.js": [
+     "state"
+    ],
+    "js/downloads.js": [
+     "state"
+    ],
+    "js/editor.js": [
+     "cursor",
+     "state"
+    ],
+    "js/harness/groups.js": [
+     "cursor"
+    ],
+    "js/harness/hgstate.js": [
+     "state"
+    ],
+    "js/harness/hist.js": [
+     "state"
+    ],
+    "js/harness/histcache.js": [
+     "cursor"
+    ],
+    "js/harness/main.js": [
+     "state"
+    ],
+    "js/harness/managers.js": [
+     "state"
+    ],
+    "js/harness/relay.js": [
+     "state"
+    ],
+    "js/harness/sessions.js": [
+     "state"
+    ],
+    "js/harness/shell.js": [
+     "state"
+    ],
+    "js/harness/skills.js": [
+     "cursor"
+    ],
+    "js/harness/subpane.js": [
+     "state"
+    ],
+    "js/harness/tools.js": [
+     "state"
+    ],
+    "js/harness/v4bridge.js": [
+     "state"
+    ],
+    "js/harness/v4proto.js": [
+     "state"
+    ],
+    "js/hex-diff.js": [
+     "state"
+    ],
+    "js/hex-viewer.js": [
+     "cursor",
+     "state"
+    ],
+    "js/init.js": [
+     "cursor",
+     "state"
+    ],
+    "js/lanzi/panel.js": [
+     "state"
+    ],
+    "js/log-viewer.js": [
+     "cursor",
+     "state"
+    ],
+    "js/nav.js": [
+     "cursor",
+     "state"
+    ],
+    "js/office-viewer.js": [
+     "stage",
+     "state"
+    ],
+    "js/proxy-panel.js": [
+     "state"
+    ],
+    "js/resources.js": [
+     "cursor",
+     "state"
+    ],
+    "js/search.js": [
+     "cursor"
+    ],
+    "js/sense.js": [
+     "AI_BR"
+    ],
+    "js/settings.js": [
+     "cursor",
+     "stage",
+     "state"
+    ],
+    "js/sidebar.js": [
+     "state"
+    ],
+    "js/terminal-core.js": [
+     "state"
+    ],
+    "js/tftp.js": [
+     "cursor"
+    ],
+    "js/theme.js": [
+     "cursor"
+    ],
+    "js/util.js": [
+     "front",
+     "state"
+    ],
+    "js/vcs-git-ops.js": [
+     "_status"
+    ],
+    "js/vcs-panel.js": [
+     "cursor",
+     "state"
+    ],
+    "js/web-panel.js": [
+     "state"
+    ],
+    "js/win-controls.js": [
+     "state"
+    ]
+   },
+   "references": {
+    "js/backend-log.js": [
+     "toggle"
+    ],
+    "js/harness/hist.js": [
+     "gone"
+    ],
+    "js/harness/main.js": [
+     "buildClaudeHarnessTab"
+    ],
+    "js/harness/readonly.js": [
+     "fc",
+     "subpane"
+    ],
+    "js/harness/subpane.js": [
+     "_sub",
+     "_subActivate",
+     "_subDynEnsure",
+     "_subEnd",
+     "_subShow",
+     "_subTabsPaint"
+    ],
+    "js/hex-viewer.js": [
+     "ai"
+    ],
+    "js/icons.js": [
+     "ICO16"
+    ],
+    "js/office-viewer.js": [
+     "page",
+     "ro"
+    ],
+    "js/proxy-panel.js": [
+     "badgeEl",
+     "urlEl"
+    ],
+    "js/resources.js": [
+     "manual"
+    ],
+    "js/settings.js": [
+     "force",
+     "ready"
+    ],
+    "js/skin.js": [
+     "style"
+    ],
+    "js/theme.js": [
+     "bg"
+    ],
+    "js/util.js": [
+     "$"
+    ],
+    "js/web-panel.js": [
+     "push",
+     "wcId"
+    ],
+    "js/win-controls.js": [
+     "fcShell"
+    ]
+   },
+   "top_level_exec": [
+    "window.addEventListener('resize', _queueSync);",
+    "document.addEventListener('visibilitychange', _queueSync);",
+    "document.addEventListener('transitionend', _queueSync, true);"
    ]
   },
   "js/harness/ask-md.js": {
@@ -2737,7 +3211,7 @@
     "tip"
    ],
    "is_module": true,
-   "load_index": 47,
+   "load_index": 49,
    "referenced_by": {
     "js/editor.js": [
      "ignore"
@@ -2811,6 +3285,9 @@
     "js/harness/v4main.js": [
      "_hgAskDockRestore"
     ],
+    "js/office-engine.js": [
+     "ignore"
+    ],
     "js/resources.js": [
      "ignore"
     ],
@@ -2823,7 +3300,6 @@
    },
    "references": {
     "js/analyze.js": [
-     "counts",
      "match"
     ],
     "js/backend-log.js": [
@@ -2832,6 +3308,9 @@
     ],
     "js/claude.js": [
      "sessions"
+    ],
+    "js/docview/index.js": [
+     "DocView"
     ],
     "js/editor.js": [
      "json"
@@ -2875,15 +3354,20 @@
      "_hgScrollBottom",
      "_hgWrap"
     ],
+    "js/hex-viewer.js": [
+     "num"
+    ],
     "js/icons.js": [
      "ICO16"
+    ],
+    "js/nav.js": [
+     "search"
     ],
     "js/notes-nav.js": [
      "im"
     ],
     "js/office-viewer.js": [
      "container",
-     "js",
      "page"
     ],
     "js/sense.js": [
@@ -2896,9 +3380,14 @@
      "$"
     ],
     "js/web-panel.js": [
+     "__newWindow",
      "api",
      "headers",
      "push"
+    ],
+    "js/win-controls.js": [
+     "fcShell",
+     "init"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -2946,7 +3435,7 @@
     "todos"
    ],
    "is_module": true,
-   "load_index": 46,
+   "load_index": 48,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "_HG",
@@ -3125,9 +3614,11 @@
     "js/log-viewer.js": [
      "HIST_PAGE"
     ],
+    "js/nav.js": [
+     "A",
+     "search"
+    ],
     "js/office-viewer.js": [
-     "js",
-     "serial",
      "task"
     ],
     "js/sense.js": [
@@ -3158,6 +3649,9 @@
     ],
     "js/vcs-git-ops.js": [
      "message"
+    ],
+    "js/web-panel.js": [
+     "user"
     ],
     "js/win-controls.js": [
      "init"
@@ -3267,10 +3761,9 @@
     "value"
    ],
    "is_module": true,
-   "load_index": 62,
+   "load_index": 64,
    "referenced_by": {
     "js/analyze.js": [
-     "kw",
      "value"
     ],
     "js/backend-log.js": [
@@ -3424,9 +3917,6 @@
     "js/hex-viewer.js": [
      "value"
     ],
-    "js/highlight.js": [
-     "kw"
-    ],
     "js/icons.js": [
      "send"
     ],
@@ -3437,7 +3927,6 @@
      "value"
     ],
     "js/log-viewer.js": [
-     "kw",
      "pop",
      "value"
     ],
@@ -3469,9 +3958,6 @@
     ],
     "js/search.js": [
      "value"
-    ],
-    "js/sense.js": [
-     "kw"
     ],
     "js/settings.js": [
      "pop",
@@ -3554,8 +4040,7 @@
      "_hgDrawCtxRing",
      "mismatch",
      "mname",
-     "setBusy",
-     "used"
+     "setBusy"
     ],
     "js/harness/groups.js": [
      "_hgRollbackTurn",
@@ -3579,8 +4064,7 @@
      "atts",
      "buildClaudeHarnessTab",
      "isImg",
-     "of",
-     "who"
+     "of"
     ],
     "js/harness/panel.js": [
      "_hgAgentsSweep",
@@ -3639,8 +4123,7 @@
      "sort"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
+     "doc",
      "pdf"
     ],
     "js/sense.js": [
@@ -3695,7 +4178,7 @@
     "thinkChipLabel"
    ],
    "is_module": true,
-   "load_index": 64,
+   "load_index": 66,
    "referenced_by": {
     "js/harness/chatctl.js": [
      "_HG_PERMS",
@@ -3753,9 +4236,6 @@
     "js/icons.js": [
      "ICO"
     ],
-    "js/office-viewer.js": [
-     "js"
-    ],
     "js/sense.js": [
      "filter"
     ],
@@ -3783,8 +4263,6 @@
     "_CTX_PHYS_MAX",
     "_HG_CTX_FALLBACK",
     "_actWordIdx",
-    "_est",
-    "_estScale",
     "_hgCtxCardAway",
     "_hgCtxCardBind",
     "_hgCtxCardClose",
@@ -3830,12 +4308,9 @@
     "memUsed",
     "mismatch",
     "mname",
-    "msg",
     "mu",
     "noUsed",
     "ownTrusted",
-    "p",
-    "parts",
     "pct",
     "pctBand",
     "pctTxt",
@@ -3844,7 +4319,6 @@
     "rec",
     "renderCtxRing",
     "restoreBad",
-    "row",
     "s",
     "setBusy",
     "showUsed",
@@ -3861,7 +4335,7 @@
     "win"
    ],
    "is_module": true,
-   "load_index": 53,
+   "load_index": 55,
    "referenced_by": {
     "js/harness/base.js": [
      "actStart",
@@ -3873,8 +4347,7 @@
      "_hgDrawCtxRing",
      "mismatch",
      "mname",
-     "setBusy",
-     "used"
+     "setBusy"
     ],
     "js/harness/groups.js": [
      "setBusy"
@@ -3890,8 +4363,7 @@
      "_hgDrawCtxRing",
      "actStart",
      "denomAuth",
-     "setBusy",
-     "used"
+     "setBusy"
     ],
     "js/harness/readonly.js": [
      "actStop",
@@ -3916,8 +4388,7 @@
      "actWord",
      "est",
      "renderCtxRing",
-     "setBusy",
-     "used"
+     "setBusy"
     ],
     "js/harness/v4proto.js": [
      "rc"
@@ -3976,11 +4447,8 @@
      "_hgPatchMissingCmds"
     ],
     "js/nav.js": [
+     "A",
      "word"
-    ],
-    "js/office-viewer.js": [
-     "R",
-     "js"
     ],
     "js/settings.js": [
      "pending"
@@ -4140,7 +4608,7 @@
     "yst"
    ],
    "is_module": true,
-   "load_index": 48,
+   "load_index": 50,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "_turnHeadSubPaint",
@@ -4256,17 +4724,11 @@
     "js/nav.js": [
      "MAX"
     ],
-    "js/office-viewer.js": [
-     "MAX"
-    ],
     "js/settings.js": [
      "frozen"
     ]
    },
    "references": {
-    "js/analyze.js": [
-     "counts"
-    ],
     "js/backend-log.js": [
      "opt"
     ],
@@ -4274,6 +4736,9 @@
      "collapse",
      "inline",
      "trimmed"
+    ],
+    "js/harness/ai-browser.js": [
+     "cursor"
     ],
     "js/harness/ask-md.js": [
      "askRender",
@@ -4349,8 +4814,6 @@
      "word"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
      "ro"
     ],
     "js/sense.js": [
@@ -4379,7 +4842,8 @@
      "message"
     ],
     "js/web-panel.js": [
-     "push"
+     "push",
+     "user"
     ],
     "js/win-controls.js": [
      "init"
@@ -4403,7 +4867,7 @@
     "subs"
    ],
    "is_module": true,
-   "load_index": 44,
+   "load_index": 46,
    "referenced_by": {
     "js/harness/groups.js": [
      "HgState"
@@ -4413,11 +4877,17 @@
     ],
     "js/harness/panel.js": [
      "HgState"
+    ],
+    "js/harness/store.js": [
+     "subs"
+    ],
+    "js/nav.js": [
+     "subs"
     ]
    },
    "references": {
-    "js/office-viewer.js": [
-     "js"
+    "js/harness/ai-browser.js": [
+     "state"
     ],
     "js/web-panel.js": [
      "del"
@@ -4429,9 +4899,12 @@
   },
   "js/harness/hist.js": {
    "defines": [
+    "_THINK_EXIT_MS",
     "_agKind",
     "_ar",
     "_cfgB",
+    "_done",
+    "_drop",
     "_dur",
     "_fall",
     "_ga",
@@ -4439,6 +4912,7 @@
     "_hgFmtDur",
     "_hgHistWinStart",
     "_hgPrevRowAt",
+    "_hgReducedMotion",
     "_hgThinkEnq",
     "_hgThinkPlay",
     "_hgThinkShowLine",
@@ -4452,7 +4926,9 @@
     "_prevTs",
     "_rElH",
     "_raid",
+    "_rmCache",
     "_te",
+    "_tm",
     "_tmpEcho",
     "_toTl",
     "_tp",
@@ -4500,8 +4976,11 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 51,
+   "load_index": 53,
    "referenced_by": {
+    "js/harness/ai-browser.js": [
+     "gone"
+    ],
     "js/harness/ask-md.js": [
      "isNearBottom"
     ],
@@ -4588,11 +5067,16 @@
    },
    "references": {
     "js/analyze.js": [
-     "counts",
      "match"
+    ],
+    "js/claude.js": [
+     "sessions"
     ],
     "js/diff-viewer.js": [
      "empty"
+    ],
+    "js/harness/ai-browser.js": [
+     "state"
     ],
     "js/harness/ask-md.js": [
      "_codeLazyEnhance",
@@ -4684,11 +5168,17 @@
      "HIST_PAGE",
      "scrollTop"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/nav.js": [
+     "A"
     ],
     "js/sense.js": [
      "filter"
+    ],
+    "js/settings.js": [
+     "pending"
+    ],
+    "js/sidebar.js": [
+     "shell"
     ],
     "js/skin.js": [
      "style"
@@ -4698,6 +5188,9 @@
     ],
     "js/vcs-panel.js": [
      "skip"
+    ],
+    "js/web-panel.js": [
+     "user"
     ],
     "js/workerbase.js": [
      "B",
@@ -4765,7 +5258,7 @@
     "totalTurns"
    ],
    "is_module": true,
-   "load_index": 58,
+   "load_index": 60,
    "referenced_by": {
     "js/harness/groups.js": [
      "_histRender"
@@ -4812,6 +5305,9 @@
      "inline",
      "json",
      "renderEntries"
+    ],
+    "js/harness/ai-browser.js": [
+     "cursor"
     ],
     "js/harness/ask-md.js": [
      "_hgLoadOpen"
@@ -4884,9 +5380,10 @@
     "js/lanzi/panel.js": [
      "poll"
     ],
+    "js/nav.js": [
+     "A"
+    ],
     "js/office-viewer.js": [
-     "R",
-     "js",
      "ro"
     ],
     "js/sense.js": [
@@ -4916,7 +5413,9 @@
     ],
     "js/web-panel.js": [
      "api",
-     "push"
+     "no",
+     "push",
+     "user"
     ],
     "js/workerbase.js": [
      "B",
@@ -4968,7 +5467,7 @@
     "wrEl"
    ],
    "is_module": true,
-   "load_index": 63,
+   "load_index": 65,
    "referenced_by": {
     "js/harness/base.js": [
      "query"
@@ -5005,6 +5504,9 @@
     ],
     "js/harness/v4bridge.js": [
      "query"
+    ],
+    "js/nav.js": [
+     "fr"
     ],
     "js/settings.js": [
      "fr"
@@ -5060,9 +5562,6 @@
     "js/logs-modal.js": [
      "sort"
     ],
-    "js/office-viewer.js": [
-     "js"
-    ],
     "js/skin.js": [
      "style"
     ],
@@ -5091,6 +5590,7 @@
   },
   "js/harness/main.js": {
    "defines": [
+    "DV",
     "_APP_VER",
     "_HG_VER",
     "_aDone",
@@ -5105,6 +5605,7 @@
     "_dj",
     "_gp",
     "_hgDiag",
+    "_hgDocLinkOpen",
     "_hgDynTick",
     "_hgFlowClick",
     "_hgFlowClick2",
@@ -5118,6 +5619,7 @@
     "_hgSbRaf",
     "_hgSubTailTick",
     "_hit",
+    "_isPseuClicked",
     "_last",
     "_n",
     "_open",
@@ -5130,6 +5632,7 @@
     "_scrollRaf",
     "_scrollRaf2",
     "_tc",
+    "_tidClicked",
     "_ty",
     "aIgn",
     "aOpt",
@@ -5157,6 +5660,7 @@
     "codeBox",
     "cp",
     "cur",
+    "cwd",
     "d",
     "dHead",
     "di",
@@ -5164,6 +5668,7 @@
     "dirRow",
     "dirs",
     "dn",
+    "docLink",
     "e2",
     "eb",
     "el",
@@ -5211,6 +5716,7 @@
     "opening",
     "ov",
     "pTool",
+    "path",
     "pct",
     "pe",
     "pid",
@@ -5277,7 +5783,7 @@
     "xc"
    ],
    "is_module": true,
-   "load_index": 67,
+   "load_index": 69,
    "referenced_by": {
     "js/a11y.js": [
      "of"
@@ -5304,6 +5810,9 @@
     "js/file-tree.js": [
      "of"
     ],
+    "js/harness/ai-browser.js": [
+     "buildClaudeHarnessTab"
+    ],
     "js/harness/ask-md.js": [
      "buildClaudeHarnessTab"
     ],
@@ -5316,8 +5825,7 @@
      "atts",
      "buildClaudeHarnessTab",
      "isImg",
-     "of",
-     "who"
+     "of"
     ],
     "js/harness/chips.js": [
      "buildClaudeHarnessTab"
@@ -5378,8 +5886,8 @@
     "js/harness/sessions.js": [
      "atts",
      "buildClaudeHarnessTab",
-     "of",
-     "who"
+     "grip",
+     "of"
     ],
     "js/harness/shell.js": [
      "_HG_VER",
@@ -5400,7 +5908,8 @@
     ],
     "js/harness/subpane.js": [
      "buildClaudeHarnessTab",
-     "of"
+     "of",
+     "vs"
     ],
     "js/harness/tools.js": [
      "buildClaudeHarnessTab",
@@ -5478,12 +5987,12 @@
     "js/vcs-panel.js": [
      "of",
      "vs"
+    ],
+    "js/web-panel.js": [
+     "of"
     ]
    },
    "references": {
-    "js/analyze.js": [
-     "counts"
-    ],
     "js/backend-log.js": [
      "opt",
      "toggle"
@@ -5494,6 +6003,11 @@
     ],
     "js/diff-viewer.js": [
      "empty"
+    ],
+    "js/docview/index.js": [
+     "DocView",
+     "_subDocOpenEnsure",
+     "_subDocOpenTids"
     ],
     "js/editor.js": [
      "MB",
@@ -5506,6 +6020,9 @@
      "modal",
      "scroll",
      "tokens"
+    ],
+    "js/harness/ai-browser.js": [
+     "state"
     ],
     "js/harness/ask-md.js": [
      "_codeLazyEnhance",
@@ -5632,7 +6149,6 @@
      "subpane"
     ],
     "js/harness/registry.js": [
-     "_done",
      "agents"
     ],
     "js/harness/relay.js": [
@@ -5705,6 +6221,7 @@
      "visIndEl"
     ],
     "js/harness/subpane.js": [
+     "_SUB_AIBR",
      "_SUB_DIR",
      "_SUB_DYN",
      "_hgSubPctApply",
@@ -5718,6 +6235,7 @@
      "_subDirRowClick",
      "_subDynEnsure",
      "_subDynOpen",
+     "_subIsPseudo",
      "_subPanePctKey",
      "_subReplay",
      "_subShow",
@@ -5752,14 +6270,17 @@
      "sort"
     ],
     "js/nav.js": [
+     "A",
+     "rk",
+     "rl",
+     "search",
      "word"
     ],
     "js/notes-nav.js": [
      "rect"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
+     "doc",
      "ro"
     ],
     "js/replay.js": [
@@ -5807,6 +6328,9 @@
      "showBanner",
      "stack"
     ],
+    "js/vcs-git-ops.js": [
+     "message"
+    ],
     "js/vcs-panel.js": [
      "skip"
     ],
@@ -5815,9 +6339,11 @@
      "aw",
      "del",
      "headers",
+     "no",
      "orig",
      "push",
-     "queue"
+     "queue",
+     "user"
     ],
     "js/win-controls.js": [
      "init"
@@ -5900,7 +6426,7 @@
     "ta"
    ],
    "is_module": true,
-   "load_index": 65,
+   "load_index": 67,
    "referenced_by": {
     "js/diff-viewer.js": [
      "_inline"
@@ -5964,6 +6490,9 @@
      "json",
      "modal"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/base.js": [
      "_HG",
      "_HG_EYE"
@@ -5995,10 +6524,6 @@
     ],
     "js/log-viewer.js": [
      "center"
-    ],
-    "js/office-viewer.js": [
-     "R",
-     "js"
     ],
     "js/sense.js": [
      "filter"
@@ -6068,7 +6593,7 @@
     "wrapped"
    ],
    "is_module": true,
-   "load_index": 66,
+   "load_index": 68,
    "referenced_by": {
     "js/a11y.js": [
      "hgModal"
@@ -6124,8 +6649,8 @@
     "js/harness/state.js": [
      "_hgWrap"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/nav.js": [
+     "search"
     ],
     "js/settings.js": [
      "reset"
@@ -6286,7 +6811,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 60,
+   "load_index": 62,
    "referenced_by": {
     "js/editor.js": [
      "P"
@@ -6456,8 +6981,7 @@
      "_hgDrawCtxRing",
      "actStart",
      "denomAuth",
-     "setBusy",
-     "used"
+     "setBusy"
     ],
     "js/harness/hgstate.js": [
      "HgState"
@@ -6532,11 +7056,12 @@
     "js/logs-modal.js": [
      "sort"
     ],
+    "js/nav.js": [
+     "A",
+     "stt"
+    ],
     "js/office-viewer.js": [
-     "R",
-     "js",
-     "task",
-     "td"
+     "task"
     ],
     "js/replay.js": [
      "fire"
@@ -6618,10 +7143,14 @@
     "tb"
    ],
    "is_module": true,
-   "load_index": 69,
+   "load_index": 71,
    "referenced_by": {
     "js/editor.js": [
      "fc"
+    ],
+    "js/harness/ai-browser.js": [
+     "fc",
+     "subpane"
     ],
     "js/harness/fx.js": [
      "flowwrap"
@@ -6674,6 +7203,9 @@
      "fc"
     ],
     "js/sidebar.js": [
+     "fc"
+    ],
+    "js/web-panel.js": [
      "fc"
     ]
    },
@@ -6756,6 +7288,9 @@
     "js/logs-modal.js": [
      "sort"
     ],
+    "js/nav.js": [
+     "A"
+    ],
     "js/office-viewer.js": [
      "ro"
     ],
@@ -6828,7 +7363,7 @@
     "t"
    ],
    "is_module": true,
-   "load_index": 70,
+   "load_index": 72,
    "referenced_by": {
     "js/harness/fx.js": [
      "_hgSpinShow"
@@ -6898,9 +7433,6 @@
     "js/harness/v4bridge.js": [
      "prevTs"
     ],
-    "js/office-viewer.js": [
-     "js"
-    ],
     "js/sense.js": [
      "calls",
      "filter"
@@ -6922,7 +7454,8 @@
      "api",
      "del",
      "push",
-     "queue"
+     "queue",
+     "user"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -6994,7 +7527,7 @@
     "tm"
    ],
    "is_module": true,
-   "load_index": 71,
+   "load_index": 73,
    "referenced_by": {
     "js/harness/base.js": [
      "agents"
@@ -7003,7 +7536,6 @@
      "agents"
     ],
     "js/harness/main.js": [
-     "_done",
      "agents"
     ],
     "js/harness/managers.js": [
@@ -7088,8 +7620,8 @@
     "js/hex-diff.js": [
      "lookup"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/nav.js": [
+     "A"
     ],
     "js/settings.js": [
      "pending"
@@ -7191,7 +7723,7 @@
     "waiting"
    ],
    "is_module": true,
-   "load_index": 50,
+   "load_index": 52,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "renderRaw"
@@ -7261,7 +7793,6 @@
    },
    "references": {
     "js/analyze.js": [
-     "counts",
      "match"
     ],
     "js/diff-viewer.js": [
@@ -7269,6 +7800,9 @@
     ],
     "js/editor.js": [
      "tokens"
+    ],
+    "js/harness/ai-browser.js": [
+     "state"
     ],
     "js/harness/ask-md.js": [
      "renderMd"
@@ -7322,9 +7856,11 @@
     "js/icons.js": [
      "ICO16"
     ],
+    "js/nav.js": [
+     "A"
+    ],
     "js/office-viewer.js": [
-     "R",
-     "js",
+     "doc",
      "task"
     ],
     "js/sense.js": [
@@ -7343,6 +7879,9 @@
     ],
     "js/vcs-panel.js": [
      "H"
+    ],
+    "js/web-panel.js": [
+     "user"
     ],
     "js/workerbase.js": [
      "B"
@@ -7416,7 +7955,7 @@
     "to"
    ],
    "is_module": true,
-   "load_index": 59,
+   "load_index": 61,
    "referenced_by": {
     "js/diff-viewer.js": [
      "same"
@@ -7532,6 +8071,9 @@
      "dirty",
      "json"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/ask-md.js": [
      "_hgAskDockRestore"
     ],
@@ -7569,8 +8111,8 @@
     "js/harness/main.js": [
      "atts",
      "buildClaudeHarnessTab",
-     "of",
-     "who"
+     "grip",
+     "of"
     ],
     "js/harness/managers.js": [
      "paintVisionBtn"
@@ -7632,11 +8174,10 @@
      "ICO16"
     ],
     "js/nav.js": [
+     "A",
      "commit"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
      "task"
     ],
     "js/sense.js": [
@@ -7712,7 +8253,7 @@
     "wasHg"
    ],
    "is_module": true,
-   "load_index": 68,
+   "load_index": 70,
    "referenced_by": {
     "js/harness/main.js": [
      "_harnessClose",
@@ -7756,6 +8297,9 @@
      "json",
      "modal",
      "scroll"
+    ],
+    "js/harness/ai-browser.js": [
+     "state"
     ],
     "js/harness/base.js": [
      "_HG"
@@ -7801,10 +8345,6 @@
     "js/logs-modal.js": [
      "sort"
     ],
-    "js/office-viewer.js": [
-     "R",
-     "js"
-    ],
     "js/proxy-panel.js": [
      "buildProxyTab"
     ],
@@ -7836,7 +8376,8 @@
      "sortKeyFn"
     ],
     "js/web-panel.js": [
-     "api"
+     "api",
+     "no"
     ],
     "js/win-controls.js": [
      "init"
@@ -7940,7 +8481,7 @@
     "zh"
    ],
    "is_module": true,
-   "load_index": 73,
+   "load_index": 75,
    "referenced_by": {
     "js/backend-log.js": [
      "zh"
@@ -8023,6 +8564,9 @@
      "json",
      "modal"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor"
+    ],
     "js/harness/chatctl.js": [
      "value"
     ],
@@ -8038,6 +8582,9 @@
     "js/harness/tools.js": [
      "ops"
     ],
+    "js/hex-viewer.js": [
+     "num"
+    ],
     "js/icons.js": [
      "ICO16"
     ],
@@ -8045,10 +8592,10 @@
      "scrollTop"
     ],
     "js/nav.js": [
+     "search",
      "word"
     ],
     "js/office-viewer.js": [
-     "js",
      "ro",
      "zip"
     ],
@@ -8075,8 +8622,10 @@
     "js/web-panel.js": [
      "api",
      "headers",
+     "origin",
      "owner",
-     "push"
+     "push",
+     "user"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -8139,7 +8688,7 @@
     "warm"
    ],
    "is_module": true,
-   "load_index": 45,
+   "load_index": 47,
    "referenced_by": {
     "js/harness/ask-md.js": [
      "_codeIO",
@@ -8374,8 +8923,8 @@
     "js/harness/tools.js": [
      "closeRun"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/nav.js": [
+     "A"
     ],
     "js/settings.js": [
      "pending",
@@ -8414,7 +8963,7 @@
     "p"
    ],
    "is_module": true,
-   "load_index": 72,
+   "load_index": 74,
    "referenced_by": {
     "js/harness/hist.js": [
      "_hgDispatch",
@@ -8455,6 +9004,9 @@
      "phResume",
      "renderAsst",
      "renderUser"
+    ],
+    "js/harness/hgstate.js": [
+     "subs"
     ],
     "js/harness/hist.js": [
      "appendThinking",
@@ -8498,9 +9050,6 @@
     "js/harness/v4bridge.js": [
      "prevTs"
     ],
-    "js/office-viewer.js": [
-     "js"
-    ],
     "js/terminal-core.js": [
      "flush"
     ],
@@ -8515,7 +9064,8 @@
     "js/web-panel.js": [
      "api",
      "del",
-     "push"
+     "push",
+     "user"
     ]
    },
    "top_level_exec": [
@@ -8531,7 +9081,7 @@
     "title"
    ],
    "is_module": true,
-   "load_index": 49,
+   "load_index": 51,
    "referenced_by": {
     "js/harness/hist.js": [
      "_toolInputBodyHtml"
@@ -8575,10 +9125,6 @@
     "js/icons.js": [
      "ICO16"
     ],
-    "js/office-viewer.js": [
-     "R",
-     "js"
-    ],
     "js/sense.js": [
      "tools"
     ],
@@ -8598,7 +9144,11 @@
    "defines": [
     "_HG_DYN_SKELETON",
     "_MAX",
+    "_SUB_AIBR",
     "_SUB_DIR",
+    "_SUB_DOCA",
+    "_SUB_DOCOPEN",
+    "_SUB_DOCU_PREFIX",
     "_SUB_DYN",
     "_a",
     "_a2",
@@ -8621,6 +9171,7 @@
     "_hgSubPctApply",
     "_hgSubPctGet",
     "_hgSubRegion",
+    "_k",
     "_lbType",
     "_ms",
     "_omIco",
@@ -8649,6 +9200,7 @@
     "_subDynOpen",
     "_subEnd",
     "_subEnsure",
+    "_subIsPseudo",
     "_subOpen",
     "_subPanePctKey",
     "_subPaneScaffold",
@@ -8719,6 +9271,7 @@
     "mdl",
     "mdlFull",
     "n0",
+    "nowKey",
     "o",
     "off",
     "old",
@@ -8728,6 +9281,7 @@
     "p",
     "paneHidden",
     "pct",
+    "prevKey",
     "pristine",
     "px",
     "q",
@@ -8771,10 +9325,18 @@
     "ws"
    ],
    "is_module": true,
-   "load_index": 61,
+   "load_index": 63,
    "referenced_by": {
     "js/editor.js": [
      "_folded"
+    ],
+    "js/harness/ai-browser.js": [
+     "_sub",
+     "_subActivate",
+     "_subDynEnsure",
+     "_subEnd",
+     "_subShow",
+     "_subTabsPaint"
     ],
     "js/harness/chatctl.js": [
      "_subEnd"
@@ -8783,6 +9345,7 @@
      "_subDirPaint"
     ],
     "js/harness/main.js": [
+     "_SUB_AIBR",
      "_SUB_DIR",
      "_SUB_DYN",
      "_hgSubPctApply",
@@ -8796,6 +9359,7 @@
      "_subDirRowClick",
      "_subDynEnsure",
      "_subDynOpen",
+     "_subIsPseudo",
      "_subPanePctKey",
      "_subReplay",
      "_subShow",
@@ -8902,11 +9466,18 @@
     "js/diff-viewer.js": [
      "empty"
     ],
+    "js/docview/index.js": [
+     "DocView",
+     "_subDocOpenEnsure"
+    ],
     "js/editor.js": [
      "foldable",
      "index",
      "json",
      "tokens"
+    ],
+    "js/harness/ai-browser.js": [
+     "state"
     ],
     "js/harness/ask-md.js": [
      "mdBubble"
@@ -8944,7 +9515,8 @@
     ],
     "js/harness/main.js": [
      "buildClaudeHarnessTab",
-     "of"
+     "of",
+     "vs"
     ],
     "js/harness/panel.js": [
      "_hgAgentModelsFetch",
@@ -9000,6 +9572,9 @@
     "js/harness/v4bridge.js": [
      "agent"
     ],
+    "js/hex-viewer.js": [
+     "ai"
+    ],
     "js/icons.js": [
      "ICO16"
     ],
@@ -9010,11 +9585,13 @@
      "sort"
     ],
     "js/nav.js": [
+     "A",
+     "search",
+     "stt",
      "t1"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
+     "doc",
      "task"
     ],
     "js/replay.js": [
@@ -9059,7 +9636,8 @@
     ],
     "js/web-panel.js": [
      "api",
-     "push"
+     "push",
+     "user"
     ],
     "js/workerbase.js": [
      "EventSource",
@@ -9069,7 +9647,7 @@
    "top_level_exec": [
     "window._SUB_DIR = _SUB_DIR;",
     "window._SUB_DYN = _SUB_DYN;",
-    "window._hgSubPctApply = _hgSubPctApply;"
+    "window._SUB_AIBR = _SUB_AIBR;"
    ]
   },
   "js/harness/tools.js": {
@@ -9225,7 +9803,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 52,
+   "load_index": 54,
    "referenced_by": {
     "js/harness/base.js": [
      "_hgAgentRowBuild",
@@ -9364,6 +9942,9 @@
      "create",
      "json"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/ask-md.js": [
      "ans"
     ],
@@ -9444,6 +10025,9 @@
      "L",
      "agent"
     ],
+    "js/hex-viewer.js": [
+     "num"
+    ],
     "js/icons.js": [
      "ICO",
      "ICO16"
@@ -9453,14 +10037,13 @@
     ],
     "js/nav.js": [
      "clock",
-     "commit"
+     "commit",
+     "search"
     ],
     "js/notes-nav.js": [
      "node"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
      "task"
     ],
     "js/sense.js": [
@@ -9501,7 +10084,9 @@
      "arm",
      "del",
      "headers",
-     "push"
+     "no",
+     "push",
+     "touch"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -9780,7 +10365,7 @@
     "ws"
    ],
    "is_module": true,
-   "load_index": 56,
+   "load_index": 58,
    "referenced_by": {
     "js/diff-viewer.js": [
      "_fin"
@@ -9853,7 +10438,6 @@
    },
    "references": {
     "js/analyze.js": [
-     "counts",
      "match"
     ],
     "js/backend-log.js": [
@@ -9868,6 +10452,9 @@
      "dirty",
      "json",
      "scroll"
+    ],
+    "js/harness/ai-browser.js": [
+     "state"
     ],
     "js/harness/ask-md.js": [
      "_hgAskDismiss",
@@ -9893,8 +10480,7 @@
      "actWord",
      "est",
      "renderCtxRing",
-     "setBusy",
-     "used"
+     "setBusy"
     ],
     "js/harness/groups.js": [
      "_hgTurnDurTxt",
@@ -10031,12 +10617,13 @@
     "js/log-viewer.js": [
      "scrollTop"
     ],
+    "js/nav.js": [
+     "A"
+    ],
     "js/notes-nav.js": [
      "node"
     ],
     "js/office-viewer.js": [
-     "js",
-     "ri",
      "task"
     ],
     "js/sidebar.js": [
@@ -10059,10 +10646,11 @@
      "message"
     ],
     "js/web-panel.js": [
-     "_k",
      "api",
+     "no",
      "push",
-     "queue"
+     "queue",
+     "user"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -10102,7 +10690,7 @@
     "v4Switch"
    ],
    "is_module": true,
-   "load_index": 57,
+   "load_index": 59,
    "referenced_by": {
     "js/harness/chatctl.js": [
      "v4PaintHeader"
@@ -10175,8 +10763,7 @@
      "V4Store"
     ],
     "js/office-viewer.js": [
-     "container",
-     "js"
+     "container"
     ],
     "js/sidebar.js": [
      "refreshSidebar"
@@ -10226,7 +10813,7 @@
     "want"
    ],
    "is_module": true,
-   "load_index": 54,
+   "load_index": 56,
    "referenced_by": {
     "js/file-tree.js": [
      "s2"
@@ -10253,9 +10840,6 @@
     "js/log-viewer.js": [
      "patch"
     ],
-    "js/util.js": [
-     "got"
-    ],
     "js/web-panel.js": [
      "patch"
     ]
@@ -10264,14 +10848,14 @@
     "js/editor.js": [
      "json"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/fx.js": [
      "rc"
     ],
     "js/notes-nav.js": [
      "node"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/sense.js": [
      "filter"
@@ -10284,6 +10868,7 @@
     ],
     "js/web-panel.js": [
      "expect",
+     "no",
      "push"
     ]
    },
@@ -10311,7 +10896,7 @@
     "still"
    ],
    "is_module": true,
-   "load_index": 55,
+   "load_index": 57,
    "referenced_by": {
     "js/harness/v4main.js": [
      "V4Store"
@@ -10322,9 +10907,6 @@
      "V4P",
      "applyDeltas",
      "newSnapshot"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/sense.js": [
      "filter"
@@ -10482,6 +11064,9 @@
      "json",
      "scroll"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "pop"
     ],
@@ -10494,6 +11079,9 @@
     "js/harness/tools.js": [
      "CTX"
     ],
+    "js/hex-viewer.js": [
+     "ci"
+    ],
     "js/icons.js": [
      "ICO",
      "ICO16"
@@ -10504,12 +11092,17 @@
     "js/logs-modal.js": [
      "sort"
     ],
+    "js/nav.js": [
+     "A"
+    ],
     "js/notes-nav.js": [
      "rect"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "canvas",
-     "js"
+     "canvas"
     ],
     "js/sidebar.js": [
      "_recentAdd",
@@ -10541,6 +11134,7 @@
     "js/web-panel.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -10695,11 +11289,29 @@
     "js/file-tree.js": [
      "rendered"
     ],
+    "js/harness/ai-browser.js": [
+     "ai"
+    ],
+    "js/harness/ask-md.js": [
+     "num"
+    ],
     "js/harness/main.js": [
      "b2"
     ],
     "js/harness/sessions.js": [
      "b2"
+    ],
+    "js/harness/skills.js": [
+     "num"
+    ],
+    "js/harness/subpane.js": [
+     "ai"
+    ],
+    "js/harness/tools.js": [
+     "num"
+    ],
+    "js/hex-diff.js": [
+     "ci"
     ],
     "js/init.js": [
      "ai",
@@ -10713,6 +11325,12 @@
     ],
     "js/notes-nav.js": [
      "rgba"
+    ],
+    "js/office-engine.js": [
+     "ai"
+    ],
+    "js/office-viewer.js": [
+     "ai"
     ],
     "js/replay.js": [
      "ai"
@@ -10768,6 +11386,10 @@
     "js/file-icons.js": [
      "fileIconHtml"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "value"
     ],
@@ -10784,12 +11406,15 @@
      "scrollTop"
     ],
     "js/nav.js": [
+     "A",
+     "search",
      "word"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "R",
-     "canvas",
-     "js"
+     "canvas"
     ],
     "js/sense.js": [
      "filter"
@@ -10825,6 +11450,7 @@
     "js/web-panel.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -10883,9 +11509,6 @@
     "js/editor.js": [
      "index"
     ],
-    "js/harness/chatctl.js": [
-     "kw"
-    ],
     "js/harness/main.js": [
      "of"
     ],
@@ -10912,6 +11535,7 @@
      "stack"
     ],
     "js/web-panel.js": [
+     "no",
      "push"
     ],
     "js/win-controls.js": [
@@ -10948,6 +11572,9 @@
    "referenced_by": {
     "js/highlight.js": [
      "loadBuffer"
+    ],
+    "js/settings.js": [
+     "older"
     ],
     "js/sidebar.js": [
      "jumpToBottom"
@@ -10990,6 +11617,7 @@
     ],
     "js/web-panel.js": [
      "api",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -11028,6 +11656,9 @@
      "ICO16"
     ],
     "js/editor.js": [
+     "ICO16"
+    ],
+    "js/harness/ai-browser.js": [
      "ICO16"
     ],
     "js/harness/ask-md.js": [
@@ -11172,7 +11803,8 @@
      "c1"
     ],
     "js/nav.js": [
-     "clock"
+     "clock",
+     "search"
     ],
     "js/notes-nav.js": [
      "rect"
@@ -11221,7 +11853,7 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 77,
+   "load_index": 79,
    "referenced_by": {},
    "references": {
     "js/analyze.js": [
@@ -11252,6 +11884,10 @@
      "newFileMenuShow",
      "showFilesModal"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "dispatch"
     ],
@@ -11273,10 +11909,6 @@
     ],
     "js/monaco-bridge.js": [
      "monacoWarmup"
-    ],
-    "js/office-viewer.js": [
-     "R",
-     "js"
     ],
     "js/proxy-panel.js": [
      "buildProxyTab"
@@ -11314,10 +11946,12 @@
      "checked"
     ],
     "js/web-panel.js": [
+     "__newWindow",
      "api",
      "headers"
     ],
     "js/win-controls.js": [
+     "fcShell",
      "init"
     ],
     "js/workerbase.js": [
@@ -11394,6 +12028,9 @@
      "dirty",
      "json"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "value"
     ],
@@ -11403,8 +12040,8 @@
     "js/icons.js": [
      "ICO16"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/office-engine.js": [
+     "viewer"
     ],
     "js/resources.js": [
      "manual"
@@ -11433,7 +12070,8 @@
     ],
     "js/web-panel.js": [
      "api",
-     "headers"
+     "headers",
+     "user"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -11744,8 +12382,11 @@
     "js/file-icons.js": [
      "fileIconHtml"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/chatctl.js": [
-     "kw",
      "pop",
      "value"
     ],
@@ -11767,11 +12408,16 @@
     "js/logs-modal.js": [
      "sort"
     ],
+    "js/nav.js": [
+     "A",
+     "search"
+    ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "js",
      "searchInput",
      "searchResults",
-     "startH",
      "viewport"
     ],
     "js/sidebar.js": [
@@ -11804,6 +12450,7 @@
     "js/web-panel.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -12020,8 +12667,11 @@
     "js/notes-nav.js": [
      "targets"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "js"
+     "xml"
     ],
     "js/settings.js": [
      "npm"
@@ -12046,7 +12696,8 @@
     ],
     "js/web-panel.js": [
      "api",
-     "headers"
+     "headers",
+     "origin"
     ],
     "js/win-controls.js": [
      "init"
@@ -12071,74 +12722,172 @@
     "NAV_KEYS",
     "NavJump",
     "OPTS",
+    "_TMP_L",
+    "_ancState",
+    "_applyRec",
+    "_arch",
+    "_askScopeDialog",
     "_askTierDialog",
+    "_autoOpen",
+    "_backInherit",
+    "_badK",
+    "_badKeys",
+    "_badV",
+    "_badge",
     "_bkSel",
+    "_byRel",
+    "_c",
     "_cgRun",
     "_closeCands",
     "_closePanel",
+    "_closePick",
     "_closeSym",
+    "_cnt",
+    "_consumed",
+    "_cur",
     "_curBk",
+    "_curTop",
+    "_d",
+    "_deadRuns",
     "_defBk",
-    "_doExpand",
+    "_dirsIn",
     "_drop",
-    "_emp",
+    "_dropOpenPick",
+    "_dropPendingRec",
+    "_effState",
+    "_estFiles",
     "_f",
+    "_fillSubs",
     "_fmt",
+    "_fmtN",
     "_full",
     "_h",
+    "_hdr",
     "_headCfg",
     "_headTxt",
     "_hoverCache",
     "_hoverDef",
+    "_isRootKey",
     "_jumpOpen",
     "_jumpSeq",
+    "_k",
     "_lastSeq",
+    "_lbl",
+    "_manual",
+    "_manualArts",
     "_max",
     "_mine",
     "_miss",
+    "_mode",
+    "_myEpoch",
     "_myPoll",
+    "_n",
+    "_navAskSeen",
     "_navClockTimer",
     "_navPathOk",
     "_navPos",
     "_navStep",
+    "_nonRoot",
+    "_noop",
+    "_normK",
+    "_normRoot",
+    "_num",
+    "_okKeys",
+    "_oldP",
+    "_op",
+    "_openPickOnNext",
+    "_opts",
     "_ov",
     "_ov2",
+    "_ownsDlg",
+    "_p",
+    "_pendingRec",
+    "_poll",
+    "_pollErr",
+    "_pollT",
     "_pollTimer",
+    "_post",
     "_postTier",
+    "_pr",
+    "_prev",
+    "_r",
+    "_recEpoch",
     "_renderCodegraph",
     "_renderProbe",
     "_renderProgress",
     "_renderState",
+    "_reopenOnce",
+    "_rk",
+    "_rk2",
+    "_rootKeys",
     "_rowByKey",
+    "_runId",
+    "_runRecommend",
+    "_rv",
+    "_sameRoot",
     "_sc",
+    "_scCleared",
+    "_scn",
     "_scopePick",
     "_scopeRow",
+    "_sd",
+    "_sd2",
+    "_sd3",
+    "_sel",
+    "_setBusy",
+    "_sg",
     "_showCandidates",
+    "_sp2",
     "_sqlOk",
+    "_stared",
     "_startBuild",
+    "_stat",
+    "_stateBtns",
+    "_still",
+    "_stopPoll",
     "_symTimer",
+    "_syncArtBox",
+    "_syncCounts",
+    "_syncSelHead",
     "_synced",
     "_t0",
     "_td",
     "_td2",
     "_td3",
-    "_tierAsked",
+    "_tmpDropped",
+    "_toggleExpand",
+    "_topNode",
+    "_tos",
+    "_tosN",
+    "_tsegs",
+    "_txtHoldUntil",
+    "_userArts",
+    "_userSet",
+    "_v",
+    "_withCounts",
     "a",
     "add",
     "all",
-    "ancSel",
     "applyKeys",
+    "artBox",
+    "arts",
+    "artsCopy",
+    "artsOff",
     "b",
     "bAdd",
     "bBuild",
     "bCancel",
     "bClr",
     "bDel",
+    "bEdit",
+    "bExp",
+    "bExpand",
     "bFix",
     "bImp",
     "bOk",
     "bPick",
     "bRe",
+    "bRec",
     "bSync",
     "badge",
     "bar",
@@ -12154,38 +12903,47 @@
     "cancel",
     "cands",
     "card",
+    "cb",
     "cfg",
-    "chk",
     "clock",
     "closeB",
     "closed",
     "cnt",
     "commit",
+    "counts",
+    "cur",
     "d",
     "d2",
     "dirs",
+    "dirsCleared",
+    "dirsCopy",
     "doAdd",
     "doneTxt",
     "e",
     "ed",
     "ed2",
+    "eff",
     "el",
+    "emp",
     "ex",
     "expanded",
     "f",
     "fbSel",
     "fi",
     "file",
+    "files",
     "findReferences",
     "first",
     "fmtSize",
     "foot",
     "from",
+    "g",
     "go",
     "gotoDefinition",
     "guard",
     "hasCtrl",
     "head",
+    "head2",
     "headRow",
     "hh",
     "hint",
@@ -12195,7 +12953,6 @@
     "inPlainInput",
     "inXterm",
     "info",
-    "inh",
     "input",
     "it",
     "item",
@@ -12204,8 +12961,11 @@
     "kb",
     "key",
     "keyLabel",
+    "kidHit",
     "kids",
     "kind",
+    "kw",
+    "l",
     "lab",
     "left",
     "lg",
@@ -12236,13 +12996,19 @@
     "navigateBack",
     "navigateForward",
     "next",
+    "nm",
+    "nodes",
     "ok1",
     "opts",
+    "out",
     "ov",
+    "own",
     "p",
+    "p2",
     "paint",
     "parts",
     "pathEl",
+    "pfx",
     "pr",
     "prev",
     "prevCur",
@@ -12252,117 +13018,235 @@
     "q",
     "queryDefinition",
     "r",
+    "raw",
+    "recNodes",
     "registerAll",
     "render",
     "renderSel",
     "res",
+    "right",
     "rj",
+    "rk",
+    "rl",
+    "rootDefault",
+    "rootName",
     "row",
     "rows",
+    "rs",
     "s",
+    "s0",
+    "savePath",
     "sc",
+    "search",
+    "segs",
     "sel",
     "selIdx",
+    "selfHit",
     "showFileSymbols",
     "showWorkspaceSymbols",
     "sn",
+    "sp",
     "ss",
     "st",
+    "stLab",
+    "stt",
     "sub",
-    "syncCnt",
+    "subHit",
+    "subOff",
     "t",
     "t1",
     "t2",
     "tag",
     "title",
+    "top",
+    "topOff",
     "tree",
     "txt",
     "ui",
     "v",
     "w",
+    "w2",
     "wantAlt",
     "wantCtrl",
     "wantShift",
     "warn",
     "warn2",
+    "wl",
     "word",
     "wrap"
    ],
    "is_module": true,
    "load_index": 32,
    "referenced_by": {
+    "js/a11y.js": [
+     "A",
+     "search"
+    ],
     "js/bit-calc.js": [
+     "A",
      "clock",
      "word"
     ],
     "js/claude.js": [
      "mine"
     ],
+    "js/ctx-menu.js": [
+     "search"
+    ],
     "js/diff-viewer.js": [
+     "A",
+     "search",
      "word"
     ],
     "js/editor.js": [
+     "A",
      "_jumpOpen",
      "_navStep",
      "commit",
      "hh",
      "navJumpTo",
+     "search",
      "word"
     ],
     "js/file-tree.js": [
-     "modelFilePath"
+     "A",
+     "modelFilePath",
+     "search"
+    ],
+    "js/harness/ask-md.js": [
+     "search"
+    ],
+    "js/harness/base.js": [
+     "A",
+     "search"
     ],
     "js/harness/fx.js": [
+     "A",
      "word"
     ],
     "js/harness/groups.js": [
      "word"
     ],
+    "js/harness/hist.js": [
+     "A"
+    ],
+    "js/harness/histcache.js": [
+     "A"
+    ],
     "js/harness/main.js": [
+     "A",
+     "rk",
+     "rl",
+     "search",
      "word"
     ],
+    "js/harness/modal.js": [
+     "search"
+    ],
+    "js/harness/panel.js": [
+     "A",
+     "stt"
+    ],
+    "js/harness/readonly.js": [
+     "A"
+    ],
+    "js/harness/registry.js": [
+     "A"
+    ],
+    "js/harness/relay.js": [
+     "A"
+    ],
     "js/harness/sessions.js": [
+     "A",
      "commit"
     ],
     "js/harness/skills.js": [
+     "search",
      "word"
     ],
+    "js/harness/state.js": [
+     "A"
+    ],
     "js/harness/subpane.js": [
+     "A",
+     "search",
+     "stt",
      "t1"
     ],
     "js/harness/tools.js": [
      "clock",
-     "commit"
+     "commit",
+     "search"
+    ],
+    "js/harness/v4bridge.js": [
+     "A"
+    ],
+    "js/hex-diff.js": [
+     "A"
     ],
     "js/hex-viewer.js": [
+     "A",
+     "search",
      "word"
     ],
     "js/icons.js": [
-     "clock"
+     "clock",
+     "search"
+    ],
+    "js/log-viewer.js": [
+     "A",
+     "search"
+    ],
+    "js/notes-nav.js": [
+     "A",
+     "search",
+     "sn"
     ],
     "js/office-viewer.js": [
+     "search",
      "word"
     ],
     "js/proxy-panel.js": [
+     "A",
      "d2"
+    ],
+    "js/resources.js": [
+     "A"
+    ],
+    "js/search.js": [
+     "search"
     ],
     "js/settings.js": [
      "NavJump",
      "applyKeys",
      "keyLabel",
+     "search",
      "word"
     ],
     "js/sidebar.js": [
+     "A",
+     "search",
      "word"
     ],
+    "js/skin.js": [
+     "A"
+    ],
     "js/terminal-core.js": [
-     "clock"
+     "clock",
+     "search"
+    ],
+    "js/theme.js": [
+     "A"
     ],
     "js/tree-fileops.js": [
+     "A",
      "NavJump",
+     "search",
      "word"
     ],
     "js/tree-search.js": [
+     "A",
+     "search",
      "word"
     ],
     "js/ts-outline.js": [
@@ -12370,23 +13254,45 @@
      "word"
     ],
     "js/util.js": [
+     "A",
+     "search",
      "word"
     ],
     "js/vcs-panel.js": [
+     "A",
      "commit",
      "word"
+    ],
+    "js/web-panel.js": [
+     "search",
+     "word"
+    ],
+    "js/win-controls.js": [
+     "A"
     ]
    },
    "references": {
     "js/backend-log.js": [
+     "toggle",
      "vw"
+    ],
+    "js/downloads.js": [
+     "units"
     ],
     "js/editor.js": [
      "MB",
      "choice",
      "index",
+     "inline",
      "json",
      "openFileSmart"
+    ],
+    "js/file-tree.js": [
+     "_key"
+    ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
     ],
     "js/harness/chatctl.js": [
      "pop",
@@ -12394,6 +13300,12 @@
     ],
     "js/harness/groups.js": [
      "MAX"
+    ],
+    "js/harness/hgstate.js": [
+     "subs"
+    ],
+    "js/harness/input-fx.js": [
+     "fr"
     ],
     "js/harness/main.js": [
      "of",
@@ -12426,10 +13338,8 @@
      "monacoInit",
      "uri"
     ],
-    "js/office-viewer.js": [
-     "js"
-    ],
     "js/replay.js": [
+     "elapsed",
      "fire"
     ],
     "js/resources.js": [
@@ -12453,8 +13363,12 @@
      "T",
      "fileops"
     ],
+    "js/ts-outline.js": [
+     "walk"
+    ],
     "js/util.js": [
      "$",
+     "banner",
      "showBanner",
      "stack"
     ],
@@ -12466,14 +13380,18 @@
     ],
     "js/web-panel.js": [
      "api",
+     "arm",
      "headers",
+     "no",
      "push"
     ],
     "js/win-controls.js": [
+     "fcShell",
      "init"
     ],
     "js/workerbase.js": [
      "B",
+     "FULL",
      "fetch"
     ]
    },
@@ -12601,6 +13519,9 @@
     "js/diff-viewer.js": [
      "rect"
     ],
+    "js/docview/index.js": [
+     "targets"
+    ],
     "js/editor.js": [
      "nnBindWikiClick",
      "nnExportMd",
@@ -12716,9 +13637,13 @@
     "js/log-viewer.js": [
      "scrollTop"
     ],
+    "js/nav.js": [
+     "A",
+     "search",
+     "sn"
+    ],
     "js/office-viewer.js": [
-     "canvas",
-     "js"
+     "canvas"
     ],
     "js/sense.js": [
      "filter"
@@ -12748,6 +13673,7 @@
     "js/web-panel.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -12761,19 +13687,125 @@
     "document.addEventListener('contextmenu', e => {"
    ]
   },
+  "js/office-engine.js": {
+   "defines": [
+    "OfficeEngine",
+    "Viewer",
+    "_PPTX_URL",
+    "_XLSX_URL",
+    "_errText",
+    "_loadPptx",
+    "_loadXlsx",
+    "_pptxMod",
+    "c",
+    "el",
+    "m",
+    "mod",
+    "viewer"
+   ],
+   "is_module": true,
+   "load_index": 43,
+   "referenced_by": {
+    "js/a11y.js": [
+     "viewer"
+    ],
+    "js/bit-calc.js": [
+     "viewer"
+    ],
+    "js/diff-viewer.js": [
+     "viewer"
+    ],
+    "js/editor.js": [
+     "viewer"
+    ],
+    "js/hex-diff.js": [
+     "viewer"
+    ],
+    "js/hex-viewer.js": [
+     "viewer"
+    ],
+    "js/lanzi/panel.js": [
+     "viewer"
+    ],
+    "js/log-viewer.js": [
+     "viewer"
+    ],
+    "js/monaco-bridge.js": [
+     "viewer"
+    ],
+    "js/office-viewer.js": [
+     "OfficeEngine",
+     "viewer"
+    ],
+    "js/proxy-panel.js": [
+     "viewer"
+    ],
+    "js/sidebar.js": [
+     "viewer"
+    ],
+    "js/terminal-core.js": [
+     "viewer"
+    ],
+    "js/tree-fileops.js": [
+     "viewer"
+    ],
+    "js/util.js": [
+     "viewer"
+    ]
+   },
+   "references": {
+    "js/editor.js": [
+     "MB",
+     "index"
+    ],
+    "js/harness/ask-md.js": [
+     "ignore"
+    ],
+    "js/hex-viewer.js": [
+     "ai"
+    ],
+    "js/office-viewer.js": [
+     "container",
+     "pdf",
+     "setZoom"
+    ],
+    "js/resources.js": [
+     "onDone"
+    ],
+    "js/settings.js": [
+     "ready"
+    ],
+    "js/sidebar.js": [
+     "activeSheet"
+    ],
+    "js/skin.js": [
+     "style"
+    ],
+    "js/vcs-git-ops.js": [
+     "message"
+    ],
+    "js/web-panel.js": [
+     "push"
+    ],
+    "js/workerbase.js": [
+     "fetch"
+    ]
+   },
+   "top_level_exec": [
+    "window.OfficeEngine = { openDocument, openPptx, openXlsx, errText: _errText };"
+   ]
+  },
   "js/office-viewer.js": {
    "defines": [
-    "A",
-    "AC",
-    "D",
-    "ORG",
-    "R",
     "_OFFICE_EXTS",
     "_dsApiReady",
     "_mb",
     "_officeKindOf",
     "_ovDocxHeadsBySize",
+    "_ovDocxHeadsByStyle",
+    "_ovDocxHeadsByToc",
     "_ovDocxOutline",
+    "_ovDocxStyleLevels",
     "_ovOnlyOfficeEdit",
     "_ovPdfBindControls",
     "_ovPdfBuildUI",
@@ -12782,117 +13814,70 @@
     "_ovPdfOutlineRender",
     "_ovPdfRenderPage",
     "_ovRenderDocx",
+    "_ovRenderEngine",
     "_ovRenderSimple",
-    "_ovRenderXlsx",
     "_ovRevokeBlobs",
-    "_ovXlsxAoa",
-    "_ovXlsxBindBar",
-    "_ovXlsxBindColGrip",
-    "_ovXlsxBindRowGrip",
-    "_ovXlsxEval",
-    "_ovXlsxFormulasFromZip",
-    "_ovXlsxMergeSizes",
-    "_ovXlsxPersist",
-    "_ovXlsxRecalcAll",
-    "_ovXlsxRenderTable",
-    "_ovXlsxRenderTabs",
-    "_ovXlsxSizeBk",
-    "_ovXlsxSnapshot",
-    "_ovXlsxWriteAoa",
     "_timeout",
-    "act",
-    "addColTh",
-    "addr",
-    "aoa",
-    "ar",
-    "b",
     "bar",
-    "base",
-    "bk",
     "body",
     "br2",
-    "bt",
     "buf",
     "c",
     "cands",
     "canvas",
-    "cc",
-    "cell",
-    "cellKeys",
-    "cellVal",
-    "cells",
-    "ci",
-    "colW",
-    "cols",
+    "cls",
     "conn",
     "container",
     "ctx",
     "cur",
-    "cv",
     "d",
-    "data",
     "dest",
     "div",
-    "dm",
+    "doc",
     "dsBtn",
     "dsBtn2",
     "el",
+    "eng",
     "err",
     "es",
+    "extra",
     "f",
     "fi",
     "fj",
     "fs",
     "fsOf",
-    "fx",
     "goTo",
-    "grip",
     "h",
-    "hRow",
-    "hasFill",
-    "hasFormula",
     "heads",
     "hit",
-    "holder",
     "host",
-    "hr",
-    "i",
+    "id",
     "idx",
-    "idxs",
+    "img",
     "info",
     "infoEl",
-    "isCsv",
-    "isDateCell",
     "items",
     "j",
-    "js",
     "kind",
     "label",
+    "levels",
     "list",
     "lvl",
     "lvls",
     "m",
-    "m2",
+    "map",
     "mid",
-    "mm",
-    "move",
+    "mode",
+    "ms",
     "mx",
-    "n",
     "name",
-    "nameEsc",
-    "num",
-    "nx",
-    "o",
     "obBtn",
-    "oc",
-    "old",
-    "oldCell",
+    "ol",
     "onScroll",
-    "onlyDefaults",
     "openOfficeFile",
-    "org",
     "out",
     "outline",
+    "p",
     "p1",
     "page",
     "pageInput",
@@ -12908,248 +13893,135 @@
     "q",
     "r",
     "raf",
-    "re",
-    "re1",
-    "relsXml",
-    "rem",
+    "remap",
     "resp",
-    "rgrip",
-    "rh",
-    "ri",
     "ro",
-    "row",
-    "rowH",
     "rows",
-    "rr",
-    "s",
     "sc",
     "scroller",
     "searchBar",
     "searchInfo",
     "searchInput",
     "searchResults",
-    "serial",
+    "seen",
     "setZoom",
-    "sh",
-    "shT",
-    "shXml",
-    "sheetsArr",
-    "shiftBk",
     "show",
+    "sid",
     "sizes",
-    "sn",
-    "snap",
     "st",
-    "startH",
-    "startW",
-    "startX",
-    "t",
+    "t0",
     "tab",
-    "table",
-    "tabs",
+    "target",
     "task",
     "tc",
-    "td",
     "text",
-    "tgt",
-    "th",
     "thr",
     "top",
     "total",
-    "tr",
     "txt",
-    "up",
+    "used",
     "v",
-    "vals",
     "viewport",
     "vp1",
     "vr",
-    "w",
-    "warn",
-    "wb",
-    "wbXml",
     "wrap",
-    "ws",
-    "ws0",
+    "xml",
     "zip",
     "zoomEl"
    ],
    "is_module": true,
-   "load_index": 43,
+   "load_index": 45,
    "referenced_by": {
     "js/a11y.js": [
-     "js",
      "page"
     ],
     "js/analyze.js": [
-     "js",
      "page"
-    ],
-    "js/backend-log.js": [
-     "js"
-    ],
-    "js/bit-calc.js": [
-     "js"
     ],
     "js/claude.js": [
      "container",
-     "js",
      "zip"
     ],
     "js/cmd-lib.js": [
      "viewport"
     ],
-    "js/ctx-menu.js": [
-     "js"
-    ],
-    "js/diff-viewer.js": [
-     "js"
+    "js/docview/index.js": [
+     "container",
+     "pdf"
     ],
     "js/editor.js": [
      "_officeKindOf",
      "_ovRevokeBlobs",
-     "js",
+     "levels",
      "openOfficeFile",
      "outline",
      "pdf",
-     "startH",
-     "table",
-     "tc"
+     "tc",
+     "xml"
     ],
     "js/file-tree.js": [
-     "js",
      "outline"
+    ],
+    "js/harness/ai-browser.js": [
+     "page",
+     "ro"
     ],
     "js/harness/ask-md.js": [
      "container",
-     "js",
      "page"
     ],
     "js/harness/base.js": [
-     "js",
-     "serial",
      "task"
     ],
     "js/harness/chatctl.js": [
-     "R",
-     "js",
+     "doc",
      "pdf"
     ],
-    "js/harness/chips.js": [
-     "js"
-    ],
-    "js/harness/fx.js": [
-     "R",
-     "js"
-    ],
     "js/harness/groups.js": [
-     "R",
-     "js",
      "ro"
-    ],
-    "js/harness/hgstate.js": [
-     "js"
-    ],
-    "js/harness/hist.js": [
-     "js"
     ],
     "js/harness/histcache.js": [
-     "R",
-     "js",
      "ro"
-    ],
-    "js/harness/input-fx.js": [
-     "js"
     ],
     "js/harness/main.js": [
-     "R",
-     "js",
+     "doc",
      "ro"
     ],
-    "js/harness/managers.js": [
-     "R",
-     "js"
-    ],
-    "js/harness/modal.js": [
-     "js"
-    ],
     "js/harness/panel.js": [
-     "R",
-     "js",
-     "task",
-     "td"
+     "task"
     ],
     "js/harness/readonly.js": [
      "ro"
     ],
-    "js/harness/reducer.js": [
-     "js"
-    ],
-    "js/harness/registry.js": [
-     "js"
-    ],
     "js/harness/relay.js": [
-     "R",
-     "js",
+     "doc",
      "task"
     ],
     "js/harness/sessions.js": [
-     "R",
-     "js",
      "task"
     ],
-    "js/harness/shell.js": [
-     "R",
-     "js"
-    ],
     "js/harness/skills.js": [
-     "js",
      "ro",
      "zip"
     ],
-    "js/harness/state.js": [
-     "js"
-    ],
-    "js/harness/store.js": [
-     "js"
-    ],
-    "js/harness/subblk.js": [
-     "R",
-     "js"
-    ],
     "js/harness/subpane.js": [
-     "R",
-     "js",
+     "doc",
      "task"
     ],
     "js/harness/tools.js": [
-     "R",
-     "js",
      "task"
     ],
     "js/harness/v4bridge.js": [
-     "js",
-     "ri",
      "task"
     ],
     "js/harness/v4main.js": [
-     "container",
-     "js"
-    ],
-    "js/harness/v4proto.js": [
-     "js"
-    ],
-    "js/harness/v4store.js": [
-     "js"
+     "container"
     ],
     "js/hex-diff.js": [
-     "canvas",
-     "js"
+     "canvas"
     ],
     "js/hex-viewer.js": [
-     "R",
-     "canvas",
-     "js"
+     "canvas"
     ],
     "js/highlight.js": [
      "page",
@@ -13158,115 +14030,56 @@
     "js/history.js": [
      "viewport"
     ],
-    "js/init.js": [
-     "R",
-     "js"
-    ],
-    "js/lanzi/panel.js": [
-     "js"
-    ],
     "js/log-viewer.js": [
-     "js",
      "searchInput",
      "searchResults",
-     "startH",
      "viewport"
     ],
     "js/monaco-bridge.js": [
-     "js"
-    ],
-    "js/nav.js": [
-     "js"
+     "xml"
     ],
     "js/notes-nav.js": [
-     "canvas",
-     "js"
+     "canvas"
+    ],
+    "js/office-engine.js": [
+     "container",
+     "pdf",
+     "setZoom"
     ],
     "js/proxy-panel.js": [
-     "js",
-     "page",
-     "table"
-    ],
-    "js/proxy-usage.js": [
-     "js",
-     "table",
-     "td"
-    ],
-    "js/resources.js": [
-     "js"
+     "page"
     ],
     "js/search.js": [
      "canvas",
      "onScroll",
      "searchInput",
-     "startH",
      "viewport"
     ],
-    "js/settings.js": [
-     "js",
-     "serial"
-    ],
-    "js/sidebar-resize.js": [
-     "js"
+    "js/sense.js": [
+     "doc"
     ],
     "js/sidebar.js": [
-     "R",
-     "js",
      "openOfficeFile",
-     "searchInput",
-     "serial"
-    ],
-    "js/skin.js": [
-     "js"
-    ],
-    "js/snip.js": [
-     "js"
+     "searchInput"
     ],
     "js/terminal-core.js": [
-     "R",
-     "js",
      "onScroll",
      "viewport"
     ],
     "js/tftp.js": [
-     "js",
-     "outline",
-     "startH"
-    ],
-    "js/theme.js": [
-     "js"
-    ],
-    "js/tree-fileops.js": [
-     "js",
      "outline"
     ],
-    "js/tree-search.js": [
-     "js"
-    ],
-    "js/ts-outline.js": [
-     "js"
+    "js/tree-fileops.js": [
+     "outline"
     ],
     "js/util.js": [
-     "js",
-     "serial",
      "viewport"
     ],
-    "js/vcs-git-ops.js": [
-     "js"
-    ],
     "js/vcs-panel.js": [
-     "R",
-     "js",
-     "page",
-     "wb"
-    ],
-    "js/web-panel.js": [
-     "R",
-     "js",
      "page"
     ],
-    "js/win-controls.js": [
-     "js"
+    "js/web-panel.js": [
+     "page"
     ]
    },
    "references": {
@@ -13276,9 +14089,6 @@
     "js/backend-log.js": [
      "toggle"
     ],
-    "js/cmd-lib.js": [
-     "sheet"
-    ],
     "js/diff-viewer.js": [
      "empty"
     ],
@@ -13286,24 +14096,28 @@
      "MB",
      "actions",
      "dirty",
+     "fit",
      "index",
      "json",
-     "level",
      "openDroppedFile",
      "scroll"
+    ],
+    "js/harness/ai-browser.js": [
+     "stage",
+     "state"
     ],
     "js/harness/chatctl.js": [
      "pop",
      "value"
-    ],
-    "js/harness/groups.js": [
-     "MAX"
     ],
     "js/harness/main.js": [
      "of"
     ],
     "js/harness/relay.js": [
      "scale"
+    ],
+    "js/hex-viewer.js": [
+     "ai"
     ],
     "js/icons.js": [
      "ICO",
@@ -13317,19 +14131,21 @@
      "sort"
     ],
     "js/nav.js": [
+     "search",
      "word"
     ],
     "js/notes-nav.js": [
      "rect"
     ],
+    "js/office-engine.js": [
+     "OfficeEngine",
+     "viewer"
+    ],
+    "js/resources.js": [
+     "onDone"
+    ],
     "js/sense.js": [
      "filter"
-    ],
-    "js/settings.js": [
-     "save"
-    ],
-    "js/sidebar-resize.js": [
-     "MIN"
     ],
     "js/sidebar.js": [
      "_recentAdd",
@@ -13345,24 +14161,25 @@
      "bg"
     ],
     "js/tree-fileops.js": [
-     "T"
+     "svg"
     ],
     "js/util.js": [
      "$",
      "connections",
      "showBanner"
     ],
+    "js/vcs-git-ops.js": [
+     "message"
+    ],
     "js/vcs-panel.js": [
      "entry"
     ],
     "js/web-panel.js": [
      "api",
-     "del",
      "headers",
      "push"
     ],
     "js/workerbase.js": [
-     "B",
      "fetch"
     ]
    },
@@ -13465,6 +14282,10 @@
    "is_module": true,
    "load_index": 38,
    "referenced_by": {
+    "js/harness/ai-browser.js": [
+     "badgeEl",
+     "urlEl"
+    ],
     "js/harness/shell.js": [
      "buildProxyTab"
     ],
@@ -13495,6 +14316,9 @@
      "modal",
      "tokens"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "value"
     ],
@@ -13513,12 +14337,14 @@
      "scrollTop"
     ],
     "js/nav.js": [
+     "A",
      "d2"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "js",
-     "page",
-     "table"
+     "page"
     ],
     "js/proxy-usage.js": [
      "pxUsageInit"
@@ -13539,6 +14365,9 @@
     "js/tab-drag.js": [
      "_initTabDrag"
     ],
+    "js/tftp.js": [
+     "hr"
+    ],
     "js/util.js": [
      "$",
      "connections"
@@ -13550,6 +14379,7 @@
     "js/web-panel.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -13639,11 +14469,6 @@
     "js/logs-modal.js": [
      "sort"
     ],
-    "js/office-viewer.js": [
-     "js",
-     "table",
-     "td"
-    ],
     "js/proxy-panel.js": [
      "_pxFnum",
      "_pxTok"
@@ -13724,6 +14549,7 @@
      "openReplay"
     ],
     "js/nav.js": [
+     "elapsed",
      "fire"
     ],
     "js/proxy-panel.js": [
@@ -13773,7 +14599,8 @@
      "fmtTs"
     ],
     "js/web-panel.js": [
-     "api"
+     "api",
+     "no"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -13853,8 +14680,11 @@
     "v"
    ],
    "is_module": true,
-   "load_index": 74,
+   "load_index": 76,
    "referenced_by": {
+    "js/harness/ai-browser.js": [
+     "manual"
+    ],
     "js/harness/main.js": [
      "manual"
     ],
@@ -13872,6 +14702,12 @@
     ],
     "js/nav.js": [
      "manual"
+    ],
+    "js/office-engine.js": [
+     "onDone"
+    ],
+    "js/office-viewer.js": [
+     "onDone"
     ],
     "js/settings.js": [
      "ResPanel",
@@ -13900,6 +14736,10 @@
      "json",
      "modal"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/ask-md.js": [
      "ignore"
     ],
@@ -13922,11 +14762,11 @@
      "center",
      "scrollTop"
     ],
+    "js/nav.js": [
+     "A"
+    ],
     "js/notes-nav.js": [
      "node"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/sense.js": [
      "filter"
@@ -14044,6 +14884,9 @@
      "fit",
      "scroll"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor"
+    ],
     "js/harness/chatctl.js": [
      "value"
     ],
@@ -14057,11 +14900,13 @@
      "initLogSplitter",
      "scrollTop"
     ],
+    "js/nav.js": [
+     "search"
+    ],
     "js/office-viewer.js": [
      "canvas",
      "onScroll",
      "searchInput",
-     "startH",
      "viewport"
     ],
     "js/skin.js": [
@@ -14079,6 +14924,7 @@
     ],
     "js/web-panel.js": [
      "api",
+     "no",
      "push"
     ]
    },
@@ -14263,12 +15109,18 @@
      "buildDiffViewerTab",
      "empty"
     ],
+    "js/docview/index.js": [
+     "DocView"
+    ],
+    "js/downloads.js": [
+     "DL"
+    ],
     "js/editor.js": [
      "json",
      "openFileSmart"
     ],
-    "js/harness/chatctl.js": [
-     "kw"
+    "js/harness/ai-browser.js": [
+     "AI_BR"
     ],
     "js/harness/main.js": [
      "harnessAddFilesByPath"
@@ -14278,6 +15130,9 @@
     ],
     "js/log-viewer.js": [
      "scrollTop"
+    ],
+    "js/office-viewer.js": [
+     "doc"
     ],
     "js/settings.js": [
      "ready"
@@ -14293,6 +15148,9 @@
     "js/web-panel.js": [
      "api",
      "push"
+    ],
+    "js/win-controls.js": [
+     "fcShell"
     ],
     "js/workerbase.js": [
      "EventSource",
@@ -14316,6 +15174,7 @@
     "NAMES",
     "NEW",
     "NJ",
+    "NO_POLICY",
     "OPTS",
     "POLICY",
     "_ARROW",
@@ -14326,13 +15185,16 @@
     "_assocBulk",
     "_bindSearchHk",
     "_ckT",
+    "_danger",
     "_ddConfirm",
     "_ddFmtSize",
     "_ddProgress",
     "_ddRefreshDataPane",
     "_ddRefreshUsage",
+    "_dlEl",
     "_do",
     "_docRef",
+    "_fillDays",
     "_hkApply",
     "_hkClear",
     "_hkInput",
@@ -14365,7 +15227,10 @@
     "_stRenderTermKeysPane",
     "_stRenderUpdatePane",
     "_stShowSection",
+    "_statEl",
+    "ab",
     "ac",
+    "aiBrowserOn",
     "alive",
     "anyOn",
     "b",
@@ -14392,13 +15257,13 @@
     "curStyle",
     "customRow",
     "d",
+    "daysSel",
     "detail",
     "dir",
     "doFont",
     "doInstall",
     "doZoom",
     "docHk",
-    "dotnetHint",
     "el",
     "el0",
     "esc",
@@ -14466,6 +15331,7 @@
     "off",
     "og",
     "ok",
+    "olderWrap",
     "on",
     "onKey",
     "online",
@@ -14482,6 +15348,7 @@
     "pathEl",
     "pct",
     "pending",
+    "pendingDays",
     "perfBtn",
     "ph",
     "prev",
@@ -14517,7 +15384,6 @@
     "stages",
     "stopRec",
     "styleRow",
-    "subs",
     "sync",
     "sync1mState",
     "syncEye",
@@ -14528,6 +15394,7 @@
     "syncTabMode",
     "syncZoom",
     "t",
+    "tail",
     "target",
     "tgl",
     "tip",
@@ -14544,6 +15411,7 @@
     "ver",
     "w",
     "warn",
+    "wr",
     "wrap",
     "z",
     "zoomVal"
@@ -14569,6 +15437,10 @@
      "pending",
      "save"
     ],
+    "js/harness/ai-browser.js": [
+     "force",
+     "ready"
+    ],
     "js/harness/base.js": [
      "pending"
     ],
@@ -14582,6 +15454,9 @@
      "force",
      "r3",
      "reset"
+    ],
+    "js/harness/hist.js": [
+     "pending"
     ],
     "js/harness/histcache.js": [
      "force"
@@ -14669,8 +15544,8 @@
     "js/notes-nav.js": [
      "save"
     ],
-    "js/office-viewer.js": [
-     "save"
+    "js/office-engine.js": [
+     "ready"
     ],
     "js/proxy-panel.js": [
      "npm",
@@ -14710,6 +15585,7 @@
      "save"
     ],
     "js/web-panel.js": [
+     "pending",
      "ready",
      "save"
     ]
@@ -14725,16 +15601,25 @@
      "check",
      "empty"
     ],
+    "js/downloads.js": [
+     "DL"
+    ],
     "js/editor.js": [
      "MB",
      "_mdPvSetTheme",
      "_mdPvTheme",
      "actions",
+     "inline",
      "json",
      "level",
      "modal",
      "openFileSmart",
      "tokens"
+    ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "stage",
+     "state"
     ],
     "js/harness/ask-md.js": [
      "legacy"
@@ -14772,6 +15657,9 @@
      "_hxConfirm",
      "ai"
     ],
+    "js/history.js": [
+     "older"
+    ],
     "js/icons.js": [
      "ICO16"
     ],
@@ -14784,15 +15672,12 @@
      "NavJump",
      "applyKeys",
      "keyLabel",
+     "search",
      "word"
     ],
     "js/notes-nav.js": [
      "node",
      "targets"
-    ],
-    "js/office-viewer.js": [
-     "js",
-     "serial"
     ],
     "js/proxy-usage.js": [
      "palette"
@@ -14851,8 +15736,13 @@
      "api",
      "del",
      "headers",
+     "no",
      "push",
-     "settled"
+     "settled",
+     "user"
+    ],
+    "js/win-controls.js": [
+     "fcShell"
     ],
     "js/workerbase.js": [
      "B",
@@ -14880,27 +15770,21 @@
    ],
    "is_module": true,
    "load_index": 11,
-   "referenced_by": {
-    "js/office-viewer.js": [
-     "MIN"
-    ]
-   },
+   "referenced_by": {},
    "references": {
     "js/backend-log.js": [
      "toggle"
     ],
     "js/editor.js": [
      "index",
-     "json"
+     "json",
+     "startW"
     ],
     "js/harness/readonly.js": [
      "fc"
     ],
     "js/log-viewer.js": [
      "center"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/skin.js": [
      "style"
@@ -15072,6 +15956,9 @@
     "js/harness/groups.js": [
      "exp"
     ],
+    "js/harness/hist.js": [
+     "shell"
+    ],
     "js/harness/histcache.js": [
      "exp"
     ],
@@ -15134,6 +16021,9 @@
     ],
     "js/monaco-bridge.js": [
      "shell"
+    ],
+    "js/office-engine.js": [
+     "activeSheet"
     ],
     "js/office-viewer.js": [
      "_recentAdd",
@@ -15215,6 +16105,9 @@
     "js/file-icons.js": [
      "fileIconHtml"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/chatctl.js": [
      "pop",
      "value"
@@ -15250,14 +16143,16 @@
      "sort"
     ],
     "js/nav.js": [
+     "A",
+     "search",
      "word"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "R",
-     "js",
      "openOfficeFile",
-     "searchInput",
-     "serial"
+     "searchInput"
     ],
     "js/sense.js": [
      "filter",
@@ -15308,7 +16203,9 @@
      "_webActivePid",
      "api",
      "del",
-     "headers"
+     "headers",
+     "no",
+     "user"
     ],
     "js/win-controls.js": [
      "init"
@@ -15366,10 +16263,16 @@
     "js/diff-viewer.js": [
      "style"
     ],
+    "js/downloads.js": [
+     "style"
+    ],
     "js/editor.js": [
      "style"
     ],
     "js/file-tree.js": [
+     "style"
+    ],
+    "js/harness/ai-browser.js": [
      "style"
     ],
     "js/harness/ask-md.js": [
@@ -15453,6 +16356,9 @@
     "js/notes-nav.js": [
      "style"
     ],
+    "js/office-engine.js": [
+     "style"
+    ],
     "js/office-viewer.js": [
      "style"
     ],
@@ -15519,8 +16425,8 @@
     "js/editor.js": [
      "json"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/nav.js": [
+     "A"
     ],
     "js/sense.js": [
      "filter"
@@ -15533,7 +16439,9 @@
     ],
     "js/web-panel.js": [
      "api",
-     "headers"
+     "headers",
+     "no",
+     "origin"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -15561,14 +16469,14 @@
     "js/editor.js": [
      "json"
     ],
-    "js/office-viewer.js": [
-     "js"
-    ],
     "js/util.js": [
      "showBanner"
     ],
     "js/web-panel.js": [
      "api"
+    ],
+    "js/win-controls.js": [
+     "fcShell"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -15676,6 +16584,9 @@
     "js/util.js": [
      "_ovSyncGroupOrder",
      "drawerBar"
+    ],
+    "js/web-panel.js": [
+     "no"
     ]
    },
    "top_level_exec": [
@@ -15865,6 +16776,9 @@
      "jump",
      "scroll"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/main.js": [
      "of"
     ],
@@ -15890,11 +16804,13 @@
      "scrollTop"
     ],
     "js/nav.js": [
-     "clock"
+     "clock",
+     "search"
+    ],
+    "js/office-engine.js": [
+     "viewer"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
      "onScroll",
      "viewport"
     ],
@@ -15952,6 +16868,7 @@
     "js/web-panel.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/workerbase.js": [
@@ -16076,6 +16993,9 @@
     "js/harness/subpane.js": [
      "resizer"
     ],
+    "js/proxy-panel.js": [
+     "hr"
+    ],
     "js/sidebar-resize.js": [
      "resizer"
     ],
@@ -16095,6 +17015,9 @@
      "collapse",
      "json"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor"
+    ],
     "js/harness/chatctl.js": [
      "_t",
      "value"
@@ -16106,9 +17029,7 @@
      "innerH"
     ],
     "js/office-viewer.js": [
-     "js",
-     "outline",
-     "startH"
+     "outline"
     ],
     "js/settings.js": [
      "force",
@@ -16133,6 +17054,8 @@
      "__webUiIsOwner",
      "api",
      "headers",
+     "no",
+     "origin",
      "owner"
     ],
     "js/workerbase.js": [
@@ -16225,6 +17148,9 @@
      "bg"
     ],
     "js/file-tree.js": [
+     "bg"
+    ],
+    "js/harness/ai-browser.js": [
      "bg"
     ],
     "js/harness/panel.js": [
@@ -16325,6 +17251,9 @@
     "js/editor.js": [
      "json"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor"
+    ],
     "js/harness/chatctl.js": [
      "value"
     ],
@@ -16343,8 +17272,8 @@
     "js/monaco-bridge.js": [
      "monacoSyncTheme"
     ],
-    "js/office-viewer.js": [
-     "js"
+    "js/nav.js": [
+     "A"
     ],
     "js/proxy-usage.js": [
      "palette"
@@ -16370,7 +17299,8 @@
     ],
     "js/web-panel.js": [
      "api",
-     "headers"
+     "headers",
+     "origin"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -16524,7 +17454,7 @@
      "fileops"
     ],
     "js/office-viewer.js": [
-     "T"
+     "svg"
     ],
     "js/settings.js": [
      "down",
@@ -16603,14 +17533,18 @@
      "scrollTop"
     ],
     "js/nav.js": [
+     "A",
      "NavJump",
+     "search",
      "word"
     ],
     "js/notes-nav.js": [
      "rect"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "js",
      "outline"
     ],
     "js/skin.js": [
@@ -16635,7 +17569,8 @@
      "api",
      "del",
      "headers",
-     "push"
+     "push",
+     "touch"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -16777,10 +17712,9 @@
      "L"
     ],
     "js/nav.js": [
+     "A",
+     "search",
      "word"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/skin.js": [
      "style"
@@ -16855,6 +17789,9 @@
     ],
     "js/monaco-bridge.js": [
      "langName"
+    ],
+    "js/nav.js": [
+     "walk"
     ]
    },
    "references": {
@@ -16874,9 +17811,6 @@
     ],
     "js/notes-nav.js": [
      "node"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/sense.js": [
      "filter"
@@ -17139,6 +18073,9 @@
      "portList",
      "showBanner"
     ],
+    "js/downloads.js": [
+     "showBanner"
+    ],
     "js/editor.js": [
      "$",
      "_HK",
@@ -17161,6 +18098,9 @@
      "banner",
      "connections",
      "showBanner"
+    ],
+    "js/harness/ai-browser.js": [
+     "$"
     ],
     "js/harness/ask-md.js": [
      "$"
@@ -17322,6 +18262,7 @@
     ],
     "js/nav.js": [
      "$",
+     "banner",
      "showBanner",
      "stack"
     ],
@@ -17486,6 +18427,10 @@
      "modal",
      "scroll"
     ],
+    "js/harness/ai-browser.js": [
+     "front",
+     "state"
+    ],
     "js/harness/main.js": [
      "nd",
      "of"
@@ -17495,9 +18440,6 @@
     ],
     "js/harness/skills.js": [
      "zh"
-    ],
-    "js/harness/v4proto.js": [
-     "got"
     ],
     "js/hex-diff.js": [
      "other"
@@ -17521,14 +18463,17 @@
      "sort"
     ],
     "js/nav.js": [
+     "A",
+     "search",
      "word"
     ],
     "js/notes-nav.js": [
      "rect"
     ],
+    "js/office-engine.js": [
+     "viewer"
+    ],
     "js/office-viewer.js": [
-     "js",
-     "serial",
      "viewport"
     ],
     "js/sense.js": [
@@ -17566,7 +18511,9 @@
      "buildWebPanelTab",
      "headers",
      "newTab",
-     "push"
+     "no",
+     "push",
+     "touch"
     ],
     "js/win-controls.js": [
      "init"
@@ -17630,6 +18577,9 @@
      "local",
      "message"
     ],
+    "js/docview/index.js": [
+     "message"
+    ],
     "js/harness/base.js": [
      "message"
     ],
@@ -17640,6 +18590,9 @@
      "message"
     ],
     "js/harness/histcache.js": [
+     "message"
+    ],
+    "js/harness/main.js": [
      "message"
     ],
     "js/harness/modal.js": [
@@ -17675,6 +18628,12 @@
     "js/notes-nav.js": [
      "message"
     ],
+    "js/office-engine.js": [
+     "message"
+    ],
+    "js/office-viewer.js": [
+     "message"
+    ],
     "js/ts-outline.js": [
      "message"
     ],
@@ -17700,6 +18659,9 @@
      "json",
      "modal"
     ],
+    "js/harness/ai-browser.js": [
+     "_status"
+    ],
     "js/harness/ask-md.js": [
      "ignore"
     ],
@@ -17712,9 +18674,6 @@
     ],
     "js/harness/skills.js": [
      "bodyHtml"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/sense.js": [
      "filter"
@@ -17753,6 +18712,7 @@
     "_applyQ",
     "_brb",
     "_can",
+    "_cfRow",
     "_chg",
     "_chgTxt",
     "_core",
@@ -18073,6 +19033,10 @@
     "js/file-tree.js": [
      "deco"
     ],
+    "js/harness/ai-browser.js": [
+     "cursor",
+     "state"
+    ],
     "js/harness/base.js": [
      "_HG"
     ],
@@ -18116,14 +19080,12 @@
      "rowEl"
     ],
     "js/nav.js": [
+     "A",
      "commit",
      "word"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
-     "page",
-     "wb"
+     "page"
     ],
     "js/proxy-panel.js": [
      "until"
@@ -18179,8 +19141,10 @@
      "del",
      "ff",
      "headers",
+     "origin",
      "owner",
-     "push"
+     "push",
+     "user"
     ],
     "js/win-controls.js": [
      "init"
@@ -18198,9 +19162,11 @@
    "defines": [
     "$w",
     "KEY",
+    "NATIVE",
     "TOKEN",
     "_WV",
     "_WV_INJECT",
+    "_WV_LOCAL",
     "__fcDiag",
     "__fcPwToken",
     "__fcPwTokenPromise",
@@ -18219,6 +19185,22 @@
     "_k",
     "_mkNav",
     "_mkUi",
+    "_pwConfirm",
+    "_pwPromptEl",
+    "_pwPromptHide",
+    "_pwPromptId",
+    "_pwPromptShow",
+    "_pwPromptTimer",
+    "_pwSiteMenu",
+    "_pwSugActiveWebview",
+    "_pwSugDocDown",
+    "_pwSugDocKey",
+    "_pwSugEl",
+    "_pwSugHide",
+    "_pwSugId",
+    "_pwSugItems",
+    "_pwSugShow",
+    "_pwSugTimer",
     "_saved",
     "_wc",
     "_webAct",
@@ -18278,6 +19260,7 @@
     "c",
     "c2",
     "changed",
+    "choose",
     "claim",
     "close",
     "closeEditorTab",
@@ -18321,7 +19304,10 @@
     "isWeb",
     "it",
     "item",
+    "items",
+    "left",
     "list",
+    "m",
     "menu",
     "merged",
     "mo",
@@ -18331,22 +19317,28 @@
     "nav",
     "newTab",
     "nm",
+    "no",
     "note",
     "ok",
     "okBtn",
     "old",
+    "oldId",
+    "onDoc",
     "onNav",
     "onScreen",
     "onStyleMut",
     "orig",
     "origClose",
+    "origin",
     "owner",
     "pend",
+    "ph",
     "pid",
     "portId",
     "pos",
     "prev",
     "push",
+    "pw",
     "queue",
     "r",
     "rd",
@@ -18355,7 +19347,9 @@
     "sc",
     "settled",
     "sh",
+    "show",
     "shown",
+    "sid",
     "srv",
     "starBtn",
     "starred",
@@ -18370,62 +19364,98 @@
     "title",
     "top",
     "topUp",
+    "touch",
     "u",
     "url",
     "urlInput",
+    "user",
     "v",
     "val",
     "want",
+    "wcId",
     "webTabs",
+    "who",
+    "wr",
     "wrap",
+    "wraps",
     "wv",
     "x",
+    "yes",
     "z"
    ],
    "is_module": true,
    "load_index": 37,
    "referenced_by": {
     "js/analyze.js": [
+     "no",
      "push"
     ],
     "js/backend-log.js": [
      "api",
+     "headers",
      "sy"
     ],
     "js/bit-calc.js": [
      "api",
-     "headers"
+     "headers",
+     "no",
+     "origin"
     ],
     "js/claude.js": [
      "api",
      "headers",
-     "push"
+     "no",
+     "push",
+     "user"
     ],
     "js/cmd-lib.js": [
      "api",
      "del",
      "headers",
+     "no",
      "push"
     ],
+    "js/ctx-menu.js": [
+     "no"
+    ],
     "js/diff-viewer.js": [
-     "api"
+     "api",
+     "no"
+    ],
+    "js/downloads.js": [
+     "_webAct",
+     "api",
+     "headers",
+     "push"
     ],
     "js/editor.js": [
      "above",
      "api",
      "below",
      "headers",
+     "no",
      "push"
+    ],
+    "js/file-icons.js": [
+     "no"
     ],
     "js/file-tree.js": [
      "api",
      "headers",
      "push"
     ],
+    "js/harness/ai-browser.js": [
+     "push",
+     "wcId"
+    ],
     "js/harness/ask-md.js": [
+     "__newWindow",
      "api",
      "headers",
      "push"
+    ],
+    "js/harness/base.js": [
+     "user"
     ],
     "js/harness/chatctl.js": [
      "api",
@@ -18443,14 +19473,20 @@
      "push"
     ],
     "js/harness/groups.js": [
-     "push"
+     "push",
+     "user"
     ],
     "js/harness/hgstate.js": [
      "del"
     ],
+    "js/harness/hist.js": [
+     "user"
+    ],
     "js/harness/histcache.js": [
      "api",
-     "push"
+     "no",
+     "push",
+     "user"
     ],
     "js/harness/input-fx.js": [
      "api",
@@ -18462,9 +19498,11 @@
      "aw",
      "del",
      "headers",
+     "no",
      "orig",
      "push",
-     "queue"
+     "queue",
+     "user"
     ],
     "js/harness/managers.js": [
      "api",
@@ -18488,10 +19526,14 @@
      "api",
      "del",
      "push",
-     "queue"
+     "queue",
+     "user"
     ],
     "js/harness/registry.js": [
      "api"
+    ],
+    "js/harness/relay.js": [
+     "user"
     ],
     "js/harness/sessions.js": [
      "api",
@@ -18500,41 +19542,50 @@
      "queue"
     ],
     "js/harness/shell.js": [
-     "api"
+     "api",
+     "no"
     ],
     "js/harness/skills.js": [
      "api",
      "headers",
+     "origin",
      "owner",
-     "push"
+     "push",
+     "user"
     ],
     "js/harness/store.js": [
      "api",
      "del",
-     "push"
+     "push",
+     "user"
     ],
     "js/harness/subpane.js": [
      "api",
-     "push"
+     "push",
+     "user"
     ],
     "js/harness/tools.js": [
      "api",
      "arm",
      "del",
      "headers",
-     "push"
+     "no",
+     "push",
+     "touch"
     ],
     "js/harness/v4bridge.js": [
-     "_k",
      "api",
+     "no",
      "push",
-     "queue"
+     "queue",
+     "user"
     ],
     "js/harness/v4main.js": [
      "api"
     ],
     "js/harness/v4proto.js": [
      "expect",
+     "no",
      "push"
     ],
     "js/harness/v4store.js": [
@@ -18544,34 +19595,41 @@
     "js/hex-diff.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/hex-viewer.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/highlight.js": [
+     "no",
      "push"
     ],
     "js/history.js": [
      "api",
+     "no",
      "push"
     ],
     "js/icons.js": [
      "c2"
     ],
     "js/init.js": [
+     "__newWindow",
      "api",
      "headers"
     ],
     "js/lanzi/panel.js": [
      "api",
-     "headers"
+     "headers",
+     "user"
     ],
     "js/log-viewer.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/logs-modal.js": [
@@ -18580,34 +19638,42 @@
     ],
     "js/monaco-bridge.js": [
      "api",
-     "headers"
+     "headers",
+     "origin"
     ],
     "js/nav.js": [
      "api",
+     "arm",
      "headers",
+     "no",
      "push"
     ],
     "js/notes-nav.js": [
      "api",
      "headers",
+     "no",
+     "push"
+    ],
+    "js/office-engine.js": [
      "push"
     ],
     "js/office-viewer.js": [
      "api",
-     "del",
      "headers",
      "push"
     ],
     "js/proxy-panel.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/proxy-usage.js": [
      "api"
     ],
     "js/replay.js": [
-     "api"
+     "api",
+     "no"
     ],
     "js/resources.js": [
      "api",
@@ -18616,6 +19682,7 @@
     ],
     "js/search.js": [
      "api",
+     "no",
      "push"
     ],
     "js/sense.js": [
@@ -18627,8 +19694,10 @@
      "api",
      "del",
      "headers",
+     "no",
      "push",
-     "settled"
+     "settled",
+     "user"
     ],
     "js/sidebar-resize.js": [
      "api",
@@ -18638,35 +19707,47 @@
      "_webActivePid",
      "api",
      "del",
-     "headers"
+     "headers",
+     "no",
+     "user"
     ],
     "js/skin.js": [
      "api",
-     "headers"
+     "headers",
+     "no",
+     "origin"
     ],
     "js/snip.js": [
      "api"
     ],
+    "js/tab-drag.js": [
+     "no"
+    ],
     "js/terminal-core.js": [
      "api",
      "headers",
+     "no",
      "push"
     ],
     "js/tftp.js": [
      "__webUiIsOwner",
      "api",
      "headers",
+     "no",
+     "origin",
      "owner"
     ],
     "js/theme.js": [
      "api",
-     "headers"
+     "headers",
+     "origin"
     ],
     "js/tree-fileops.js": [
      "api",
      "del",
      "headers",
-     "push"
+     "push",
+     "touch"
     ],
     "js/tree-search.js": [
      "api",
@@ -18681,7 +19762,9 @@
      "buildWebPanelTab",
      "headers",
      "newTab",
-     "push"
+     "no",
+     "push",
+     "touch"
     ],
     "js/vcs-git-ops.js": [
      "api",
@@ -18694,13 +19777,15 @@
      "del",
      "ff",
      "headers",
+     "origin",
      "owner",
-     "push"
+     "push",
+     "user"
     ],
     "js/win-controls.js": [
      "api",
      "headers",
-     "wv"
+     "no"
     ],
     "js/workerbase.js": [
      "api"
@@ -18714,6 +19799,10 @@
      "check",
      "empty"
     ],
+    "js/downloads.js": [
+     "DL",
+     "toggleFrom"
+    ],
     "js/editor.js": [
      "actions",
      "create",
@@ -18722,12 +19811,21 @@
      "json",
      "modal"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/harness/base.js": [
      "_HG"
     ],
     "js/harness/chatctl.js": [
      "_t",
      "value"
+    ],
+    "js/harness/main.js": [
+     "of"
+    ],
+    "js/harness/readonly.js": [
+     "fc"
     ],
     "js/harness/v4proto.js": [
      "patch"
@@ -18741,12 +19839,14 @@
     "js/icons.js": [
      "ICO16"
     ],
+    "js/nav.js": [
+     "search",
+     "word"
+    ],
     "js/notes-nav.js": [
      "rect"
     ],
     "js/office-viewer.js": [
-     "R",
-     "js",
      "page"
     ],
     "js/resources.js": [
@@ -18757,6 +19857,7 @@
      "filter"
     ],
     "js/settings.js": [
+     "pending",
      "ready",
      "save"
     ],
@@ -18842,7 +19943,7 @@
     "t"
    ],
    "is_module": true,
-   "load_index": 75,
+   "load_index": 77,
    "referenced_by": {
     "js/analyze.js": [
      "init"
@@ -18854,8 +19955,18 @@
     "js/claude.js": [
      "init"
     ],
+    "js/downloads.js": [
+     "fcShell"
+    ],
     "js/editor.js": [
      "fcShell"
+    ],
+    "js/harness/ai-browser.js": [
+     "fcShell"
+    ],
+    "js/harness/ask-md.js": [
+     "fcShell",
+     "init"
     ],
     "js/harness/base.js": [
      "init"
@@ -18882,16 +19993,27 @@
      "init"
     ],
     "js/init.js": [
+     "fcShell",
      "init"
     ],
     "js/monaco-bridge.js": [
      "init"
     ],
     "js/nav.js": [
+     "fcShell",
      "init"
+    ],
+    "js/sense.js": [
+     "fcShell"
+    ],
+    "js/settings.js": [
+     "fcShell"
     ],
     "js/sidebar.js": [
      "init"
+    ],
+    "js/snip.js": [
+     "fcShell"
     ],
     "js/ts-outline.js": [
      "init"
@@ -18918,14 +20040,17 @@
      "json",
      "moved"
     ],
+    "js/harness/ai-browser.js": [
+     "state"
+    ],
     "js/hex-viewer.js": [
      "rgba"
     ],
+    "js/nav.js": [
+     "A"
+    ],
     "js/notes-nav.js": [
      "rect"
-    ],
-    "js/office-viewer.js": [
-     "js"
     ],
     "js/replay.js": [
      "fire"
@@ -18947,7 +20072,7 @@
     "js/web-panel.js": [
      "api",
      "headers",
-     "wv"
+     "no"
     ],
     "js/workerbase.js": [
      "fetch"
@@ -18992,6 +20117,10 @@
      "fetch"
     ],
     "js/diff-viewer.js": [
+     "B",
+     "fetch"
+    ],
+    "js/downloads.js": [
      "B",
      "fetch"
     ],
@@ -19118,14 +20247,17 @@
     ],
     "js/nav.js": [
      "B",
+     "FULL",
      "fetch"
     ],
     "js/notes-nav.js": [
      "PRE",
      "fetch"
     ],
+    "js/office-engine.js": [
+     "fetch"
+    ],
     "js/office-viewer.js": [
-     "B",
      "fetch"
     ],
     "js/proxy-panel.js": [

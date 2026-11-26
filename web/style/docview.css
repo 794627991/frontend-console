@@ -1,0 +1,185 @@
+/* ============================================================
+   docview —— 文档预览引擎与分屏文档标签的样式
+   （2026-11-26，Step 2。设计文档 5.4 的 web/style/docview.css）
+
+   界面文字禁用彩色 emoji（工厂铁律）；图标走 ICO16。
+   ============================================================ */
+
+/* ---------- 面板骨架（6.2.7） ---------- */
+.dv-root { display: flex; flex-direction: column; height: 100%; min-height: 0;
+  background: var(--bg-panel); font-size: 12px; position: relative; }
+
+/* **`[hidden]` 必须压得住 display**（2026-11-26 实锤事故）。
+   下面这些块都写了 `display: flex`——而 HTML 的 hidden 属性只设
+   `display: none`，优先级被作者样式表里的 `display: flex` 直接盖掉。
+   结果：JS 里 `el.hidden = true` 完全不生效，「文件已在磁盘上更改」从一
+   打开就挂着、点「忽略」关不掉；`.dv-zoom` 也一样——docx 不支持缩放，
+   它本该隐藏却一直显示。浏览器 UA 样式表里本有一条
+   `[hidden] { display: none }`，但作者的 `display:flex` 赢了。
+   **这一条是全局兜底：任何模块的 hidden 都该生效。** */
+[hidden] { display: none !important; }
+
+/* 顶栏 */
+.dv-bar { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap; }
+.dv-name { font-size: 12px; color: var(--fg-bright); font-family: var(--font-mono);
+  cursor: pointer; max-width: 40%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dv-name:hover { color: var(--accent); }
+.dv-pos { font-size: 10px; color: var(--muted); font-family: var(--font-mono); }
+.dv-spacer { flex: 1; }
+/* .dv-zoom 已随用户令删除（2026-11-26：「- 100% + 完全没效果 不行直接删了」），
+   缩放改走 Ctrl+滚轮 + .dv-zoom-toast */
+.dv-find-wrap { display: flex; align-items: center; gap: 4px; }
+.dv-find { width: 140px; background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 8px; color: var(--fg); font-size: 11px; outline: none; }
+.dv-find:focus { border-color: var(--accent); }
+.dv-find-n { font-size: 10px; color: var(--muted); min-width: 36px;
+  font-family: var(--font-mono); }
+/* 上/下一处：纯文字「上」「下」（禁 emoji，图标库里没有上下箭头） */
+.dv-find-prev, .dv-find-next { padding: 2px 6px !important; font-size: 10px;
+  min-width: 0; line-height: 1.4; }
+/* 当前跳到的那一处：给它所在块加描边，与其余命中区分开 */
+.dv-hit-cur { outline: 2px solid var(--accent); outline-offset: 2px;
+  border-radius: 2px; }
+
+.dv-note { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-bottom: 1px solid var(--border); font-size: 11px; color: var(--fg); }
+.dv-note-t { flex: 1; }
+.dv-note-x { cursor: pointer; color: var(--muted); }
+.dv-note-x:hover { color: var(--accent); }
+
+/* 文件变更不再弹横幅（2026-11-26 用户令：「自动重新加载不就行了？」），
+   这条留着只为清掉历史 CSS 的假设——没有 .dv-changed 元素。 */
+
+.dv-body { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.dv-status { padding: 24px; color: var(--muted); font-size: 12px; text-align: center; }
+/* Ctrl+滚轮缩放的短暂反馈（没有常驻缩放控件了，见 core.js 注释） */
+.dv-zoom-toast { position: absolute; right: 12px; bottom: 12px; z-index: 5;
+  padding: 4px 10px; border-radius: 4px; font-family: var(--font-mono);
+  font-size: 11px; color: var(--fg-bright); pointer-events: none;
+  background: color-mix(in srgb, var(--bg-card) 88%, transparent);
+  border: 1px solid var(--border); opacity: 0; transition: opacity .15s; }
+.dv-zoom-toast.on { opacity: 1; }
+
+/* ---------- 高亮（CSS Custom Highlight API） ---------- */
+::highlight(dv-reveal) { background-color: color-mix(in srgb, var(--accent) 32%, transparent); }
+::highlight(dv-hit) { background-color: color-mix(in srgb, var(--neon-yellow, #c9a227) 45%, transparent); }
+/* 回退形态（接口不可用时按块加的类） */
+.dv-reveal-fallback { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.dv-revealed { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.dv-range { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -2px; }
+
+/* ---------- docx ---------- */
+.dv-docx-host { background: var(--bg-panel); }
+/* docx-preview 自带的 .dv-docx-wrapper 是灰底 + 30px 内边距（它自己的预览风格）。
+   放进我们的面板里两面都要覆盖：灰底会在缩放留白处露出来，像一片死白/死灰。 */
+.dv-docx-host .dv-docx-wrapper { background: var(--bg-panel); padding: 12px 0; }
+.dv-docx-host .dv-docx-wrapper > section { background: #fff; margin: 0 auto 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+/* 窄容器（分屏）里的整页缩放。
+   docx-preview 的 wrapper 是 `display:flex; flex-flow:column; align-items:center`，
+   section 是固定 A4 物理宽度（≈794px）。**光用 transform 缩放不够**：transform
+   不改布局盒，flex 仍按 794px 居中 → 页面偏到右侧、左边一大片空白（实锤）。
+   所以缩放态把 wrapper 改成块级、section 用 margin 定位，让 transform-origin
+   的左侧对齐真正生效。 */
+.dv-docx-host.dv-docx-fit .dv-docx-wrapper { display: block; overflow-x: hidden; }
+.dv-docx-host.dv-docx-fit .dv-docx-wrapper > section {
+  margin-left: 12px; margin-right: 0; transform-origin: top left; }
+/* 非缩放态（主界面宽标签页）保持原始宽度，允许横向滚动 */
+.dv-docx-host:not(.dv-docx-fit) .dv-docx-wrapper { overflow-x: auto; }
+/* 放大态：transform 只改绘制不改布局盒。用 top left 原点 + 块级布局，
+   放大后从左上角往右下长，多出来的部分靠横向滚动看，而不是向两侧溢出被裁。 */
+.dv-docx-host.dv-docx-grow .dv-docx-wrapper { display: block; overflow-x: auto; }
+.dv-docx-host.dv-docx-grow .dv-docx-wrapper > section {
+  margin-left: 12px; margin-right: 0; transform-origin: top left; }
+
+/* ---------- pdf ---------- */
+.dv-pdf-pages { padding: 12px; display: flex; flex-direction: column; align-items: center; }
+.dv-page { margin-bottom: 10px; position: relative; min-height: 200px; width: fit-content; }
+.dv-pdf-canvas { box-shadow: 0 2px 8px rgba(0,0,0,0.2); display: block; }
+/* 文字层：透明覆盖在 canvas 上，只给查找/引文定位用，不吃鼠标 */
+.dv-pdf-text { position: absolute; top: 0; left: 0; pointer-events: none;
+  color: transparent; overflow: hidden; }
+.dv-pdf-text span { position: absolute; white-space: pre; }
+.dv-pdf-label { font-size: 9px; color: var(--muted); text-align: center;
+  padding: 2px 0; font-family: var(--font-mono); }
+
+/* ---------- xlsx / pptx ---------- */
+.dv-xlsx-host { position: relative; width: 100%; height: 100%; }
+.dv-pptx-host { width: 100%; }
+
+/* ---------- image ---------- */
+.dv-image-body { display: flex; align-items: center; justify-content: center;
+  overflow: auto; padding: 12px; }
+.dv-image-wrap { display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%; }
+.dv-image { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.dv-image.dv-image-actual { max-width: none; max-height: none; object-fit: none; }
+
+/* ---------- 分屏里的文档标签（6.2） ---------- */
+.hg-doc-pane { padding: 0; overflow: hidden; }
+.dv-pane-host { width: 100%; height: 100%; display: flex; flex-direction: column; }
+/* 分屏里也能「在主界面打开」——2026-11-26 用户实测质问：
+   「我记得在 AI 浏览器里之前看见过在工具主界面打开快捷键，我重新打开工具
+    反而没看到！」实际上是被下面这条 `display: none` 藏掉的，不是没做。
+   分屏里读到一段想拿去编辑时，这正是唯一顺手出口，必须留着。 */
+
+/* 聊天流里的文档链接 */
+.hg-doclink { color: var(--accent); cursor: pointer; text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent); }
+.hg-doclink:hover { border-bottom-style: solid;
+  background: color-mix(in srgb, var(--accent) 10%, transparent); }
+code .hg-doclink { border-bottom: none; }
+
+/* ---------- 「打开文件」伪 tab 的面板（2026-11-26 用户令） ----------
+   与「动态」「目录」同级的分屏标签页。要求「符合工具的 UI 美化」：
+   深色卡片、克制的高亮色、明确的层级，不放彩色 emoji。 */
+.hg-docopen-msgs { padding: 12px; overflow-y: auto; }
+.hg-docopen-pane { display: flex; flex-direction: column; gap: 12px; }
+
+.dv-open-hero { display: flex; flex-direction: column; gap: 8px; }
+.dv-open-pick { display: flex; align-items: center; justify-content: center; gap: 9px;
+  width: 100%; padding: 16px 12px; cursor: pointer; font-family: inherit;
+  font-size: 13px; color: var(--fg-bright);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 8px; transition: background .12s, border-color .12s; }
+.dv-open-pick:hover { background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
+  border-color: var(--accent); }
+.dv-open-ico { display: inline-flex; color: var(--accent); }
+.dv-open-ico svg { width: 18px; height: 18px; }
+.dv-open-hint { font-size: 10.5px; color: var(--muted); line-height: 1.6; }
+
+.dv-open-drop { display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px; border: 1px dashed var(--border); border-radius: 8px;
+  color: var(--muted); background: var(--bg-card); font-size: 11px; }
+.dv-open-drop.hot { border-color: var(--accent); color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-card)); }
+.dv-open-drop-ico { display: inline-flex; opacity: .7; flex: none; }
+.dv-open-drop-ico svg { width: 16px; height: 16px; }
+.dv-open-drop-t { }
+
+.dv-open-sec { display: flex; flex-direction: column; gap: 5px; }
+.dv-open-sec-head { font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  color: var(--muted); padding: 2px 2px 4px; }
+.dv-open-recent { display: flex; flex-direction: column; gap: 2px; }
+.dv-open-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 5px; cursor: pointer; font-size: 11px; color: var(--fg);
+  border: 1px solid transparent; }
+.dv-open-row:hover { color: var(--accent); border-color: var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.dv-open-row-ico { display: inline-flex; flex: none; color: var(--muted); }
+.dv-open-row:hover .dv-open-row-ico { color: var(--accent); }
+.dv-open-row-ico svg { width: 13px; height: 13px; }
+.dv-open-row-n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dv-open-row-k { font-size: 9.5px; color: var(--muted); font-family: var(--font-mono);
+  flex: none; text-transform: uppercase; }
+
+.dv-open-note { font-size: 10.5px; color: var(--muted); line-height: 1.7;
+  padding: 8px 10px; border-radius: 6px; background: var(--bg-card);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.dv-open-note.warn { color: var(--neon-red, #d0574f);
+  border-left-color: var(--neon-red, #d0574f); }

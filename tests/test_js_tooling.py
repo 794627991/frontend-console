@@ -109,7 +109,14 @@ def test_eslint_clean_against_baseline():
                     reason="未跑 npm install（node_modules 不存在）")
 def test_node_unit_tests_pass():
     """node 单元测试（纯函数）必须全绿。"""
+    files = [
+        "tests/js/log-viewer-scroll.test.mjs",
+        # 2026-11-26 Step 2：docview 的纯函数层
+        "tests/js/docview-anchor.test.mjs",
+        "tests/js/docview-docx-parse.test.mjs",
+        "tests/js/docview-linkify.test.mjs",
+    ]
     proc = subprocess.run(
-        ["node", "--test", "tests/js/log-viewer-scroll.test.mjs"],
+        ["node", "--test"] + files,
         cwd=ROOT, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-2000:]

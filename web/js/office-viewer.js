@@ -9,6 +9,11 @@ const _OFFICE_EXTS = {
   pdf: 'pdf',
   xlsx: 'excel', xls: 'excel', csv: 'excel',
   pptx: 'ppt', ppt: 'ppt',
+  // 2026-11-26（文档 6.1.1 / Step 1 的 1g）：图片也走文档预览。
+  // 目的不是「看图」（编辑器已有图片预览），而是**统一缩放/适应窗口/背景**，
+  // 并且为 Step 2 的「聊天流路径可点」提供一个统一的打开入口。
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image',
+  webp: 'image', bmp: 'image', ico: 'image', svg: 'image',
 };
 
 function _officeKindOf(path) {
@@ -22,26 +27,17 @@ async function openOfficeFile(path) {
   const kind = _officeKindOf(path);
   if (!kind) return false;
   const name = path.split(/[\\/]/).pop();
-  // 大文件预检（PDF 流式不限；PPT 后端 COM 转 PDF 不吃前端 buffer 走 200MB 上限；
-  // 其他 >10MB 拒）
-  if (kind !== 'pdf' && kind !== 'ppt') {
+  // 2026-11-26（AC-1.8）：旧的 10MB 预检取消——新引擎是流式/按需挂载的，
+  // 大 docx/xlsx 能直接开。PDF 本来就不限；ppt 的 200MB 预检也一并去掉
+  //（不再走 COM 转 PDF，没有那个开销了）。
+  // 保留一道兜底上限只是防把浏览器拖死：500MB 以上的文件提示改用资源管理器。
+  if (kind !== 'pdf') {
     try {
       const fi = await fetch('/api/file_info', {method:'POST',
         headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
       const fj = await fi.json();
-      if (fj.ok && fj.size > 10 * 1024 * 1024) {
-        showBanner(`${name} ${(fj.size/1024/1024).toFixed(1)}MB 过大，请用资源管理器打开`, 5000, true);
-        return true;
-      }
-    } catch (_) {}
-  }
-  if (kind === 'ppt') {
-    try {
-      const fi = await fetch('/api/file_info', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body: JSON.stringify({path})});
-      const fj = await fi.json();
-      if (fj.ok && fj.size > 200 * 1024 * 1024) {
-        showBanner(name + ' ' + (fj.size/1024/1024).toFixed(1) + 'MB 过大', 5000, true);
+      if (fj.ok && fj.size > 500 * 1024 * 1024) {
+        showBanner(`${name} ${(fj.size/1024/1024).toFixed(0)}MB 过大，请用资源管理器打开`, 5000, true);
         return true;
       }
     } catch (_) {}
@@ -75,19 +71,51 @@ async function openOfficeFile(path) {
       data: { kind: 'office', name, path, extPath: path } });
   }
 
-  if (kind === 'pdf' || kind === 'ppt') {
-    // PDF Pro：专用 UI（工具栏+侧栏+虚拟化页面区）。
-    // a290 全功能：PPT/pptx 也走此链——后端 PowerPoint COM 转 PDF（缓存），
-    // 前端全套 PDF 引擎（虚拟化/搜索/缩放/翻页）。_pdfSrc 指向 aspdf 转换端点
-    if (kind === 'ppt') {
-      conn._pdfSrc = '/api/office/read?aspdf=1&path=' + encodeURIComponent(path);
-      conn._pdfConvNote = '首次转换需启动 PowerPoint，请稍候…';
-    }
+  if (kind === 'pdf') {
+    // PDF Pro：专用 UI（工具栏+侧栏+虚拟化页面区）。A01：pdf 链保持现有库不动。
     _ovPdfBuildUI(wrap, conn, path, name);
     const dsBtn = wrap.querySelector('[data-ov-dsedit]');
     if (dsBtn) dsBtn.onclick = () => _ovOnlyOfficeEdit(conn);
+  } else if (kind === 'ppt' || kind === 'excel') {
+    // 2026-11-26 用户令（D01/D02/D04）：
+    //  · ppt 不再走「本机 PowerPoint COM 转 PDF」——慢、没装 Office 就开不了、
+    //    依赖会后台启动 PowerPoint。改用 @aiden0z/pptx-renderer 直接渲染。
+    //  · excel 不再走自研编辑网格（用户评价「效果极差」，D02 要求代码直接删）。
+    //    改用 @extend-ai/react-xlsx 的 wasm 引擎，**只读**（D01）。
+    // 两者都交给 office-engine.js；OnlyOffice 编辑按钮原样保留（D03）。
+    wrap.innerHTML = `
+      <div class="office-viewer ov-doc-engine">
+        <div class="office-toolbar">
+          <span class="office-title">${esc(name)}</span>
+          <span class="office-info" data-ov-info>加载中…</span>
+          <span style="flex:1"></span>
+          <span class="office-readonly-tag" title="文档预览为只读。需要编辑请用右侧「全功能编辑」（需本机安装 OnlyOffice）">只读</span>
+          <button class="btn ghost" data-ov-dsedit title="OnlyOffice 全功能编辑（需本机安装，未装给安装指引）">✎ 全功能编辑</button>
+        </div>
+        <div class="office-body ov-doc-stage" data-ov-body>
+          <div class="office-loading">正在加载文件…</div>
+        </div>
+      </div>`;
+  } else if (kind === 'image') {
+    // 2026-11-26（Step 1 的 1g）：图片预览。只读、无 OnlyOffice 入口
+    //（图片没有「全功能编辑」这回事）。
+    // 用 object-fit:contain 铺满可用区，背景用深色以便看清透明 PNG。
+    wrap.innerHTML = `
+      <div class="office-viewer ov-doc-engine">
+        <div class="office-toolbar">
+          <span class="office-title">${esc(name)}</span>
+          <span class="office-info" data-ov-info>加载中…</span>
+          <span style="flex:1"></span>
+          <span class="office-readonly-tag">只读</span>
+          <button class="btn ghost" data-ov-img-fit="contain" title="适应窗口">适应</button>
+          <button class="btn ghost" data-ov-img-fit="actual" title="原始大小（超出可滚动）">1:1</button>
+        </div>
+        <div class="office-body ov-doc-stage" data-ov-body>
+          <div class="office-loading">正在加载图片…</div>
+        </div>
+      </div>`;
   } else {
-    // docx/xlsx/ppt：原有简单 UI
+    // docx：原有简单 UI（A01：docx 渲染链保持 docx-preview 不动）
     wrap.innerHTML = `
       <div class="office-viewer">
         <div class="office-toolbar">
@@ -100,8 +128,6 @@ async function openOfficeFile(path) {
         <div class="office-body" data-ov-body><div class="office-loading">正在加载文件…</div></div>
       </div>`;
   }
-
-  // a290：office-toolbar 的 OnlyOffice 编辑钮绑定（docx/xlsx 场景）
   const dsBtn2 = wrap.querySelector('[data-ov-dsedit]');
   if (dsBtn2) dsBtn2.onclick = () => _ovOnlyOfficeEdit(conn);
   const es = termArea.querySelector('.empty-state');
@@ -115,7 +141,71 @@ async function openOfficeFile(path) {
   // null）：ppt 与 pdf 同走 _ovPdfBuildUI（上面的 78 行分支已把 wrap.innerHTML
   // 换成 PDF UI，DOM 里根本没有 [data-ov-body]）——此处只排了 'pdf'，ppt 仍
   // 进简单 UI 分支，querySelector 拿到 null 后 body.innerHTML 必炸。
-  if (kind !== 'pdf' && kind !== 'ppt') {
+  // 2026-11-26：ppt / excel 改走新引擎（见上面分支），DOM 里**有** [data-ov-body]，
+  // 但渲染函数不同，所以单独一条路径。
+  if (kind === 'ppt' || kind === 'excel') {
+    setTimeout(async () => {
+      const body = wrap.querySelector('[data-ov-body]');
+      const info = wrap.querySelector('[data-ov-info]');
+      try {
+        const resp = await fetch('/api/office/read?path=' + encodeURIComponent(path));
+        if (!resp.ok) {
+          body.innerHTML = `<div class="office-err">文件读取失败（${resp.status}）</div>`;
+          return;
+        }
+        const buf = await resp.arrayBuffer();
+        info.textContent = (buf.byteLength / 1024).toFixed(0) + ' KB';
+        await _ovRenderEngine(conn, kind, buf, body, info);
+      } catch (e) {
+        body.innerHTML = `<div class="office-err">加载失败: ${esc(String(e && e.message || e))}</div>`;
+        if (info) info.textContent = '加载失败';
+      }
+    }, 0);
+  } else if (kind === 'image') {
+    // 图片：直接用 blob URL（不走 arrayBuffer→canvas，省一次拷贝，
+    // 大图也能立刻显示；退订由 conn._imgUrl 在关闭 tab 时 revoke）。
+    setTimeout(() => {
+      const body = wrap.querySelector('[data-ov-body]');
+      const info = wrap.querySelector('[data-ov-info]');
+      const img = new Image();
+      img.className = 'ov-image';
+      img.alt = name;
+      img.onload = () => {
+        if (info) info.textContent = img.naturalWidth + '×' + img.naturalHeight
+          + ' · ' + (body.dataset.bytes || '');
+        body.innerHTML = '';
+        body.appendChild(img);
+        conn._imgEl = img;
+      };
+      img.onerror = () => {
+        body.innerHTML = '<div class="office-err">图片解码失败（格式不受支持或文件损坏）</div>';
+        if (info) info.textContent = '解码失败';
+      };
+      // 适应 / 1:1 切换
+      wrap.querySelectorAll('[data-ov-img-fit]').forEach((b) => {
+        b.onclick = () => {
+          const mode = b.dataset.ovImgFit;
+          img.classList.toggle('ov-image-actual', mode === 'actual');
+          body.classList.toggle('ov-doc-stage-scroll', mode === 'actual');
+        };
+      });
+      fetch('/api/office/read?path=' + encodeURIComponent(path))
+        .then((r) => {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.blob();
+        })
+        .then((blob) => {
+          if (info) info.textContent = (blob.size / 1024).toFixed(0) + ' KB';
+          body.dataset.bytes = (blob.size / 1024).toFixed(0) + ' KB';
+          conn._imgUrl = URL.createObjectURL(blob);
+          img.src = conn._imgUrl;
+        })
+        .catch((e) => {
+          body.innerHTML = `<div class="office-err">加载失败: ${esc(String(e && e.message || e))}</div>`;
+          if (info) info.textContent = '加载失败';
+        });
+    }, 0);
+  } else if (kind !== 'pdf') {
     setTimeout(async () => {
       const body = wrap.querySelector('[data-ov-body]');
       const info = wrap.querySelector('[data-ov-info]');
@@ -132,9 +222,105 @@ async function openOfficeFile(path) {
 }
 window.openOfficeFile = openOfficeFile;
 
+// 2026-11-26 用户令（D01/D02/D04）：pptx / xlsx 走 office-engine.js 的新引擎。
+// 只读（D01）；渲染实例挂到 conn 上，关标签时一并释放（AC-1.12 无残留监听）。
+async function _ovRenderEngine(conn, kind, buf, body, info) {
+  const eng = window.OfficeEngine;
+  if (!eng) {
+    body.innerHTML = '<div class="office-err">渲染引擎未加载（office-engine.js）</div>';
+    return;
+  }
+  body.innerHTML = '<div class="office-loading">正在渲染…</div>';
+  const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  try {
+    // 让渲染器自己管布局：容器需 position:relative + 撑满
+    const host = document.createElement('div');
+    host.className = 'ov-engine-host';
+    body.innerHTML = '';
+    body.appendChild(host);
+    const h = await eng.openDocument(host, kind, buf, { onDone: () => {} });
+    if (!h) { body.innerHTML = '<div class="office-err">不支持的文档类型</div>'; return; }
+    conn.officeHandle = h;                 // 关闭标签时 dispose
+    const ms = Math.round(((window.performance && performance.now) ? performance.now() : Date.now()) - t0);
+    const extra = [];
+    if (kind === 'ppt' && h.slideCount) extra.push(h.slideCount + ' 页');
+    if (kind === 'xlsx' && h.sheetName) extra.push('工作表：' + h.sheetName);
+    if (h.errors && h.errors.length) extra.push('失败 ' + h.errors.length + ' 页');
+    if (info) info.textContent = [extra.join(' · '), ms + 'ms'].filter(Boolean).join(' · ');
+    // Ctrl+滚轮缩放（2026-11-26 用户令，见 _ovDocxBindZoom 注释）
+    _ovEngineBindZoom(body, kind, h);
+  } catch (e) {
+    body.innerHTML = `<div class="office-err">渲染失败：${esc(String(e && e.message || e))}</div>`;
+    if (info) info.textContent = '渲染失败';
+    if (window.console) console.error('[office-engine]', kind, e);
+  }
+}
+
+// 引擎文档（pptx / xlsx）的 Ctrl+滚轮缩放。两个库各有自己的接口：
+//   pptx -> viewer.setZoom(百分比)，外层已包 throttle
+//   xlsx -> controller.setZoomScale(倍率)
+// 走 OfficeEngine 返回的 handle，不直接碰库内部对象。
+function _ovEngineBindZoom(body, kind, h) {
+  if (!body || body._ovZoomBound || !h) return;
+  body._ovZoomBound = true;
+  let pct = 100;
+  let t = 0;
+  body.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    if (Date.now() - t < 80) return;      // 两个库的缩放都要重排/重绘
+    t = Date.now();
+    pct = Math.min(300, Math.max(50, pct + (e.deltaY < 0 ? 10 : -10)));
+    try {
+      if (kind === 'ppt' && typeof h.setZoom === 'function') h.setZoom(pct);
+      else if (kind === 'excel') {
+        const c = h.controller;
+        if (c && typeof c.setZoomScale === 'function') c.setZoomScale(pct / 100);
+      }
+    } catch (_) {}
+  }, { passive: false });
+}
+
 // ============================================================
-// PDF Pro 渲染器（虚拟化+搜索+目录）
+// Ctrl+滚轮缩放（2026-11-26 用户令）
+//
+// 用户原话：「正常 word、pdf 等都应该有 ctrl+鼠标滚轮放大才对啊！我发现
+// 无论是主菜单还是 AI 打开文件 tab 显示也不生效，是不是没对接上？」
+// 确实没对接：此前主界面 docx 只有「大纲 / 全功能编辑」两个按钮，PDF 只有
+// 工具条上的 ＋－，没有任何滚轮处理。
+//
+// **不动应用界面缩放**：Chromium 的 ctrl+wheel 默认会缩放整个页面，那是
+// 全应用级的（Electron 里通常被禁掉，所以表现为「完全没反应」）。这里
+// preventDefault 后只改文档自身的 transform，应用界面尺寸不变。
 // ============================================================
+function _ovDocxBindZoom(body, container, conn) {
+  if (!body || body._ovZoomBound) return;
+  body._ovZoomBound = true;
+  let pct = 100;
+  const apply = () => {
+    // docx-preview 的 section 是固定 A4 宽（≈794px）。这里用 transform 缩放，
+    // transform-origin 设 top center：宽轴居中放大，不偏左。
+    container.querySelectorAll('.docx-wrapper > section').forEach(s => {
+      s.style.transformOrigin = 'top center';
+      s.style.transform = pct === 100 ? '' : 'scale(' + (pct / 100) + ')';
+      if (pct === 100) s.style.marginBottom = '';
+      else s.style.marginBottom = Math.round(16 - (s.offsetHeight || 1123) * (1 - pct / 100) / 2) + 'px';
+    });
+    if (conn) conn._docxZoom = pct;
+    if (typeof showBanner === 'function') { /* 不打横幅，避免刷屏 */ }
+  };
+  let t = 0;
+  body.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    if (Date.now() - t < 60) return;      // 节流：重排代价不低
+    t = Date.now();
+    pct = Math.min(300, Math.max(50, pct + (e.deltaY < 0 ? 10 : -10)));
+    apply();
+  }, { passive: false });
+}
+
+
 // a290 全功能：OnlyOffice 真·全功能编辑（docx/xlsx/pptx Office 级保真编辑）。
 // 探测本机 Document Server：装了=完整编辑器；没装=安装指引（现有链不受影响）
 async function _ovOnlyOfficeEdit(conn) {
@@ -399,6 +585,19 @@ function _ovPdfBindControls(conn, wrap) {
   };
   wrap.querySelector('[data-ov-zoomin]').onclick = () => setZoom(conn._pdfZoom + 0.25);
   wrap.querySelector('[data-ov-zoomout]').onclick = () => setZoom(conn._pdfZoom - 0.25);
+  // Ctrl+滚轮缩放（2026-11-26 用户令：「正常 word、pdf 等都应该有 ctrl+
+  // 鼠标滚轮放大才对啊！我发现无论是主菜单还是 AI 打开文件 tab 显示也不生效」）。
+  // passive:false 才能 preventDefault；不动应用界面缩放，只动文档。
+  // 节流 80ms：setZoom 会清空渲染集合并重画，连续滚动不打节流会排队卡死。
+  let _zwT = 0;
+  pagesEl.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;              // 普通滚轮保持滚动
+    e.preventDefault();
+    const now = Date.now();
+    if (now - _zwT < 80) return;
+    _zwT = now;
+    setZoom(conn._pdfZoom + (e.deltaY < 0 ? 0.25 : -0.25));
+  }, { passive: false });
 
   // 目录（a461 修复：按钮与面板原本共用 data-ov-outline——querySelector 恒
   // 命中按钮本身，点「☰」变成把按钮藏掉、面板从未打开（a283 起即坏）。
@@ -510,12 +709,11 @@ function _ovPdfOutlineRender(conn, wrap, items, depth) {
 
 // ============================================================
 // docx / xlsx（a280 引擎，非 PDF 路径）
-// a32x：ppt 已不走这里——openOfficeFile 入口就把 ppt 交给 _ovPdfBuildUI
-// （COM 转 PDF 后由 PDF 引擎渲染）。原 kind==='ppt' 分支是死代码，已删。
+// 2026-11-26（D01/D02/D04）：只剩 docx 还走这里。ppt / excel 已改走
+// office-engine.js 的新引擎（openOfficeFile 里单独分发，不进本函数）。
 // ============================================================
 async function _ovRenderSimple(kind, buf, body, wrap, conn) {
   if (kind === 'word') return _ovRenderDocx(buf, body, wrap, conn);
-  if (kind === 'excel') return _ovRenderXlsx(buf, body, wrap, conn);
   body.innerHTML = '<div class="office-err">不支持的文件类型</div>';
 }
 
@@ -561,13 +759,16 @@ async function _ovRenderDocx(buf, body, wrap, conn) {
     container._rendering = false;
     clearTimeout(_timeout);
     container.classList.add('docx-themed');
-    // a290 全功能：docx 目录索引侧栏——从渲染 DOM 提取 h1-h6（docx-preview 按
-    // Word 标题样式映射 heading），点击跳转 + 滚动高亮当前节
-    _ovDocxOutline(body, container, conn);
+    // a290 全功能：docx 目录索引侧栏——从文档结构提取标题（a704：
+    // styles.xml 的 outlineLvl → TOC 域 → 字号启发式，见 _ovDocxOutline）。
+    // 解析失败只是少一条大纲，不影响文档显示。
+    try { await _ovDocxOutline(body, container, conn, buf); } catch (_) {}
     // a449 复审：进度提示按「renderAsync 会替换容器内容」假设置入容器内，
     // 但该假设未在真浏览器验证过——若库是追加式写入，提示会残留在文档
     // 顶部。渲染完成后防御性摘除（替换式则此处无节点，空操作）
     container.querySelectorAll('.office-loading').forEach(n => n.remove());
+    // Ctrl+滚轮缩放（2026-11-26 用户令，见 _ovDocxBindZoom 注释）
+    try { _ovDocxBindZoom(body, container, conn); } catch (_) {}
   } catch (e) {
     container._rendering = false;
     if (_timeout) clearTimeout(_timeout);
@@ -611,16 +812,129 @@ function _ovDocxHeadsBySize(container) {
   return cands;
 }
 
-function _ovDocxOutline(body, container, conn) {
-  // docx-preview 渲染 Word 标题样式为 <p class="docx_heading1..6">（不是 h 标签）。
+// a704：从 docx 的 styles.xml 提取「样式 → 大纲级别」映射。
+// 这是标题结构**唯一权威**的来源——Word 导航窗格（视图→导航窗格）的判定就
+// 是 <w:outlineLvl>（0 起，9 = 正文级别），与字号大小、与样式是否叫 Heading
+// 都无关。实测三份文档说明单靠 DOM 特征全部漏判：
+//   · ECC 文档：标题靠自定义样式（docx_1/2/3），字号与正文同为 13px
+//   · iotop   ：标题同样 13px，且**没有** TOC 域（只有 styles.xml 的 outlineLvl）
+//   · HTOP    ：styles.xml 里一个 outlineLvl 都没有（真·无结构，不该建大纲）
+// docx-preview 把 Word 的 styleId 直接拼成类名 docx_<styleId>（ECC 的
+// styleId=1/2/3 → docx_1/2/3，正好是 heading 1/2/3），所以拿到映射后用
+// 类名后缀精确匹配段落即可，不必猜。
+async function _ovDocxStyleLevels(buf) {
+  if (!buf || typeof JSZip === 'undefined' || typeof DOMParser === 'undefined') return null;
+  try {
+    const zip = await JSZip.loadAsync(buf);
+    const f = zip.file('word/styles.xml');
+    if (!f) return null;
+    const xml = await f.async('string');
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    if (doc.querySelector('parsererror')) return null;
+    const map = new Map();   // styleId → '1'..'9'
+    doc.querySelectorAll('style').forEach(st => {
+      const id = st.getAttribute('w:styleId') || st.getAttribute('styleId');
+      if (!id) return;
+      const ol = st.querySelector('outlineLvl');
+      if (!ol) return;
+      const v = parseInt(ol.getAttribute('w:val') || ol.getAttribute('val'), 10);
+      // 0~8 = 1~9 级大纲；9 在 Word 里是「正文文本」级别（TOC Heading 就用它），排除
+      if (!(v >= 0 && v <= 8)) return;
+      map.set(id, String(Math.min(6, v + 1)));
+    });
+    return map.size ? map : null;
+  } catch (_) { return null; }   // 解不开就走后面的兜底，不影响文档显示
+}
+
+// a704 用户实锤（D:\doc\ECC错误处理与UBI数据完整性保障机制分析验证.docx
+// 无大纲）：这份文档标题用 Word 自定义样式（渲染成 docx_1/2/3 数字类，没有
+// docx_heading*），且字号与正文同为 13px —— 字号启发式（_ovDocxHeadsBySize）
+// 在「标题与正文同字号、只靠样式区分」的文档上天然无解。但它的 Word 目录
+// （TOC 域）是完好的：docx-preview 把 TOC 条目渲染成
+//     <p class="docx_NN"><a href="#_Toc123456789">标题文字 页码</a></p>
+// 层级体现在条目左缘缩进（实测 0/28/56px 精确对应三级；库用 margin-left
+// 表达，但有的文档用 padding/缩进字符，所以量渲染位置而不是读 CSS）。
+// 所以直接读 TOC —— 它就是 Word 自己认定的标题结构，比字号启发式准得多，
+// 且大纲内容与文档里打印出来的目录完全一致。
+// 返回 [{ el, lvl, text }]，el 是正文里对应书签的锚点元素（跳转目标）。
+// 局限：TOC 是「生成目录那一刻」的快照，后期新增的标题不在里面，所以它排在
+// styles.xml 的 outlineLvl 之后。
+function _ovDocxHeadsByToc(container) {
+  const rows = [];
+  const seen = new Set();
+  for (const a of container.querySelectorAll('a[href^="#_Toc"]')) {
+    const id = (a.getAttribute('href') || '').slice(1);   // "#_Toc123" → "_Toc123"
+    if (!id || seen.has(id)) continue;                    // 同一条目可能被拆成多个 a
+    const target = container.querySelector('[id="' + id + '"]');
+    if (!target) continue;                                // 锚点不在本文档（TOC 过期/跨文档）
+    const p = a.closest('p');
+    if (!p) continue;
+    // 文字：去掉条目尾部的页码（Word 用制表位右对齐，DOM 里退化成「空白+数字」）
+    const text = (p.textContent || '').replace(/\s+\d+\s*$/, '').trim();
+    if (!text) continue;
+    seen.add(id);
+    rows.push({ el: target, text, left: Math.round(p.getBoundingClientRect().left) });
+  }
+  if (rows.length < 2) return [];
+  // 层级 = 条目左缘去重升序后的档位。上限 6 级（Word 目录默认 3 级，
+  // 深文档可到 4~6）。所有条目左缘相同 → 全是 lv1（至少大纲出现）。
+  const lvls = [...new Set(rows.map(r => r.left))].sort((x, y) => x - y).slice(0, 6);
+  return rows.map(r => ({
+    el: r.el, text: r.text,
+    lvl: String(Math.min(6, lvls.indexOf(r.left) + 1)),
+  }));
+}
+
+// a704：按 styles.xml 的 outlineLvl 建大纲。docx-preview 把 styleId 拼成
+// 类名 docx_<styleId>，所以 styleId=2 → 段落类 docx_2。用类名**精确**匹配
+// （className.split(/\s+/)），不能 contains——docx_1 会命中 docx_11/21/31
+// （ECC 文档里那正是 TOC 条目，会把打印出来的目录页也收进大纲）。
+function _ovDocxHeadsByStyle(container, levels) {
+  const out = [];
+  for (const p of container.querySelectorAll('p')) {
+    const cls = (p.className || '').split(/\s+/);
+    let lvl = null;
+    for (const c of cls) {
+      // docx_<styleId>；styleId 可能含下划线/连字符，取首个 docx_ 前缀后的全部
+      if (c.indexOf('docx_') !== 0) continue;
+      const sid = c.slice(5);
+      if (levels.has(sid)) { lvl = levels.get(sid); break; }
+    }
+    if (!lvl) continue;
+    const text = (p.textContent || '').trim();
+    if (!text) continue;              // 空段（分页/书签残留）不算标题
+    out.push({ el: p, lvl, text });
+  }
+  return out;
+}
+
+async function _ovDocxOutline(body, container, conn, buf) {
   // a311（用户实锤"大纲没了"）：Y 盘 H11 文档标题用的是自定义样式（渲染出
-  // docx_743 数字类，无 heading 类）→ 栏消失。兜底：无 heading 类时按字号
-  // 启发式识别标题（正文中位数字号 ×1.25 以上的独立短段 ≈ 标题），字号分档映射层级
-  let heads = [...container.querySelectorAll('[class*="docx_heading"]')];
+  // docx_743 数字类）→ 栏消失。此后曾误以为 docx-preview 会把 Word 标题渲染成
+  // <p class="docx_heading1..6">——**那是错的**，这个库从不生成 heading 类名，
+  // 只输出 docx_<styleId>（见 _ovDocxStyleLevels 注释）。a704 按权威顺序重排：
+  //   1) styles.xml 的 <w:outlineLvl>  → Word 导航窗格用的就是它，唯一权威
+  //   2) Word 目录域（TOC）             → Word 生成目录时的快照，能跳转
+  //   3) 字号启发式                     → 纯猜，标题与正文同字号时必失效
+  // 三级都空了才不建栏（HTOP 那类真无结构的文档）。
+  let heads = [];
+  const levels = await _ovDocxStyleLevels(buf);
+  if (levels) heads = _ovDocxHeadsByStyle(container, levels);
+  if (heads.length < 2) heads = _ovDocxHeadsByToc(container);
   if (heads.length < 2) {
-    heads = _ovDocxHeadsBySize(container);
+    heads = _ovDocxHeadsBySize(container).map(p => ({
+      el: p, lvl: String(p.dataset.ovHlvl || 3), text: (p.textContent || '').trim(),
+    })).filter(h => h.text);
   }
   if (heads.length < 2) return;   // 真没有标题结构不建栏
+  // 层级归一化：某些文档最低一级标题就是「标题 3」（jbd2.docx 实测全是
+  // lv3/lv4），照搬会让整条大纲缩进两级、右边空出大片。把用到的层级压缩到
+  // 从 1 开始连续编号，视觉上等同「按出现的最浅标题对齐」。
+  const used = [...new Set(heads.map(h => Number(h.lvl)))].sort((a, b) => a - b);
+  if (used[0] !== 1) {
+    const remap = new Map(used.map((v, i) => [v, String(Math.min(6, i + 1))]));
+    heads.forEach(h => { h.lvl = remap.get(Number(h.lvl)) || h.lvl; });
+  }
   const scroller = body;   // office-body 是滚动容器
   const bar = document.createElement('div');
   bar.className = 'ov-docx-outline';
@@ -653,26 +967,29 @@ function _ovDocxOutline(body, container, conn) {
       bar.classList.toggle('hidden', !show);
     };
   }
-  const items = heads.map((h, i) => {
-    const m = /docx_heading(\d)/.exec(h.className);
-    const lvl = (m && m[1]) || h.dataset.ovHlvl || 3;
+  const items = heads.map((h) => {
     const d = document.createElement('div');
-    d.className = 'ov-docx-outline-item lv' + lvl;
-    d.textContent = (h.textContent || '').trim().slice(0, 40) || '(无标题)';
-    d.onclick = () => h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    d.className = 'ov-docx-outline-item lv' + h.lvl;
+    d.textContent = h.text.slice(0, 40) || '(无标题)';
+    d.onclick = () => h.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     bar.appendChild(d);
     return d;
   });
   body.appendChild(bar);
   // 滚动高亮当前节（rAF 合并，同全站滚动优化惯例）
+  // a704：改用视口坐标判定。原来读 h.offsetTop —— docx-preview 的
+  // offsetParent 是各个 <section class="docx">，每页重新计数（实测同一文档
+  // 里后一个标题的 offsetTop 比前一个还小），而 scroller.scrollTop 是整篇
+  // 文档的累计滚动量，两者不同坐标系 → 高亮永远错位（点 3.1.1 会高亮到
+  // 第 8 章）。getBoundingClientRect 与 offsetParent 无关，一并对齐。
   let raf = 0;
   const onScroll = () => {
     if (raf) return;
     raf = requestAnimationFrame(() => {
       raf = 0;
-      const st = scroller.scrollTop + 80;
+      const st = scroller.getBoundingClientRect().top + 80;
       let cur = 0;
-      heads.forEach((h, i) => { if (h.offsetTop <= st) cur = i; });
+      heads.forEach((h, i) => { if (h.el.getBoundingClientRect().top <= st) cur = i; });
       items.forEach((d, i) => d.classList.toggle('cur', i === cur));
     });
   };
@@ -681,670 +998,10 @@ function _ovDocxOutline(body, container, conn) {
   // 关 tab 时监听随 conn 清理（office-viewer 关闭钩子若无须手动——scroller 是 body 随 wrap 移除，监听自动失效）
 }
 
-async function _ovRenderXlsx(buf, body, wrap, conn) {
-  // a290R 全功能（用户令：excel 必须可编辑）：自建可编辑网格——零运行时依赖
-  // （Luckysheet 与页面 AMD loader/全局 $ 冲突连环坑，撤回）。
-  // 能力：单元格编辑 / 公式（=开头，+-*/、SUM/AVG/MIN/MAX/COUNT、A1:B3 区间、裸引用）/
-  // 行列插删 / 多 sheet 切换 / 撤销 / 合并单元格保真 / 保存写回 .xlsx（.bak 备份）。
-  // Office 级完整编辑（图表/样式）走工具栏「✎ 全功能编辑」（OnlyOffice 分层）。
-  if (typeof XLSX === 'undefined') { body.innerHTML = '<div class="office-err">SheetJS 库未加载</div>'; return; }
-  try {
-    const data = new Uint8Array(buf);
-    // H4（a309R3）：cellNF 保留数字格式 z（日期/货币显示的落盘载体）、cellStyles
-    // 保留样式 s 与 !rows/!cols——保存写回不再剥格式（配合 _ovXlsxWriteAoa 迁移）
-    const wb = XLSX.read(data, { type: 'array', cellNF: true, cellStyles: true });
-    conn._wb = wb; conn._sheetIdx = 0; conn._undo = [];
-    // SheetJS 丢的无缓存公式从 xml 补捞（每 sheet 一张 addr→公式 表）
-    conn._zipFormulas = {};
-    for (const sn of wb.SheetNames) {
-      Object.assign(conn._zipFormulas, await _ovXlsxFormulasFromZip(buf, sn));
-    }
-    body.innerHTML =
-      '<div class="xlsx-edit-bar">' +
-      '<button class="btn ghost" data-xa="undo" title="撤销">↶ 撤销</button>' +
-      '<span style="width:6px"></span>' +
-      '<button class="btn ghost" data-xa="insrow" title="在选中行上方插行">＋行</button>' +
-      '<button class="btn ghost" data-xa="delrow" title="删除选中行">－行</button>' +
-      '<span style="width:6px"></span>' +
-      '<button class="btn ghost" data-xa="inscol" title="在选中列左侧插列">＋列</button>' +
-      '<button class="btn ghost" data-xa="delcol" title="删除选中列">－列</button>' +
-      '<span style="flex:1"></span>' +
-      '<span style="font-size:10px;color:var(--muted)">单元格直接编辑；公式 =A1+B2 / =SUM(B1:B3)</span>' +
-      '<span style="width:8px"></span>' +
-      '<button class="btn ghost" data-xa="save" title="写回 .xlsx（自动 .bak 备份）">保存</button>' +
-      '</div>' +
-      '<div class="xlsx-tabs" data-xa-tabs></div>' +
-      '<div class="xlsx-table-wrap" data-xa-table></div>';
-    _ovXlsxBindBar(conn, body);
-    _ovXlsxRenderTabs(conn);
-    _ovXlsxRenderTable(conn);
-    // openpyxl 等工具写的公式无缓存值（<v></v> 空串）——读入后全表现算一遍，
-    // 公式格立即显示计算值（而非空）。M7（审查实锤：打开即 persist 会把白名单
-    // 外公式 VLOOKUP 等的缓存 v 清零落盘）——只算只显示，不写回
-    _ovXlsxRecalcAll(conn);
-    if (conn._aoa.some(row => row.some(c => c && c.f))) { _ovXlsxRenderTable(conn); }
-  } catch (e) {
-    body.innerHTML = '<div class="office-err">Excel 渲染失败: ' + esc(String(e).slice(0, 200)) + '</div>';
-  }
-}
-
-// ---- 自建编辑网格 ----
-async function _ovXlsxFormulasFromZip(buf, sheetName) {
-  // SheetJS 社区版丢弃无缓存值的公式 cell（openpyxl 写 <v></v> 空串）。xlsx=zip，
-  // 用 JSZip 解 sheet xml 捞 <c r><f> 公式兜底（逻辑经页内插桩逐行验证）
-  try {
-    if (typeof JSZip === 'undefined') return {};
-    const zip = await JSZip.loadAsync(buf);
-    const wbXml = await zip.file('xl/workbook.xml').async('string');
-    const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
-    const nameEsc = sheetName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-    const re1 = new RegExp('<sheet\\s[^>]*name="' + nameEsc + '"[^>]*r:id="(rId\\d+)"');
-    const m = re1.exec(wbXml)
-      || new RegExp('<sheet\\s[^>]*r:id="(rId\\d+)"[^>]*name="' + nameEsc + '"').exec(wbXml);
-    if (!m) return {};
-    const m2 = new RegExp('<Relationship[^>]*Id="' + m[1] + '"[^>]*>').exec(relsXml);
-    const tgt = m2 ? (/Target="([^"]+)"/.exec(m2[0]) || [])[1] : null;
-    if (!m2 || !tgt) return {};
-    const path = 'xl/' + tgt.replace(/^\/?xl\//, '');
-    const f = zip.file(path);
-    if (!f) return {};
-    const shXml = await f.async('string');
-    const out = {};
-    const re = /<c r="([A-Z]+\d+)"[^>]*>\s*<f>([^<]+)<\/f>/g;
-    let mm;
-    while ((mm = re.exec(shXml))) {
-      const fx = mm[2].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-      out[sheetName + '!' + mm[1]] = '=' + fx;
-    }
-    return out;
-  } catch (_) { return {}; }
-}
-
-function _ovXlsxAoa(conn) {
-  const ws = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
-  const R = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-  // R4-3（实锤：!ref 起点非 A1 全表错位）：记起点偏移——aoa 下标 0 基对应
-  // 真实 (R.s.r, R.s.c)，写回/公式引用/行列尺寸都要按此平移
-  conn._refOrigin = { r: R.s.r, c: R.s.c };
-  const aoa = [];
-  const sn = conn._wb.SheetNames[conn._sheetIdx];
-  for (let r = R.s.r; r <= R.e.r; r++) {
-    const row = [];
-    for (let c = R.s.c; c <= R.e.c; c++) {
-      let cell = ws[XLSX.utils.encode_cell({ r, c })] || null;
-      // SheetJS 丢弃的无缓存公式 cell——从 zip 补捞表合成（v 由现算填）
-      if (!cell && conn._zipFormulas) {
-        const f = conn._zipFormulas[sn + '!' + XLSX.utils.encode_cell({ r, c })];
-        if (f) cell = { t: 'n', v: 0, f, w: f };
-      }
-      row.push(cell);
-    }
-    aoa.push(row);
-  }
-  return aoa;
-}
-// R6-2（实锤：行高/列宽跨表串表）：_rowH/_colW 按 sheetIdx 分桶——此前挂
-// conn 单实例，S1 拖的行高会写进 S2 的 !rows 落盘、S1 自己的调整反而丢
-function _ovXlsxSizeBk(conn, which) {
-  if (!conn[which]) conn[which] = {};
-  return conn[which][conn._sheetIdx] || (conn[which][conn._sheetIdx] = {});
-}
-function _ovXlsxWriteAoa(conn, aoa) {
-  const name = conn._wb.SheetNames[conn._sheetIdx];
-  const old = conn._wb.Sheets[name];
-  // R4-3：起点偏移（!ref=B2:C3 的表 aoa[0][0] 即 B2）。优先 _refOrigin
-  // （_ovXlsxAoa 记录），无则从旧表 !ref 推，再退 A1
-  const ORG = conn._refOrigin || (() => {
-    const rr = old && old['!ref'] ? XLSX.utils.decode_range(old['!ref']) : null;
-    return rr ? rr.s : { r: 0, c: 0 };
-  })();
-  const AC = (r, c) => XLSX.utils.encode_cell({ r: ORG.r + r, c: ORG.c + c });   // aoa 下标 → 真实地址
-  // R4-3 根治：aoa_to_sheet 传全 null 只借空表骨架——若让它写值，ORG 非 0 时
-  // 残影位 (r,c) 与邻格正确位 (r-1,c-1) 重叠，事后删残影会误删已写的正确格。
-  // 所有格一律走下方循环按 AC 写（值/沿用/格式迁移三态）
-  const ws = XLSX.utils.aoa_to_sheet(aoa.map(row => row.map(() => null)));
-  for (let r = 0; r < aoa.length; r++) for (let c = 0; c < (aoa[r] || []).length; c++) {
-    const cell = aoa[r][c];
-    if (!cell) continue;
-    const addr = AC(r, c);
-    const oc = old ? old[addr] : null;
-    if (cell.f) {
-      // H3（审查实锤：存出 <f>=SUM(...)</f> 双等号——OOXML 的 <f> 不含前导
-      // =，SheetJS 原样写入即公式损坏）。写回前剥 =（内部表示保留 = 前缀）
-      const f = String(cell.f).replace(/^=/, '');
-      // H4（a309R3 审查实锤：保存丢数字格式/日期/超链接）：公式与缓存值都
-      // 未变的格 → 整格沿用旧对象（z/s/t/l/w 全保）——aoa_to_sheet 重建只
-      // 有裸值，格式信息只在旧 ws 的格对象上
-      if (oc && oc.f === f && oc.v === cell.v) { ws[addr] = oc; continue; }
-      const out = Object.assign({}, cell, { f });
-      if (oc && oc.z && !out.z) out.z = oc.z;   // 编辑过的公式格也保数字格式
-      if (oc && oc.l && !out.l) out.l = oc.l;
-      if (oc && oc.s && !out.s) out.s = oc.s;   // R4-5：现算值≠缓存时样式 s 同样迁移（黄底/加粗等）
-      ws[addr] = out;
-    } else {
-      // H4：非公式格值未变 → 整格沿用旧对象（z 数字格式/日期/超链接 l/
-      // 文本型数字 t='s' 全保——「007」不再被写成数值 7）
-      if (oc && !oc.f && oc.v === cell.v) { ws[addr] = oc; continue; }
-      if (oc && oc.z && !cell.z) cell.z = oc.z;   // 编辑过的格保数字格式（改日期格的值）
-      if (oc && oc.l && !cell.l) cell.l = oc.l;   // 改超链接格显示文本不丢链接
-      if (oc && oc.s && !cell.s) cell.s = oc.s;   // R4-5：编辑过的格保样式 s
-      // a319R3 实锤：z/l 拷到 cell 上却没写回——aoa_to_sheet 的裸值对象留在
-      // ws[addr]，格式/超链接全丢。编辑过的格整对象落盘
-      ws[addr] = cell;
-    }
-  }
-  if (old && old['!merges']) ws['!merges'] = old['!merges'];
-  if (old && old['!cols']) ws['!cols'] = old['!cols'];
-  // H4：行高迁移（旧 ws 的 !rows + 用户拖拽 _rowH 覆盖）——此前一律丢。
-  // R4-3：_rowH/_colW 键是 aoa 下标，!rows/!cols 数组下标是真实行/列号——平移
-  const rows = (old && old['!rows']) ? old['!rows'].slice() : [];
-  const rowH = (conn._rowH || {})[conn._sheetIdx];
-  if (rowH) for (const k in rowH) {
-    const ri = ORG.r + +k; rows[ri] = Object.assign({}, rows[ri], { hpx: rowH[k] });
-  }
-  if (rows.length) ws['!rows'] = rows;
-  // a295 用户拖拽的列宽同样落盘（R6-2：当前表桶）
-  const colW = (conn._colW || {})[conn._sheetIdx];
-  if (colW) {
-    const cols = ws['!cols'] ? ws['!cols'].slice() : [];
-    for (const k in colW) {
-      const ci = ORG.c + +k; cols[ci] = Object.assign({}, cols[ci], { wpx: colW[k] });
-    }
-    ws['!cols'] = cols;
-  }
-  // R4-3：!ref 按真实起点 + aoa 尺寸直造（全 null 骨架的 !ref 不可信；
-  // 加行/加列后范围自然跟着长）
-  if (aoa.length && (aoa[0] || []).length) {
-    ws['!ref'] = XLSX.utils.encode_range({
-      s: { r: ORG.r, c: ORG.c },
-      e: { r: ORG.r + aoa.length - 1, c: ORG.c + aoa[0].length - 1 }
-    });
-  }
-  conn._wb.Sheets[name] = ws;
-}
-// 公式求值（安全子集：数字/单元格引用/区间 + +-*/() 与 SUM/AVG/AVERAGE/MIN/MAX/COUNT）
-function _ovXlsxEval(formula, conn) {
-  const aoa = conn._aoa;
-  const cellVal = (r, c) => {
-    // R4-3：公式引用是真实坐标，aoa 下标 0 基——按 _refOrigin 平移取值
-    const o = conn._refOrigin || { r: 0, c: 0 };
-    const cell = aoa[r - o.r] && aoa[r - o.r][c - o.c];
-    if (!cell) return 0;
-    if (typeof cell.v === 'number') return cell.v;
-    const n = parseFloat(cell.v);
-    return isNaN(n) ? 0 : n;
-  };
-  let js = formula.replace(/^=/, '');
-  js = js.replace(/(SUM|AVG|AVERAGE|MIN|MAX|COUNT)\(([A-Z]+\d+):([A-Z]+\d+)\)/gi, (m, fn, a, b) => {
-    const A = XLSX.utils.decode_cell(a), B = XLSX.utils.decode_cell(b);
-    const vals = [];
-    for (let r = A.r; r <= B.r; r++) for (let c = A.c; c <= B.c; c++) vals.push(cellVal(r, c));
-    if (!vals.length) return '0';
-    const f = fn.toUpperCase();
-    if (f === 'SUM') return '(' + vals.join('+') + ')';
-    if (f === 'AVG' || f === 'AVERAGE') return '((' + vals.join('+') + ')/' + vals.length + ')';
-    if (f === 'MIN') return 'Math.min(' + vals.join(',') + ')';
-    if (f === 'MAX') return 'Math.max(' + vals.join(',') + ')';
-    return String(vals.length);
-  });
-  js = js.replace(/\b([A-Z]+)(\d+)\b/g, (m, col, row) =>
-    String(cellVal(parseInt(row, 10) - 1, XLSX.utils.decode_col(col))));
-  // 安全白名单校验（仅数字/运算/Math.min max）。a319R3 实锤：占位符 'X' 不在
-  // 白名单字符类 → MIN/MAX 公式必被拒。占位改 '#' 并入白名单（'#' 非合法公式
-  // 字符，恶意输入带 # 也过不了 Function 语法——catch 兜底返回 null）
-  if (!/^[\d+\-*/(). ,#]*$/.test(js.replace(/Math\.(min|max)/g, '#'))) return null;
-  try {
-    const v = Function('"use strict";return (' + js + ')')();
-    return (typeof v === 'number' && isFinite(v)) ? v : null;
-  } catch (_) { return null; }
-}
-// R10-2（实锤：纯拖拽后直接保存丢尺寸）：拖行高/列宽只写桶，不触发
-// persist——save 分支需先把各表桶合并进 ws 再 write
-function _ovXlsxMergeSizes(conn) {
-  const idxs = new Set(
-    Object.keys(conn._rowH || {}).concat(Object.keys(conn._colW || {})));
-  idxs.forEach(iS => {
-    const idx = +iS;
-    const sh = conn._wb.Sheets[conn._wb.SheetNames[idx]];
-    if (!sh) return;
-    const rr = sh['!ref'] ? XLSX.utils.decode_range(sh['!ref']) : null;
-    const org = rr ? rr.s : { r: 0, c: 0 };
-    const rowH = conn._rowH[idx] || {};
-    if (Object.keys(rowH).length) {
-      const rows = (sh['!rows'] || []).slice();
-      for (const k in rowH) {
-        const ri = org.r + +k;
-        rows[ri] = Object.assign({}, rows[ri], { hpx: rowH[k] });
-      }
-      sh['!rows'] = rows;
-    }
-    const colW = conn._colW[idx] || {};
-    if (Object.keys(colW).length) {
-      const cols = (sh['!cols'] || []).slice();
-      for (const k in colW) {
-        const ci = org.c + +k;
-        cols[ci] = Object.assign({}, cols[ci], { wpx: colW[k] });
-      }
-      sh['!cols'] = cols;
-    }
-  });
-}
-
-function _ovXlsxSnapshot(conn) {
-  // R4-2（实锤：undo 跨 sheet 覆盖）：快照必须带 sheet 归属——旧格式只有
-  // aoa，S1 编辑后切 S2 撤销会把 S1 快照整体灌进 S2 落盘。
-  // R5-1（实锤：跨表恢复 origin 串表）：org 必须随快照——undo 的 persist
-  // 发生在 renderTable 刷新 _refOrigin 之前，用错表 origin 整表错位落盘。
-  // R8-1（实锤：undo 不回滚行高列宽）：插删行的平移态也要随快照回滚——
-  // 桶（用户拖拽）+ !rows/!cols（ws 侧）一并入快照，否则拖过的行高在
-  // 撤销插行后永久漂到下一行并落盘
-  const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
-  conn._undo.push(JSON.stringify({
-    idx: conn._sheetIdx, aoa: conn._aoa, org: conn._refOrigin,
-    rowH: (conn._rowH || {})[conn._sheetIdx] || null,
-    colW: (conn._colW || {})[conn._sheetIdx] || null,
-    rows: sh && sh['!rows'] ? JSON.parse(JSON.stringify(sh['!rows'])) : null,
-    cols: sh && sh['!cols'] ? JSON.parse(JSON.stringify(sh['!cols'])) : null,
-  }));
-  if (conn._undo.length > 50) conn._undo.shift();
-}
-function _ovXlsxRenderTabs(conn) {
-  const body = conn.wrap.querySelector('[data-ov-body]');
-  const tabs = body.querySelector('[data-xa-tabs]');
-  tabs.innerHTML = '';
-  conn._wb.SheetNames.forEach((name, i) => {
-    const b = document.createElement('button');
-    b.className = 'btn ghost' + (i === conn._sheetIdx ? ' active' : '');
-    b.textContent = name;
-    // R10-1（实锤：切表选中态残留）：SA 选行/聚焦格后切 SB，界面无任何
-    // 高亮但 _selRow/_sel 残留——「－行」会误删 SB 同位行。切表必清
-    b.onclick = () => { conn._sheetIdx = i; conn._selRow = undefined; conn._sel = null; _ovXlsxRenderTabs(conn); _ovXlsxRenderTable(conn); };
-    tabs.appendChild(b);
-  });
-}
-// a295：列宽/行高拖拽（document 级 move/up，拖完套样式+记尺寸；双击复位）
-function _ovXlsxBindColGrip(conn, grip, c) {
-  grip.addEventListener('mousedown', e => {
-    e.preventDefault(); e.stopPropagation();
-    const th = grip.parentElement;
-    const holder = conn.wrap.querySelector('[data-xa-table]');
-    const table = holder.querySelector('table');
-    const startX = e.clientX;
-    const cells = table ? [...table.querySelectorAll('tr')].map(tr => tr.children[c + 1]) : [];
-    const startW = th.getBoundingClientRect().width;
-    const move = ev => {
-      const w = Math.max(36, Math.round(startW + ev.clientX - startX));
-      th.style.width = w + 'px';
-      cells.forEach(td => { if (td) { td.style.width = w + 'px'; td.style.maxWidth = w + 'px'; } });
-      _ovXlsxSizeBk(conn, '_colW')[c] = w;   // R6-2：按 sheet 分桶
-      grip.classList.add('on');
-    };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      grip.classList.remove('on');
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  });
-  grip.addEventListener('dblclick', () => {
-    delete _ovXlsxSizeBk(conn, '_colW')[c];
-    // R11-2（实锤：persist 烙值后复位不回退）：桶键删除只影响后续渲染，
-    // ws 侧被 persist 烙进 !cols 的尺寸键需同步清。R12-1（实锤：键名
-    // 错配）：SheetJS 读入 <col customWidth="1" width="30"/> 产出的是
-    // 小写 customwidth + width + MDW——清键要大小写双形态连根拔，否则
-    // 复位后保存 customWidth 原样复活（行侧 hpt/hpx 全中无此问题）
-    const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
-    if (sh && sh['!cols']) {
-      const rr = sh['!ref'] ? XLSX.utils.decode_range(sh['!ref']) : null;
-      const ci = c + (rr ? rr.s.c : 0);
-      const cc = sh['!cols'][ci];
-      if (cc && (cc.wpx !== undefined || cc.width !== undefined ||
-                 cc.customwidth !== undefined || cc.customWidth !== undefined)) {
-        ['wpx', 'wch', 'width', 'MDW', 'customwidth', 'customWidth']
-          .forEach(k => { delete cc[k]; });
-        // R13-1（实锤：.xls 复位出零宽列）：biff8 读端对每列硬塞默认键
-        // {level:0, hidden:false}——残留非空不置 undefined，写端会为该列
-        // 落盘 width=0 的 COLINFO（视觉隐藏级）。残留仅零值默认键时同样
-        // 置空；hidden:true / level≠0（用户显式设置）保留
-        const rem = Object.keys(cc);
-        const onlyDefaults = rem.every(k =>
-          (k === 'level' && !cc[k]) || (k === 'hidden' && !cc[k]));
-        if (!rem.length || onlyDefaults) sh['!cols'][ci] = undefined;
-      }
-    }
-    _ovXlsxRenderTable(conn);
-  });
-}
-function _ovXlsxBindRowGrip(conn, grip, r) {
-  grip.addEventListener('mousedown', e => {
-    e.preventDefault(); e.stopPropagation();
-    const tr = grip.closest('tr');
-    const startX = e.clientY;
-    const startH = tr.getBoundingClientRect().height;
-    const move = ev => {
-      const h = Math.max(20, Math.round(startH + ev.clientY - startX));
-      tr.style.height = h + 'px';
-      _ovXlsxSizeBk(conn, '_rowH')[r] = h;   // R6-2：按 sheet 分桶
-      grip.classList.add('on');
-    };
-    const up = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', up);
-      grip.classList.remove('on');
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  });
-  grip.addEventListener('dblclick', () => {
-    delete _ovXlsxSizeBk(conn, '_rowH')[r];
-    // R11-2：同列复位——清 ws !rows 烙值（ORG 偏移到全局行号）
-    const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
-    if (sh && sh['!rows']) {
-      const rr = sh['!ref'] ? XLSX.utils.decode_range(sh['!ref']) : null;
-      const ri = r + (rr ? rr.s.r : 0);
-      if (sh['!rows'][ri] && sh['!rows'][ri].hpx !== undefined) {
-        delete sh['!rows'][ri].hpx;
-        delete sh['!rows'][ri].customHeight;
-        delete sh['!rows'][ri].hpt;
-        if (!Object.keys(sh['!rows'][ri]).length) sh['!rows'][ri] = undefined;
-      }
-    }
-    _ovXlsxRenderTable(conn);
-  });
-}
-
-function _ovXlsxRenderTable(conn) {
-  const body = conn.wrap.querySelector('[data-ov-body]');
-  const holder = body.querySelector('[data-xa-table]');
-  conn._aoa = _ovXlsxAoa(conn);
-  const table = document.createElement('table');
-  table.className = 'xlsx-edit-table';
-  // a295：用户列宽/行高（拖拽手柄写入；渲染时套用）。纯 DOM 构建（innerHTML
-  // 拼接会丢手柄的事件绑定）
-  if (!conn._colW) conn._colW = {};
-  if (!conn._rowH) conn._rowH = {};
-  const hr = document.createElement('tr');
-  hr.appendChild(document.createElement('th'));   // 角格
-  (conn._aoa[0] || []).forEach((_, c) => {
-    const th = document.createElement('th');
-    th.textContent = XLSX.utils.encode_col(c);
-    const w = _ovXlsxSizeBk(conn, '_colW')[c];   // R6-2：当前表桶
-    if (w) th.style.width = w + 'px';
-    const grip = document.createElement('div');
-    grip.className = 'x-col-grip';
-    grip.title = '拖动调整列宽（双击复位）';
-    _ovXlsxBindColGrip(conn, grip, c);
-    th.appendChild(grip);
-    hr.appendChild(th);
-  });
-  const addColTh = document.createElement('th');
-  addColTh.style.cssText = 'width:26px;cursor:pointer';
-  addColTh.title = '加一列';
-  addColTh.textContent = '＋';
-  addColTh.onclick = () => {
-    _ovXlsxSnapshot(conn);
-    conn._aoa.forEach(row => row.push(null));
-    _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
-  };
-  hr.appendChild(addColTh);
-  table.appendChild(hr);
-  conn._aoa.forEach((row, r) => {
-    const tr = document.createElement('tr');
-    const rh = document.createElement('td');
-    rh.className = 'xlsx-row-head'; rh.textContent = r + 1;
-    rh.style.position = 'relative';
-    const hRow = _ovXlsxSizeBk(conn, '_rowH')[r];   // R6-2：当前表桶
-    if (hRow) { tr.style.height = hRow + 'px'; }
-    rh.onclick = () => {
-      table.querySelectorAll('tr').forEach(x => x.classList.remove('selrow'));
-      tr.classList.add('selrow'); conn._selRow = r;
-    };
-    // a295：行高拖拽手柄（行首格底缘）
-    const rgrip = document.createElement('div');
-    rgrip.className = 'x-row-grip';
-    rgrip.title = '拖动调整行高（双击复位）';
-    _ovXlsxBindRowGrip(conn, rgrip, r);
-    rh.appendChild(rgrip);
-    tr.appendChild(rh);
-    row.forEach((cell, c) => {
-      const td = document.createElement('td');
-      td.contentEditable = 'true';
-      td.spellcheck = false;
-      const show = cell ? (cell.f ? (cell._cv !== undefined ? cell._cv : cell.v) : (cell.w !== undefined ? cell.w : cell.v)) : '';
-      td.textContent = (show === undefined || show === null) ? '' : String(show);
-      td.dataset.r = r; td.dataset.c = c;
-      if (cell && cell.f) td.classList.add('hasf');
-      td.addEventListener('focus', () => {
-        // M6 + a309R3 实锤（第2轮）：_editBase 必须记「focus 后展示的文本」。
-        // 公式格 focus 会把格内容换成公式本体——SheetJS 读入的 f 无 '=' 前缀，
-        // 旧实现对「显示值」比对必不等 → 未编辑的 blur 把公式当用户输入写成
-        // 文本格（公式损毁 + undo 污染）。展示统一补 '='（与编辑输入一致），
-        // _editBase 同步取该文本——未编辑 blur 即无操作
-        let base = (show === undefined || show === null) ? '' : String(show);
-        if (cell && cell.f) {
-          base = '=' + String(cell.f).replace(/^=/, '');
-          td.textContent = base;
-        }
-        conn._editBase = base;
-        conn._sel = { r, c };
-      });
-      td.addEventListener('blur', () => {
-        const txt = td.textContent.trim();
-        // R4-1（实锤：带空格文本点一下就走）：比对用未 trim 原文——旧代码
-        // trim 后的 txt 对未 trim 的 _editBase，'  padded  ' 格点一下即被判
-        // "已编辑"存成 'padded'，纯空格格被清 null。未编辑判定必须字节相等
-        if (td.textContent === (conn._editBase !== undefined ? conn._editBase : ((show === undefined || show === null) ? '' : String(show)))) {
-          // 未编辑：恢复显示值（focus 时公式格被换成公式文本，无编辑不重建表格）
-          td.textContent = (show === undefined || show === null) ? '' : String(show);
-          return;
-        }   // M6：与 focus 时展示文本比对（a309R3：含公式文本）
-        _ovXlsxSnapshot(conn);
-        const num = parseFloat(txt);
-        // a319R3：日期格输日期样文本 → Excel 序列数（t:'n' + 继承 z），Excel 里
-        // 打开仍是日期而非文本。仅当格本身带日期格式 z 时转（普通格输 2025-1-1
-        // 存文本，尊重用户原样）
-        const oldCell = conn._aoa[r][c];
-        const dm = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/.exec(txt);
-        const isDateCell = oldCell && typeof oldCell.z === 'string' && /[ymdhs]/i.test(oldCell.z) && !/general/i.test(oldCell.z);
-        // R4-6（实锤：非法日期静默进位）：Date.UTC 对 2025-13-45 自动进位成
-        // 2026-02-14——回读各分量必须与输入一致，否则不转（走文本分支原样保存）
-        let serial = null;
-        if (isDateCell && dm) {
-          const t = Date.UTC(+dm[1], +dm[2] - 1, +dm[3], +(dm[4] || 0), +(dm[5] || 0), +(dm[6] || 0));
-          const D = new Date(t);
-          if (D.getUTCFullYear() === +dm[1] && D.getUTCMonth() === +dm[2] - 1 && D.getUTCDate() === +dm[3] &&
-              (!dm[4] || (D.getUTCHours() === +dm[4] && D.getUTCMinutes() === +dm[5] && (!dm[6] || D.getUTCSeconds() === +dm[6]))))
-            serial = Math.round((t / 86400000 + 25569) * 1e8) / 1e8;
-        }
-        if (txt === '') conn._aoa[r][c] = null;
-        else if (txt.startsWith('=')) {
-          const cv = _ovXlsxEval(txt, conn);
-          conn._aoa[r][c] = { t: 'n', v: cv !== null ? cv : 0, f: txt, w: String(cv !== null ? cv : txt), _cv: cv !== null ? cv : '?' };
-        } else if (serial !== null) {
-          conn._aoa[r][c] = { t: 'n', v: serial, z: oldCell.z, w: txt };
-        } else if (!isNaN(num) && /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(txt)) conn._aoa[r][c] = { t: 'n', v: num, w: txt };
-        // a319R3 实锤：旧正则 [-+\d.eE]+ 会把日期样文本 2025-1-1 整串放行，
-        // parseFloat 只吃到 2025 → 日期被存成数字 2025。收紧为单一数字字面量，
-        // 2025-1-1 走文本分支原样保存
-        else conn._aoa[r][c] = { t: 's', v: txt, w: txt };
-        _ovXlsxRecalcAll(conn);
-        _ovXlsxPersist(conn);
-        // M5（审查实锤：同步重建把用户正点击的下一格 detach——每次编辑后要
-        // 点两次才能进下一格）。重建延迟到 rAF：本次 click 先落在旧 DOM，
-        // 重建后焦点自然恢复
-        requestAnimationFrame(() => _ovXlsxRenderTable(conn));
-      });
-      td.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); td.blur(); }
-        if (e.key === 'Tab') {
-          e.preventDefault(); td.blur();
-          const nx = table.querySelector('td[data-r="' + r + '"][data-c="' + (c + 1) + '"]');
-          if (nx) nx.focus();
-        }
-      });
-      tr.appendChild(td);
-    });
-    table.appendChild(tr);
-  });
-  const ar = document.createElement('tr');
-  ar.innerHTML = '<td colspan="' + ((conn._aoa[0] || []).length + 2) + '" style="text-align:center;cursor:pointer;color:var(--muted);padding:6px">＋ 加一行</td>';
-  ar.querySelector('td').onclick = () => {
-    _ovXlsxSnapshot(conn);
-    conn._aoa.push((conn._aoa[0] || []).map(() => null));
-    _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
-  };
-  table.appendChild(ar);
-  holder.innerHTML = '';
-  holder.appendChild(table);
-}
-function _ovXlsxRecalcAll(conn) {
-  (conn._aoa || []).forEach(row => row.forEach(cell => {
-    if (cell && cell.f) {
-      const v = _ovXlsxEval(cell.f, conn);
-      if (v !== null) { cell._cv = v; cell.v = v; cell.w = String(v); }
-      else { cell._cv = '?'; /* M7：eval 失败保留原 v/w——不置 0（原缓存值 Excel 算的，比 0 强） */ }
-    }
-  }));
-}
-function _ovXlsxPersist(conn) { _ovXlsxWriteAoa(conn, conn._aoa); }
-function _ovXlsxBindBar(conn, body) {
-  body.querySelector('.xlsx-edit-bar').onclick = async e => {
-    const b = e.target.closest('button[data-xa]');
-    if (!b) return;
-    const act = b.dataset.xa;
-    const r = conn._selRow, c = conn._sel ? conn._sel.c : 0;
-    if (act === 'undo') {
-      const snap = conn._undo.pop();
-      if (snap) {
-        const s = JSON.parse(snap);
-        const idx = Array.isArray(s) ? conn._sheetIdx : s.idx;   // 旧格式（纯数组）按当前表
-        const aoa = Array.isArray(s) ? s : s.aoa;
-        // R4-2：先归位 sheet 再恢复。R11-1（实锤：换表第二入口漏防）：
-        // undo 跨表归位同切表 onclick 一样要清选中态——SB 的 _selRow 残留
-        // 会让归位后的 SA「－行」误删同位行
-        if (idx !== conn._sheetIdx) {
-          conn._sheetIdx = idx; conn._selRow = undefined; conn._sel = null;
-          _ovXlsxRenderTabs(conn);
-        }
-        // R5-1：origin 先归位再 persist——旧格式快照无 org 时从目标表 !ref 推兜底
-        conn._refOrigin = s.org || (() => {
-          const ws0 = conn._wb.Sheets[conn._wb.SheetNames[idx]];
-          const rr = ws0 && ws0['!ref'] ? XLSX.utils.decode_range(ws0['!ref']) : null;
-          return rr ? rr.s : { r: 0, c: 0 };
-        })();
-        // R8-1：行高列宽桶 + ws 侧 !rows/!cols 一并回滚（快照法覆盖面比
-        // 反向平移完整；旧格式快照无这些键时跳过维持旧行为）。
-        // R9-1（实锤：快照 null 不清后续产生的数组）：ws 侧用 `in` 判键——
-        // 快照时无尺寸数组（null）就删掉目标表后来拖拽产生的数组，否则
-        // 已撤销的行高列宽越过撤销落盘、界面与文件永久脱节
-        if (s.rowH) { if (!conn._rowH) conn._rowH = {}; conn._rowH[idx] = s.rowH; }
-        if (s.colW) { if (!conn._colW) conn._colW = {}; conn._colW[idx] = s.colW; }
-        const shT = conn._wb.Sheets[conn._wb.SheetNames[idx]];
-        if (shT && 'rows' in s) {
-          if (s.rows) shT['!rows'] = s.rows;
-          else delete shT['!rows'];
-        }
-        if (shT && 'cols' in s) {
-          if (s.cols) shT['!cols'] = s.cols;
-          else delete shT['!cols'];
-        }
-        conn._aoa = aoa; _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
-      }
-      return;
-    }
-    if (act === 'save') {
-      try {
-        b.disabled = true; b.textContent = '保存中…';
-        // H5（审查实锤：CSV 被写回 xlsx 二进制——扩展名仍 .csv 双不开）：
-        // 按原扩展选 bookType
-        const isCsv = /\.csv$/i.test(conn.officePath || '');
-        // R4-4（实锤：.xls 被写 xlsx 字节）：按扩展选 bookType——.xls 走
-        // biff8（Excel 97-2003），否则 Excel 报"格式与扩展名不匹配"
-        const bt = isCsv ? 'csv' : (/\.xls$/i.test(conn.officePath || '') ? 'biff8' : 'xlsx');
-        // R5-2 + R6-1（实锤：写层能力边界静默丢数据）：SheetJS 社区版 write
-        // 不保 .xls 的公式/样式，也不保 .xlsx 的单元格填充样式（cell.s 的
-        // patternType）——保存前检测，confirm 警示可拒（建议 ✎ 全功能编辑）
-        const sheetsArr = Object.values(conn._wb.Sheets);
-        const cellKeys = ws => Object.keys(ws).filter(k => k[0] !== '!');
-        const hasFormula = sheetsArr.some(ws => cellKeys(ws).some(k => ws[k] && ws[k].f));
-        const hasFill = sheetsArr.some(ws => cellKeys(ws).some(k =>
-          ws[k] && ws[k].s && ws[k].s.patternType && ws[k].s.patternType !== 'none'));
-        let warn = null;
-        if (bt === 'biff8' && hasFormula) warn = '该 .xls（Excel 97-2003）包含公式。\n此格式保存会丢失全部公式（转为静态值）与样式，建议取消后另存 .xlsx。\n\n仍要保存吗？';
-        else if (bt === 'biff8' && hasFill) warn = '该 .xls（Excel 97-2003）包含单元格颜色/填充。\n此格式保存会丢失样式，建议取消后另存 .xlsx。\n\n仍要保存吗？';
-        else if (bt === 'xlsx' && hasFill) warn = '该表格包含单元格颜色/填充样式。\n内置表格引擎保存会丢失这些样式（建议取消后用 ✎ 全功能编辑保存）。\n\n仍要保存吗？';
-        if (warn && !confirm(warn)) {
-          b.disabled = false; b.textContent = '保存';
-          return;
-        }
-        // R10-2：纯拖拽（无编辑→无 persist）时桶还没进 ws——写盘前合并
-        _ovXlsxMergeSizes(conn);
-        const out = XLSX.write(conn._wb, { bookType: bt, type: 'array' });
-        const resp = await fetch('/api/office/write?path=' + encodeURIComponent(conn.officePath), { method: 'POST', body: out });
-        const j = await resp.json();
-        if (j.ok) {
-          b.textContent = '已保存';
-          showBanner('已保存 ' + conn.meta.label + '（.bak 备份在旁）', 3000);
-          setTimeout(() => { b.textContent = '保存'; b.disabled = false; }, 1200);
-        } else throw new Error(j.err);
-      } catch (err) {
-        b.disabled = false; b.textContent = '保存';
-        showBanner('保存失败: ' + String(err).slice(0, 100), 5000, true);
-      }
-      return;
-    }
-    _ovXlsxSnapshot(conn);
-    // R7-1（实锤：插删行/列后行高列宽错位）：aoa 平移时行高列宽两套
-    // 索引必须同移——用户桶（aoa 下标键）平移 + 当前表 !rows/!cols 数组按
-    // 全局行/列号（ORG 偏移）splice，否则拖过的行高套错行、错位 hpx 落盘
-    const sh = conn._wb.Sheets[conn._wb.SheetNames[conn._sheetIdx]];
-    const org = conn._refOrigin || { r: 0, c: 0 };
-    const shiftBk = (bk, at, del) => {   // 桶键平移：del=删 at 位，否则 ≥at 上移
-      const out = {};
-      for (const k in bk) {
-        const i = +k;
-        if (del) { if (i === at) continue; out[i > at ? i - 1 : i] = bk[k]; }
-        else out[i >= at ? i + 1 : i] = bk[k];
-      }
-      return out;
-    };
-    if (act === 'insrow' || act === 'delrow') {
-      const rr = act === 'insrow' ? Math.max(r !== undefined ? r : 0, 0) : r;
-      if (conn._rowH && conn._rowH[conn._sheetIdx] && rr !== undefined)
-        conn._rowH[conn._sheetIdx] = shiftBk(conn._rowH[conn._sheetIdx], rr, act === 'delrow');
-      else if (conn._rowH && act === 'delrow' && rr === undefined && conn._rowH[conn._sheetIdx]) {
-        const bk = conn._rowH[conn._sheetIdx];   // 末行 pop：键 = 桶最大键时才删
-        const mx = Math.max(...Object.keys(bk).map(Number));
-        if (conn._aoa.length - 1 === mx) delete bk[mx];
-      }
-      if (sh && sh['!rows'] && rr !== undefined) {
-        if (act === 'insrow') sh['!rows'].splice(org.r + rr, 0, undefined);
-        else sh['!rows'].splice(org.r + rr, 1);
-      }
-    }
-    if (act === 'inscol' || act === 'delcol') {
-      if (conn._colW && conn._colW[conn._sheetIdx])
-        conn._colW[conn._sheetIdx] = shiftBk(conn._colW[conn._sheetIdx], c, act === 'delcol');
-      if (sh && sh['!cols']) {
-        if (act === 'inscol') sh['!cols'].splice(org.c + c, 0, undefined);
-        else sh['!cols'].splice(org.c + c, 1);
-      }
-    }
-    if (act === 'insrow') conn._aoa.splice(Math.max(r !== undefined ? r : 0, 0), 0, (conn._aoa[0] || []).map(() => null));
-    if (act === 'delrow') { if (r !== undefined && conn._aoa[r]) conn._aoa.splice(r, 1); else if (conn._aoa.length) conn._aoa.pop(); }
-    // R8-2（实锤：无选中删末行 !rows 残留）：pop 路径的 splice 被
-    // rr!==undefined 挡住——统一按删后行数截断，被删行的 hpx 不再被
-    // 后续加行继承落盘
-    if (act === 'delrow' && sh && sh['!rows'] &&
-        sh['!rows'].length > org.r + conn._aoa.length)
-      sh['!rows'].length = org.r + conn._aoa.length;
-    if (act === 'inscol') conn._aoa.forEach(row => row.splice(Math.max(c, 0), 0, null));
-    if (act === 'delcol') conn._aoa.forEach(row => { if (row[c] !== undefined) row.splice(c, 1); });
-    _ovXlsxRecalcAll(conn); _ovXlsxPersist(conn); _ovXlsxRenderTable(conn);
-  };
-}
-
+// 2026-11-26 用户令（D02）：xlsx 自研可编辑网格整段删除（用户评价「效果极差」）。
+// 换代：pptx / xlsx 一律走 office-engine.js 的只读渲染引擎（D01）；
+// 唯一的编辑途径是 OnlyOffice（D03 要求其接口原样保留，见 _ovOnlyOfficeEdit）。
+// 一并消失的还有 /api/office/write 的前端调用点（原 _ovXlsxWriteAoa 内的那句）。
 
 // 模块化一期（js-modularization 分支）：转 ES module——裸顶层声明转为模块
 // 作用域，跨文件消费名补挂 window（消费者均 typeof 守卫运行时：editor.js

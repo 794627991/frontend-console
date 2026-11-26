@@ -409,6 +409,12 @@ function askRender(it) {
       const html = md.render(_hgNormalizeFences(text || ''));
       const t = document.createElement('div');
       t.innerHTML = html;
+      // 2026-11-26（Step 2，文档 6.3）：文档路径可点。必须在下面拦截 http
+      // 链接之前做——改写后的 <a> 已经没有 href，不会被那条规则误伤。
+      // **就地改 DOM**（linkifyNode），不往返 innerHTML——往返会丢掉已绑的监听。
+      try {
+        if (window.DocView && window.DocView.linkifyNode) window.DocView.linkifyNode(t);
+      } catch (_) {}
       // v2.27.22：一律拦截就地导航——http(s) 链接转系统浏览器打开（后端
       // /api/open_url），其余（相对路径/伪协议）只提示。WebView 一旦离开
       // 应用页面整个工具就被错误页替换且无返回入口（用户实锤）

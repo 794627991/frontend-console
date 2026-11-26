@@ -50,7 +50,7 @@ function buildClaudeHarnessTab(opts = {}) {
           <nav class="hg-rail" data-hg-rail aria-label="回合导航（ZCode 同款快速跳转）"></nav>
           <div class="hg-flow" data-hg-flow></div>
           <button class="hg-jumpbtm" data-hg-jumpbtm title="跳到最新消息" aria-label="跳到最新消息"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v14"/><path d="M5 12l7 7 7-7"/></svg></button>
-          <button class="hg-dyn-capsule" data-hg-dyncaps title="会话动态：点开分屏动态页 / 动态页激活时再点收起（子代理运行中点按直达实况）" style="position:absolute;top:10px;right:14px;z-index:7;display:inline-flex;align-items:center;gap:7px;padding:4px 12px;border-radius:999px;">
+          <button class="hg-dyn-capsule" data-hg-dyncaps title="会话动态：点开分屏（动态/目录/打开文件）/ 动态页激活时再点收起（子代理运行中点按直达实况）" style="position:absolute;top:10px;right:14px;z-index:7;display:inline-flex;align-items:center;gap:7px;padding:4px 12px;border-radius:999px;">
             <span class="hg-caps-dot"></span>
             <span class="hg-caps-st" data-hg-caps-st>就绪</span>
             <span class="hg-caps-dur" data-hg-caps-dur></span>
@@ -355,7 +355,46 @@ function buildClaudeHarnessTab(opts = {}) {
       }
     });
   }
+  // 2026-11-26（Step 2，文档 6.3.4）：打开聊天流里点到的文档路径。
+  //   · 相对路径按当前会话的项目目录解析（_HG.cwd）
+  //   · 先 /api/file_info 确认存在，不存在就提示、不开标签（AC-2.3）
+  async function _hgDocLinkOpen(el) {
+    let path = '', at = '';
+    try { path = decodeURIComponent(el.getAttribute('data-doc-open') || ''); } catch (_) { return; }
+    try { at = decodeURIComponent(el.getAttribute('data-doc-at') || ''); } catch (_) {}
+    if (!path) return;
+    // 相对路径 → 绝对（Windows 盘符或 UNC 开头的视为已经是绝对路径）
+    if (!/^[A-Za-z]:[\\/]/.test(path) && !/^\\\\/.test(path) && !/^\//.test(path)) {
+      const cwd = (_HG && _HG.cwd) || '';
+      if (cwd) path = cwd.replace(/[\\/]$/, '') + '\\' + path.replace(/^[\\/]+/, '');
+    }
+    const DV = window.DocView;
+    if (!DV || !DV.openInHarness) { showBanner('文档预览模块未加载', 3000); return; }
+    try {
+      const r = await fetch('/api/file_info', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      const j = await r.json();
+      if (!j || !j.ok) { showBanner('文件不存在或已被删除', 3200); return; }
+      await DV.openInHarness(path, { at, by: 'user' });
+    } catch (err) {
+      showBanner('打开失败：' + String((err && err.message) || err).slice(0, 120), 4000);
+    }
+  }
+
   function _hgFlowClick(e) {
+    // 2026-11-26（Step 2，文档 6.3.4）：聊天流里的文档路径。必须排在所有分支
+    // 之前——否则会被下面的行级点击（子代理卡/工具行折叠等）抢走。
+    // 链路：解出路径与锚点 → 相对路径按会话项目目录解析 → /api/file_info
+    // 确认存在 → DocView.openInHarness。
+    const docLink = e.target.closest('[data-doc-open]');
+    if (docLink) {
+      e.preventDefault();
+      e.stopPropagation();
+      _hgDocLinkOpen(docLink);
+      return;
+    }
     // 批2（迁出主窗）：段头/结论行/段内行三分支退役——主窗零 .h-subblock，
     // 子过程唯一入口=单行卡（agRow 分支）+胶囊/目录（各自入口）；旧快照
     // 残留的段 DOM 由批3 switchTo 剥离，不在此兼容
@@ -1505,11 +1544,24 @@ function buildClaudeHarnessTab(opts = {}) {
     }
     const t = e.target.closest('[data-hg-subtab]');
     if (t) {
-      // v3.3R（全审 P3）：伪 tab（动态/目录）点击入口与 _subDynOpen/_subDirOpen
-      // 同口径置 manual——分屏若是 Task 自动开的（manual=false），用户点 tab 条
-      // 切过来阅读，回合终结不该把整个分屏收走
-      if (t.dataset.hgSubtab === _SUB_DIR || t.dataset.hgSubtab === _SUB_DYN
-          || t.dataset.hgSubtab === _SUB_AIBR) _sub.manual = true;
+      // v3.3R（全审 P3）：伪 tab（动态/目录/AI 浏览器/文档）点击入口与
+      // _subDynOpen/_subDirOpen 同口径置 manual——分屏若是 Task 自动开的
+      // （manual=false），用户点 tab 条切过来阅读，回合终结不该把整个分屏收走
+      // a704（6.2.3）：判据改成 _subIsPseudo，不再逐个点名
+      const _tidClicked = t.dataset.hgSubtab;
+      const _isPseuClicked = typeof window._subIsPseudo === 'function'
+        ? window._subIsPseudo(_tidClicked)
+        : (_tidClicked === _SUB_DIR || _tidClicked === _SUB_DYN || _tidClicked === _SUB_AIBR);
+      if (_isPseuClicked) _sub.manual = true;
+      // 2026-11-26 用户令：文档面板的伪 tab 由 docview 懒建——_subActivate
+      // 对未注册的 tid 静默早退。注册表里没有就先让模块建出来。
+      if (window._subDocOpenTids && window._subDocOpenTids.indexOf(_tidClicked) >= 0
+          && !_sub.tabs[_tidClicked]) {
+        try {
+          if (typeof window.DocView.openDocOpenTab === 'function') window.DocView.openDocOpenTab();
+        } catch (_) {}
+        return;
+      }
       _subActivate(t.dataset.hgSubtab);
     }
   };
@@ -1651,6 +1703,10 @@ function buildClaudeHarnessTab(opts = {}) {
     try { localStorage.removeItem('hg-dyn-caps'); } catch(_) {}   // v3.3：旧面板偏好废止，清残留（不再读取，残留本无害）
     _hgDynCapsulePaint();
   } catch(_) {}
+
+  // 2026-11-26（用户令）：胶囊展开后的「打开文件」是一个**伪 tab**
+  // （__docopen__，与动态/目录同级），面板内容在 web/js/docview/harness-pane.js
+  // 的 _subDocOpenEnsure。胶囊的展开链由 subpane.js 的 _subDynOpen 负责补建它。
 
   // v2.3.9 组头点击：折叠/展开（localStorage 记忆），不影响选会话
   _hgListEl.addEventListener('click', (e) => {

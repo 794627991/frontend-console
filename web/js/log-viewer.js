@@ -36,8 +36,27 @@ function resHitToScroll(conn, hit) {
 // 拖拽日志文件到窗口任意位置打开（含超大文件，走 G 级虚拟列表）
 // 遮罩文案按当前活跃 tab 分发：claude/note 有各自的落点行为，不该说"打开日志"
 let _dragOverlay = null;
-let _dragCounter = 0;
+/** 最近一次 dragover 的落点类型（'sidebar' / 'doc' / ''）。
+ *  遮罩铺满全屏盖住一切，用户只能靠这行字判断「松开会发生什么」——所以必须
+ *  跟着落点走，不能只看活跃 tab。2026-11-26 用户实测：拖到右侧「打开文件」
+ *  面板上仍显示「松开添加为 Claude 对话附件」，实际也真被当成了附件。
+ *  判据统一走 editor.js 的 `_dropZoneOf`（现只此一处定义）。 */
+let _dragZone = '';
+/** 落点判据取 editor.js 的 window.fcDropZoneOf（那边定义，避免两份漂移）。
+ *  模块加载顺序不保证，所以每次调用时取，不缓存。 */
+function _zoneOf(el) {
+  try { return (window.fcDropZoneOf && window.fcDropZoneOf(el)) || ''; } catch (_) { return ''; }
+}
 function _dragOverlayText() {
+  const z = _dragZone;
+  const fileIco = '<span><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/></svg>';
+  // 落点优先于活跃 tab：拖到侧栏 / 文档面板 = 工具打开，与附件无关
+  if (z === 'sidebar') {
+    return '<span class="claude-ico"></span> 松开用工具打开（会展开左侧栏）';
+  }
+  if (z === 'doc') {
+    return fileIco + ' 松开在文档面板中打开</span>';
+  }
   const c = activePortId && connections[activePortId];
   const kind = c && c.meta && c.meta.kind;
   if (kind === 'claude') return '<span class="claude-ico"></span> 松开把路径发给 Claude';
@@ -47,7 +66,7 @@ function _dragOverlayText() {
   // 图标+文案包一层 span 保住内部空格（遮罩是 flex，裸 svg 会成独立 flex 项贴死文字）
   if (kind === 'editor' && c.isNote && c.editor)
     return '<span><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/><path d="M5.5 8.5h5M5.5 11h3.5"/></svg> 松开插入到笔记</span>';
-  return '<span><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.5 2.5V6H12"/></svg> 松开以打开文件</span>';
+  return fileIco + ' 松开以打开文件</span>';
 }
 function showDragOverlay(show) {
   if (show && !_dragOverlay) {
@@ -73,18 +92,39 @@ showDragOverlay = function(show) {
   if (show && dm && dm.classList.contains('show')) return;   // 弹窗场景：不出遮罩
   _origShowDragOverlay(show);
 };
+// **显示与清除都挂在 window 的 capture 阶段**（2026-11-26 用户实测「屏蔽罩
+// 不消失了」）。原来靠 body 上的 dragenter/dragleave 计数器：文档面板的 drop
+// 处理里加 `stopPropagation()` 之后，事件不再冒泡到 body，`_dragCounter` 归零
+// 那一行永远不执行，遮罩就永远挂在屏幕上。计数器本身也不平衡（从 body 拖进
+// 内部元素会多计一次 enter）。
+//
+// 现在：capture 阶段在目标元素之前跑，任何元素上的 stopPropagation 都拦不住；
+// 清除走三个独立的终止信号（drop / dragend / 真正离开窗口的 dragleave），
+// 不再依赖计数对不对得上。
+function _hasFiles(e) {
+  return !!(e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files'));
+}
+function _hideOverlay() {
+  _dragZone = '';
+  showDragOverlay(false);
+}
+window.addEventListener('dragover', (e) => {
+  if (!_hasFiles(e)) return;
+  const z = _zoneOf(e.target);
+  // 没遮罩时也要建（第一次拖进来）；落点变了就换字
+  if (!_dragOverlay || z !== _dragZone) { _dragZone = z; showDragOverlay(true); }
+}, true);
+window.addEventListener('drop', _hideOverlay, true);
+window.addEventListener('dragend', _hideOverlay, true);
+// relatedTarget 为空 = 真的离开了窗口（内部元素间移动会带 relatedTarget）
+window.addEventListener('dragleave', (e) => {
+  if (!e.relatedTarget) _hideOverlay();
+}, true);
+
 document.body.addEventListener('dragenter', e => {
   e.preventDefault();
-  if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
-    _dragCounter++; showDragOverlay(true);
-  }
 });
 document.body.addEventListener('dragover', e => { e.preventDefault(); });
-document.body.addEventListener('dragleave', e => {
-  e.preventDefault();
-  _dragCounter--;
-  if (_dragCounter <= 0) { _dragCounter = 0; showDragOverlay(false); }
-});
 // drop 事件由 pywebview 原生处理（main.py 注册，能拿到 File.pywebviewFullPath 绝对路径），
 // 回调里 evaluate_js 调 openDroppedFile。这里仅 preventDefault（阻止 WebView2 导航到文件）
 // 并隐藏遮罩——preventDefault 不影响 pywebview 的 drop_handler 触发。
@@ -93,7 +133,7 @@ document.body.addEventListener('dragleave', e => {
 // 现保持原生链路（延迟稳定 ~12s、弹窗必出），待 WebView2 Runtime 层解决。
 document.body.addEventListener('drop', e => {
   e.preventDefault();
-  _dragCounter = 0; showDragOverlay(false);
+  _hideOverlay();          // capture 阶段已清过，这里兜底（幂等）
 });
 
 // 同步已打开日志列表到后端（打开/关闭日志 tab 时调用，让 MCP/AI 能感知）

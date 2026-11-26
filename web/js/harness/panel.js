@@ -384,6 +384,9 @@
     // 目录停 1s 秒表
     if (tid === _SUB_DYN) dynEl = null;
     if (tid === _SUB_DIR) _subDirTickStop();
+    // a704（6.2.3）：文档标签的实例必须在这里销毁——sc 一 remove 就没人能
+    // 再按它找到实例，渲染器的 ResizeObserver / 变更轮询会永久泄漏。
+    if (tb.onDestroy) { try { tb.onDestroy(); } catch (_) {} }
     if (tb.sc && tb.sc.parentNode) tb.sc.remove();
     delete _sub.tabs[tid];
     _sub.order = _sub.order.filter(t => t !== tid);

@@ -44,6 +44,16 @@ function connectAiSSE() {
         if (item.kind === 'download' && window.DL) {
           window.DL.onEvent(item);
         }
+        // 文档面板（2026-11-26 Step 3）：后端 doc_store.wait_for 推来，让前端
+        // 打开 / 定位并把结果回传给 /api/doc/report_*。
+        // req_id 由后端生成——回传时原样带回，后端据此唤醒等待方（6.4.3）。
+        // **判据不带 kind 前缀**：信封的 kind 曾被子载荷里的文档类型覆盖成
+        // "docx"（已修），但这里靠 req_id + action 双判更稳——这类请求的
+        // 唯一来源就是文档服务，不会与别的 ui_action 混淆。
+        if (item.req_id && window.DocView) {
+          if (item.action === 'doc_open') { window.DocView.onOpenRequest(item); return; }
+          if (item.action === 'doc_show') { window.DocView.onShowRequest(item); return; }
+        }
         return; // 跳过 screen/screenctl/ui_action 帧（不进感知流）
       }
       senseState.lines.push(item);

@@ -1435,6 +1435,19 @@ function _edConfirm(msg) {
   });
 }
 function _edCloseNow(conn) {
+  // 2026-11-26：文档渲染引擎实例（pptx / xlsx）——必须在 tab 脱离 DOM 之前
+  // dispose。pptx-renderer 内部挂了 ResizeObserver 与 window resize 监听，
+  // 不释放会随打开次数累积（AC-1.12 要求关掉标签后无残留定时器与监听）。
+  if (conn.officeHandle && typeof conn.officeHandle.dispose === 'function') {
+    try { conn.officeHandle.dispose(); } catch (_) {}
+    conn.officeHandle = null;
+  }
+  // 图片预览的 blob URL 同理：不 revoke 会一直占着解码后的内存
+  if (conn._imgUrl) {
+    try { URL.revokeObjectURL(conn._imgUrl); } catch (_) {}
+    conn._imgUrl = null;
+  }
+  conn._imgEl = null;
   // 磁盘检测轮询清掉（编辑器 tab 专属；proxy 等面板 tab 的 pollTimer 下一行通用清理）
   if (conn.diskWatchTimer) { clearInterval(conn.diskWatchTimer); conn.diskWatchTimer = null; }
   // 面板类 tab（proxy 等）带轮询 interval：关 tab 必清（wrap 脱离 DOM 后
@@ -2478,7 +2491,46 @@ window.addEventListener('keydown', (e) => {
     if (typeof showBanner === 'function') showBanner(window.__dragDbg ? '拖拽计时探针：已开启' : '拖拽计时探针：已关闭', 2000);
   }
 });
-window.addEventListener('drop', () => { window.__dragT0 = Date.now(); window.__dragProbe && __dragProbe('html-drop'); }, true);
+window.addEventListener('drop', (e) => { window.__dragT0 = Date.now(); window.__dragProbe && __dragProbe('html-drop'); }, true);
+
+// 拖放落点的统一判据（2026-11-26）。三处必须用**同一个**判据：
+//   ① editor.js 的全局 drop 分发（决定走附件还是走工具）
+//   ② log-viewer.js 的遮罩文案（决定说「添加为附件」还是「打开文件」）
+//   ③ 文档面板自己的 drop 处理
+// 分三份写就会漂——第一版就把 `.hg-docopen-pane` 误写成 `.dv-open-pane`，
+// 结果拖到右侧「打开文件」面板仍被当附件（用户实测）。所以只定义在这里。
+//
+// 返回值：''=普通区域（按活跃 tab 分发） / 'sidebar'=左侧栏 / 'doc'=文档面板
+const DOC_DROP_SEL = '[data-dv-drop], .hg-docopen-msgs, .hg-docopen-pane, ' +
+                     '.hg-doc-pane, .dv-root, .dv-pane-host';
+function _dropZoneOf(el) {
+  if (!el || !el.closest) return '';
+  if (el.closest('#sidebar')) return 'sidebar';
+  if (el.closest(DOC_DROP_SEL)) return 'doc';
+  return '';
+}
+window.fcDropZoneOf = _dropZoneOf;
+
+// 拖到左侧栏时的视觉反馈（2026-11-26 用户令：「拖到打开侧边栏直接工具打开，
+// 包括侧边栏收起时窄框（拖入也生效）」）。收起态只有 44px 图标条，必须高亮
+// 才看得出「落这里能接」。dragover 高频，只做幂等的 class 切换。
+// 离开侧栏（dragleave 且 relatedTarget 不在侧栏内）与 drop 结束都要清。
+window.addEventListener('dragover', (e) => {
+  const sb = document.getElementById('sidebar');
+  if (!sb) return;
+  const has = e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  sb.classList.toggle('drop-target', !!(has && _dropZoneOf(e.target) === 'sidebar'));
+}, true);
+window.addEventListener('dragleave', (e) => {
+  const sb = document.getElementById('sidebar');
+  if (!sb) return;
+  const rt = e.relatedTarget;
+  if (!rt || (rt.closest && !rt.closest('#sidebar'))) sb.classList.remove('drop-target');
+}, true);
+window.addEventListener('dragend', () => {
+  const sb = document.getElementById('sidebar');
+  if (sb) sb.classList.remove('drop-target');
+}, true);
 // Electron 壳形态：Python 侧 drop_handler 桥不存在，renderer 自己取绝对
 // 路径（preload 暴露 fcShell.pathForFile = webUtils.getPathForFile）→ 走
 // 同一入口 openDroppedFiles——去重/对比弹窗填栏/harness 附件/文件夹设根/
@@ -2488,18 +2540,42 @@ window.addEventListener('drop', (e) => {
   if (!window.fcShell || !window.fcShell.pathForFile) return;
   const files = e.dataTransfer && e.dataTransfer.files;
   if (!files || !files.length) return;
+  // **落点在文档面板上时，这套全局分发必须让路**（2026-11-26 用户实测：
+  // 「拖拽无效，直接被 claude 全覆盖了，直接拖成了附件」）。
+  // 本监听器是 capture 阶段挂在 window 上的，比元素自己的冒泡监听器先跑；
+  // 只要不放行，`harnessActive` 分支就会把文件挂成对话附件，文档的 drop 区
+  // 永远轮不到。这里**只是 return（不 stopPropagation）**，事件照常冒泡到
+  // 文档面板/分屏的 drop 监听器，由它们自己处理。
+  const zone = _dropZoneOf(e.target);
+  if (zone === 'doc') return;
   const paths = [];
   for (let i = 0; i < files.length; i++) {
     try { const p = window.fcShell.pathForFile(files[i]); if (p) paths.push(p); }
     catch (_) {}
   }
-  if (paths.length) openDroppedFiles(paths);
+  if (!paths.length) return;
+  // **落点在左侧栏 → 一律用工具打开，且不当作对话附件**（2026-11-26 用户令：
+  // 「拖到打开侧边栏 直接工具打开，包括侧边栏收起时窄框（拖入也生效），并且
+  // 能够自适应收起和展开」）。
+  // 只有 harness 会话页里才需要区分落点——不在 harness 时拖进窗口本来就走
+  // 工具打开（用户补充：「只有在 harness 中，才这样生效」）。所以这里只判
+  // 「在侧栏上」这一件事：强制走工具打开，并把收起的侧栏展开回「打开」页，
+  // 让用户看见结果。
+  if (zone === 'sidebar') {
+    try { if (typeof window.fcSidebarShow === 'function') window.fcSidebarShow('open'); } catch (_) {}
+    const sb = document.getElementById('sidebar');
+    if (sb) sb.classList.remove('drop-target');
+    openDroppedFiles(paths, { forceTool: true });
+    return;
+  }
+  openDroppedFiles(paths);
 }, true);
 // v3.5.73：原生拖拽多文件入口（main.py 全量透传）——harness 活动时全部
 // 加为对话附件（用户拖 5 个文件就该进 5 个附件）；其余 tab 保持首文件行为
 // （编辑器/阅读器一次开一个是合理交互），旧码在 Python 侧 break 只发第一个
-async function openDroppedFiles(paths) {
+async function openDroppedFiles(paths, opt) {
   if (!Array.isArray(paths) || !paths.length) return;
+  opt = opt || {};
   // v3.5.85：双发去重（快通道+兜底慢路万一并发）——同路径清单 2s 内只处理
   // 一次（对齐单文件时代 openDroppedFile._last 的既有语义）
   const _sig = paths.slice().sort().join('\u0001');
@@ -2507,6 +2583,13 @@ async function openDroppedFiles(paths) {
   if (openDroppedFiles._last && openDroppedFiles._last.s === _sig && _now - openDroppedFiles._last.t < 2000) return;
   openDroppedFiles._last = { s: _sig, t: _now };
   window.__dragProbe && __dragProbe('js-recv ' + paths.length + '个');
+  // forceTool：落点在左侧栏 / 非 harness 场景，一律「工具打开」，绝不挂成
+  // 对话附件（2026-11-26 用户令：「拖到打开侧边栏 直接工具打开……只有在
+  // harness 中，才这样生效，因为不在 harness 界面时候，拖入都是工具打开的」）。
+  if (opt.forceTool) {
+    for (const p of paths) await openDroppedFile(p, false, true);
+    return;
+  }
   // 对比弹窗优先（对齐 openDroppedFile 既有语义，v3.5.73 建多文件通道时
   // 漏抄此分支）：弹窗在开，拖入文件填 A/B 栏——否则下一行 harness 判定
   // 抢跑，claude 会话活动时拖对比文件会被整组挂成对话附件（用户实锤）
@@ -2528,7 +2611,7 @@ async function openDroppedFiles(paths) {
   }
   return openDroppedFile(paths[0], false);
 }
-async function openDroppedFile(path, fromRecent) {
+async function openDroppedFile(path, fromRecent, forceTool) {
   // v2.24：双拖放通道去重（.NET 原生 DragDrop 即时 + pywebview 兜底延迟
   // ~12s 可能先后到达）——同路径 2s 内只处理一次
   const _now = Date.now();
@@ -2555,7 +2638,7 @@ async function openDroppedFile(path, fromRecent) {
   } catch(_) {}   // 探测失败（网络等）继续走文件链路
   // 拖到程序员计算器 tab 上的文件：当前活动 tab 是计算器 → 直接算哈希
   // （计算器内 hashBox 的 drop 只做视觉高亮；真实路径只有这个全局通道有）
-  if (!fromRecent && activePortId && connections[activePortId] &&
+  if (!fromRecent && !forceTool && activePortId && connections[activePortId] &&
       connections[activePortId].meta && connections[activePortId].meta.kind === 'bitcalc' &&
       typeof connections[activePortId].hashFile === 'function') {
     connections[activePortId].hashFile(path);
@@ -2566,7 +2649,7 @@ async function openDroppedFile(path, fromRecent) {
   // 就能读文件——图片也能识图）。用户正对着 claude tab 拖，意图明确，不该弹打开方式。
   // fromRecent=true（「最近」快捷打开）时跳过：点快捷项的意图是打开文件本身，
   // 若当前活动 tab 恰好是 claude 会话，路径会被灌进对话输入框（"被 claude 拦截"）。
-  if (!fromRecent && activePortId && connections[activePortId] &&
+  if (!fromRecent && !forceTool && activePortId && connections[activePortId] &&
       connections[activePortId].meta && connections[activePortId].meta.kind === 'claude') {
     const safe = path.replace(/\\/g, '/');
     for (let i = 0; i < safe.length; i++) {
@@ -2583,14 +2666,14 @@ async function openDroppedFile(path, fromRecent) {
   // 最开始拖进对话就是给 claude 的）。fromRecent=true 同上跳过。
   if (!fromRecent && activePortId && connections[activePortId] &&
       connections[activePortId].meta && connections[activePortId].meta.kind === 'harness' &&
-      typeof window.harnessAddFilesByPath === 'function') {
+      !forceTool && typeof window.harnessAddFilesByPath === 'function') {
     window.harnessAddFilesByPath([path]);
     return;
   }
   // 拖到笔记 tab（.note，Editor.js 在场）：图片直接作为图块插入——
   // 与 note 内部粘贴图同款体验（上传 files/images/ 后插 image 块），
   // 不弹"打开方式"。
-  if (activePortId && connections[activePortId] &&
+  if (!forceTool && activePortId && connections[activePortId] &&
       connections[activePortId].meta && connections[activePortId].meta.kind === 'editor') {
     const c = connections[activePortId];
     if (c.isNote && c.editor) {   // .note 的 Editor.js 实例（.txt 是 Monaco 不走这）

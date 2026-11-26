@@ -797,6 +797,14 @@ document.querySelectorAll('.sidebar-sheet-tab').forEach(tab => {
   // 启动恢复形态（a59x 用户令「默认左边栏收起」）：无记录或上次收起 →
   // mini 图标条起步；仅当用户上次明确展开过（'0'）才展开起步
   try { if (localStorage.getItem(KEY) !== '0') miniOn(); } catch (_) { miniOn(); }
+
+  // 供外部（editor.js 的全局 drop 分发）驱动：「把侧栏展开到某个 sheet」。
+  // 2026-11-26 用户令：拖文件到侧栏上就直接用工具打开，并让用户看见结果——
+  // 侧栏收起成 44px 图标条时也要能拖（#sidebar 节点仍在，只是面板隐藏），
+  // 拖完自动展开回「打开」页。
+  window.fcSidebarShow = function (sheet) {
+    try { miniOff(sheet || last); } catch (_) {}
+  };
 })();
 
 

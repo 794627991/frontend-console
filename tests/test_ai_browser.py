@@ -1341,37 +1341,41 @@ def test_mcp_failure_text_is_consistent(monkeypatch):
         assert mcp.tool_browser_press(u, {"key": "Enter"}) == "失败：后端返回了无法识别的内容（不是 JSON 对象）"
 
 
-def test_mcp_devtools_default_target_is_ai_browser(monkeypatch):
-    app_evals, br = [], []
+def test_mcp_devtools_only_goes_through_ai_browser(monkeypatch):
+    """2026-11-26 用户令：「禁用，永远不允许直接操作工具，必须只能使用 AI 浏览器，
+    任何 CDP 操作都必须用浏览器完成。」
+
+    历史：v3.5.187 时 devtools_* 直连工具本体；2026-11-24 改成缺省走 AI 浏览器、
+    target="app" 才直连；2026-11-26 用户实锤 AI 拿 target="app" 执行
+    location.reload() 重载了用户的工具窗口——那不是诊断，是操作本体。
+    现在 target 参数整个删除，五个工具**只能**转给 AI 浏览器。
+
+    工具界面怎么操作：它就是 http://127.0.0.1:<port>/ 网页，browser_navigate 打开它。
+    """
+    br = []
     monkeypatch.setattr(mcp, "_aibr", lambda url, path, body=None, timeout=None, http_timeout=None:
                         br.append((path, body)) or "BR")
-    monkeypatch.setattr(mcp.devtools_cdp, "evaluate",
-                        lambda expr, max_len=4000: app_evals.append(expr) or "APP")
     u = "http://backend"
-    # 缺省 = AI 浏览器（用户拍板：不再默认操作工具自身界面）
     assert mcp.tool_devtools_eval(u, {"expression": "document.title"}) == "OK BR"
+    assert br[-1][0] == "eval"
     assert mcp.tool_devtools_dom(u, {"selector": "div", "limit": 3}) == "BR"
     assert br[-1] == ("dom", {"selector": "div", "limit": 3})
     assert mcp.tool_devtools_console(u, {"tail": 5, "live_seconds": 2}) == "BR"
+    assert br[-1][0] == "console"
     assert mcp.tool_devtools_network(u, {"seconds": 4.7, "filter": "api"}) == "BR"
     assert br[-1] == ("network", {"seconds": 4, "filter": "api"})
-    assert mcp.tool_devtools_screenshot(u, {}).startswith("BR\n用 Read")
-    assert app_evals == []
-    n_br = len(br)
-    # 显式 target=app 才走工具自身界面（原链路原样保留）
-    assert mcp.tool_devtools_eval(u, {"expression": "document.title", "target": "APP"}) == "OK APP"
-    assert mcp.tool_devtools_dom(u, {"selector": "div", "target": "app"}) == "APP"
-    # app 链原样保留：eval 一次、dom 一次（dom 走 evaluate 发它的查询脚本）
-    assert app_evals[0] == "document.title"
-    assert len(app_evals) == 2 and app_evals[1].startswith("(function(){var els=")
-    assert len(br) == n_br                              # target=app 不碰 AI 浏览器
+    assert mcp.tool_devtools_screenshot(u, {}).startswith("BR")
+    assert br[-1][0] == "screenshot"
+    # 就算调用方硬塞 target="app"，也只会被无视（不再是路由开关）
+    assert mcp.tool_devtools_eval(u, {"expression": "1", "target": "app"}) == "OK BR"
+    assert br[-1][0] == "eval"
 
-
-def test_mcp_devtools_bad_target_is_plain_text():
-    r = mcp.tool_devtools_eval("http://b", {"expression": "1", "target": "tool"})
-    assert r.startswith("失败：") and "target 只能是" in r
+def test_mcp_devtools_has_no_target_switch():
+    """target 参数已删除（2026-11-26 用户令）。残留的 target 只被无视，不作路由。"""
+    for t in mcp._TOOLS:
+        if t["name"].startswith("devtools_"):
+            assert "target" not in t["inputSchema"]["properties"], t["name"]
     assert mcp.tool_devtools_eval("http://b", {}).startswith("失败：缺少必填参数")
-
 
 def test_mcp_tool_table():
     names = [t["name"] for t in mcp._TOOLS]
@@ -1379,7 +1383,8 @@ def test_mcp_tool_table():
     assert sum(n.startswith("browser_") for n in names) == 14
     for t in mcp._TOOLS:
         if t["name"].startswith("devtools_"):
-            assert t["inputSchema"]["properties"]["target"]["default"] == "browser"
+            # 2026-11-26 用户令：devtools_* 没有 target 开关了，只走 AI 浏览器
+            assert "target" not in t["inputSchema"]["properties"], t["name"]
         if t["name"].startswith("browser_"):
             assert hasattr(mcp, "tool_" + t["name"])          # 每个工具都有实现
     nav = next(t for t in mcp._TOOLS if t["name"] == "browser_navigate")
@@ -1389,10 +1394,14 @@ def test_mcp_tool_table():
     wait = next(t for t in mcp._TOOLS if t["name"] == "browser_wait")
     assert (wait["inputSchema"]["properties"]["timeout"]["minimum"],
             wait["inputSchema"]["properties"]["timeout"]["maximum"]) == (1, 30)
-    # 工具描述不能把人往「操作工具界面」上引：要操作得显式写 target=app
+    # 工具描述必须把人往 AI 浏览器上引，且明确「工具界面怎么开」（2026-11-26
+    # 用户令：target 参数已删除，唯一通道是 AI 浏览器；工具界面就是那个网页）
     for t in mcp._TOOLS:
         if t["name"].startswith("devtools_"):
-            assert "默认" in t["description"] and 'target="app"' in t["description"], t["name"]
+            d = t["description"]
+            assert "AI 浏览器" in d, t["name"]
+            assert "browser_navigate" in d and "127.0.0.1" in d, t["name"]
+            assert 'target="app"' not in d, t["name"]   # 别再把人往直连上引
     # 只读的才允许断连重试；有副作用的（点击/输入/导航/eval）不在列
     assert {"browser_screenshot", "browser_dom", "browser_console", "browser_network",
             "browser_downloads"} <= mcp._RETRY_SAFE_TOOLS
@@ -1523,6 +1532,85 @@ def test_evaluate_fallback_unpacks_two_values(monkeypatch):
             return {"result": {"value": "ok"}}
     monkeypatch.setattr(cdp, "CdpSession", Cs)
     assert cdp.evaluate("1") == "ok"
+
+
+def test_evaluate_annotates_page_selfcheck(monkeypatch):
+    """target=app 的返回值必须自带「我在哪个页面、这页有多旧」的自检行。
+
+    2026-11-26 用户实测：AI 连续三次白跑——取错 target（截图浮窗与主页面同
+    origin）、AI 浏览器把工具页导航成 about:blank、改了源码但页面没重载
+    （window 上还是旧函数，只能靠 String(fn) 猜）。这行字就是给 AI 的硬提示。
+    """
+    monkeypatch.setattr(cdp, "find_cdp", lambda timeout=1.0: 9222)
+    monkeypatch.setattr(cdp, "ENDPOINT_FILE", os.devnull)
+    monkeypatch.setattr(cdp, "find_page_target", lambda port, origin: {"id": "T1"})
+    monkeypatch.setattr(cdp, "_newest_web_mtime", lambda: 1000_000)
+
+    class Cs:
+        def __init__(self, port, tid):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def send(self, method, params=None, timeout=10):
+            # 页面加载于 500_000（比源码旧）→ 必须报「源码比页面新」
+            return {"result": {"value": json.dumps({
+                "__fc": {"href": "http://127.0.0.1:1/", "title": "T", "ready": "complete",
+                         "origin": 500_000, "srcMtime": 1000_000},
+                "v": 42})}}
+    monkeypatch.setattr(cdp, "CdpSession", Cs)
+    out = cdp.evaluate("1 + 41")
+    assert "页面自检: http://127.0.0.1:1/ [complete]" in out
+    assert "源码比页面新 500s" in out and "先 reload" in out
+    assert out.rstrip().endswith("42")
+
+
+def test_evaluate_warns_when_not_tool_page(monkeypatch):
+    """页面被导航成 about:blank 时必须喊出来——否则 eval 全返回空，看起来像前端没加载。"""
+    monkeypatch.setattr(cdp, "find_cdp", lambda timeout=1.0: 9222)
+    monkeypatch.setattr(cdp, "ENDPOINT_FILE", os.devnull)
+    monkeypatch.setattr(cdp, "find_page_target", lambda port, origin: {"id": "T1"})
+    monkeypatch.setattr(cdp, "_newest_web_mtime", lambda: 0)
+
+    class Cs:
+        def __init__(self, port, tid):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def send(self, method, params=None, timeout=10):
+            return {"result": {"value": json.dumps({
+                "__fc": {"href": "about:blank", "title": "", "ready": "complete",
+                         "origin": 500_000, "srcMtime": 0}, "v": None})}}
+    monkeypatch.setattr(cdp, "CdpSession", Cs)
+    out = cdp.evaluate("window.DocView")
+    assert "这不是工具主界面" in out and "about:blank" in out
+    assert out.rstrip().endswith("null")     # 原值仍要给，别吞掉
+
+
+def test_evaluate_expression_error_is_reported(monkeypatch):
+    """探针包里抛错不能变成一句 JSON——要还原成原来的中文错误文案。"""
+    monkeypatch.setattr(cdp, "find_cdp", lambda timeout=1.0: 9222)
+    monkeypatch.setattr(cdp, "ENDPOINT_FILE", os.devnull)
+    monkeypatch.setattr(cdp, "find_page_target", lambda port, origin: {"id": "T1"})
+    monkeypatch.setattr(cdp, "_newest_web_mtime", lambda: 0)
+
+    class Cs:
+        def __init__(self, port, tid):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def send(self, method, params=None, timeout=10):
+            return {"result": {"value": json.dumps(
+                {"__fc": {}, "__fcErr": "nope is not defined"})}}
+    monkeypatch.setattr(cdp, "CdpSession", Cs)
+    with pytest.raises(cdp.CdpError) as e:
+        cdp.evaluate("nope()")
+    assert "nope is not defined" in str(e.value)
 
 
 def test_cdp_port_resolution(monkeypatch):
@@ -1815,15 +1903,27 @@ def test_cross_component_contract_literals():
     assert "const AIBR_TID = '__aibr__';" in fe and "type: '__aibr__'" in fe
     sub = _read("web", "js", "harness", "subpane.js")
     assert "const _SUB_AIBR = '__aibr__';" in sub and "window._SUB_AIBR = _SUB_AIBR;" in sub
-    # 分屏的上限计数 / 逐出 / 残留清理 / 恢复认领 / 贴底滚动 都豁免它
-    # （逐出那行原先只钉了它的子串，恒真——这里每条都带各自独有的上下文）
-    for guard in ("_sub.order.filter(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_AIBR).length > 6",
-                  "const old = _sub.order.find(x => x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_AIBR)",
-                  "&& t !== _SUB_AIBR && _sub.tabs[t])",
-                  "t === _SUB_DYN || t === _SUB_AIBR) return false;",
-                  "tid !== _SUB_DYN && tid !== _SUB_AIBR) _subScroll(tid);",
+    # 分屏的上限计数 / 逐出 / 残留清理 / 恢复认领 / 贴底滚动 都豁免它。
+    # a704（文档 6.2.3）把这些逐个点名的判据收敛成 _subIsPseudo 一处：
+    # 再加一类伪标签（文档标签）不必再去六个地方各补一个 !==。所以这里改钉
+    # **新契约**——判据函数存在、内置三类在里面、其余各点都改调它。
+    assert "function _subIsPseudo(t)" in sub and "window._subIsPseudo = _subIsPseudo;" in sub
+    pseudo_fn = sub[sub.index("function _subIsPseudo(t)"):]
+    pseudo_fn = pseudo_fn[:pseudo_fn.index("\n  }")]
+    for k in ("_SUB_DIR", "_SUB_DYN", "_SUB_AIBR"):
+        assert k in pseudo_fn, "伪标签判据必须包含 " + k
+    assert "tb.pseudo" in pseudo_fn, "文档标签靠档案上的 pseudo 字段判伪"
+    for guard in ("_sub.order.filter(x => !_subIsPseudo(x)).length > 6",
+                  "_sub.order.find(x => !_subIsPseudo(x))",
+                  "!_subIsPseudo(t) && _sub.tabs[t])",
+                  "if (_subIsPseudo(t)) return false;",
+                  "if (!_subIsPseudo(tid)) _subScroll(tid);",
                   "t === _SUB_AIBR ? ((typeof ICO16"):
         assert guard in sub, guard
+    # 旧的三处硬编码判据必须已经绝迹（回归护栏：谁加回去就红）
+    for dead in ("x !== _SUB_DIR && x !== _SUB_DYN && x !== _SUB_AIBR",
+                 "tid !== _SUB_DYN && tid !== _SUB_AIBR) _subScroll(tid);"):
+        assert dead not in sub, "旧的硬编码判据残留：" + dead
     # 总开关的键名：后端读写、设置页——同一个
     assert '"ai_browser_enabled"' in _read("src", "server.py") and "ai_browser_enabled" in py
     assert "ai_browser_enabled" in _read("web", "js", "settings.js")
@@ -2725,6 +2825,10 @@ def probe(label, fn):
         v = "REJECTED"
     elif "端口连不上" in txt or "CdpUnavailable" in txt:
         v = "PASSED"
+    elif "URLError" in txt or "ConnectionRefused" in txt or "目标计算机积极拒绝" in txt:
+        # 2026-11-26：devtools_* 现在只转 AI 浏览器（HTTP），后端起不来就是
+        # URLError——**能走到这一步就说明已越过调用方封禁**，正是要验的。
+        v = "PASSED"
     else:
         v = "OTHER " + txt[:80]
     print("%s %s" % (label, v))
@@ -2737,8 +2841,8 @@ if MODE == "temp":
 elif MODE == "package":
     from src import mcp_server as m
     u = "http://127.0.0.1:9"
-    probe("devtools_eval", lambda: m.tool_devtools_eval(u, {"expression": "1", "target": "app"}))
-    probe("devtools_dom", lambda: m.tool_devtools_dom(u, {"selector": "body", "target": "app"}))
+    probe("devtools_eval", lambda: m.tool_devtools_eval(u, {"expression": "1"}))
+    probe("devtools_dom", lambda: m.tool_devtools_dom(u, {"selector": "body"}))
 else:
     # mcp_server.py 当**脚本**跑：函数所在的模块就是 __main__——Claude Code 登记的
     # 启动方式正是 `python …\src\mcp_server.py`（安装版才是按包导入的 exe --mcp）
@@ -2749,8 +2853,8 @@ else:
     g = {"__name__": "__main__", "__file__": path}
     exec(compile(src[:-len(tail)], path, "exec"), g)
     u = "http://127.0.0.1:9"
-    probe("devtools_eval", lambda: g["tool_devtools_eval"](u, {"expression": "1", "target": "app"}))
-    probe("devtools_screenshot", lambda: g["tool_devtools_screenshot"](u, {"target": "app"}))
+    probe("devtools_eval", lambda: g["tool_devtools_eval"](u, {"expression": "1"}))
+    probe("devtools_screenshot", lambda: g["tool_devtools_screenshot"](u, {}))
 '''
 
 

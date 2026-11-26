@@ -1,0 +1,13 @@
+{
+  "crate": "duke-office-art",
+  "version": "0.3.0",
+  "sourceDigest": "1e4a9536c4773eb2c93f2b4f10389c675a1401c317e531899507bb502d369ff0",
+  "wasmSha256": "ddd1a9fd6ad97f7902ba41bbe2bb99d72be5e1cbf22a3bca8cef8e0d3e63ab84",
+  "outputs": {
+    "office_art.js": "f01641c16170efa7f83d5d9701c9042ac54b6d39ee40db5af8de6dd9f5844cb7",
+    "office_art.d.ts": "0119040d4409f60693ac927066c3fea521f7eabfe8f23fad7f9181762335cf62",
+    "payload.js": "df91445ccdb51b2fd8fafb208b7e4958e5789648d3c592a31783ba28b717fcab",
+    "payload.d.ts": "ba6fc442944c3f6b20366c3cb367704b6ea1d5f6354e7178658d580698bfd520",
+    "THIRD-PARTY-NOTICES.txt": "d6ff46beb27276769aa5e6c188476b93ae4fb5cda7a97e069c9068c983fd7bd1"
+  }
+}

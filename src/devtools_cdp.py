@@ -28,21 +28,27 @@ from src import app_state as _st
 ENDPOINT_FILE = os.path.join(_st.HOME_DIR, "endpoint.json")
 
 
-# ---- 调用方白名单（2026-11-25 用户令，两次实锤后定）-------------------------
-# 用户令原话：「裸连 CDP 必须禁用，只保留 devtools_*(target="app")，所有工具
-# 验证也必须走 AI 浏览器！不允许直接操作工具本体！」
+# ---- 调用方白名单（2026-11-25 用户令 + 2026-11-26 收紧）--------------------
+# 2026-11-25 用户令：「裸连 CDP 必须禁用……所有工具验证也必须走 AI 浏览器！
+# 不允许直接操作工具本体！」
+# 2026-11-26 用户令（本条为最终版，前者不完整）：
+#   「禁用，永远不允许直接操作工具，必须只能使用 AI 浏览器，任何 CDP 操作
+#    都必须用浏览器完成。」
 #
-# 事故经过：AI 两次写临时脚本 `find_page_target(...)` + `CdpSession` 直连 9222
-# 去操作工具自身的界面——一次绕过了 AI 浏览器（用户看不见 AI 在干什么），
-# 一次连的还是旧端口上早已废弃的实例（白折腾半天）。根因不是「没有规矩」，
-# 是**这条路在代码上敞着**：任何 Python 进程 import 本模块就能自己挑 target。
+# 事故经过：AI 两次写临时脚本直连 9222 操作工具自身界面——一次绕过 AI 浏览器
+# （用户看不见 AI 在干什么），一次连的还是旧端口上已废弃的实例。2026-11-25 的
+# 修法只是把白名单收到 mcp_server / ai_browser，**但 mcp_server 的
+# devtools_*(target="app") 走的就是这条直连**——等于「工具本体的 CDP 直连」
+# 被当成正规通道留着，AI 可以拿它 eval / reload / 派发事件直接改用户的界面
+# （2026-11-26 实锤：AI 用 target="app" 执行 location.reload() 重载了用户的
+# 工具窗口）。那不是「读诊断」，是操作本体。
 #
-# 修法：本模块的「发现/执行」类入口只对**工具进程内的两个合法调用方**开放——
-#   · src.mcp_server   —— devtools_* 工具的实现（target="app" 的正规路径）
-#   · src.ai_browser   —— AI 浏览器（自带 partition + targetId 登记校验）
-# 其余调用方（临时脚本、tests 之外的任何 import）一律 DevtoolsError。
+# 最终约束：本模块的「发现/执行」类入口**只对 src.ai_browser 开放**。
+# 工具本体就是一个 http://127.0.0.1:<port>/ 网页，AI 浏览器能直接打开并操作
+# 它（browser_navigate 到那个地址即可）——所有 CDP 操作从此只有一条路，
+# 就是 AI 浏览器。target="app" 已从工具面删除。
 # tests/ 下跑在隔离 CDP 口（FC_CDP_PORT）的契约测试是唯一豁免。
-_ALLOWED_CALLERS = ("mcp_server", "ai_browser")
+_ALLOWED_CALLERS = ("ai_browser",)
 
 
 def _caller_allowed():
@@ -80,13 +86,12 @@ _ALLOWED_FILES = tuple(n + ".py" for n in _ALLOWED_CALLERS)
 def _frame_allowed(f):
     """这一帧是不是合法调用方的代码。
 
-    看模块名的末段：mcp_server / ai_browser（src.mcp_server、裸名都算）。
-    **还有一种必须认**：mcp_server.py 被当**脚本**运行时——Claude Code 登记的
-    启动方式就是 `python …\\src\\mcp_server.py`——这个文件的模块名是 __main__，
-    不是 src.mcp_server。2026-11-25 审查 a698 时实测（沙箱、隔离口）：只按模块名
-    判，脚本方式下 devtools_* 五个工具一调就报「禁止裸连 CDP」，正规通道被自己的
-    封禁误杀；安装版的 `exe --mcp` 是按包导入的，不受影响，所以只有源码形态中招。
-    __main__ 的帧看它 globals 里的 __file__ 是不是这两个文件之一。"""
+    只看 ai_browser（2026-11-26 用户令：工具本体不允许直连，AI 浏览器能打开
+    工具页，所有 CDP 操作都走它）。**mcp_server 不再放行**——它只是把请求转给
+    AI 浏览器（HTTP），自己不该碰 CDP。
+
+    __main__ 的帧：ai_browser.py 被当脚本运行时模块名是 __main__，按 __file__
+    的文件名认（同前一处修复的思路）。"""
     g = f.f_globals
     mod = str(g.get("__name__") or "")
     if mod == "__main__":
@@ -98,10 +103,10 @@ def _frame_allowed(f):
 def _guard_caller(what):
     if not _caller_allowed():
         raise DevtoolsError(
-            "禁止裸连 CDP（2026-11-25 用户令）：%s 只能由 src.mcp_server 的 "
-            "devtools_* 工具或 src.ai_browser 调用。要操作工具界面请用 "
-            "devtools_*(target=\"app\")；要操作网页请用 AI 浏览器"
-            "（browser_* / devtools_* 缺省目标）。" % what)
+            "禁止裸连 CDP（2026-11-26 用户令）：%s 只能由 src.ai_browser 调用。"
+            "**不允许直接操作工具本体**——工具界面就是一个 http://127.0.0.1:<port>/ "
+            "网页，用 browser_navigate 打开它再用 browser_* 操作；"
+            "操作其它网页同样只走 AI 浏览器（browser_*）。" % what)
 
 
 # 主 UI CDP 端口（a624 起常开，electron/main.js 固定 appendSwitch 9222）。
@@ -229,7 +234,13 @@ def list_targets(cdp_port, timeout=3.0):
 
 def find_page_target(cdp_port, backend_origin):
     """过滤工具主页面 target（type=page 且 url 以后端 origin 开头）。
-    返回 target dict；零命中抛 TargetNotFound（带全部 targets 摘要）。"""
+    返回 target dict；零命中抛 TargetNotFound（带全部 targets 摘要）。
+
+    **优先取 url 正好是 origin + "/" 的那个**。原来的 `hits[0]` 在截图浮窗
+    （`/web/screenshot.html`）、其它以同一 origin 开的辅助页存在时会指错页面
+    ——实测：截图窗口开着时 `devtools_*(target="app")` 一直操作的是
+    fc-snip 那个空壳页，`window.DocView` 当然是 undefined，看起来像「前端没加载」。
+    """
     _guard_caller("find_page_target")
     targets = [t for t in list_targets(cdp_port)
                if t.get("type") == "page"]
@@ -241,7 +252,9 @@ def find_page_target(cdp_port, backend_origin):
                              (t.get("title") or t.get("url") or "?")[:60])
             for t in targets[:8])
         raise TargetNotFound(summary)
-    return hits[0]          # 多命中（理论不出现）取第一个
+    exact = [t for t in hits
+             if str(t.get("url", "")).rstrip("/") == backend_origin.rstrip("/")]
+    return (exact or hits)[0]
 
 
 class CdpSession(object):
@@ -453,9 +466,59 @@ def eval_on(cs, js_expression, timeout=10.0, max_len=4000):
     return out
 
 
-def evaluate(js_expression, timeout=10.0, max_len=4000):
-    """便捷封装：找 CDP→找 target→Runtime.evaluate→返回截断文本。
-    供 mcp_server 五工具共用（**工具自身界面**这条链；AI 浏览器走 ai_browser）。"""
+def _app_probe_js(js_expression):
+    """把 AI 的表达式包一层，附上「我到底在哪个页面、这个页面有多旧」的自检。
+
+    **为什么必须做**（2026-11-26 用户实测后定的）：`target="app"` 的调用返回的
+    只是一个值，AI 无从判断自己是不是在正确地���面上、页面是不是已经加载了最新
+    代码。实测踩了三次同一类坑，每次都白跑好几轮工具调用：
+      · 截图浮窗 `/web/screenshot.html` 与主页面同 origin，取错 target →
+        `window.DocView` 恒 undefined，看起来像「前端没加载」
+      · AI 浏览器导航把工具页带走了 → 页面变成 about:blank，eval 全是空结果
+      · 改了源码但页面没重载 → `window` 上还是旧函数，只能靠 `String(fn)` 猜
+    现在每次都把 href / 页面加载时刻 / 源码文件的最新修改时刻一起回给 AI，
+    「页面比源码旧」这件事一眼就能看出来，不用再去绕。
+    """
+    # 后端能拿到源码文件的 mtime；页面里有 performance.timeOrigin。
+    # 两个都是毫秒时间戳，直接比。
+    newest = _newest_web_mtime()
+    return (
+        "(function(){"
+        "var fc={href:location.href,title:document.title,ready:document.readyState,"
+        "origin:Math.round(performance.timeOrigin),srcMtime:%d};"
+        "var r;try{r=(%s);}catch(e){return JSON.stringify({__fc:fc,__fcErr:String(e&&e.message||e)})}"
+        "return JSON.stringify({__fc:fc,v:r===undefined?null:r});"
+        "})()" % (newest, js_expression)
+    )
+
+
+def _newest_web_mtime():
+    """web/ 下所有 .js/.css 的最新修改时间（毫秒）。取不到返回 0。"""
+    import glob
+    import os as _os
+    base = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "web")
+    newest = 0
+    try:
+        for pat in ("**/*.js", "**/*.css"):
+            for p in glob.glob(_os.path.join(base, pat), recursive=True):
+                try:
+                    m = _os.stat(p).st_mtime
+                    if m > newest:
+                        newest = m
+                except OSError:
+                    pass
+    except Exception:
+        return 0
+    return int(round(newest * 1000))
+
+
+def evaluate_raw(js_expression, timeout=10.0, max_len=4000):
+    """执行表达式，返回 (值文本, 自检 dict)。自检 dict 见 _app_probe_js。
+
+    包一层探针会改变返回值形状（多个信封），所以需要结构化的调用方
+    （例如 devtools_dom 要自己解析 JSON）走这里，拿 `(值, meta)` 再拼自己的
+    输出——不要在外层去剥 evaluate() 的文本，那样一改格式就碎。
+    """
     port = find_cdp()
     info = {}
     try:
@@ -464,17 +527,70 @@ def evaluate(js_expression, timeout=10.0, max_len=4000):
     except Exception:
         pass
     origin = "http://127.0.0.1:%s" % info.get("port", "")
-    # R9 审计 W38：origin 匹配不到（网页 tab 等）→ 回落首个网页 tab
-    # target。2026-11-24 修：find_webtab_target 只返回 (port, target) 两个值，
-    # 原来这里按三个解包——真走到回落分支即 ValueError（从未被触发过：
-    # 工具开着时主页面 target 永远在）
     try:
         tid = find_page_target(port, origin)["id"]
     except TargetNotFound:
         port, t2 = find_webtab_target()
         tid = t2["id"]
     with CdpSession(port, tid) as cs:
-        return eval_on(cs, js_expression, timeout=timeout, max_len=max_len)
+        raw = eval_on(cs, _app_probe_js(js_expression), timeout=timeout,
+                      max_len=max_len + 2000)   # 信封占一点余量
+    try:
+        d = json.loads(raw)
+    except Exception:
+        return raw, {}
+    if not isinstance(d, dict) or "__fc" not in d:
+        return raw, {}
+    if "__fcErr" in d:
+        raise CdpError("表达式异常: %s" % d["__fcErr"])
+    v = d.get("v")
+    if isinstance(v, str):
+        text = v
+    else:
+        text = json.dumps(v, ensure_ascii=False, default=str)
+    if len(text) > max_len:
+        text = text[:max_len] + "\n…（已截断，全长 %d 字符）" % len(text)
+    return text, (d.get("__fc") or {})
+
+
+def meta_line(fc):
+    """把自检 dict 拼成一行中文结论。空 dict 返回 ''。"""
+    if not fc:
+        return ""
+    href = fc.get("href") or ""
+    ready = fc.get("ready") or ""
+    t0 = fc.get("origin") or 0
+    src = fc.get("srcMtime") or 0
+    bits = ["页面自检: %s [%s]" % (href or "?", ready or "?")]
+    # 最坑的一种：主页面被导航走了（实测被 AI 浏览器带去 about:blank 或外部
+    # 网页），此时 eval 全返回空、看起来像「前端没加载」。必须显式喊出来。
+    low = href.lower()
+    if not href or low.startswith("about:") or low.startswith("file:"):
+        bits.append("**这不是工具主界面**（地址是 %s）——重新打开工具窗口，"
+                    "别在这个页面上继续操作" % (href or "空"))
+    if t0 and src:
+        if src > t0:
+            bits.append("**源码比页面新 %ds —— 现在这页跑的是旧代码，先 reload 再信结果**"
+                        % int((src - t0) / 1000))
+        else:
+            bits.append("页面已加载最新源码")
+    elif t0:
+        bits.append("页面加载于 %s" % time.strftime("%H:%M:%S", time.localtime(t0 / 1000)))
+    return "\n".join(bits)
+
+
+def evaluate(js_expression, timeout=10.0, max_len=4000):
+    """执行表达式，返回「自检行 + 值」的文本。供 mcp_server 五工具共用
+    （**工具自身界面**这条链；AI 浏览器走 ai_browser）。
+
+    为什么要带自检行：2026-11-26 用户实测，AI 连续三次白跑——取错 target
+    （截图浮窗与主页面同 origin）、AI 浏览器把工具页导航成 about:blank、
+    改了源码但页面没重载（window 上还是旧函数，只能靠 String(fn) 猜）。
+    现在每次都把「哪个地址 / 页面何时加载 / 源码何时改」一起回给 AI。
+    """
+    text, fc = evaluate_raw(js_expression, timeout=timeout, max_len=max_len)
+    head = meta_line(fc)
+    return (head + "\n" + (text if text is not None else "undefined")) if head else text
 
 
 def page_target_origin_probe():

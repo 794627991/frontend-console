@@ -118,6 +118,7 @@ html.fc-ui-ready .startup-splash { opacity: 0; pointer-events: none; }
 <link rel="stylesheet" href="web/style/terminal.css?v=__HG_VER__">
 <link rel="stylesheet" href="web/style/vcs.css?v=__HG_VER__">
 <link rel="stylesheet" href="web/style/office.css?v=__HG_VER__">
+<link rel="stylesheet" href="web/style/docview.css?v=__HG_VER__">
 <link rel="stylesheet" href="web/style/web.css?v=__HG_VER__">
 <link rel="stylesheet" href="web/style/misc.css?v=__HG_VER__">
 <link rel="stylesheet" href="web/skins.css?v=__HG_VER__">
@@ -648,11 +649,27 @@ html.fc-ui-ready .startup-splash { opacity: 0; pointer-events: none; }
 <script src="vendor/editorjs-marker.umd.js"></script>
 <script src="vendor/markdown-it/dist/markdown-it.min.js"></script>
 <script src="vendor/intel-hex/intel-hex-web.js"></script>
-<!-- a280: Office 查看器库（docx 需要 JSZip 依赖 + pdf + xlsx） -->
+<!-- a280: Office 查看器库（docx 需要 JSZip 依赖 + pdf） -->
 <script src="vendor/docx-preview/jszip.min.js"></script>
 <script src="vendor/docx-preview/docx-preview.min.js"></script>
 <script src="vendor/pdfjs/pdf.min.js"></script>
-<script src="vendor/xlsx/xlsx.full.min.js"></script>
+<!-- 2026-11-26 用户令（D01/D02）：xlsx 自研网格退役，pptx/xlsx 换新引擎。
+     这里有两处**必须**在第一个 module 脚本之前完成，否则新引擎必炸：
+       1. window.process 替身 —— xlsx-engine 的 dist 里残留 process.env.NODE_ENV
+          （chunk-XUHSQ3GF.js 的 virtualizer），浏览器没有 process → ReferenceError。
+       2. importmap —— xlsx-engine 的 dist 有裸模块引用（fflate 等），浏览器只认
+          带 / ./ ../ 的说明符。Step 0 的 V02 实测：不补这两条必失败。
+     位置：必须早于本文件第 657 行起的第一个 type="module"。 -->
+<script>
+window.process = window.process || { env: { NODE_ENV: 'production' } };
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "fflate": "/vendor/xlsx-engine/fflate/browser.js"
+  }
+}
+</script>
 <!-- a290R：Excel 编辑用自建网格（零运行时依赖）+ OnlyOffice 分层，Luckysheet vendor 备用未引用 -->
 <script type="module" src="web/js/monaco-bridge.js"></script>
 <script src="web/js/util.js?v=__HG_VER__"></script>
@@ -700,6 +717,14 @@ html.fc-ui-ready .startup-splash { opacity: 0; pointer-events: none; }
      backend-log 仅 window.__backendLogToggle（排障直调）。经典脚本对它们的
      依赖为零（tools/js_dep_graph.py + 逐名 grep 核实）。 -->
 <script type="module" src="web/js/a11y.js?v=__HG_VER__"></script>
+<!-- 2026-11-26 文档渲染引擎（用户令 D01/D02/D04）：pptx 用 @aiden0z/pptx-renderer、
+     xlsx 用 @extend-ai/react-xlsx wasm 引擎。渲染由 office-viewer.js 分发过来。
+     放在 office-viewer.js 之前：后者分发时按 window.OfficeEngine 取用 -->
+<script type="module" src="web/js/office-engine.js?v=__HG_VER__"></script>
+<!-- 2026-11-26 文档预览引擎（Step 2）：DocView.mount / 分屏文档标签 / 路径可点。
+     必须在 harness/* 之前加载——ask-md 的 renderMd 与 main 的点击委托都要用
+     window.DocView，而 harness 的脚本是按序号立即执行的 -->
+<script type="module" src="web/js/docview/index.js?v=__HG_VER__"></script>
 <script type="module" src="web/js/office-viewer.js?v=__HG_VER__"></script>
 <!-- v3.0:claude-harness.js 拆分为 harness/ 21 文件(编号锁加载顺序,不得调换;
      state/base 提供共享状态与基础表,main 最后组装 builder,shell 挂顶层外壳) -->

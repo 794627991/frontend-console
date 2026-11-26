@@ -84,6 +84,27 @@ TOPMOST + 最大化，事后有的撤销了、有的没撤——用户被置顶�
 - 仓库根有 `.codegraph/` 时，优先用 `codegraph explore "<符号/问题>"`
   （或 MCP `codegraph_explore`），先于 grep/find。
 
+## 技能指路（动手前先读对应 skill）
+
+**改了 `web/` 下任何代码（js/css/html），要在真实界面验证效果时——先读
+`serial-console-pro` skill 的「验证前端控制台的界面改动」一节。**
+
+那节的核心是铁律与流程：**永远不允许直接操作工具本体，所有 CDP 操作只走
+AI 浏览器**；工具界面本身就是 `http://127.0.0.1:<port>/` 网页，用
+`browser_navigate` 打开它；`devtools_*` 的 `target` 参数已删除；改完代码先
+`location.reload()` 再验证（不重载时 window 上还是旧函数，结论全不成立）；
+合成事件测不了 OS 拖放；裸连 CDP 的禁令。不读会重走 2026-11-26 踩过的坑
+（AI 拿 `target="app"` 执行 `location.reload()` 重载了用户的工具窗口）。
+
+**为什么写在那里而不是这里**：方法是通用的（任何项目的会话都可能要验证
+前端），本工程只是触发场景之一；而 skill 只在命中时加载，不占每个会话的
+常驻上下文。
+
+其它常用 skill：`code-review`（评审改动）、`doc-coauthoring`（写设计文档）、
+`data-analysis`（分析数据）、`find-skills`（找有没有现成的）。
+技能仓库入口是工具内的「技能仓库」按钮（设置里的 `skills.sh` 集成），
+装的技能落在 `~/.claude/skills/`，所有项目的会话共享。
+
 <!-- 工程速览（形态与入口，帮助新会话快速对齐） -->
 
 ## 工程速览
@@ -296,20 +317,28 @@ TOPMOST + 最大化，事后有的撤销了、有的没撤——用户被置顶�
     续命；壳认领 guest 首选分区判据 `aibrIsAiGuest`，`aibrPending` 只做兜底
     （两个 webview 的挂载事件会交错）；操作锁排队有上限（`_OP_QUEUE_WAIT`），超了
     快速失败；MCP 侧的等待必须夹限（HTTP 超时是按它算的）。
-  - **铁律·操作工具界面的唯一合法通道（2026-11-25 用户令，两次实锤后定）**：
-    **不得裸连 CDP**。禁止 `find_page_target` / `find_cdp` / `CdpSession` /
-    `Runtime.evaluate` 等一切直连 9222 的脚本手段去读写工具自身界面——
-    这类做法绕过了 `devtools_*` 的默认改道与 target 校验，AI 甚至会不知道
-    自己在操作哪个 target（实测两次：一次绕过 AI 浏览器、一次在错误的旧端口
-    实例上操作了半天，白跑）。
-    合法通道只有两条：
-      1. **AI 浏览器**（`browser_*` 工具，或 `devtools_*` 缺省目标）——验证
-         任何前端改动，**默认走这条**，让用户能看着 AI 操作；
-      2. `devtools_*(target="app")`——仅当确实要读工具自身界面（如确认某个
-         按钮/面板的 DOM 真实状态）时，显式声明 app 目标。
-    诊断脚本读 DOM 也不行：要问界面状态，用 `devtools_dom(target="app")`。
-    唯一例外是 `tests/` 里跑在**隔离 CDP 口**（`FC_CDP_PORT`）上的自动化测
-    试——那是契约测试，不是拿 CDP 当遥控器操作真实工具。
+  - **铁律·操作工具界面的唯一合法通道（2026-11-26 用户令，最终版）**：
+    **永远不允许直接操作工具本体。任何 CDP 操作都必须用 AI 浏览器完成。**
+
+    **不得裸连 CDP**：禁止 `find_page_target` / `find_cdp` / `CdpSession` /
+    `Runtime.evaluate` 等一切直连 9222 的脚本手段。`src/devtools_cdp.py` 的
+    调用方白名单**只放行 `src.ai_browser`**，随手写的脚本第一次调用就报
+    「禁止裸连 CDP」。唯一例外是 `tests/` 里跑在隔离 CDP 口（`FC_CDP_PORT`）
+    上的契约测试——那是契约测试，不是拿 CDP 当遥控器操作真实工具。
+
+    **`devtools_*(target="app")` 已删除**（2026-11-26 用户令）。它曾直连工具
+    本体的 CDP，等于 AI 能 eval / reload / 派发事件直接改用户界面——实锤：AI
+    用它执行 `location.reload()` 重载了用户的工具窗口。那不是诊断，是操作本体。
+    现在 `devtools_*` 五个工具都只是 `browser_*` 的同义词，`target` 参数整个移除。
+
+    **想操作工具界面？它就是网页**：`http://127.0.0.1:<后端端口>/`。
+    `browser_navigate` 打开它，之后全程 `browser_*`。端口从
+    `GET /api/ai/mcp_info` 的 `backend_url` 或锚点 `endpoint.json` 取，
+    **不要记忆**（每次启动会变）。
+
+    改完前端代码必须 `location.reload()` 再验证——不重载时 window 上还是旧
+    函数，任何结论都不成立。合成事件测不了 OS 拖放，拖拽类改动请用户实际拖一次。
+
   - **铁律·禁止改用户窗口状态（2026-11-25 用户令，事故级）**：见上文「禁止
     操作用户窗口」——不得 `SetWindowPos(HWND_TOPMOST)`、不得最大化/改尺寸。
     调试要窗口可见就**请用户点一下**，不许自己去置顶。
